@@ -226,24 +226,25 @@
                         imageContent = `
                             <div class="relative rounded-xl overflow-hidden bg-slate-900 border border-slate-700/50">
                                 <img src="${step.image}" alt="Step ${index + 1}" class="w-full h-auto object-cover max-h-[300px]" />
-                                <button onclick="removeImage('${step.id}')" class="absolute top-2 right-2 p-2 bg-slate-900/80 backdrop-blur-sm rounded-full text-white shadow-lg active:scale-95">
-                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                <button type="button" onclick="removeImage('${step.id}')" class="absolute top-2 right-2 p-2 bg-slate-900/80 backdrop-blur-sm rounded-full text-white shadow-lg active:scale-95 z-10 cursor-pointer">
+                                    <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
                                 </button>
                             </div>
                         `;
                     } else {
+                        // 【重點修正】：改用 relative 容器與 opacity-0 的隱形輸入框直接覆蓋，徹底解決 iOS Safari 阻擋隱藏 input 的問題
                         imageContent = `
                             <div class="flex space-x-3">
-                                <label class="flex-1 flex flex-col items-center justify-center py-6 px-4 border-2 border-dashed border-slate-600 rounded-xl bg-slate-800/50 active:bg-slate-700 transition-colors cursor-pointer text-slate-400 hover:text-indigo-400">
-                                    <i data-lucide="camera" class="w-7 h-7 mb-2"></i>
-                                    <span class="text-xs font-medium">即時拍照</span>
-                                    <input type="file" accept="image/*" capture="environment" class="hidden" onchange="handleImageUpload('${step.id}', this)" />
-                                </label>
-                                <label class="flex-1 flex flex-col items-center justify-center py-6 px-4 border-2 border-dashed border-slate-600 rounded-xl bg-slate-800/50 active:bg-slate-700 transition-colors cursor-pointer text-slate-400 hover:text-indigo-400">
-                                    <i data-lucide="image" class="w-7 h-7 mb-2"></i>
-                                    <span class="text-xs font-medium">從相簿選擇</span>
-                                    <input type="file" accept="image/*" class="hidden" onchange="handleImageUpload('${step.id}', this)" />
-                                </label>
+                                <div class="relative flex-1 flex flex-col items-center justify-center py-6 px-4 border-2 border-dashed border-slate-600 rounded-xl bg-slate-800/50 active:bg-slate-700 transition-colors cursor-pointer text-slate-400 hover:text-indigo-400 overflow-hidden">
+                                    <i data-lucide="camera" class="w-7 h-7 mb-2 pointer-events-none"></i>
+                                    <span class="text-xs font-medium pointer-events-none">即時拍照</span>
+                                    <input type="file" accept="image/*" capture="environment" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="handleImageUpload('${step.id}', this)" />
+                                </div>
+                                <div class="relative flex-1 flex flex-col items-center justify-center py-6 px-4 border-2 border-dashed border-slate-600 rounded-xl bg-slate-800/50 active:bg-slate-700 transition-colors cursor-pointer text-slate-400 hover:text-indigo-400 overflow-hidden">
+                                    <i data-lucide="image" class="w-7 h-7 mb-2 pointer-events-none"></i>
+                                    <span class="text-xs font-medium pointer-events-none">從相簿選擇</span>
+                                    <input type="file" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="handleImageUpload('${step.id}', this)" />
+                                </div>
                             </div>
                         `;
                 }
@@ -268,15 +269,16 @@
                                         <span class="text-sm font-medium text-slate-300">步驟 ${index + 1}</span>
                                     </div>
                                     
-                                    <div class="flex items-center space-x-1">
-                                        <button onclick="moveUp(${index})" ${isFirst ? 'disabled' : ''} class="p-2 rounded-lg ${isFirst ? 'text-slate-600' : 'text-slate-400 active:bg-slate-700 hover:text-white'}">
-                                            <i data-lucide="arrow-up" class="w-4 h-4"></i>
+                                    <div class="flex items-center space-x-1 relative z-10">
+                                        <!-- 【重點修正】：加上 type="button" 以及內部 i 標籤加上 pointer-events-none，防止 SVG 攔截點擊事件 -->
+                                        <button type="button" onclick="moveUp(${index})" ${isFirst ? 'disabled' : ''} class="p-2 rounded-lg ${isFirst ? 'text-slate-600' : 'text-slate-400 active:bg-slate-700 hover:text-white'} cursor-pointer">
+                                            <i data-lucide="arrow-up" class="w-4 h-4 pointer-events-none"></i>
                                         </button>
-                                        <button onclick="moveDown(${index})" ${isLast ? 'disabled' : ''} class="p-2 rounded-lg ${isLast ? 'text-slate-600' : 'text-slate-400 active:bg-slate-700 hover:text-white'}">
-                                            <i data-lucide="arrow-down" class="w-4 h-4"></i>
+                                        <button type="button" onclick="moveDown(${index})" ${isLast ? 'disabled' : ''} class="p-2 rounded-lg ${isLast ? 'text-slate-600' : 'text-slate-400 active:bg-slate-700 hover:text-white'} cursor-pointer">
+                                            <i data-lucide="arrow-down" class="w-4 h-4 pointer-events-none"></i>
                                         </button>
-                                        <button onclick="deleteStep('${step.id}')" class="p-2 rounded-lg text-rose-400 active:bg-rose-950/50 hover:text-rose-300">
-                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                        <button type="button" onclick="deleteStep('${step.id}')" class="p-2 rounded-lg text-rose-400 active:bg-rose-950/50 hover:text-rose-300 cursor-pointer">
+                                            <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
                                         </button>
                                     </div>
                                 </div>
@@ -346,12 +348,13 @@
             <!-- 新增步驟框框 -->
             <button 
                 id="addBoxBtn"
+                type="button"
                 onclick="addStep()"
                 disabled
-                class="w-full border-2 border-dashed border-slate-600 rounded-2xl p-6 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-400 hover:border-indigo-500 hover:bg-slate-800/50 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                class="w-full border-2 border-dashed border-slate-600 rounded-2xl p-6 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-400 hover:border-indigo-500 hover:bg-slate-800/50 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed relative z-10 cursor-pointer"
             >
-                <i data-lucide="plus-circle" class="w-8 h-8 mb-2"></i>
-                <span class="text-sm font-medium">新增步驟</span>
+                <i data-lucide="plus-circle" class="w-8 h-8 mb-2 pointer-events-none"></i>
+                <span class="text-sm font-medium pointer-events-none">新增步驟</span>
             </button>
 
         </main>
