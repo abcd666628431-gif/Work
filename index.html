@@ -10,19 +10,19 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Firebase SDKs -->
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
 
         // Firebase Configuration
         const userFirebaseConfig = {
-            apiKey: "AIzaSyDcH7BFp9xghWLdgvsLseo3XyJG_opf9A8",
-            authDomain: "icarus2-50e01.firebaseapp.com",
-            databaseURL: "https://icarus2-50e01-default-rtdb.firebaseio.com",
-            projectId: "icarus2-50e01",
-            storageBucket: "icarus2-50e01.firebasestorage.app",
-            messagingSenderId: "67456823",
-            appId: "1:67456823:web:9b90f0c93d3cd1c7a394b2"
+            apiKey: "AIzaSyBsdBYBeJYqgeDDxF39lZ0pr785SMnwvJs",
+            authDomain: "work-eb62f.firebaseapp.com",
+            databaseURL: "https://work-eb62f-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "work-eb62f",
+            storageBucket: "work-eb62f.firebasestorage.app",
+            messagingSenderId: "428210130706",
+            appId: "1:428210130706:web:142207595423bdf661adcb"
         };
 
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : userFirebaseConfig;
@@ -46,6 +46,21 @@
         // Initialize Icons
         lucide.createIcons();
 
+        // 系統提示框 (Toast)
+        window.showToast = (message, isError = false) => {
+            const toast = document.createElement('div');
+            toast.className = `fixed top-16 left-1/2 transform -translate-x-1/2 px-5 py-3 rounded-full shadow-2xl text-sm font-bold z-50 transition-all duration-300 ${isError ? 'bg-rose-500 text-white' : 'bg-indigo-600 text-white'}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            // 動畫效果
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translate(-50%, -20px)';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        };
+
         // Authentication
         async function initAuth() {
             try {
@@ -56,7 +71,7 @@
                 }
             } catch (error) {
                 console.error("Auth error:", error);
-                await signInAnonymously(auth).catch(console.error);
+                window.showToast("Firebase 驗證失敗，請檢查設定", true);
             }
         }
 
@@ -68,7 +83,7 @@
                 setupFirestoreListener();
             } else {
                 connectionDot.classList.replace('bg-emerald-500', 'bg-rose-500');
-                connectionStatus.textContent = '連線中...';
+                connectionStatus.textContent = '連線中或驗證失敗...';
                 if (unsubscribeSnapshot) unsubscribeSnapshot();
             }
         });
@@ -89,12 +104,18 @@
                 console.error("Firestore Error:", error);
                 loadingMask.style.display = 'none';
                 addBoxBtn.disabled = false;
+                
+                if (error.code === 'permission-denied') {
+                    window.showToast("資料庫權限不足！請去 Firebase 開啟 Rules", true);
+                } else {
+                    window.showToast("資料同步錯誤: " + error.message, true);
+                }
             });
         }
 
         // Image Compression
         function compressImage(file) {
-            return new Promise((resolve) => {
+            return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.readAsDataURL(file);
                 reader.onload = (event) => {
@@ -102,7 +123,7 @@
                     img.src = event.target.result;
                     img.onload = () => {
                         const canvas = document.createElement('canvas');
-                        const MAX_WIDTH = 800;
+                        const MAX_WIDTH = 800; // 手機版夠用了，可大幅減少容量
                         let scaleSize = 1;
                         if (img.width > MAX_WIDTH) {
                             scaleSize = MAX_WIDTH / img.width;
@@ -111,49 +132,86 @@
                         canvas.height = img.height * scaleSize;
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                        resolve(canvas.toDataURL('image/jpeg', 0.6));
+                        resolve(canvas.toDataURL('image/jpeg', 0.6)); // 壓縮為 JPEG
                     };
+                    img.onerror = () => reject(new Error("圖片解析失敗"));
                 };
+                reader.onerror = () => reject(new Error("檔案讀取失敗"));
             });
         }
 
         // Actions
         window.addStep = async () => {
-            if (!currentUser) return;
+            if (!currentUser) {
+                window.showToast("未連線到資料庫，無法新增", true);
+                return;
+            }
             const newId = Date.now().toString();
             const newOrder = steps.length > 0 ? Math.max(...steps.map(s => s.order)) + 1 : 0;
             const stepData = { image: null, note: '', order: newOrder };
 
-            // Optimistic UI
+            // Optimistic UI (先在畫面加上去，讓操作不卡頓)
             steps.push({ id: newId, ...stepData });
             renderSteps();
 
-            const stepRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'workflow_steps', newId);
-            await setDoc(stepRef, stepData);
+            try {
+                const stepRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'workflow_steps', newId);
+                await setDoc(stepRef, stepData);
+            } catch (err) {
+                window.showToast("新增至雲端失敗", true);
+            }
         };
 
         window.handleImageUpload = async (id, inputElement) => {
-            if (!currentUser) return;
             const file = inputElement.files[0];
-            if (file) {
-                // Show loading on specific step (simplified for HTML version)
-                const stepElement = document.getElementById(`step-${id}`);
-                if(stepElement) stepElement.classList.add('opacity-50');
+            if (!file) return;
 
-                try {
-                    const compressedBase64 = await compressImage(file);
-                    const stepRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'workflow_steps', id);
-                    await setDoc(stepRef, { image: compressedBase64 }, { merge: true });
-                } catch (error) {
-                    console.error("Upload error:", error);
-                } finally {
-                    if(stepElement) stepElement.classList.remove('opacity-50');
+            if (!currentUser) {
+                window.showToast("未連線，無法上傳圖片", true);
+                return;
+            }
+
+            // 讓該區塊變半透明表示處理中
+            const stepElement = document.getElementById(`step-${id}`);
+            if(stepElement) stepElement.classList.add('opacity-50');
+            window.showToast("處理圖片中...");
+
+            try {
+                // 1. 壓縮圖片
+                const compressedBase64 = await compressImage(file);
+                
+                // 2. 樂觀更新 (Optimistic UI) - 讓畫面【瞬間】顯示圖片！
+                const stepIndex = steps.findIndex(s => s.id === id);
+                if(stepIndex !== -1) {
+                    steps[stepIndex].image = compressedBase64;
+                    renderSteps(); // 立刻重新渲染畫面
                 }
+
+                // 3. 背景慢慢上傳到 Firebase
+                const stepRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'workflow_steps', id);
+                await setDoc(stepRef, { image: compressedBase64 }, { merge: true });
+                window.showToast("圖片上傳成功");
+                
+            } catch (error) {
+                console.error("Upload error:", error);
+                window.showToast("圖片上傳失敗：" + error.message, true);
+            } finally {
+                if(stepElement) stepElement.classList.remove('opacity-50');
+                // 清空 input，這樣下次選同一張圖也能再次觸發 onchange
+                inputElement.value = '';
             }
         };
 
         window.removeImage = async (id) => {
             if (!currentUser) return;
+            
+            // 樂觀更新：立刻移除畫面圖片
+            const stepIndex = steps.findIndex(s => s.id === id);
+            if(stepIndex !== -1) {
+                steps[stepIndex].image = null;
+                renderSteps();
+            }
+
             const stepRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'workflow_steps', id);
             await setDoc(stepRef, { image: null }, { merge: true });
         };
@@ -167,14 +225,27 @@
 
         window.handleNoteBlur = async (id, text) => {
             if (!currentUser) return;
-            const stepRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'workflow_steps', id);
-            await setDoc(stepRef, { note: text }, { merge: true });
+            try {
+                const stepRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'workflow_steps', id);
+                await setDoc(stepRef, { note: text }, { merge: true });
+            } catch (err) {
+                window.showToast("備註儲存失敗", true);
+            }
         };
 
         window.deleteStep = async (id) => {
             if (!currentUser) return;
-            const stepRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'workflow_steps', id);
-            await deleteDoc(stepRef);
+            
+            // 樂觀更新：立刻移除畫面步驟
+            steps = steps.filter(s => s.id !== id);
+            renderSteps();
+
+            try {
+                const stepRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'workflow_steps', id);
+                await deleteDoc(stepRef);
+            } catch (err) {
+                window.showToast("刪除失敗", true);
+            }
         };
 
         window.moveUp = async (index) => {
@@ -182,7 +253,7 @@
             const step1 = steps[index];
             const step2 = steps[index - 1];
 
-            // Optimistic Update
+            // 樂觀更新：立刻調換順序
             const tempOrder = step1.order;
             step1.order = step2.order;
             step2.order = tempOrder;
@@ -200,7 +271,7 @@
             const step1 = steps[index];
             const step2 = steps[index + 1];
 
-             // Optimistic Update
+            // 樂觀更新：立刻調換順序
             const tempOrder = step1.order;
             step1.order = step2.order;
             step2.order = tempOrder;
@@ -226,30 +297,29 @@
                         imageContent = `
                             <div class="relative rounded-xl overflow-hidden bg-slate-900 border border-slate-700/50">
                                 <img src="${step.image}" alt="Step ${index + 1}" class="w-full h-auto object-cover max-h-[300px]" />
-                                <button type="button" onclick="removeImage('${step.id}')" class="absolute top-2 right-2 p-2 bg-slate-900/80 backdrop-blur-sm rounded-full text-white shadow-lg active:scale-95 z-10 cursor-pointer">
+                                <button type="button" onclick="window.removeImage('${step.id}')" class="absolute top-2 right-2 p-2 bg-slate-900/80 backdrop-blur-sm rounded-full text-white shadow-lg active:scale-95 z-10 cursor-pointer">
                                     <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
                                 </button>
                             </div>
                         `;
                     } else {
-                        // 【重點修正】：改用 relative 容器與 opacity-0 的隱形輸入框直接覆蓋，徹底解決 iOS Safari 阻擋隱藏 input 的問題
+                        // iOS Safari 專屬修復：使用完全覆蓋的透明 input
                         imageContent = `
                             <div class="flex space-x-3">
                                 <div class="relative flex-1 flex flex-col items-center justify-center py-6 px-4 border-2 border-dashed border-slate-600 rounded-xl bg-slate-800/50 active:bg-slate-700 transition-colors cursor-pointer text-slate-400 hover:text-indigo-400 overflow-hidden">
                                     <i data-lucide="camera" class="w-7 h-7 mb-2 pointer-events-none"></i>
                                     <span class="text-xs font-medium pointer-events-none">即時拍照</span>
-                                    <input type="file" accept="image/*" capture="environment" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="handleImageUpload('${step.id}', this)" />
+                                    <input type="file" accept="image/*" capture="environment" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="window.handleImageUpload('${step.id}', this)" />
                                 </div>
                                 <div class="relative flex-1 flex flex-col items-center justify-center py-6 px-4 border-2 border-dashed border-slate-600 rounded-xl bg-slate-800/50 active:bg-slate-700 transition-colors cursor-pointer text-slate-400 hover:text-indigo-400 overflow-hidden">
                                     <i data-lucide="image" class="w-7 h-7 mb-2 pointer-events-none"></i>
                                     <span class="text-xs font-medium pointer-events-none">從相簿選擇</span>
-                                    <input type="file" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="handleImageUpload('${step.id}', this)" />
+                                    <input type="file" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="window.handleImageUpload('${step.id}', this)" />
                                 </div>
                             </div>
                         `;
                 }
 
-                // 現在每個步驟（包含最後一個）下方都會有箭頭，引導至下個步驟或「新增框框」
                 let arrowContent = `
                     <div class="py-3 text-indigo-500/80 flex justify-center w-full">
                         <i data-lucide="arrow-down" class="w-8 h-8 animate-pulse"></i>
@@ -270,14 +340,13 @@
                                     </div>
                                     
                                     <div class="flex items-center space-x-1 relative z-10">
-                                        <!-- 【重點修正】：加上 type="button" 以及內部 i 標籤加上 pointer-events-none，防止 SVG 攔截點擊事件 -->
-                                        <button type="button" onclick="moveUp(${index})" ${isFirst ? 'disabled' : ''} class="p-2 rounded-lg ${isFirst ? 'text-slate-600' : 'text-slate-400 active:bg-slate-700 hover:text-white'} cursor-pointer">
+                                        <button type="button" onclick="window.moveUp(${index})" ${isFirst ? 'disabled' : ''} class="p-2 rounded-lg ${isFirst ? 'text-slate-600' : 'text-slate-400 active:bg-slate-700 hover:text-white'} cursor-pointer">
                                             <i data-lucide="arrow-up" class="w-4 h-4 pointer-events-none"></i>
                                         </button>
-                                        <button type="button" onclick="moveDown(${index})" ${isLast ? 'disabled' : ''} class="p-2 rounded-lg ${isLast ? 'text-slate-600' : 'text-slate-400 active:bg-slate-700 hover:text-white'} cursor-pointer">
+                                        <button type="button" onclick="window.moveDown(${index})" ${isLast ? 'disabled' : ''} class="p-2 rounded-lg ${isLast ? 'text-slate-600' : 'text-slate-400 active:bg-slate-700 hover:text-white'} cursor-pointer">
                                             <i data-lucide="arrow-down" class="w-4 h-4 pointer-events-none"></i>
                                         </button>
-                                        <button type="button" onclick="deleteStep('${step.id}')" class="p-2 rounded-lg text-rose-400 active:bg-rose-950/50 hover:text-rose-300 cursor-pointer">
+                                        <button type="button" onclick="window.deleteStep('${step.id}')" class="p-2 rounded-lg text-rose-400 active:bg-rose-950/50 hover:text-rose-300 cursor-pointer">
                                             <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
                                         </button>
                                     </div>
@@ -292,8 +361,8 @@
                             <div>
                                 <textarea
                                     placeholder="點此輸入備註內容..."
-                                    onchange="handleNoteChange('${step.id}', this.value)"
-                                    onblur="handleNoteBlur('${step.id}', this.value)"
+                                    onchange="window.handleNoteChange('${step.id}', this.value)"
+                                    onblur="window.handleNoteBlur('${step.id}', this.value)"
                                     class="w-full bg-slate-900/50 border border-slate-700 rounded-xl p-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none min-h-[80px]"
                                 >${step.note || ''}</textarea>
                             </div>
@@ -307,7 +376,7 @@
                 stepsContainer.insertAdjacentHTML('beforeend', stepHTML);
             });
             
-            // Re-initialize Lucide icons for new DOM elements
+            // Re-initialize Lucide icons
             lucide.createIcons();
         }
 
@@ -321,19 +390,19 @@
     <!-- Loading Mask -->
     <div id="loadingMask" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center">
         <i data-lucide="loader-2" class="w-12 h-12 text-indigo-500 animate-spin mb-4"></i>
-        <p class="text-slate-300 font-medium tracking-widest text-sm">正在同步資料...</p>
+        <p class="text-slate-300 font-medium tracking-widest text-sm">正在載入系統...</p>
     </div>
 
-    <!-- Phone Container (移除了底部的 pb-24 空白) -->
+    <!-- Phone Container -->
     <div class="w-full max-w-[430px] bg-slate-900 sm:rounded-[3rem] sm:shadow-2xl sm:border-[8px] border-slate-800 overflow-hidden relative min-h-screen sm:min-h-[932px] pb-10">
         
         <!-- Header -->
-        <header class="bg-slate-900/90 backdrop-blur-md sticky top-0 z-10 border-b border-slate-800 p-5 pt-8 sm:pt-12">
+        <header class="bg-slate-900/90 backdrop-blur-md sticky top-0 z-10 border-b border-slate-800 p-5 pt-8 sm:pt-12 shadow-md">
             <div class="flex items-center justify-between">
                 <h1 class="text-xl font-bold text-white tracking-wider flex-1 text-center">工作順序流程</h1>
             </div>
             <p class="text-xs text-center mt-1 flex items-center justify-center space-x-2">
-                <span id="connectionDot" class="w-2 h-2 rounded-full bg-rose-500 transition-colors duration-300"></span>
+                <span id="connectionDot" class="w-2 h-2 rounded-full bg-rose-500 transition-colors duration-300 shadow-sm"></span>
                 <span id="connectionStatus" class="text-slate-400">連線中...</span>
             </p>
         </header>
@@ -349,7 +418,7 @@
             <button 
                 id="addBoxBtn"
                 type="button"
-                onclick="addStep()"
+                onclick="window.addStep()"
                 disabled
                 class="w-full border-2 border-dashed border-slate-600 rounded-2xl p-6 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-400 hover:border-indigo-500 hover:bg-slate-800/50 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed relative z-10 cursor-pointer"
             >
