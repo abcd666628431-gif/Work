@@ -41,8 +41,7 @@
         const connectionStatus = document.getElementById('connectionStatus');
         const connectionDot = document.getElementById('connectionDot');
         const stepsContainer = document.getElementById('stepsContainer');
-        const emptyState = document.getElementById('emptyState');
-        const addBtn = document.getElementById('addBtn');
+        const addBoxBtn = document.getElementById('addBoxBtn');
 
         // Initialize Icons
         lucide.createIcons();
@@ -85,11 +84,11 @@
                 steps.sort((a, b) => a.order - b.order);
                 renderSteps();
                 loadingMask.style.display = 'none';
-                addBtn.disabled = false;
+                addBoxBtn.disabled = false;
             }, (error) => {
                 console.error("Firestore Error:", error);
                 loadingMask.style.display = 'none';
-                addBtn.disabled = false;
+                addBoxBtn.disabled = false;
             });
         }
 
@@ -218,17 +217,12 @@
         function renderSteps() {
             stepsContainer.innerHTML = '';
             
-            if (steps.length === 0) {
-                emptyState.style.display = 'block';
-            } else {
-                emptyState.style.display = 'none';
+            steps.forEach((step, index) => {
+                const isFirst = index === 0;
+                const isLast = index === steps.length - 1;
                 
-                steps.forEach((step, index) => {
-                    const isFirst = index === 0;
-                    const isLast = index === steps.length - 1;
-                    
-                    let imageContent = '';
-                    if (step.image) {
+                let imageContent = '';
+                if (step.image) {
                         imageContent = `
                             <div class="relative rounded-xl overflow-hidden bg-slate-900 border border-slate-700/50">
                                 <img src="${step.image}" alt="Step ${index + 1}" class="w-full h-auto object-cover max-h-[300px]" />
@@ -252,22 +246,20 @@
                                 </label>
                             </div>
                         `;
-                    }
+                }
 
-                    let arrowContent = '';
-                    if (!isLast) {
-                        arrowContent = `
-                            <div class="py-3 text-indigo-500/80">
-                                <i data-lucide="arrow-down" class="w-8 h-8 animate-pulse"></i>
-                            </div>
-                        `;
-                    }
+                // 現在每個步驟（包含最後一個）下方都會有箭頭，引導至下個步驟或「新增框框」
+                let arrowContent = `
+                    <div class="py-3 text-indigo-500/80 flex justify-center w-full">
+                        <i data-lucide="arrow-down" class="w-8 h-8 animate-pulse"></i>
+                    </div>
+                `;
 
-                    const stepHTML = `
-                        <div id="step-${step.id}" class="flex flex-col items-center transition-opacity duration-200">
-                            <div class="w-full bg-slate-800 rounded-2xl p-4 shadow-lg border border-slate-700/50 relative group">
-                                
-                                <!-- Header -->
+                const stepHTML = `
+                    <div id="step-${step.id}" class="flex flex-col items-center transition-opacity duration-200">
+                        <div class="w-full bg-slate-800 rounded-2xl p-4 shadow-lg border border-slate-700/50 relative group">
+                            
+                            <!-- Header -->
                                 <div class="flex justify-between items-center mb-4">
                                     <div class="flex items-center space-x-3">
                                         <span class="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-600 text-white font-bold text-sm shadow-md shadow-indigo-900/50">
@@ -295,24 +287,23 @@
                                 </div>
 
                                 <!-- Note Area -->
-                                <div>
-                                    <textarea
-                                        placeholder="點此輸入備註內容..."
-                                        onchange="handleNoteChange('${step.id}', this.value)"
-                                        onblur="handleNoteBlur('${step.id}', this.value)"
-                                        class="w-full bg-slate-900/50 border border-slate-700 rounded-xl p-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none min-h-[80px]"
-                                    >${step.note || ''}</textarea>
-                                </div>
+                            <div>
+                                <textarea
+                                    placeholder="點此輸入備註內容..."
+                                    onchange="handleNoteChange('${step.id}', this.value)"
+                                    onblur="handleNoteBlur('${step.id}', this.value)"
+                                    class="w-full bg-slate-900/50 border border-slate-700 rounded-xl p-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none min-h-[80px]"
+                                >${step.note || ''}</textarea>
                             </div>
-                            
-                            <!-- Arrow -->
-                            ${arrowContent}
                         </div>
-                    `;
-                    
-                    stepsContainer.insertAdjacentHTML('beforeend', stepHTML);
-                });
-            }
+                        
+                        <!-- Arrow -->
+                        ${arrowContent}
+                    </div>
+                `;
+                
+                stepsContainer.insertAdjacentHTML('beforeend', stepHTML);
+            });
             
             // Re-initialize Lucide icons for new DOM elements
             lucide.createIcons();
@@ -331,8 +322,8 @@
         <p class="text-slate-300 font-medium tracking-widest text-sm">正在同步資料...</p>
     </div>
 
-    <!-- Phone Container -->
-    <div class="w-full max-w-[430px] bg-slate-900 sm:rounded-[3rem] sm:shadow-2xl sm:border-[8px] border-slate-800 overflow-hidden relative pb-24 min-h-screen sm:min-h-[932px]">
+    <!-- Phone Container (移除了底部的 pb-24 空白) -->
+    <div class="w-full max-w-[430px] bg-slate-900 sm:rounded-[3rem] sm:shadow-2xl sm:border-[8px] border-slate-800 overflow-hidden relative min-h-screen sm:min-h-[932px] pb-10">
         
         <!-- Header -->
         <header class="bg-slate-900/90 backdrop-blur-md sticky top-0 z-10 border-b border-slate-800 p-5 pt-8 sm:pt-12">
@@ -352,25 +343,18 @@
                 <!-- Steps will be dynamically injected here -->
             </div>
 
-            <!-- Empty State -->
-            <div id="emptyState" class="text-center py-12 text-slate-500 text-sm hidden">
-                目前沒有任何步驟，請點擊下方按鈕新增。
-            </div>
-
-        </main>
-
-        <!-- Bottom Actions -->
-        <div class="absolute bottom-0 left-0 right-0 p-5 bg-gradient-to-t from-slate-950 via-slate-900 to-transparent">
+            <!-- 新增步驟框框 -->
             <button 
-                id="addBtn"
+                id="addBoxBtn"
                 onclick="addStep()"
                 disabled
-                class="w-full py-4 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 text-white rounded-2xl shadow-lg shadow-indigo-900/50 flex items-center justify-center space-x-2 font-medium transition-all active:scale-[0.98]"
+                class="w-full border-2 border-dashed border-slate-600 rounded-2xl p-6 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-400 hover:border-indigo-500 hover:bg-slate-800/50 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-                <i data-lucide="plus" class="w-5 h-5"></i>
-                <span>新增下一個步驟</span>
+                <i data-lucide="plus-circle" class="w-8 h-8 mb-2"></i>
+                <span class="text-sm font-medium">新增步驟</span>
             </button>
-        </div>
+
+        </main>
         
     </div>
 
