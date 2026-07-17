@@ -74,7 +74,37 @@
             { id: 't13', start: '17:30', end: '19:30', title: '豬肉檔收工', content: '豬肉檔收工,入表「街市豬肉檔屠豬及營運資料總表」', note: '公機SHARE內' },
             { id: 't14', start: '18:30', end: '19:00', title: '晚間剔檔與抄溫', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20' }
         ];
-        let taskCompletionState = JSON.parse(localStorage.getItem('dailyTasksState')) || {};
+        
+        // 【新增】跨日自動重置系統 (Auto Reset System)
+        // 取得今天的日期字串 (格式 YYYY-MM-DD)
+        const getLocalTodayStr = () => {
+            const now = new Date();
+            // 這裡直接使用本地日期，因為您的最後一個任務約在 20:00 結束
+            // 午夜過後 (00:00) 就會自動切換為新的一天
+            return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+        };
+
+        const todayDateStr = getLocalTodayStr();
+        const lastSavedDate = localStorage.getItem('dailyTasksDate');
+
+        let taskCompletionState = {};
+        let taskExtrasState = {}; // 儲存相片與備註
+
+        if (lastSavedDate !== todayDateStr) {
+            // 系統偵測到是新的一天！(或者第一次使用)
+            console.log("新的一天開始，初始化排程資料...");
+            // 清除昨天的舊資料
+            localStorage.removeItem('dailyTasksState');
+            localStorage.removeItem('dailyTasksExtras');
+            // 更新日期標籤為今天
+            localStorage.setItem('dailyTasksDate', todayDateStr);
+            // 狀態保持為空 {}，讓畫面呈現全新未完成狀態
+        } else {
+            // 如果還是同一天，就讀取剛剛/稍早存檔的資料
+            taskCompletionState = JSON.parse(localStorage.getItem('dailyTasksState')) || {};
+            taskExtrasState = JSON.parse(localStorage.getItem('dailyTasksExtras')) || {};
+        }
+        
         let timeUpdateInterval;
 
         // Initialize Icons
@@ -452,6 +482,43 @@
             renderDailySchedule(); // Re-render to update styles
         };
 
+        // 新增：處理每日任務的相片上傳
+        window.handleDailyPhotoUpload = async (taskId, inputElement) => {
+            const file = inputElement.files[0];
+            if (!file) return;
+
+            window.showToast("壓縮與處理圖片中...");
+            try {
+                const compressedBase64 = await compressImage(file);
+                if (!taskExtrasState[taskId]) taskExtrasState[taskId] = {};
+                taskExtrasState[taskId].photo = compressedBase64;
+                localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+                renderDailySchedule();
+                window.showToast("任務圖片已附加");
+            } catch (error) {
+                window.showToast("圖片處理失敗", true);
+            } finally {
+                inputElement.value = '';
+            }
+        };
+
+        // 新增：移除每日任務相片
+        window.removeDailyPhoto = (taskId) => {
+            if (taskExtrasState[taskId]) {
+                taskExtrasState[taskId].photo = null;
+                localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+                renderDailySchedule();
+            }
+        };
+
+        // 新增：處理改進事項與備註儲存
+        window.saveDailyNote = (taskId, noteText) => {
+            if (!taskExtrasState[taskId]) taskExtrasState[taskId] = {};
+            taskExtrasState[taskId].note = noteText;
+            localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+            window.showToast("改進/備註已儲存");
+        };
+
         function parseTime(timeStr) {
             const [hours, minutes] = timeStr.split(':').map(Number);
             const now = new Date();
@@ -517,17 +584,21 @@
 
             dailyScheduleData.forEach(task => {
                 const isCompleted = taskCompletionState[task.id];
+                const extras = taskExtrasState[task.id] || {};
                 const status = calculateTaskStatus(task.start, task.end);
                 
                 let timeColor = 'text-cyan-600/70';
                 let borderColor = 'border-slate-800/80';
                 let glowEffect = '';
+                let activeScale = '';
                 
                 if (!isCompleted) {
                     if (status.state === 'active') { 
                         timeColor = 'text-cyan-400 neon-text'; 
-                        borderColor = 'border-cyan-500/50'; 
-                        glowEffect = 'shadow-[0_0_15px_rgba(6,182,212,0.15)]';
+                        borderColor = 'border-cyan-500'; 
+                        // 針對「正在進行中」的任務做傻瓜式放大與強烈光暈
+                        glowEffect = 'shadow-[0_0_20px_rgba(6,182,212,0.3)] bg-slate-800/90 z-10';
+                        activeScale = 'scale-[1.02] transform transition-all duration-500';
                     }
                     if (status.state === 'overdue') { 
                         timeColor = 'text-rose-400 drop-shadow-[0_0_5px_rgba(244,63,94,0.8)]'; 
@@ -537,27 +608,62 @@
                 }
 
                 const taskHTML = `
-                    <div class="bg-slate-900/80 backdrop-blur-md rounded-2xl p-4 border ${isCompleted ? 'border-slate-800/30 opacity-40' : borderColor} ${glowEffect} relative transition-all duration-300 flex space-x-3 cursor-pointer group hover:bg-slate-800" onclick="window.toggleTask('${task.id}')">
+                    <div class="bg-slate-900/80 backdrop-blur-md rounded-2xl p-4 border ${isCompleted ? 'border-slate-800/30 opacity-60' : borderColor} ${glowEffect} ${activeScale} relative transition-all duration-300 flex flex-col group hover:bg-slate-800">
                         
-                        <!-- Checkbox Area -->
-                        <div class="flex-shrink-0 pt-1">
-                            <div class="w-6 h-6 rounded-md border-2 ${isCompleted ? 'border-cyan-500 bg-cyan-500/20 text-cyan-400 drop-shadow-[0_0_5px_rgba(6,182,212,0.8)]' : 'border-slate-600 text-transparent group-hover:border-cyan-500/50'} flex items-center justify-center transition-all duration-300">
-                                <i data-lucide="check" class="w-4 h-4"></i>
+                        <!-- 頂部任務資訊 (點擊可打勾) -->
+                        <div class="flex space-x-3 cursor-pointer" onclick="window.toggleTask('${task.id}')">
+                            <!-- Checkbox Area -->
+                            <div class="flex-shrink-0 pt-1">
+                                <div class="w-6 h-6 rounded-md border-2 ${isCompleted ? 'border-cyan-500 bg-cyan-500/20 text-cyan-400 drop-shadow-[0_0_5px_rgba(6,182,212,0.8)]' : 'border-slate-600 text-transparent group-hover:border-cyan-500/50'} flex items-center justify-center transition-all duration-300">
+                                    <i data-lucide="check" class="w-4 h-4"></i>
+                                </div>
+                            </div>
+
+                            <!-- Content Area -->
+                            <div class="flex-1 space-y-2">
+                                <div class="flex justify-between items-start">
+                                    <span class="text-[11px] px-2 py-1 bg-slate-950/80 rounded border ${isCompleted ? 'border-slate-800 text-slate-500' : 'border-cyan-900/80 text-cyan-300 shadow-[0_0_8px_rgba(8,145,178,0.2)]'} tracking-widest">${task.start} - ${task.end}</span>
+                                    <span class="text-[11px] ${timeColor} tracking-widest font-bold">${isCompleted ? '✔ 已歸檔' : status.text}</span>
+                                </div>
+                                
+                                <h3 class="text-sm tracking-widest ${isCompleted ? 'text-slate-600 line-through' : 'text-cyan-50 drop-shadow-[0_0_2px_rgba(255,255,255,0.3)]'}">${task.title}</h3>
+                                <p class="text-[11px] leading-relaxed tracking-wider ${isCompleted ? 'text-slate-700' : 'text-cyan-100/70'}">${task.content}</p>
+                                
+                                ${task.note ? `<div class="mt-2 p-2 rounded-md bg-cyan-950/20 border border-cyan-800/30 text-[10px] text-cyan-400/80 leading-relaxed uppercase tracking-wider">${task.note}</div>` : ''}
                             </div>
                         </div>
 
-                        <!-- Content Area -->
-                        <div class="flex-1 space-y-2">
-                            <div class="flex justify-between items-start">
-                                <span class="text-[11px] px-2 py-1 bg-slate-950/80 rounded border ${isCompleted ? 'border-slate-800 text-slate-500' : 'border-cyan-900/80 text-cyan-300 shadow-[0_0_8px_rgba(8,145,178,0.2)]'} tracking-widest">${task.start} - ${task.end}</span>
-                                <span class="text-[11px] ${timeColor} tracking-widest">${isCompleted ? '✔ 已歸檔' : status.text}</span>
+                        <!-- 底部擴充操作區 (防呆工具：相片與備註) -->
+                        <div class="mt-4 pt-3 border-t border-slate-800/80 flex flex-col space-y-3">
+                            
+                            <!-- 圖片顯示區塊 -->
+                            ${extras.photo ? `
+                                <div class="relative w-full rounded-lg overflow-hidden border border-cyan-900/50">
+                                    <img src="${extras.photo}" class="w-full h-32 object-cover opacity-80" />
+                                    <button type="button" onclick="window.removeDailyPhoto('${task.id}')" class="absolute top-2 right-2 p-1.5 bg-rose-500/80 rounded-md text-white">
+                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                    </button>
+                                </div>
+                            ` : ''}
+
+                            <!-- 功能按鈕列 -->
+                            <div class="flex space-x-2">
+                                <!-- 附加照片按鈕 -->
+                                <label class="flex-1 flex items-center justify-center space-x-1 py-2 rounded-lg bg-slate-950/50 border border-slate-700 text-cyan-500/80 hover:text-cyan-300 hover:border-cyan-500/50 transition-colors cursor-pointer active:scale-95 text-[11px] tracking-widest">
+                                    <i data-lucide="camera" class="w-4 h-4"></i>
+                                    <span>${extras.photo ? '重新拍照' : '附加存證相片'}</span>
+                                    <input type="file" accept="image/*" capture="environment" class="hidden" onchange="window.handleDailyPhotoUpload('${task.id}', this)" />
+                                </label>
                             </div>
-                            
-                            <h3 class="text-sm tracking-widest ${isCompleted ? 'text-slate-600 line-through' : 'text-cyan-50 drop-shadow-[0_0_2px_rgba(255,255,255,0.3)]'}">${task.title}</h3>
-                            <p class="text-[11px] leading-relaxed tracking-wider ${isCompleted ? 'text-slate-700' : 'text-cyan-100/70'}">${task.content}</p>
-                            
-                            ${task.note ? `<div class="mt-2 p-2 rounded-md bg-cyan-950/20 border border-cyan-800/30 text-[10px] text-cyan-400/80 leading-relaxed uppercase tracking-wider">${task.note}</div>` : ''}
+
+                            <!-- 異常/改進備註框 -->
+                            <textarea
+                                placeholder="遇到問題或流程建議？點此記錄改進事項..."
+                                onblur="window.saveDailyNote('${task.id}', this.value)"
+                                class="w-full bg-slate-950/50 border border-slate-700 rounded-lg p-2.5 text-[11px] text-cyan-100 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 resize-none min-h-[60px] tracking-widest"
+                            >${extras.note || ''}</textarea>
                         </div>
+
                     </div>
                 `;
                 container.insertAdjacentHTML('beforeend', taskHTML);
