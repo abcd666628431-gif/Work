@@ -8,11 +8,25 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        /* 科幻終端機特效樣式 (Sci-Fi Effects) */
+        .neon-text { text-shadow: 0 0 5px rgba(34, 211, 238, 0.5), 0 0 10px rgba(34, 211, 238, 0.3); }
+        .neon-border { box-shadow: 0 0 10px rgba(34, 211, 238, 0.2) inset, 0 0 10px rgba(34, 211, 238, 0.2); }
+        .hud-ring { transition: stroke-dashoffset 1s cubic-bezier(0.4, 0, 0.2, 1); }
+        /* 螢幕掃描線 */
+        .scanline {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.1));
+            background-size: 100% 4px; z-index: 50; pointer-events: none; opacity: 0.3;
+        }
+    </style>
+
     <!-- Firebase SDKs -->
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Firebase Configuration
         const userFirebaseConfig = {
@@ -42,6 +56,26 @@
         const connectionDot = document.getElementById('connectionDot');
         const stepsContainer = document.getElementById('stepsContainer');
         const addBoxBtn = document.getElementById('addBoxBtn');
+
+        // Daily Schedule State
+        const dailyScheduleData = [
+            { id: 't1', start: '07:00', end: '07:25', title: '開啟鮮風機與豬肉檔巡查', content: '1. 開啟鮮風機,拍照並發送至「紅街市內部溝通群」<br>2. 向有營業的豬肉攤檔派發聲明書,並收集豬肉價格,測豬溫相*6', note: '17:00開,20:00關。測豬溫順檔號。<br>【關係:21號(母)→20號(子)。2、14、26號會遲開】' },
+            { id: 't2', start: '07:25', end: '07:30', title: '錄入豬肉價格', content: '完成價格收集及錄入市政署系統內', note: '8:00後致電通知樓上稽查' },
+            { id: 't3', start: '07:30', end: '08:30', title: '早更資料與相片發送', content: '1. Whatapps: 返豬相*6, 豬溫相*6<br>2. Wechat: 上班照*5 (客服7人,清潔8人,保安2人,清潔1人,清潔1人)<br>3. 更新豬肉3個表格(總表/營運/十項)', note: '相片留底: 桌面>01及02<br>表格: 公機SHARE內' },
+            { id: 't4', start: '08:30', end: '09:25', title: '收集魚/菜/雞/牛肉資料', content: '1. 收魚價、菜價、菜單/菜標、進貨公斤重量<br>2. 收生鮮及冰鮮雞單,影相發送,填雞表<br>3. 收牛價<br>完成價格收集及錄入市政署系統內', note: '生鮮雞相*4(每檔1張不同類)。<br>致電通知樓上稽查。<br>相片留底至桌面>01' },
+            { id: 't5', start: '09:30', end: '10:30', title: '巡檔、抄溫與文員工作', content: '1. 剔檔(承租人狀況表)、抄溫度<br>2. 收豬肉紙及拆貨單,寫菜簿、雞簿<br>3. 更新表格(生鮮雞/豬肉檔/蔬菜重量)<br>4. 影豬肉營業相*14發送Whatapps/Wechat<br>5. 埋欄開燈相*2發送Wechat', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20<br>(10:00-10:30) 開燈, (18:00-18:30) 關燈<br>無論有沒有營業都需要拍相' },
+            { id: 't6', start: '10:00', end: '13:00', title: '還單與掃描', content: '還單，後掃描豬肉聲明書、菜單、牛肉單、雞單、拆貨單，並按相關格式命名檔案儲至 Share 派單', note: '公機SHARE內' },
+            { id: 't7', start: '10:00', end: '19:00', title: '提早收工時段', content: '開始提早收工', note: '' },
+            { id: 't8', start: '10:30', end: '11:30', title: '稽查簽署', content: '稽查到客服室簽署菜簿、雞簿、單據等。', note: '' },
+            { id: 't9', start: '11:30', end: '12:00', title: '午間剔檔與抄溫', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20' },
+            { id: 't10', start: '13:00', end: '14:00', title: '收雞單', content: '收J-022雞單,並掃描 派單', note: '' },
+            { id: 't11', start: '16:00', end: '19:00', title: '雞檔收工', content: '雞檔收工時段', note: '' },
+            { id: 't12', start: '16:30', end: '17:00', title: '傍晚剔檔與抄溫', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20' },
+            { id: 't13', start: '17:30', end: '19:30', title: '豬肉檔收工', content: '豬肉檔收工,入表「街市豬肉檔屠豬及營運資料總表」', note: '公機SHARE內' },
+            { id: 't14', start: '18:30', end: '19:00', title: '晚間剔檔與抄溫', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20' }
+        ];
+        let taskCompletionState = JSON.parse(localStorage.getItem('dailyTasksState')) || {};
+        let timeUpdateInterval;
 
         // Initialize Icons
         lucide.createIcons();
@@ -391,12 +425,164 @@
             lucide.createIcons();
         }
 
+        // Daily Schedule Logic
+        window.switchTab = (tab) => {
+            const customPage = document.getElementById('customWorkflowPage');
+            const dailyPage = document.getElementById('dailySchedulePage');
+            const btnCustom = document.getElementById('tabCustom');
+            const btnDaily = document.getElementById('tabDaily');
+
+            if (tab === 'custom') {
+                customPage.classList.remove('hidden');
+                dailyPage.classList.add('hidden');
+                btnCustom.className = "flex-1 py-1.5 text-sm rounded-md bg-slate-800 text-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.2)] border border-cyan-500/50 transition-all uppercase tracking-widest neon-text";
+                btnDaily.className = "flex-1 py-1.5 text-sm text-slate-600 hover:text-cyan-200/50 transition-all uppercase tracking-widest";
+            } else {
+                customPage.classList.add('hidden');
+                dailyPage.classList.remove('hidden');
+                btnDaily.className = "flex-1 py-1.5 text-sm rounded-md bg-slate-800 text-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.2)] border border-cyan-500/50 transition-all uppercase tracking-widest neon-text";
+                btnCustom.className = "flex-1 py-1.5 text-sm text-slate-600 hover:text-cyan-200/50 transition-all uppercase tracking-widest";
+                renderDailySchedule();
+            }
+        };
+
+        window.toggleTask = (taskId) => {
+            taskCompletionState[taskId] = !taskCompletionState[taskId];
+            localStorage.setItem('dailyTasksState', JSON.stringify(taskCompletionState));
+            renderDailySchedule(); // Re-render to update styles
+        };
+
+        function parseTime(timeStr) {
+            const [hours, minutes] = timeStr.split(':').map(Number);
+            const now = new Date();
+            now.setHours(hours, minutes, 0, 0);
+            return now;
+        }
+
+        function calculateTaskStatus(startStr, endStr) {
+            const now = new Date();
+            const start = parseTime(startStr);
+            const end = parseTime(endStr);
+            
+            if (now < start) {
+                const diffMins = Math.floor((start - now) / 60000);
+                const h = Math.floor(diffMins / 60);
+                const m = diffMins % 60;
+                return { state: 'waiting', text: `未開始 (約 ${h > 0 ? h + '小時' : ''}${m}分後)` };
+            } else if (now >= start && now <= end) {
+                const diffMins = Math.floor((end - now) / 60000);
+                const h = Math.floor(diffMins / 60);
+                const m = diffMins % 60;
+                return { state: 'active', text: `進行中 (剩餘 ${h > 0 ? h + '小時' : ''}${m}分)` };
+            } else {
+                const diffMins = Math.floor((now - end) / 60000);
+                const h = Math.floor(diffMins / 60);
+                const m = diffMins % 60;
+                return { state: 'overdue', text: `已結束 (超時 ${h > 0 ? h + '小時' : ''}${m}分)` };
+            }
+        }
+
+        function renderDailySchedule() {
+            const container = document.getElementById('scheduleContainer');
+            container.innerHTML = '';
+
+            // 1. 動態計算與更新 HUD 數據
+            const totalTasks = dailyScheduleData.length;
+            const completedTasks = dailyScheduleData.filter(t => taskCompletionState[t.id]).length;
+            const percentage = totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
+            
+            const ring = document.getElementById('hudProgressRing');
+            const percentText = document.getElementById('hudPercentage');
+            const countText = document.getElementById('hudTaskCount');
+            
+            if(ring && percentText && countText) {
+                // 圓周長計算 (r=40, C=2*PI*r)
+                const circumference = 2 * Math.PI * 40;
+                const offset = circumference - (percentage / 100) * circumference;
+                ring.style.strokeDashoffset = offset;
+                percentText.textContent = `${percentage}%`;
+                countText.textContent = `${completedTasks}/${totalTasks}`;
+                
+                // 顏色動態變換 (達成 100% 變翡翠綠)
+                if (percentage === 100) {
+                    ring.classList.replace('text-cyan-400', 'text-emerald-400');
+                    percentText.classList.replace('text-cyan-400', 'text-emerald-400');
+                    document.getElementById('hudContainer').classList.replace('border-cyan-500/30', 'border-emerald-500/30');
+                } else {
+                    ring.classList.replace('text-emerald-400', 'text-cyan-400');
+                    percentText.classList.replace('text-emerald-400', 'text-cyan-400');
+                    document.getElementById('hudContainer').classList.replace('border-emerald-500/30', 'border-cyan-500/30');
+                }
+            }
+
+            dailyScheduleData.forEach(task => {
+                const isCompleted = taskCompletionState[task.id];
+                const status = calculateTaskStatus(task.start, task.end);
+                
+                let timeColor = 'text-cyan-600/70';
+                let borderColor = 'border-slate-800/80';
+                let glowEffect = '';
+                
+                if (!isCompleted) {
+                    if (status.state === 'active') { 
+                        timeColor = 'text-cyan-400 neon-text'; 
+                        borderColor = 'border-cyan-500/50'; 
+                        glowEffect = 'shadow-[0_0_15px_rgba(6,182,212,0.15)]';
+                    }
+                    if (status.state === 'overdue') { 
+                        timeColor = 'text-rose-400 drop-shadow-[0_0_5px_rgba(244,63,94,0.8)]'; 
+                        borderColor = 'border-rose-500/50'; 
+                        glowEffect = 'shadow-[0_0_15px_rgba(244,63,94,0.15)] animate-pulse';
+                    }
+                }
+
+                const taskHTML = `
+                    <div class="bg-slate-900/80 backdrop-blur-md rounded-2xl p-4 border ${isCompleted ? 'border-slate-800/30 opacity-40' : borderColor} ${glowEffect} relative transition-all duration-300 flex space-x-3 cursor-pointer group hover:bg-slate-800" onclick="window.toggleTask('${task.id}')">
+                        
+                        <!-- Checkbox Area -->
+                        <div class="flex-shrink-0 pt-1">
+                            <div class="w-6 h-6 rounded-md border-2 ${isCompleted ? 'border-cyan-500 bg-cyan-500/20 text-cyan-400 drop-shadow-[0_0_5px_rgba(6,182,212,0.8)]' : 'border-slate-600 text-transparent group-hover:border-cyan-500/50'} flex items-center justify-center transition-all duration-300">
+                                <i data-lucide="check" class="w-4 h-4"></i>
+                            </div>
+                        </div>
+
+                        <!-- Content Area -->
+                        <div class="flex-1 space-y-2">
+                            <div class="flex justify-between items-start">
+                                <span class="text-[11px] px-2 py-1 bg-slate-950/80 rounded border ${isCompleted ? 'border-slate-800 text-slate-500' : 'border-cyan-900/80 text-cyan-300 shadow-[0_0_8px_rgba(8,145,178,0.2)]'} tracking-widest">${task.start} - ${task.end}</span>
+                                <span class="text-[11px] ${timeColor} tracking-widest">${isCompleted ? '✔ 已歸檔' : status.text}</span>
+                            </div>
+                            
+                            <h3 class="text-sm tracking-widest ${isCompleted ? 'text-slate-600 line-through' : 'text-cyan-50 drop-shadow-[0_0_2px_rgba(255,255,255,0.3)]'}">${task.title}</h3>
+                            <p class="text-[11px] leading-relaxed tracking-wider ${isCompleted ? 'text-slate-700' : 'text-cyan-100/70'}">${task.content}</p>
+                            
+                            ${task.note ? `<div class="mt-2 p-2 rounded-md bg-cyan-950/20 border border-cyan-800/30 text-[10px] text-cyan-400/80 leading-relaxed uppercase tracking-wider">${task.note}</div>` : ''}
+                        </div>
+                    </div>
+                `;
+                container.insertAdjacentHTML('beforeend', taskHTML);
+            });
+
+            lucide.createIcons();
+
+            // Refresh timers automatically
+            if(timeUpdateInterval) clearInterval(timeUpdateInterval);
+            timeUpdateInterval = setInterval(() => {
+                if(!document.getElementById('dailySchedulePage').classList.contains('hidden')) {
+                    renderDailySchedule(); // lazy auto-update for timers
+                }
+            }, 60000); // Check every minute
+        }
+
         // Start initialization
         initAuth();
 
     </script>
 </head>
-<body class="bg-slate-950 text-slate-200 font-sans sm:px-4 sm:py-8 flex justify-center relative min-h-screen">
+<body class="bg-slate-950 text-cyan-50 font-mono font-black sm:px-4 sm:py-8 flex justify-center relative min-h-screen">
+
+    <!-- 掃描線特效 (Scanline) -->
+    <div class="scanline"></div>
 
     <!-- Loading Mask -->
     <div id="loadingMask" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center">
@@ -408,18 +594,24 @@
     <div class="w-full max-w-[430px] bg-slate-900 sm:rounded-[3rem] sm:shadow-2xl sm:border-[8px] border-slate-800 overflow-hidden relative min-h-screen sm:min-h-[932px] pb-10">
         
         <!-- Header -->
-        <header class="bg-slate-900/90 backdrop-blur-md sticky top-0 z-10 border-b border-slate-800 p-5 pt-8 sm:pt-12 shadow-md">
-            <div class="flex items-center justify-between">
-                <h1 class="text-xl font-bold text-white tracking-wider flex-1 text-center">工作順序流程</h1>
+        <header class="bg-slate-900/90 backdrop-blur-md sticky top-0 z-10 border-b border-cyan-900/50 p-5 pt-8 sm:pt-12 shadow-[0_4px_20px_rgba(8,145,178,0.1)]">
+            <div class="flex items-center justify-between relative">
+                <h1 class="text-xl text-cyan-400 tracking-[0.2em] flex-1 text-center neon-text">工作順序流程</h1>
             </div>
-            <p class="text-xs text-center mt-1 flex items-center justify-center space-x-2">
-                <span id="connectionDot" class="w-2 h-2 rounded-full bg-rose-500 transition-colors duration-300 shadow-sm"></span>
-                <span id="connectionStatus" class="text-slate-400">連線中...</span>
+            <p class="text-[10px] text-center mt-2 flex items-center justify-center space-x-2 tracking-widest uppercase text-cyan-600">
+                <span id="connectionDot" class="w-2 h-2 rounded-full bg-rose-500 transition-colors duration-300 shadow-[0_0_5px_currentColor]"></span>
+                <span id="connectionStatus">System Connecting...</span>
             </p>
+
+            <!-- 分頁切換 (Tab Control) -->
+            <div class="mt-4 flex bg-slate-950 rounded-lg p-1 shadow-inner border border-slate-800">
+                <button id="tabCustom" onclick="window.switchTab('custom')" class="flex-1 py-1.5 text-sm rounded-md bg-slate-800 text-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.2)] border border-cyan-500/50 transition-all uppercase tracking-widest neon-text">自訂流程</button>
+                <button id="tabDaily" onclick="window.switchTab('daily')" class="flex-1 py-1.5 text-sm text-slate-600 hover:text-cyan-200/50 transition-all uppercase tracking-widest">每日排程</button>
+            </div>
         </header>
 
-        <!-- Main Content -->
-        <main class="p-5 space-y-2">
+        <!-- Main Content (自訂流程) -->
+        <main id="customWorkflowPage" class="p-5 space-y-2 block transition-opacity">
             
             <div id="stepsContainer">
                 <!-- Steps will be dynamically injected here -->
@@ -439,6 +631,35 @@
 
         </main>
         
+        <!-- Main Content (每日排程 - 預設隱藏) -->
+        <main id="dailySchedulePage" class="p-5 space-y-2 hidden transition-opacity relative z-10">
+            
+            <div id="hudContainer" class="flex flex-col items-center justify-center mb-6 p-5 bg-slate-900/60 backdrop-blur-md rounded-2xl border border-cyan-500/30 neon-border">
+                <div class="relative w-32 h-32 mb-2">
+                    <!-- 背景環 -->
+                    <svg class="w-full h-full transform -rotate-90 drop-shadow-lg" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="40" fill="none" stroke="currentColor" class="text-slate-800" stroke-width="6"></circle>
+                        <!-- 進度環 (周長約 251.2) -->
+                        <circle id="hudProgressRing" cx="50" cy="50" r="40" fill="none" stroke="currentColor" class="text-cyan-400 hud-ring drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]" stroke-width="6" stroke-dasharray="251.2" stroke-dashoffset="251.2" stroke-linecap="round"></circle>
+                    </svg>
+                    <!-- 百分比文字 -->
+                    <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        <span id="hudPercentage" class="text-2xl text-cyan-400 neon-text tracking-wider mt-1">0%</span>
+                        <span class="text-[9px] text-cyan-600/80 tracking-widest uppercase mt-0.5">效能指數</span>
+                    </div>
+                </div>
+                <!-- 數據列 -->
+                <div class="text-[11px] text-cyan-500/80 tracking-widest flex items-center justify-center space-x-2 bg-slate-950/50 px-4 py-1.5 rounded-full border border-cyan-900/50">
+                    <i data-lucide="crosshair" class="w-3.5 h-3.5 text-cyan-400"></i>
+                    <span>巡視座標達成: <span id="hudTaskCount" class="text-cyan-300 font-bold ml-1">0/14</span></span>
+                </div>
+            </div>
+
+            <div id="scheduleContainer" class="space-y-4 pb-8">
+                <!-- Daily Schedule will be injected here -->
+            </div>
+        </main>
+
     </div>
 
 </body>
