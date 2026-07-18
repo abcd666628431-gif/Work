@@ -52,6 +52,7 @@
         let steps = [];
         let currentUser = null;
         let unsubscribeSnapshot = null;
+        let unsubscribeImagesSnapshot = null;
 
         // DOM Elements
         const loadingMask = document.getElementById('loadingMask');
@@ -169,6 +170,7 @@
                 connectionDot.classList.replace('bg-emerald-500', 'bg-rose-500');
                 connectionStatus.textContent = '連線中或驗證失敗...';
                 if (unsubscribeSnapshot) unsubscribeSnapshot();
+                if (unsubscribeImagesSnapshot) unsubscribeImagesSnapshot();
             }
         });
 
@@ -178,9 +180,20 @@
             
             // 【修改】：將儲存路徑從個人私密資料夾改為應用程式的公共資料夾
             const stepsRef = collection(db, 'artifacts', appId, 'public', 'data', 'workflow_steps');
+            const imagesRef = collection(db, 'artifacts', appId, 'public', 'data', 'workflow_images');
             
             unsubscribeSnapshot = onSnapshot(stepsRef, (snapshot) => {
-                steps = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const fetchedSteps = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                
+                // 保留現有記憶體中的圖片資料，避免重繪時圖片閃爍
+                steps = fetchedSteps.map(fetchedStep => {
+                    const existingStep = steps.find(s => s.id === fetchedStep.id);
+                    return {
+                        ...fetchedStep,
+                        image: existingStep ? existingStep.image : null
+                    };
+                });
+                
                 steps.sort((a, b) => a.order - b.order);
                 renderSteps();
                 loadingMask.style.display = 'none';
@@ -196,10 +209,36 @@
                     window.showToast("資料同步錯誤: " + error.message, true);
                 }
             });
+
+            // 非同步監聽圖片集合 (雲端關聯讀取 - 分離式儲存)
+            unsubscribeImagesSnapshot = onSnapshot(imagesRef, (snapshot) => {
+                let hasChanges = false;
+                snapshot.docChanges().forEach((change) => {
+                    const stepId = change.doc.id;
+                    const stepIndex = steps.findIndex(s => s.id === stepId);
+                    
+                    if (change.type === "added" || change.type === "modified") {
+                        const imgData = change.doc.data().image;
+                        if (stepIndex !== -1 && steps[stepIndex].image !== imgData) {
+                            steps[stepIndex].image = imgData;
+                            hasChanges = true;
+                        }
+                    }
+                    if (change.type === "removed") {
+                        if (stepIndex !== -1 && steps[stepIndex].image !== null) {
+                            steps[stepIndex].image = null;
+                            hasChanges = true;
+                        }
+                    }
+                });
+                if (hasChanges) {
+                    renderSteps();
+                }
+            });
         }
 
-        // Image Compression (高清晰度平衡版)
-        function compressImage(file) {
+        // Image Compression (高效能非同步壓縮版 - 轉換為 webp 減少體積)
+        function compressImageAsync(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.readAsDataURL(file);
@@ -208,8 +247,8 @@
                     img.src = event.target.result;
                     img.onload = () => {
                         const canvas = document.createElement('canvas');
-                        // 【更新】將最大寬度提升至 1200px，保留工作細節
-                        const MAX_WIDTH = 1200; 
+                        // 【更新】將最大寬度從 1200 降至 800，避免觸發 5MB 本地限制或 1MB 雲端限制
+                        const MAX_WIDTH = 800; 
                         let scaleSize = 1;
                         if (img.width > MAX_WIDTH) {
                             scaleSize = MAX_WIDTH / img.width;
@@ -219,8 +258,8 @@
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                         
-                        // 【更新】改回 JPEG 格式並將畫質提升至 0.8 (80%)，兼顧高清晰度與資料庫限制
-                        resolve(canvas.toDataURL('image/jpeg', 0.8)); 
+                        // 【高級壓縮】轉換為 webp 格式，品質 0.6，體積大幅縮小
+                        resolve(canvas.toDataURL('image/webp', 0.6)); 
                     };
                     img.onerror = () => reject(new Error("圖片解析失敗"));
                 };
@@ -266,8 +305,8 @@
             window.showToast("處理圖片中...");
 
             try {
-                // 1. 壓縮圖片
-                const compressedBase64 = await compressImage(file);
+                // 1. 非同步壓縮圖片
+                const compressedBase64 = await compressImageAsync(file);
                 
                 // 2. 樂觀更新 (Optimistic UI) - 讓畫面【瞬間】顯示圖片！
                 const stepIndex = steps.findIndex(s => s.id === id);
@@ -276,15 +315,19 @@
                     renderSteps(); // 立刻重新渲染畫面
                 }
 
-                // 3. 背景慢慢上傳到 Firebase
-                // 【修改】
-                const stepRef = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_steps', id);
-                await setDoc(stepRef, { image: compressedBase64 }, { merge: true });
+                // 3. 分離式儲存 (Separated Storage)
+                // 【核心修改】：不再合併至 workflow_steps，而是存入獨立的 workflow_images 集合
+                const imageRef = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_images', id);
+                await setDoc(imageRef, { image: compressedBase64 });
                 window.showToast("圖片上傳成功");
                 
             } catch (error) {
                 console.error("Upload error:", error);
-                window.showToast("圖片上傳失敗：" + error.message, true);
+                if (error.code === 'resource-exhausted') {
+                    window.showToast("圖片超過雲端大小限制，請嘗試更換圖片", true);
+                } else {
+                    window.showToast("圖片上傳失敗：" + error.message, true);
+                }
             } finally {
                 if(stepElement) stepElement.classList.remove('opacity-50');
                 // 清空 input，這樣下次選同一張圖也能再次觸發 onchange
@@ -302,9 +345,9 @@
                 renderSteps();
             }
 
-            // 【修改】
-            const stepRef = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_steps', id);
-            await setDoc(stepRef, { image: null }, { merge: true });
+            // 【核心修改】：從分離式圖片集合中刪除，主文件保持不動
+            const imageRef = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_images', id);
+            await deleteDoc(imageRef);
         };
 
         window.handleNoteChange = (id, text) => {
@@ -336,6 +379,10 @@
                 // 【修改】
                 const stepRef = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_steps', id);
                 await deleteDoc(stepRef);
+                
+                // 同步刪除分離的圖片檔
+                const imageRef = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_images', id);
+                await deleteDoc(imageRef);
             } catch (err) {
                 window.showToast("刪除失敗", true);
             }
@@ -545,17 +592,29 @@
                 if (!taskExtrasState[taskId]) taskExtrasState[taskId] = { currentPhotos: [], currentNotes: [] };
                 if (!taskExtrasState[taskId].currentPhotos) taskExtrasState[taskId].currentPhotos = [];
                 
-                // 支援多張連續讀取
+                // 支援多張連續讀取 (採用高強度壓縮)
                 for(let i = 0; i < files.length; i++) {
-                    const compressedBase64 = await compressImage(files[i]);
+                    const compressedBase64 = await compressImageAsync(files[i]);
                     taskExtrasState[taskId].currentPhotos.push(compressedBase64);
                 }
                 
-                localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
-                renderDailySchedule();
-                window.showToast("相片已附加至當前任務");
+                try {
+                    localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+                    renderDailySchedule();
+                    window.showToast("相片已附加至當前任務");
+                } catch (storageError) {
+                    // 偵測 localStorage 容量限制 (QuotaExceededError)
+                    if (storageError.name === 'QuotaExceededError' || storageError.message.includes('quota')) {
+                        // 移除剛才塞入但存不進去的圖片，避免資料庫崩潰
+                        taskExtrasState[taskId].currentPhotos.splice(-files.length, files.length);
+                        window.showToast("手機暫存空間不足！請先將已完成的任務「打勾結案」釋放空間", true);
+                    } else {
+                        throw storageError;
+                    }
+                }
             } catch (error) {
-                window.showToast("圖片處理失敗", true);
+                console.error("Upload Error:", error);
+                window.showToast("圖片處理失敗: " + error.message, true);
             } finally {
                 inputElement.value = '';
             }
