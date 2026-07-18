@@ -27,16 +27,14 @@
         .marker-blue { background: linear-gradient(104deg, transparent 0%, rgba(186, 230, 253, 0.8) 2%, rgba(125, 211, 252, 0.9) 98%, transparent 100%); background-size: 100% 38%; background-position: 0 85%; background-repeat: no-repeat; padding: 0 2px; }
         .marker-green { background: linear-gradient(104deg, transparent 0%, rgba(187, 247, 208, 0.8) 2%, rgba(134, 239, 172, 0.9) 98%, transparent 100%); background-size: 100% 38%; background-position: 0 85%; background-repeat: no-repeat; padding: 0 2px; }
 
-        .sticky-note-1 { background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border-left: 3px solid #fbbf24; box-shadow: 2px 2px 5px rgba(0,0,0,0.04); transform: rotate(-0.5deg); }
-        .sticky-note-2 { background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 3px solid #4ade80; box-shadow: 2px 2px 5px rgba(0,0,0,0.04); transform: rotate(0.5deg); }
-        .sticky-note-3 { background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-left: 3px solid #60a5fa; box-shadow: 2px 2px 5px rgba(0,0,0,0.04); transform: rotate(-1deg); }
+        .sticky-note-1 { background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border-left: 3px solid #fbbf24; box-shadow: 2px 2px 5px rgba(0,0,0,0.04); }
+        .sticky-note-2 { background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 3px solid #4ade80; box-shadow: 2px 2px 5px rgba(0,0,0,0.04); }
+        .sticky-note-3 { background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-left: 3px solid #60a5fa; box-shadow: 2px 2px 5px rgba(0,0,0,0.04); }
 
-        .tape-strip { position: absolute; top: -6px; left: 50%; transform: translateX(-50%) rotate(-1deg); width: 35px; height: 12px; border: 1px solid rgba(255,255,255,0.8); box-shadow: 0 1px 2px rgba(0,0,0,0.05); backdrop-filter: blur(2px); z-index: 5; border-radius: 1px; }
+        .tape-strip { position: absolute; top: -6px; left: 50%; transform: translateX(-50%); width: 35px; height: 12px; border: 1px solid rgba(255,255,255,0.8); box-shadow: 0 1px 2px rgba(0,0,0,0.05); backdrop-filter: blur(2px); z-index: 5; border-radius: 1px; }
         .tape-strip-1 { background-color: rgba(255, 255, 255, 0.6); }
         .tape-strip-2 { background-color: rgba(254, 240, 138, 0.5); }
         .tape-strip-3 { background-color: rgba(186, 230, 253, 0.5); }
-
-        .hand-drawn-border { border-radius: 255px 15px 225px 15px/15px 225px 15px 255px; }
 
         /* 卡片滾動對焦特效 */
         .daily-task-card { transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1); }
@@ -262,6 +260,17 @@
                 localforage.setItem('userDailyScheduleData', dailyScheduleData);
                 renderDailySchedule();
                 window.showToast("已新增子任務");
+            }
+        };
+
+        window.deleteSubTask = (taskId, subIdx, event) => {
+            if (event) event.stopPropagation();
+            const task = dailyScheduleData.find(t => t.id === taskId);
+            if (task && task.subSteps) {
+                task.subSteps.splice(subIdx, 1);
+                localforage.setItem('userDailyScheduleData', dailyScheduleData);
+                renderDailySchedule();
+                window.showToast("已刪除子任務");
             }
         };
 
@@ -1207,7 +1216,7 @@
                 const editSubAttr = (idx) => isEdit ? `contenteditable="true" onblur="window.updateTaskData('${task.id}', 'subSteps', this.innerText, ${idx})" onclick="event.stopPropagation()"` : '';
 
                 const taskHTML = `
-                    <div class="daily-task-card bg-white rounded-xl p-4 border ${isCompleted ? 'border-slate-200 opacity-60 bg-slate-50' : borderColor} ${glowEffect} ${activeScale} relative transition-all duration-300 flex flex-col group hand-drawn-border mt-4">
+                    <div class="daily-task-card bg-white rounded-xl p-4 border ${isCompleted ? 'border-slate-200 opacity-60 bg-slate-50' : borderColor} ${glowEffect} ${activeScale} relative transition-all duration-300 flex flex-col group mt-4">
                         
                         <!-- 膠帶裝飾 -->
                         <div class="tape-strip ${tapeStyleClass} hidden sm:block"></div>
@@ -1223,7 +1232,7 @@
                         <div class="flex space-x-3 pl-1">
                             <!-- Checkbox Area -->
                             <div class="flex-shrink-0 pt-1 cursor-pointer" onclick="window.toggleTask('${task.id}')">
-                                <div class="w-6 h-6 rounded border-2 ${isCompleted ? 'border-blue-500 bg-blue-500 text-white shadow-sm' : 'border-slate-300 text-transparent group-hover:border-blue-400 bg-white'} flex items-center justify-center transition-all duration-200 active:scale-90 hand-drawn-border">
+                                <div class="w-6 h-6 rounded border-2 ${isCompleted ? 'border-blue-500 bg-blue-500 text-white shadow-sm' : 'border-slate-300 text-transparent group-hover:border-blue-400 bg-white'} flex items-center justify-center transition-all duration-200 active:scale-90">
                                     <i data-lucide="check" class="w-4 h-4"></i>
                                 </div>
                             </div>
@@ -1231,7 +1240,7 @@
                             <!-- Content Area -->
                             <div class="flex-1 space-y-2 min-w-0">
                                 <div class="flex justify-between items-center">
-                                    <span class="text-[11px] px-2 py-0.5 bg-slate-100 rounded border border-slate-200 text-slate-600 tracking-wider flex-shrink-0 font-medium shadow-sm hand-drawn-border">
+                                    <span class="text-[11px] px-2 py-0.5 bg-slate-100 rounded border border-slate-200 text-slate-600 tracking-wider flex-shrink-0 font-medium shadow-sm">
                                         <span ${editAttrText('start')} class="${isEdit ? 'border-b border-dashed border-blue-400 text-blue-600 cursor-text focus:outline-none focus:bg-white px-0.5 rounded transition-colors' : ''}">${task.start}</span>
                                         <span class="mx-0.5 text-slate-400">-</span>
                                         <span ${editAttrText('end')} class="${isEdit ? 'border-b border-dashed border-blue-400 text-blue-600 cursor-text focus:outline-none focus:bg-white px-0.5 rounded transition-colors' : ''}">${task.end}</span>
@@ -1278,7 +1287,12 @@
                                                             <p ${editSubAttr(idx)} class="text-[12px] ${subStepTextClass} tracking-wide leading-relaxed pr-2 transition-colors flex-1 ${editClass} ${!isEdit && !isCompleted ? 'cursor-pointer' : ''} select-none">${step}</p>
                                                         </div>
                                                         ${!isCompleted ? `
-                                                        <div class="flex items-center space-x-2 shrink-0 ml-1 opacity-0 group-hover/step:opacity-100 transition-opacity">
+                                                        <div class="flex items-center space-x-2 shrink-0 ml-1 ${isEdit ? '' : 'opacity-0 group-hover/step:opacity-100 transition-opacity'}">
+                                                            ${isEdit ? `
+                                                            <button type="button" onclick="window.deleteSubTask('${task.id}', ${idx}, event); event.stopPropagation();" class="text-red-400 hover:text-red-500 active:scale-95 transition-transform p-0.5 cursor-pointer">
+                                                                <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
+                                                            </button>
+                                                            ` : `
                                                             <label class="cursor-pointer text-blue-500 hover:text-blue-600 active:scale-95 transition-transform p-0.5" onclick="event.stopPropagation();">
                                                                 <i data-lucide="camera" class="w-3.5 h-3.5"></i>
                                                                 <input type="file" accept="image/*" multiple class="hidden" onchange="window.handleSubTaskPhotoUpload('${task.id}', ${idx}, this)" />
@@ -1286,6 +1300,7 @@
                                                             <button type="button" onclick="window.toggleSubNoteInput('${task.id}', ${idx}); event.stopPropagation();" class="text-blue-500 hover:text-blue-600 active:scale-95 transition-transform p-0.5">
                                                                 <i data-lucide="message-square" class="w-3.5 h-3.5"></i>
                                                             </button>
+                                                            `}
                                                         </div>
                                                         ` : ''}
                                                     </div>
