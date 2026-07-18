@@ -651,6 +651,9 @@
                 if(btnGallery) btnGallery.className = activeClass;
                 window.renderGallery();
             }
+            
+            // 記錄當前分頁到本地端，重整時會讀取
+            localStorage.setItem('activeTab', tab);
         };
 
         window.deleteTaskCard = (taskId, event) => {
@@ -727,6 +730,12 @@
 
         window.deleteCategory = (idx) => {
             const catToDelete = galleryCategories[idx];
+            
+            // 加入二次確認防呆機制
+            if (!confirm(`確定要刪除「${catToDelete}」分類嗎？\n此分類下的所有圖片將會自動移至「未分類」。`)) {
+                return;
+            }
+
             // 移動關聯照片到「未分類」
             galleryItems.forEach(item => {
                 if(item.category === catToDelete) item.category = '未分類';
@@ -748,37 +757,28 @@
                 window.showToast("預設分類無法修改", true);
                 return;
             }
-            el.contentEditable = true;
-            el.classList.add('bg-slate-800', 'cursor-text');
-            el.focus();
             
-            // 將游標移到最後
-            const range = document.createRange();
-            const sel = window.getSelection();
-            range.selectNodeContents(el);
-            range.collapse(false);
-            sel.removeAllRanges();
-            sel.addRange(range);
+            // 優化修改方式：改用系統原生的 prompt 彈窗，解決手機端 contentEditable 失焦及輸入不便的問題
+            const oldName = galleryCategories[idx];
+            const newName = prompt("請輸入新的分類名稱：", oldName);
             
-            el.onblur = () => {
-                el.contentEditable = false;
-                el.classList.remove('bg-slate-800', 'cursor-text');
-                const newName = el.innerText.trim();
-                if (newName && newName !== galleryCategories[idx]) {
-                    const oldName = galleryCategories[idx];
-                    galleryCategories[idx] = newName;
-                    localStorage.setItem('galleryCategories', JSON.stringify(galleryCategories));
-                    
-                    // 批量更新圖片分類
-                    galleryItems.forEach(item => {
-                        if(item.category === oldName) item.category = newName;
-                    });
-                    localStorage.setItem('galleryItems', JSON.stringify(galleryItems));
-                    if (currentGalleryCategory === oldName) currentGalleryCategory = newName;
-                    window.showToast("分類名稱已更新");
-                }
+            if (newName !== null && newName.trim() !== "" && newName.trim() !== oldName) {
+                const finalName = newName.trim();
+                galleryCategories[idx] = finalName;
+                localStorage.setItem('galleryCategories', JSON.stringify(galleryCategories));
+                
+                // 批量更新圖片分類
+                galleryItems.forEach(item => {
+                    if(item.category === oldName) item.category = finalName;
+                });
+                localStorage.setItem('galleryItems', JSON.stringify(galleryItems));
+                
+                if (currentGalleryCategory === oldName) currentGalleryCategory = finalName;
+                
+                window.showToast("分類名稱已更新");
                 window.renderGallery();
-            };
+            }
+        };
             el.onkeydown = (e) => {
                 if(e.key === 'Enter') {
                     e.preventDefault();
@@ -1211,7 +1211,7 @@
                                         <span class="mx-0.5">-</span>
                                         <span ${editAttrText('end')} class="${isEdit ? 'border-b border-dashed border-amber-500/60 text-amber-300 cursor-text focus:outline-none focus:bg-slate-800/80 px-0.5 rounded transition-colors' : ''}">${task.end}</span>
                                     </span>
-                                    <span class="text-[11px] ${timeColor} tracking-widest font-bold ml-2 text-right">${isCompleted ? '✔ 已歸檔' : status.text}</span>
+                                    <span id="status-text-${task.id}" class="text-[11px] ${timeColor} tracking-widest font-bold ml-2 text-right">${isCompleted ? '✔ 已歸檔' : status.text}</span>
                                 </div>
                                 
                                 <h3 ${editAttrText('title')} class="text-sm tracking-widest ${isCompleted ? 'text-slate-600 line-through' : 'text-cyan-50 drop-shadow-[0_0_2px_rgba(255,255,255,0.3)]'} ${editClass}">${task.title}</h3>
@@ -1414,13 +1414,33 @@
             if(timeUpdateInterval) clearInterval(timeUpdateInterval);
             timeUpdateInterval = setInterval(() => {
                 if(!document.getElementById('dailySchedulePage').classList.contains('hidden') && !window.isEditMode) {
-                    renderDailySchedule(); // lazy auto-update for timers
+                    // 優化刷新：只局部更新各卡片的剩餘時間，不重覆渲染整個排程列表
+                    dailyScheduleData.forEach(task => {
+                        const isCompleted = taskCompletionState[task.id];
+                        if (!isCompleted) {
+                            const status = calculateTaskStatus(task.start, task.end);
+                            const statusEl = document.getElementById(`status-text-${task.id}`);
+                            if (statusEl) {
+                                statusEl.textContent = status.text;
+                                if (status.state === 'active') {
+                                    statusEl.className = 'text-[11px] text-cyan-400 neon-text tracking-widest font-bold ml-2 text-right';
+                                } else if (status.state === 'overdue') {
+                                    statusEl.className = 'text-[11px] text-rose-400 drop-shadow-[0_0_5px_rgba(244,63,94,0.8)] tracking-widest font-bold ml-2 text-right';
+                                } else {
+                                    statusEl.className = 'text-[11px] text-cyan-600/70 tracking-widest font-bold ml-2 text-right';
+                                }
+                            }
+                        }
+                    });
                 }
             }, 60000); // Check every minute
         }
-
+        
         // Start initialization
         initAuth();
+        
+        // 初始化時載入上次最後停留的分頁，預設為「每日排程」
+        window.switchTab(localStorage.getItem('activeTab') || 'daily');
 
     </script>
 </head>
