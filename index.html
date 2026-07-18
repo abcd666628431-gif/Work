@@ -8,6 +8,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- 核心升級：導入大容量本地資料庫引擎 (突破 5MB 限制) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
     <!-- Google Fonts for Notebook style -->
     <link href="https://gs.jurieo.com/gemini/fonts-googleapis/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
     
@@ -79,117 +81,126 @@
 
         const defaultDailyScheduleData = [
             { 
-                id: 't1', start: '07:00', end: '07:25', title: '開啟鮮風機與豬肉檔巡查', 
-                content: '1. 開啟鮮風機,拍照並發送至「紅街市內部溝通群」<br>2. 向有營業的豬肉攤檔派發聲明書,並收集豬肉價格,測豬溫相*6', 
-                note: '17:00開, 20:00關。測豬溫順檔號。<br>【關係:21號(母)→20號(子) 2、14、26號,會遲開】',
+                id: 't1', start: '07:00', end: '07:25', title: '開啟鮮風機與豬肉檔巡查', content: '1. 開啟鮮風機,拍照並發送至「紅街市內部溝通群」<br>2. 向有營業的豬肉攤檔派發聲明書,並收集豬肉價格,測豬溫相*6', note: '17:00開,20:00關。測豬溫順檔號。<br>【關係:21號(母)→20號(子)。2、14、26號會遲開】',
                 subSteps: [
-                    "開啟鮮風機，拍照並發送至「紅街市內部溝通群」",
+                    "前往機房開啟鮮風機",
+                    "拍攝鮮風機運作相片，發送至「紅街市內部溝通群」",
                     "向有營業的豬肉攤檔派發聲明書",
-                    "收集豬肉價格",
-                    "測豬溫並拍攝 6 張相片 (順檔號)"
+                    "收集各攤檔豬肉價格",
+                    "測量豬溫並拍攝 6 張相片 (順檔號)"
                 ]
             },
             { 
-                id: 't2', start: '07:25', end: '07:30', title: '錄入豬肉價格', 
-                content: '7:25前 完成價格收集及錄入市政署系統內', 
-                note: '8:00後 致電通知樓上稽查',
+                id: 't2', start: '07:25', end: '07:30', title: '錄入豬肉價格', content: '完成價格收集及錄入市政署系統內', note: '8:00後致電通知樓上稽查',
                 subSteps: [
-                    "核對並錄入收集到的豬肉價格至市政署系統"
+                    "登入市政署系統",
+                    "核對並錄入收集到的豬肉價格",
+                    "確認錄入無誤後存檔"
                 ]
             },
             { 
-                id: 't3', start: '07:30', end: '08:30', title: '發送早更相片與更新表格', 
-                content: '發送相片:<br>• <b>Whatapps</b>: 返豬相*6 (車上*1, 板車*2, 貨車冇豬*1, 攤檔上*2) / 豬溫相*6 (寶號連檔號*1, 對地面/牆身*1, 對豬肉*4)<br>• <b>Wechat</b>: 上班照*5 (客服7人, 清潔8人, 保安2人, 清潔1人, 清潔1人)', 
-                note: '照片留底至: 桌面>01上報資料<br>【桌面>02工作資料 (所有相片)】<br>表格存放: 公機SHARE內',
+                id: 't3', start: '07:30', end: '08:30', title: '早更資料與相片發送', content: '1. Whatapps: 返豬相*6, 豬溫相*6<br>2. Wechat: 上班照*5 (客服7人,清潔8人,保安2人,清潔1人,清潔1人)<br>3. 更新豬肉3個表格(總表/營運/十項)', note: '相片留底: 桌面>01及02<br>表格: 公機SHARE內',
                 subSteps: [
-                    "Whatapps發送: 返豬相*6",
-                    "Whatapps發送: 豬溫相*6",
-                    "Wechat發送: 上班照*5",
+                    "Whatapps: 發送返豬相*6 (車上*1/板車*2/冇豬*1/攤檔*2)",
+                    "Whatapps: 發送豬溫相*6 (寶號*1/地面牆身*1/豬肉*4)",
+                    "相片留底至: 桌面 > 01上報資料",
+                    "Wechat: 發送上班照*5 (客服/清潔/保安)",
+                    "相片留底至: 桌面 > 02工作資料",
                     "更新表格 (1) 街市豬肉十項變動總表",
                     "更新表格 (2) 街市豬肉檔屠豬及營運資料總表",
                     "更新表格 (3) 紅街市十項豬肉價格"
                 ]
             },
-            { 
-                id: 't4', start: '08:30', end: '09:25', title: '收集魚/菜/雞/牛肉價格及資料', 
-                content: '1. 收魚價<br>2. 收菜價, 收菜單/菜標, 收進貨公斤重量<br>3. 收生鮮及冰鮮雞單, 影生鮮雞相, 並發送至「紅街市內部溝通群」, 填雞表<br>4. 收牛價<br><br>完成價格收集及錄入市政署系統內', 
-                note: '致電通知樓上稽查。<br>發送相片: Whatapps 生鮮雞相*4 (每檔影1張,最好不同類)。<br>照片留底至: 桌面>01上報資料',
-                subSteps: [
-                    "收魚價",
-                    "收菜價、菜單/菜標、進貨公斤重量",
-                    "收生鮮及冰鮮雞單，填寫雞表",
-                    "拍攝生鮮雞相*4 並發送至 Whatapps 及內部溝通群",
-                    "收牛價",
-                    "將所有收集價格錄入市政署系統"
-                ]
-            },
-            { 
-                id: 't5', start: '09:30', end: '10:30', title: '剔檔、抄溫與文員更新工作', 
-                content: '1. 剔檔(承租人親身經營狀況表)、抄溫度<br>2. 收豬肉紙及拆貨單, 寫菜簿、雞簿<br>3. 影豬肉營業相*14 發送至 Wechat /「紅街市內部溝通群」/ Whatapps (無論有沒有營業都需要拍)<br>4. 埋欄開燈相*2 發送Wechat「紅街市綜合外判」', 
-                note: '抄溫時段: 9-11, 11-13, 16-18, 18-20<br>照片留底至: 桌面>01上報資料<br>公機SHARE內更新4個表格。<br>(10:00-10:30) 開燈, (18:00-18:30) 關燈',
-                subSteps: [
-                    "剔檔 (承租人親身經營狀況表)、抄溫度",
-                    "收豬肉紙及拆貨單, 寫菜簿、雞簿",
-                    "拍攝豬肉營業相*14並發送",
-                    "拍攝埋欄開燈相*2並發送至綜合外判",
-                    "更新表格: 街市生鮮雞每日進貨零售登記表",
-                    "更新表格: 街市豬肉檔屠豬及營運資料總表",
-                    "更新表格: 冰鮮及凍肉檔設施清潔檢查",
-                    "更新表格: 紅街市蔬菜類攤位來貨量統計收集用2026"
-                ]
-            },
-            { 
-                id: 't6', start: '10:00', end: '13:00', title: '還單與掃描', 
-                content: '還單，後掃描豬肉聲明書、菜單、牛肉單、雞單、拆貨單,並按相關格式命名檔案儲至 Share 派單', 
-                note: '公機SHARE內',
-                subSteps: [
-                    "進行各類單據還單",
-                    "掃描豬肉聲明書、菜單、牛肉單、雞單、拆貨單",
-                    "按格式命名檔案並儲存至 Share 派單"
-                ]
-            },
+            { id: 't4', start: '08:30', end: '09:25', title: '收集魚/菜/雞/牛肉資料', content: '1. 收魚價、菜價、菜單/菜標、進貨公斤重量<br>2. 收生鮮及冰鮮雞單,影相發送,填雞表<br>3. 收牛價<br>完成價格收集及錄入市政署系統內', note: '生鮮雞相*4(每檔1張不同類)。<br>致電通知樓上稽查。<br>相片留底至桌面>01' },
+            { id: 't5', start: '09:30', end: '10:30', title: '巡檔、抄溫與文員工作', content: '1. 剔檔(承租人狀況表)、抄溫度<br>2. 收豬肉紙及拆貨單,寫菜簿、雞簿<br>3. 更新表格(生鮮雞/豬肉檔/蔬菜重量)<br>4. 影豬肉營業相*14發送Whatapps/Wechat<br>5. 埋欄開燈相*2發送Wechat', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20<br>(10:00-10:30) 開燈, (18:00-18:30) 關燈<br>無論有沒有營業都需要拍相' },
+            { id: 't6', start: '10:00', end: '13:00', title: '還單與掃描', content: '還單，後掃描豬肉聲明書、菜單、牛肉單、雞單、拆貨單，並按相關格式命名檔案儲至 Share 派單', note: '公機SHARE內' },
             { id: 't7', start: '10:00', end: '19:00', title: '提早收工時段', content: '開始提早收工', note: '' },
             { id: 't8', start: '10:30', end: '11:30', title: '稽查簽署', content: '稽查到客服室簽署菜簿、雞簿、單據等。', note: '' },
-            { id: 't9', start: '11:30', end: '12:00', title: '剔檔與抄溫 (午間)', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9:00-11:00, 11:00-13:00, 16:00-18:00, 18:00-20:00' },
+            { id: 't9', start: '11:30', end: '12:00', title: '午間剔檔與抄溫', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20' },
             { id: 't10', start: '13:00', end: '14:00', title: '收雞單', content: '收J-022雞單,並掃描 派單', note: '' },
             { id: 't11', start: '16:00', end: '19:00', title: '雞檔收工', content: '雞檔收工時段', note: '' },
-            { id: 't12', start: '16:30', end: '17:00', title: '剔檔與抄溫 (傍晚)', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9:00-11:00, 11:00-13:00, 16:00-18:00, 18:00-20:00' },
+            { id: 't12', start: '16:30', end: '17:00', title: '傍晚剔檔與抄溫', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20' },
             { id: 't13', start: '17:30', end: '19:30', title: '豬肉檔收工', content: '豬肉檔收工,入表「街市豬肉檔屠豬及營運資料總表」', note: '公機SHARE內' },
-            { id: 't14', start: '18:30', end: '19:00', title: '剔檔與抄溫 (晚間)', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9:00-11:00, 11:00-13:00, 16:00-18:00, 18:00-20:00' }
+            { id: 't14', start: '18:30', end: '19:00', title: '晚間剔檔與抄溫', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20' }
         ];
 
-        // 強制寫入以套用您最新提供的排程資料，覆蓋舊有暫存
         let dailyScheduleData = defaultDailyScheduleData;
-        localStorage.setItem('userDailyScheduleData', JSON.stringify(dailyScheduleData));
-        
-        let taskCompletionState = JSON.parse(localStorage.getItem('dailyTasksState')) || {};
-        let taskExtrasState = JSON.parse(localStorage.getItem('dailyTasksExtras')) || {}; 
-        let taskArchiveState = JSON.parse(localStorage.getItem('dailyTasksArchive')) || {}; 
-        let subTaskCompletionState = JSON.parse(localStorage.getItem('subTaskCompletionState')) || {}; 
+        let taskCompletionState = {};
+        let taskExtrasState = {}; 
+        let taskArchiveState = {}; 
+        let subTaskCompletionState = {}; 
         let expandedTasksState = {}; 
         
-        let galleryCategories = JSON.parse(localStorage.getItem('galleryCategories')) || ['全部', '未分類', '街市檔口', '鮮風機', '價格表', '其他'];
-        let galleryItems = JSON.parse(localStorage.getItem('galleryItems')) || [];
-        let currentGalleryCategory = galleryCategories[0] || '全部';
+        let galleryCategories = ['全部', '未分類', '街市檔口', '鮮風機', '價格表', '其他'];
+        let galleryItems = [];
+        let currentGalleryCategory = '全部';
 
         window.isEditMode = false;
-
-        Object.keys(taskExtrasState).forEach(key => {
-            const extra = taskExtrasState[key];
-            if (extra.photo !== undefined && !extra.currentPhotos) {
-                extra.currentPhotos = extra.photo ? [extra.photo] : [];
-                delete extra.photo;
-            }
-            if (extra.note !== undefined && !extra.currentNotes) {
-                extra.currentNotes = extra.note ? [extra.note] : [];
-                delete extra.note;
-            }
-            if (!extra.subTasks) {
-                extra.subTasks = {};
-            }
-        });
-        
         let timeUpdateInterval;
+
+        // ==========================================
+        // 🚀 核心升級：配置 IndexedDB 大容量引擎 (突破 5MB 限制)
+        // ==========================================
+        localforage.config({
+            name: 'WorkLogApp',
+            storeName: 'work_records'
+        });
+
+        async function loadLocalData() {
+            try {
+                const sd = await localforage.getItem('userDailyScheduleData');
+                if (sd) dailyScheduleData = sd;
+
+                const ts = await localforage.getItem('dailyTasksState');
+                if (ts) taskCompletionState = ts;
+
+                const te = await localforage.getItem('dailyTasksExtras');
+                if (te) taskExtrasState = te;
+
+                const ta = await localforage.getItem('dailyTasksArchive');
+                if (ta) taskArchiveState = ta;
+
+                const st = await localforage.getItem('subTaskCompletionState');
+                if (st) subTaskCompletionState = st;
+
+                const gc = await localforage.getItem('galleryCategories');
+                if (gc) galleryCategories = gc;
+
+                const gi = await localforage.getItem('galleryItems');
+                if (gi) galleryItems = gi;
+
+                currentGalleryCategory = galleryCategories[0] || '全部';
+
+                Object.keys(taskExtrasState).forEach(key => {
+                    const extra = taskExtrasState[key];
+                    if (extra.photo !== undefined && !extra.currentPhotos) {
+                        extra.currentPhotos = extra.photo ? [extra.photo] : [];
+                        delete extra.photo;
+                    }
+                    if (extra.note !== undefined && !extra.currentNotes) {
+                        extra.currentNotes = extra.note ? [extra.note] : [];
+                        delete extra.note;
+                    }
+                    if (!extra.subTasks) {
+                        extra.subTasks = {};
+                    }
+                });
+
+                // 資料載入完成後，確保畫面刷新
+                if(document.getElementById('dailySchedulePage') && !document.getElementById('dailySchedulePage').classList.contains('hidden')) {
+                    renderDailySchedule();
+                }
+                if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) {
+                    window.renderGallery();
+                }
+            } catch (error) {
+                console.error("載入本地資料失敗:", error);
+                window.showToast("資料讀取失敗，請重整", true);
+            }
+        }
+        
+        // 觸發載入
+        loadLocalData();
 
         window.toggleEditMode = (isChecked) => {
             window.isEditMode = isChecked;
@@ -224,7 +235,7 @@
                 } else {
                     task[field] = cleanValue;
                 }
-                localStorage.setItem('userDailyScheduleData', JSON.stringify(dailyScheduleData));
+                localforage.setItem('userDailyScheduleData', dailyScheduleData);
                 window.showToast("資料已儲存更新");
             }
         };
@@ -236,7 +247,7 @@
                 content: '點擊編輯任務內容...', note: '', subSteps: []
             };
             dailyScheduleData.push(newTask);
-            localStorage.setItem('userDailyScheduleData', JSON.stringify(dailyScheduleData));
+            localforage.setItem('userDailyScheduleData', dailyScheduleData);
             renderDailySchedule();
             window.showToast("已新增任務卡片");
         };
@@ -248,7 +259,7 @@
                 if (!task.subSteps) task.subSteps = [];
                 task.subSteps.push("點擊編輯新增的子任務");
                 expandedTasksState[taskId] = true; 
-                localStorage.setItem('userDailyScheduleData', JSON.stringify(dailyScheduleData));
+                localforage.setItem('userDailyScheduleData', dailyScheduleData);
                 renderDailySchedule();
                 window.showToast("已新增子任務");
             }
@@ -374,12 +385,11 @@
                         canvas.width = width;
                         canvas.height = height;
                         const ctx = canvas.getContext('2d');
-                        // 學習加入平滑處理參數，提升縮放品質
                         ctx.imageSmoothingEnabled = true;
                         ctx.imageSmoothingQuality = 'high';
                         ctx.drawImage(img, 0, 0, width, height);
                         
-                        // 升級：改用 webp 格式以獲得更高的壓縮比與畫質，品質設為 0.8
+                        // 升級：採用高壓縮比、高畫質的 WebP 格式
                         resolve(canvas.toDataURL('image/webp', 0.8)); 
                     };
                     img.onerror = () => reject(new Error("圖片解析失敗"));
@@ -639,16 +649,16 @@
         window.deleteTaskCard = (taskId, event) => {
             if(event) event.stopPropagation();
             dailyScheduleData = dailyScheduleData.filter(t => t.id !== taskId);
-            localStorage.setItem('userDailyScheduleData', JSON.stringify(dailyScheduleData));
+            localforage.setItem('userDailyScheduleData', dailyScheduleData);
             
             delete taskCompletionState[taskId];
             delete taskExtrasState[taskId];
             delete taskArchiveState[taskId];
             delete subTaskCompletionState[taskId];
-            localStorage.setItem('dailyTasksState', JSON.stringify(taskCompletionState));
-            localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
-            localStorage.setItem('dailyTasksArchive', JSON.stringify(taskArchiveState));
-            localStorage.setItem('subTaskCompletionState', JSON.stringify(subTaskCompletionState));
+            localforage.setItem('dailyTasksState', taskCompletionState);
+            localforage.setItem('dailyTasksExtras', taskExtrasState);
+            localforage.setItem('dailyTasksArchive', taskArchiveState);
+            localforage.setItem('subTaskCompletionState', subTaskCompletionState);
             
             renderDailySchedule();
             window.showToast("排程卡片已刪除");
@@ -662,7 +672,7 @@
             // 頂部加入統一的設定按鈕 (全部分類皆可管理)
             sidebar.innerHTML = `
                 <div class="w-full flex justify-center pt-2 pb-2 border-b border-slate-200 shrink-0 sticky top-0 bg-[#f4f1eb] z-20">
-                    <button type="button" onclick="window.openCategoryManager()" class="p-1.5 bg-white text-slate-500 hover:text-slate-800 rounded shadow-sm border border-slate-200 active:scale-95 transition-all">
+                    <button type="button" onclick="window.manageCurrentCategory()" class="p-1.5 bg-white text-slate-500 hover:text-slate-800 rounded shadow-sm border border-slate-200 active:scale-95 transition-all">
                         <i data-lucide="settings" class="w-4 h-4"></i>
                     </button>
                 </div>
@@ -709,97 +719,52 @@
             const newName = prompt("請輸入新分類名稱：", "新分類");
             if(newName && newName.trim() !== '') {
                 galleryCategories.push(newName.trim());
-                localStorage.setItem('galleryCategories', JSON.stringify(galleryCategories));
+                localforage.setItem('galleryCategories', galleryCategories);
                 window.renderGallery();
                 window.showToast("已新增分類");
             }
         };
 
-        window.openCategoryManager = () => {
-            const listContainer = document.getElementById('categoryManageList');
-            if(!listContainer) return;
-            
-            listContainer.innerHTML = galleryCategories.map((cat, idx) => {
-                const isProtected = cat === '全部' || cat === '未分類';
-                return `
-                    <div class="flex justify-between items-center bg-white p-2.5 rounded-lg border border-slate-200 shadow-sm">
-                        ${!isProtected ? `
-                            <div class="flex-1 mr-2 relative">
-                                <input type="text" id="cat-input-${idx}" value="${cat}" readonly
-                                    onblur="window.saveCategoryName(${idx}, this.value)"
-                                    onkeydown="if(event.key === 'Enter') this.blur()"
-                                    class="w-full bg-transparent border border-transparent rounded px-1.5 py-1 text-sm text-slate-700 font-medium focus:bg-white focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 transition-all truncate cursor-default focus:cursor-text">
-                            </div>
-                            <div class="flex items-center space-x-1 shrink-0 ml-1">
-                                <button type="button" onclick="const input = document.getElementById('cat-input-${idx}'); input.removeAttribute('readonly'); input.focus();" class="p-1.5 text-blue-500 hover:bg-blue-50 rounded-md transition-colors active:scale-95"><i data-lucide="edit-2" class="w-4 h-4"></i></button>
-                                <button type="button" onclick="window.deleteCategoryAction(${idx})" class="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors active:scale-95"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
-                            </div>
-                        ` : `
-                            <span class="text-sm text-slate-700 font-medium tracking-wide truncate flex-1 px-1.5 py-1">${cat}</span>
-                            <span class="text-[10px] text-slate-400 px-2 bg-slate-100 rounded py-1 font-medium tracking-widest shrink-0 ml-2">系統預設</span>
-                        `}
-                    </div>
-                `;
-            }).join('');
-            
-            lucide.createIcons();
-            const modal = document.getElementById('categoryManageModal');
-            modal.classList.remove('hidden');
-            modal.classList.add('flex');
-        };
+        window.manageCurrentCategory = () => {
+            const idx = galleryCategories.indexOf(currentGalleryCategory);
+            if(idx === -1) return;
 
-        window.closeCategoryManager = () => {
-            const modal = document.getElementById('categoryManageModal');
-            modal.classList.add('hidden');
-            modal.classList.remove('flex');
-        };
-
-        window.saveCategoryName = (idx, newName) => {
-            const oldName = galleryCategories[idx];
-            const finalName = newName.trim();
-            const inputEl = document.getElementById(`cat-input-${idx}`);
-            if (inputEl) inputEl.setAttribute('readonly', true);
+            const action = prompt(`管理分類「${currentGalleryCategory}」\n\n[1] 修改名稱\n[2] 刪除分類\n\n請輸入數字選擇：`);
             
-            if (finalName === "" || finalName === oldName) {
-                if (inputEl) inputEl.value = oldName;
-                return;
-            }
-            if(galleryCategories.includes(finalName) && galleryCategories.indexOf(finalName) !== idx) {
-                window.showToast("此分類名稱已存在", true);
-                if (inputEl) inputEl.value = oldName;
-                return;
-            }
-
-            galleryCategories[idx] = finalName;
-            localStorage.setItem('galleryCategories', JSON.stringify(galleryCategories));
-            
-            galleryItems.forEach(item => {
-                if(item.category === oldName) item.category = finalName;
-            });
-            localStorage.setItem('galleryItems', JSON.stringify(galleryItems));
-            
-            if (currentGalleryCategory === oldName) currentGalleryCategory = finalName;
-            
-            window.showToast("分類名稱已更新");
-            window.renderGallery();
-        };
-
-        window.deleteCategoryAction = (idx) => {
-            const catName = galleryCategories[idx];
-            if (confirm(`確定要刪除「${catName}」分類嗎？\n此分類下的圖片將自動移至「未分類」。`)) {
-                galleryItems.forEach(item => {
-                    if(item.category === catName) item.category = '未分類';
-                });
-                localStorage.setItem('galleryItems', JSON.stringify(galleryItems));
-                
-                galleryCategories.splice(idx, 1);
-                localStorage.setItem('galleryCategories', JSON.stringify(galleryCategories));
-                
-                if(currentGalleryCategory === catName) currentGalleryCategory = galleryCategories[0];
-                
-                window.openCategoryManager();
-                window.renderGallery();
-                window.showToast("分類已刪除");
+            if (action === '1') {
+                const newName = prompt("請輸入新的分類名稱：", currentGalleryCategory);
+                if (newName !== null && newName.trim() !== "" && newName.trim() !== currentGalleryCategory) {
+                    const finalName = newName.trim();
+                    galleryCategories[idx] = finalName;
+                    localforage.setItem('galleryCategories', galleryCategories);
+                    
+                    galleryItems.forEach(item => {
+                        if(item.category === currentGalleryCategory) item.category = finalName;
+                    });
+                    localforage.setItem('galleryItems', galleryItems);
+                    
+                    currentGalleryCategory = finalName;
+                    window.showToast("分類名稱已更新");
+                    window.renderGallery();
+                }
+            } else if (action === '2') {
+                if (confirm(`確定要刪除「${currentGalleryCategory}」分類嗎？\n此分類下的圖片將自動移至「未分類」。`)) {
+                    galleryItems.forEach(item => {
+                        if(item.category === currentGalleryCategory) item.category = '未分類';
+                    });
+                    localforage.setItem('galleryItems', galleryItems);
+                    
+                    galleryCategories.splice(idx, 1);
+                    // 防止把所有分類刪光導致 UI 錯誤
+                    if(galleryCategories.length === 0) {
+                        galleryCategories.push('未分類');
+                    }
+                    localforage.setItem('galleryCategories', galleryCategories);
+                    
+                    currentGalleryCategory = galleryCategories[0];
+                    window.renderGallery();
+                    window.showToast("分類已刪除");
+                }
             }
         };
 
@@ -811,7 +776,7 @@
         window.handleGalleryUpload = async (input) => {
             const files = input.files;
             if(!files || files.length===0) return;
-            window.showToast("處理與上傳中...");
+            window.showToast("處理與壓縮上傳中...");
             for(let i=0; i<files.length; i++) {
                try {
                    const b64 = await compressImageAsync(files[i]);
@@ -825,7 +790,8 @@
                } catch(e) {}
             }
             try {
-                localStorage.setItem('galleryItems', JSON.stringify(galleryItems));
+                // 使用非同步資料庫寫入，徹底解決 QuotaExceededError
+                await localforage.setItem('galleryItems', galleryItems);
                 window.renderGallery();
                 window.showToast("圖庫上傳完成");
             } catch(e) {
@@ -836,7 +802,7 @@
 
         window.deleteGalleryItem = (id) => {
             galleryItems = galleryItems.filter(item => item.id !== id);
-            localStorage.setItem('galleryItems', JSON.stringify(galleryItems));
+            localforage.setItem('galleryItems', galleryItems);
             window.renderGallery();
         };
 
@@ -844,7 +810,7 @@
             const item = galleryItems.find(i => i.id === id);
             if(item) {
                 item.title = text.trim() || '未命名相片';
-                localStorage.setItem('galleryItems', JSON.stringify(galleryItems));
+                localforage.setItem('galleryItems', galleryItems);
             }
         };
 
@@ -881,16 +847,16 @@
                         notes: [...(extras.currentNotes || [])],
                         subTasks: JSON.parse(JSON.stringify(extras.subTasks || {}))
                     });
-                    localStorage.setItem('dailyTasksArchive', JSON.stringify(taskArchiveState));
+                    localforage.setItem('dailyTasksArchive', taskArchiveState);
                     
                     extras.currentPhotos = []; extras.currentNotes = []; extras.subTasks = {};
                     taskExtrasState[taskId] = extras;
-                    localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+                    localforage.setItem('dailyTasksExtras', taskExtrasState);
                     window.showToast("任務完成！紀錄已打包入更多圖片");
                 }
             }
 
-            localStorage.setItem('dailyTasksState', JSON.stringify(taskCompletionState));
+            localforage.setItem('dailyTasksState', taskCompletionState);
             renderDailySchedule(); 
         };
 
@@ -899,7 +865,7 @@
             if (!subTaskCompletionState[taskId]) subTaskCompletionState[taskId] = {};
             
             subTaskCompletionState[taskId][idx] = !subTaskCompletionState[taskId][idx];
-            localStorage.setItem('subTaskCompletionState', JSON.stringify(subTaskCompletionState));
+            localforage.setItem('subTaskCompletionState', subTaskCompletionState);
             renderDailySchedule();
         };
 
@@ -923,13 +889,11 @@
                 }
                 
                 try {
-                    localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+                    await localforage.setItem('dailyTasksExtras', taskExtrasState);
                     renderDailySchedule();
                 } catch (storageError) {
-                    if (storageError.name === 'QuotaExceededError' || storageError.message.includes('quota')) {
-                        extras.subTasks[subIdx].photos.splice(-files.length, files.length);
-                        window.showToast("手機暫存空間不足！", true);
-                    } else { throw storageError; }
+                    extras.subTasks[subIdx].photos.splice(-files.length, files.length);
+                    window.showToast("手機暫存空間不足！", true);
                 }
             } catch (error) {
                 window.showToast("處理失敗", true);
@@ -958,14 +922,14 @@
             if (!extras.subTasks[subIdx]) extras.subTasks[subIdx] = { photos: [], notes: [] };
             extras.subTasks[subIdx].notes.push(text);
             
-            localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+            localforage.setItem('dailyTasksExtras', taskExtrasState);
             renderDailySchedule();
         };
 
         window.removeSubTaskPhoto = (taskId, subIdx, photoIdx) => {
             if(taskExtrasState[taskId]?.subTasks?.[subIdx]?.photos) {
                 taskExtrasState[taskId].subTasks[subIdx].photos.splice(photoIdx, 1);
-                localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+                localforage.setItem('dailyTasksExtras', taskExtrasState);
                 renderDailySchedule();
             }
         };
@@ -973,7 +937,7 @@
         window.removeSubTaskNote = (taskId, subIdx, noteIdx) => {
             if(taskExtrasState[taskId]?.subTasks?.[subIdx]?.notes) {
                 taskExtrasState[taskId].subTasks[subIdx].notes.splice(noteIdx, 1);
-                localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+                localforage.setItem('dailyTasksExtras', taskExtrasState);
                 renderDailySchedule();
             }
         };
@@ -990,14 +954,12 @@
                     taskExtrasState[taskId].currentPhotos.push(compressedBase64);
                 }
                 try {
-                    localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+                    await localforage.setItem('dailyTasksExtras', taskExtrasState);
                     renderDailySchedule();
                     window.showToast("相片已附加");
                 } catch (storageError) {
-                    if (storageError.name === 'QuotaExceededError' || storageError.message.includes('quota')) {
-                        taskExtrasState[taskId].currentPhotos.splice(-files.length, files.length);
-                        window.showToast("手機暫存空間不足！", true);
-                    } else { throw storageError; }
+                    taskExtrasState[taskId].currentPhotos.splice(-files.length, files.length);
+                    window.showToast("手機暫存空間不足！", true);
                 }
             } catch (error) {
                 window.showToast("處理失敗", true);
@@ -1007,7 +969,7 @@
         window.removeCurrentPhoto = (taskId, index) => {
             if (taskExtrasState[taskId] && taskExtrasState[taskId].currentPhotos) {
                 taskExtrasState[taskId].currentPhotos.splice(index, 1);
-                localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+                localforage.setItem('dailyTasksExtras', taskExtrasState);
                 renderDailySchedule();
             }
         };
@@ -1022,14 +984,14 @@
             if (!taskExtrasState[taskId].currentNotes) taskExtrasState[taskId].currentNotes = [];
             
             taskExtrasState[taskId].currentNotes.push(text);
-            localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+            localforage.setItem('dailyTasksExtras', taskExtrasState);
             renderDailySchedule(); 
         };
 
         window.removeCurrentNote = (taskId, index) => {
             if (taskExtrasState[taskId] && taskExtrasState[taskId].currentNotes) {
                 taskExtrasState[taskId].currentNotes.splice(index, 1);
-                localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+                localforage.setItem('dailyTasksExtras', taskExtrasState);
                 renderDailySchedule();
             }
         };
@@ -1148,9 +1110,6 @@
                     ring.classList.replace('text-green-500', 'text-blue-500');
                 }
             }
-            
-            const markerColors = ['yellow', 'pink', 'blue', 'green'];
-            const stickyStyles = [1, 2, 3];
 
             dailyScheduleData.forEach((task, index) => {
                 const isCompleted = taskCompletionState[task.id];
@@ -1158,10 +1117,13 @@
                 const archive = taskArchiveState[task.id] || [];
                 const status = calculateTaskStatus(task.start, task.end);
                 
+                // 動態取得各種色彩
+                const markerColors = ['yellow', 'pink', 'blue', 'green'];
+                const stickyStyles = [1, 2, 3];
                 const markerColorClass = `marker-${markerColors[index % markerColors.length]}`;
                 const stickyStyleClass = `sticky-note-${stickyStyles[index % stickyStyles.length]}`;
                 const tapeStyleClass = `tape-strip-${stickyStyles[index % stickyStyles.length]}`;
-                
+
                 let timeColor = 'text-slate-400';
                 let borderColor = 'border-slate-200';
                 let glowEffect = 'shadow-sm';
@@ -1192,15 +1154,15 @@
                 const editSubAttr = (idx) => isEdit ? `contenteditable="true" onblur="window.updateTaskData('${task.id}', 'subSteps', this.innerText, ${idx})" onclick="event.stopPropagation()"` : '';
 
                 const taskHTML = `
-                    <div class="daily-task-card bg-white rounded-xl p-4 border ${isCompleted ? 'border-slate-200 opacity-60 bg-slate-50' : borderColor} ${glowEffect} ${activeScale} relative transition-all duration-300 flex flex-col group hand-drawn-border mt-3">
+                    <div class="daily-task-card bg-white rounded-xl p-4 border ${isCompleted ? 'border-slate-200 opacity-60 bg-slate-50' : borderColor} ${glowEffect} ${activeScale} relative transition-all duration-300 flex flex-col group hand-drawn-border mt-4">
                         
+                        <!-- 膠帶裝飾 -->
+                        <div class="tape-strip ${tapeStyleClass} hidden sm:block"></div>
+
                         <!-- 任務編號印戳 -->
                         <div class="absolute -left-2 -top-2 w-7 h-7 bg-[#334155] text-[#fdfbf7] text-[11px] font-black rounded-full flex items-center justify-center shadow-md border-[2px] border-[#fdfbf7] z-30 font-mono tracking-tighter">
                             ${String(index + 1).padStart(2, '0')}
                         </div>
-
-                        <!-- 膠帶裝飾 -->
-                        <div class="tape-strip ${tapeStyleClass} hidden sm:block"></div>
 
                         <!-- 筆記本裝飾左側線 -->
                         <div class="absolute left-0 top-0 bottom-0 w-1.5 ${statusLineColor} opacity-80" style="border-radius: 10px 0 0 10px;"></div>
@@ -1224,8 +1186,10 @@
                                     <span id="status-text-${task.id}" class="text-[11px] ${timeColor} tracking-wide font-bold ml-2 text-right">${isCompleted ? '✔ 已歸檔' : status.text}</span>
                                 </div>
                                 
-                                <h3 ${editAttrText('title')} class="text-[15px] tracking-wide font-bold ${isCompleted ? 'text-slate-400 line-through' : 'text-slate-800'} ${editClass} pl-1"><span class="${!isCompleted ? markerColorClass : ''}">${task.title}</span></h3>
-                                <p ${editAttrHtml('content')} class="text-[12px] leading-relaxed tracking-wide ${isCompleted ? 'text-slate-400' : 'text-slate-600'} ${editClass}">${task.content}</p>
+                                <h3 ${editAttrText('title')} class="text-[15px] tracking-wide font-bold ${isCompleted ? 'text-slate-400 line-through' : 'text-slate-800'} ${editClass} pl-1">
+                                    <span class="${!isCompleted ? markerColorClass : ''}">${task.title}</span>
+                                </h3>
+                                <p ${editAttrHtml('content')} class="text-[12px] leading-relaxed tracking-wide ${isCompleted ? 'text-slate-400' : 'text-slate-600'} ${editClass} pl-1">${task.content}</p>
                                 
                                 ${(task.note || isEdit) ? `<div ${editAttrHtml('note')} class="mt-2 p-2.5 rounded-md text-[10.5px] text-slate-700 leading-relaxed tracking-wide ${stickyStyleClass} ${isEdit ? 'border border-dashed border-blue-300 focus:outline-none focus:bg-white cursor-text' : ''}">${task.note || (isEdit ? '點擊此處新增備註...' : '')}</div>` : ''}
 
@@ -1296,7 +1260,7 @@
                                                         ${subExtras.notes?.length > 0 ? `
                                                             <div class="space-y-1 w-[90%]">
                                                                 ${subExtras.notes.map((n, nIdx) => `
-                                                                    <div class="flex justify-between items-start p-2 rounded text-[10px] text-slate-700 tracking-wide sticky-note mt-1">
+                                                                    <div class="flex justify-between items-start p-1.5 rounded text-[10px] text-slate-700 tracking-wide sticky-note mt-1">
                                                                         <span class="break-words flex-1 pr-2 font-medium">📌 ${n}</span>
                                                                         ${!isCompleted ? `<button type="button" onclick="window.removeSubTaskNote('${task.id}', ${idx}, ${nIdx}); event.stopPropagation();" class="text-red-400 hover:text-red-500 mt-0.5 shrink-0 active:scale-95"><i data-lucide="x" class="w-3 h-3"></i></button>` : ''}
                                                                     </div>
@@ -1428,29 +1392,24 @@
                 }
             }, 60000); 
 
-            // 卡片滑動焦點特效 (Intersection Observer)
+            // 卡片焦點特效
             setTimeout(() => {
                 const cards = document.querySelectorAll('.daily-task-card');
                 const observer = new IntersectionObserver((entries) => {
                     entries.forEach(entry => {
-                        // 在中心區域滑過時觸發亮起特效 (編輯模式下則停用避免干擾)
                         if (entry.isIntersecting && !window.isEditMode && !entry.target.innerHTML.includes('已歸檔')) {
                             entry.target.classList.add('card-focused');
                         } else {
                             entry.target.classList.remove('card-focused');
                         }
                     });
-                }, { 
-                    root: null, 
-                    rootMargin: "-35% 0px -35% 0px", // 螢幕正中間約30%的區域
-                    threshold: 0 
-                });
+                }, { root: null, rootMargin: "-35% 0px -35% 0px", threshold: 0 });
                 cards.forEach(card => observer.observe(card));
             }, 100);
         }
 
         initAuth();
-        window.switchTab('daily'); // 強制預設載入每日排程介面
+        window.switchTab(localStorage.getItem('activeTab') || 'daily');
 
     </script>
 </head>
