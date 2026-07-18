@@ -389,8 +389,8 @@
                         ctx.imageSmoothingQuality = 'high';
                         ctx.drawImage(img, 0, 0, width, height);
                         
-                        // 升級：採用高壓縮比、高畫質的 WebP 格式
-                        resolve(canvas.toDataURL('image/webp', 0.8)); 
+                        // 升級：採用高壓縮比、高畫質的 WebP 格式，清晰度調高至 0.9
+                        resolve(canvas.toDataURL('image/webp', 0.9)); 
                     };
                     img.onerror = () => reject(new Error("圖片解析失敗"));
                 };
@@ -672,7 +672,7 @@
             // 頂部加入統一的設定按鈕 (全部分類皆可管理)
             sidebar.innerHTML = `
                 <div class="w-full flex justify-center pt-2 pb-2 border-b border-slate-200 shrink-0 sticky top-0 bg-[#f4f1eb] z-20">
-                    <button type="button" onclick="window.manageCurrentCategory()" class="p-1.5 bg-white text-slate-500 hover:text-slate-800 rounded shadow-sm border border-slate-200 active:scale-95 transition-all">
+                    <button type="button" onclick="window.openCategoryManager()" class="p-1.5 bg-white text-slate-500 hover:text-slate-800 rounded shadow-sm border border-slate-200 active:scale-95 transition-all">
                         <i data-lucide="settings" class="w-4 h-4"></i>
                     </button>
                 </div>
@@ -725,46 +725,99 @@
             }
         };
 
-        window.manageCurrentCategory = () => {
-            const idx = galleryCategories.indexOf(currentGalleryCategory);
-            if(idx === -1) return;
+        window.openCategoryManager = () => {
+            window.renderCategoryManager();
+            const modal = document.getElementById('categoryManageModal');
+            if(modal) {
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            }
+        };
 
-            const action = prompt(`管理分類「${currentGalleryCategory}」\n\n[1] 修改名稱\n[2] 刪除分類\n\n請輸入數字選擇：`);
-            
-            if (action === '1') {
-                const newName = prompt("請輸入新的分類名稱：", currentGalleryCategory);
-                if (newName !== null && newName.trim() !== "" && newName.trim() !== currentGalleryCategory) {
-                    const finalName = newName.trim();
-                    galleryCategories[idx] = finalName;
-                    localforage.setItem('galleryCategories', galleryCategories);
-                    
-                    galleryItems.forEach(item => {
-                        if(item.category === currentGalleryCategory) item.category = finalName;
-                    });
-                    localforage.setItem('galleryItems', galleryItems);
-                    
-                    currentGalleryCategory = finalName;
-                    window.showToast("分類名稱已更新");
-                    window.renderGallery();
-                }
-            } else if (action === '2') {
-                if (confirm(`確定要刪除「${currentGalleryCategory}」分類嗎？\n此分類下的圖片將自動移至「未分類」。`)) {
-                    galleryItems.forEach(item => {
-                        if(item.category === currentGalleryCategory) item.category = '未分類';
-                    });
-                    localforage.setItem('galleryItems', galleryItems);
-                    
+        window.closeCategoryManager = () => {
+            const modal = document.getElementById('categoryManageModal');
+            if(modal) {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+        };
+
+        window.renderCategoryManager = () => {
+            const list = document.getElementById('categoryManageList');
+            if(!list) return;
+            list.innerHTML = galleryCategories.map((cat) => {
+                const isProtected = cat === '全部' || cat === '未分類';
+                return `
+                <div class="flex items-center justify-between bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
+                    ${isProtected ? `
+                        <span class="text-sm font-bold text-slate-500 ml-1 tracking-widest">${cat} <span class="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded ml-1 font-normal border border-slate-200">系統保留</span></span>
+                        <div class="flex gap-1 opacity-30 pointer-events-none">
+                            <button class="p-1.5"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                        </div>
+                    ` : `
+                        <input type="text" value="${cat}" onblur="window.renameCategoryInModal('${cat}', this.value)" class="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700 font-bold focus:outline-none focus:border-blue-400 focus:bg-white transition-colors mr-2 w-full min-w-0 tracking-widest shadow-inner">
+                        <div class="flex gap-1 shrink-0">
+                            <button onclick="window.deleteCategoryInModal('${cat}')" class="p-1.5 text-red-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors active:scale-95"><i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i></button>
+                        </div>
+                    `}
+                </div>
+                `;
+            }).join('');
+            lucide.createIcons();
+        };
+
+        window.renameCategoryInModal = async (oldName, newName) => {
+            newName = newName.trim();
+            if(!newName || newName === oldName) {
+                window.renderCategoryManager(); 
+                return;
+            }
+            if(galleryCategories.includes(newName)) {
+                window.showToast("分類名稱已存在", true);
+                window.renderCategoryManager();
+                return;
+            }
+
+            const idx = galleryCategories.indexOf(oldName);
+            if(idx !== -1) {
+                galleryCategories[idx] = newName;
+                await localforage.setItem('galleryCategories', galleryCategories);
+                
+                galleryItems.forEach(item => {
+                    if(item.category === oldName) item.category = newName;
+                });
+                await localforage.setItem('galleryItems', galleryItems);
+                
+                if(currentGalleryCategory === oldName) currentGalleryCategory = newName;
+                
+                window.showToast("分類名稱已更新");
+                window.renderCategoryManager();
+                window.renderGallery();
+            }
+        };
+
+        window.deleteCategoryInModal = async (catName) => {
+            if (confirm(`確定要刪除「${catName}」分類嗎？\n此分類下的圖片將自動移至「未分類」。`)) {
+                galleryItems.forEach(item => {
+                    if(item.category === catName) item.category = '未分類';
+                });
+                await localforage.setItem('galleryItems', galleryItems);
+                
+                const idx = galleryCategories.indexOf(catName);
+                if(idx !== -1) {
                     galleryCategories.splice(idx, 1);
-                    // 防止把所有分類刪光導致 UI 錯誤
-                    if(galleryCategories.length === 0) {
-                        galleryCategories.push('未分類');
-                    }
-                    localforage.setItem('galleryCategories', galleryCategories);
-                    
-                    currentGalleryCategory = galleryCategories[0];
-                    window.renderGallery();
-                    window.showToast("分類已刪除");
                 }
+                
+                if(galleryCategories.length === 0) {
+                    galleryCategories.push('未分類');
+                }
+                await localforage.setItem('galleryCategories', galleryCategories);
+                
+                if(currentGalleryCategory === catName) currentGalleryCategory = galleryCategories[0];
+                
+                window.showToast("分類已刪除");
+                window.renderCategoryManager();
+                window.renderGallery();
             }
         };
 
