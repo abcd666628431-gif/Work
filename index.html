@@ -62,7 +62,7 @@
         const addBoxBtn = document.getElementById('addBoxBtn');
 
         // Daily Schedule State
-        const dailyScheduleData = [
+        const defaultDailyScheduleData = [
             { 
                 id: 't1', start: '07:00', end: '07:25', title: '開啟鮮風機與豬肉檔巡查', content: '1. 開啟鮮風機,拍照並發送至「紅街市內部溝通群」<br>2. 向有營業的豬肉攤檔派發聲明書,並收集豬肉價格,測豬溫相*6', note: '17:00開,20:00關。測豬溫順檔號。<br>【關係:21號(母)→20號(子)。2、14、26號會遲開】',
                 subSteps: [
@@ -106,12 +106,23 @@
             { id: 't13', start: '17:30', end: '19:30', title: '豬肉檔收工', content: '豬肉檔收工,入表「街市豬肉檔屠豬及營運資料總表」', note: '公機SHARE內' },
             { id: 't14', start: '18:30', end: '19:00', title: '晚間剔檔與抄溫', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20' }
         ];
+
+        // 載入用戶自定義排程或預設排程
+        let dailyScheduleData = JSON.parse(localStorage.getItem('userDailyScheduleData')) || defaultDailyScheduleData;
         
         // 分離狀態儲存，避免蓋掉舊的 boolean 結構
         let taskCompletionState = JSON.parse(localStorage.getItem('dailyTasksState')) || {};
         let taskExtrasState = JSON.parse(localStorage.getItem('dailyTasksExtras')) || {}; // 儲存相片與備註
         let taskArchiveState = JSON.parse(localStorage.getItem('dailyTasksArchive')) || {}; // 歷史存檔庫
         let expandedTasksState = {}; // 記錄展開的子流程 (UI 狀態，無需存 localStorage)
+        
+        // 圖庫存檔專屬狀態
+        let galleryCategories = JSON.parse(localStorage.getItem('galleryCategories')) || ['全部', '未分類', '街市檔口', '鮮風機', '價格表', '其他'];
+        let galleryItems = JSON.parse(localStorage.getItem('galleryItems')) || [];
+        let currentGalleryCategory = '全部';
+
+        // 編輯模式狀態管理
+        window.isEditMode = false;
 
         // 【資料遷移】確保舊版的單一相片/備註轉換為支援多重紀錄的陣列格式
         Object.keys(taskExtrasState).forEach(key => {
@@ -124,9 +135,84 @@
                 extra.currentNotes = extra.note ? [extra.note] : [];
                 delete extra.note;
             }
+            // 確保子任務的儲存結構存在
+            if (!extra.subTasks) {
+                extra.subTasks = {};
+            }
         });
         
         let timeUpdateInterval;
+
+        // 編輯模式切換功能
+        window.toggleEditMode = (isChecked) => {
+            window.isEditMode = isChecked;
+            const bg = document.getElementById('editToggleBg');
+            const dot = document.getElementById('editToggleDot');
+            const label = document.getElementById('editModeLabel');
+            
+            if (isChecked) {
+                bg.classList.replace('bg-slate-800', 'bg-amber-900/80');
+                bg.classList.replace('border-slate-600', 'border-amber-500');
+                dot.classList.add('translate-x-4');
+                dot.classList.replace('bg-cyan-500', 'bg-amber-400');
+                label.textContent = '文字編輯中';
+                label.classList.replace('text-slate-300', 'text-amber-400');
+            } else {
+                bg.classList.replace('bg-amber-900/80', 'bg-slate-800');
+                bg.classList.replace('border-amber-500', 'border-slate-600');
+                dot.classList.remove('translate-x-4');
+                dot.classList.replace('bg-amber-400', 'bg-cyan-500');
+                label.textContent = '一般檢視模式';
+                label.classList.replace('text-amber-400', 'text-slate-300');
+            }
+            renderDailySchedule();
+        };
+
+        // 編輯文字並自動存檔機制
+        window.updateTaskData = (taskId, field, value, subIdx = -1) => {
+            const task = dailyScheduleData.find(t => t.id === taskId);
+            if (task) {
+                const cleanValue = typeof value === 'string' ? value.trim() : value;
+                if (subIdx !== -1) {
+                    task.subSteps[subIdx] = cleanValue;
+                } else {
+                    task[field] = cleanValue;
+                }
+                localStorage.setItem('userDailyScheduleData', JSON.stringify(dailyScheduleData));
+                window.showToast("資料已儲存更新");
+            }
+        };
+
+        // --- 新增：編輯模式擴充功能 (新增任務卡片、新增子任務) ---
+        window.addNewTaskCard = () => {
+            const newId = 't_' + Date.now();
+            const newTask = {
+                id: newId,
+                start: '00:00',
+                end: '00:00',
+                title: '點擊編輯任務標題',
+                content: '點擊編輯任務內容...',
+                note: '',
+                subSteps: []
+            };
+            dailyScheduleData.push(newTask);
+            localStorage.setItem('userDailyScheduleData', JSON.stringify(dailyScheduleData));
+            renderDailySchedule();
+            window.showToast("已新增任務卡片");
+        };
+
+        window.addSubTask = (taskId, event) => {
+            if (event) event.stopPropagation();
+            const task = dailyScheduleData.find(t => t.id === taskId);
+            if (task) {
+                if (!task.subSteps) task.subSteps = [];
+                task.subSteps.push("點擊編輯新增的子任務");
+                expandedTasksState[taskId] = true; // 強制展開以檢視新子任務
+                localStorage.setItem('userDailyScheduleData', JSON.stringify(dailyScheduleData));
+                renderDailySchedule();
+                window.showToast("已新增子任務");
+            }
+        };
 
         // Initialize Icons
         lucide.createIcons();
@@ -526,20 +612,212 @@
         window.switchTab = (tab) => {
             const customPage = document.getElementById('customWorkflowPage');
             const dailyPage = document.getElementById('dailySchedulePage');
+            const galleryPage = document.getElementById('galleryPage');
             const btnCustom = document.getElementById('tabCustom');
             const btnDaily = document.getElementById('tabDaily');
+            const btnGallery = document.getElementById('tabGallery');
+
+            const activeClass = "flex-1 py-1.5 text-[11px] sm:text-sm rounded-md bg-slate-800 text-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.2)] border border-cyan-500/50 transition-all uppercase tracking-widest neon-text";
+            const inactiveClass = "flex-1 py-1.5 text-[11px] sm:text-sm text-slate-600 hover:text-cyan-200/50 transition-all uppercase tracking-widest";
+
+            customPage.classList.add('hidden');
+            dailyPage.classList.add('hidden');
+            if(galleryPage) galleryPage.classList.add('hidden');
+            
+            btnCustom.className = inactiveClass;
+            btnDaily.className = inactiveClass;
+            if(btnGallery) btnGallery.className = inactiveClass;
 
             if (tab === 'custom') {
                 customPage.classList.remove('hidden');
-                dailyPage.classList.add('hidden');
-                btnCustom.className = "flex-1 py-1.5 text-sm rounded-md bg-slate-800 text-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.2)] border border-cyan-500/50 transition-all uppercase tracking-widest neon-text";
-                btnDaily.className = "flex-1 py-1.5 text-sm text-slate-600 hover:text-cyan-200/50 transition-all uppercase tracking-widest";
-            } else {
-                customPage.classList.add('hidden');
+                btnCustom.className = activeClass;
+            } else if (tab === 'daily') {
                 dailyPage.classList.remove('hidden');
-                btnDaily.className = "flex-1 py-1.5 text-sm rounded-md bg-slate-800 text-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.2)] border border-cyan-500/50 transition-all uppercase tracking-widest neon-text";
-                btnCustom.className = "flex-1 py-1.5 text-sm text-slate-600 hover:text-cyan-200/50 transition-all uppercase tracking-widest";
+                btnDaily.className = activeClass;
                 renderDailySchedule();
+            } else if (tab === 'gallery') {
+                if(galleryPage) galleryPage.classList.remove('hidden');
+                if(btnGallery) btnGallery.className = activeClass;
+                window.renderGallery();
+            }
+        };
+
+        window.deleteTaskCard = (taskId, event) => {
+            if(event) event.stopPropagation();
+            dailyScheduleData = dailyScheduleData.filter(t => t.id !== taskId);
+            localStorage.setItem('userDailyScheduleData', JSON.stringify(dailyScheduleData));
+            
+            // 清理關聯數據釋放空間
+            delete taskCompletionState[taskId];
+            delete taskExtrasState[taskId];
+            delete taskArchiveState[taskId];
+            localStorage.setItem('dailyTasksState', JSON.stringify(taskCompletionState));
+            localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+            localStorage.setItem('dailyTasksArchive', JSON.stringify(taskArchiveState));
+            
+            renderDailySchedule();
+            window.showToast("排程卡片已刪除");
+        };
+
+        // 圖庫存檔專屬邏輯
+        window.renderGallery = () => {
+            const sidebar = document.getElementById('gallerySidebar');
+            const grid = document.getElementById('galleryGrid');
+            if(!sidebar || !grid) return;
+
+            // 渲染側邊分類
+            sidebar.innerHTML = galleryCategories.map((cat, idx) => {
+                const isProtected = cat === '全部' || cat === '未分類';
+                return `
+                <div class="relative w-[60px] group shrink-0">
+                    <div ondblclick="window.editCategory(${idx}, this)" onclick="window.switchGalleryCategory('${cat}')" class="w-full py-2 text-[10px] tracking-widest rounded-md transition-colors ${currentGalleryCategory === cat ? 'bg-cyan-900/80 text-cyan-300 border border-cyan-700 shadow-[0_0_5px_rgba(8,145,178,0.3)]' : 'text-slate-400 hover:bg-slate-800 border border-transparent'} px-1 cursor-pointer flex items-center justify-center break-words min-h-[30px] select-none text-center">
+                        ${cat}
+                    </div>
+                    ${!isProtected ? `<button type="button" onclick="window.deleteCategory(${idx}); event.stopPropagation();" class="absolute -top-1 -right-1 bg-rose-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 shadow transition-opacity z-10"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}
+                </div>
+                `;
+            }).join('') + `
+                <button type="button" onclick="window.addCategory()" class="w-[60px] py-1.5 mt-1 mb-2 flex justify-center text-cyan-600 hover:text-cyan-300 hover:bg-slate-800 rounded border border-dashed border-cyan-800 transition-colors shrink-0 active:scale-95"><i data-lucide="plus" class="w-4 h-4"></i></button>
+            `;
+
+            // 渲染網格圖片與搜尋過濾
+            const query = document.getElementById('gallerySearchInput').value.toLowerCase();
+            let filtered = galleryItems.filter(item => {
+                const matchCat = currentGalleryCategory === '全部' || item.category === currentGalleryCategory;
+                const matchQuery = item.title.toLowerCase().includes(query) || (item.timestamp && item.timestamp.includes(query));
+                return matchCat && matchQuery;
+            });
+
+            if(filtered.length === 0) {
+                grid.innerHTML = '<div class="absolute inset-0 flex flex-col items-center justify-center text-slate-600 text-xs tracking-widest"><i data-lucide="image-off" class="w-8 h-8 mb-2 opacity-50"></i>尚無對應圖片</div>';
+            } else {
+                grid.innerHTML = '<div class="grid grid-cols-2 gap-3 pb-6">' + filtered.map(item => `
+                    <div class="bg-[#1a2332] rounded-lg overflow-hidden border border-slate-800 shadow-lg flex flex-col group relative">
+                        <div class="aspect-square w-full relative">
+                            <img src="${item.url}" class="w-full h-full object-cover active:scale-95 transition-transform cursor-pointer" onclick="window.openFullscreenImg('${item.url}')"/>
+                            <button onclick="window.deleteGalleryItem('${item.id}')" class="absolute top-1.5 right-1.5 p-1.5 bg-rose-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-md active:bg-rose-600 z-10"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
+                        </div>
+                        <div class="p-2 flex flex-col bg-[#151c28] flex-1">
+                            <div class="text-[11px] text-slate-200 font-medium break-words whitespace-pre-wrap w-full text-left focus:outline-none focus:bg-slate-800 rounded p-1 min-h-[30px]" contenteditable="true" onblur="window.updateGalleryTitle('${item.id}', this.innerText)">${item.title}</div>
+                        </div>
+                    </div>
+                `).join('') + '</div>';
+            }
+            lucide.createIcons();
+        };
+
+        window.addCategory = () => {
+            const newName = '新分類';
+            galleryCategories.push(newName);
+            localStorage.setItem('galleryCategories', JSON.stringify(galleryCategories));
+            window.renderGallery();
+            window.showToast("已新增分類，點擊2下可修改名稱");
+        };
+
+        window.deleteCategory = (idx) => {
+            const catToDelete = galleryCategories[idx];
+            // 移動關聯照片到「未分類」
+            galleryItems.forEach(item => {
+                if(item.category === catToDelete) item.category = '未分類';
+            });
+            localStorage.setItem('galleryItems', JSON.stringify(galleryItems));
+            
+            galleryCategories.splice(idx, 1);
+            localStorage.setItem('galleryCategories', JSON.stringify(galleryCategories));
+            
+            if (currentGalleryCategory === catToDelete) {
+                currentGalleryCategory = '全部';
+            }
+            window.renderGallery();
+            window.showToast("分類已刪除，關聯圖片已移至未分類");
+        };
+
+        window.editCategory = (idx, el) => {
+            if (galleryCategories[idx] === '全部' || galleryCategories[idx] === '未分類') {
+                window.showToast("預設分類無法修改", true);
+                return;
+            }
+            el.contentEditable = true;
+            el.classList.add('bg-slate-800', 'cursor-text');
+            el.focus();
+            
+            // 將游標移到最後
+            const range = document.createRange();
+            const sel = window.getSelection();
+            range.selectNodeContents(el);
+            range.collapse(false);
+            sel.removeAllRanges();
+            sel.addRange(range);
+            
+            el.onblur = () => {
+                el.contentEditable = false;
+                el.classList.remove('bg-slate-800', 'cursor-text');
+                const newName = el.innerText.trim();
+                if (newName && newName !== galleryCategories[idx]) {
+                    const oldName = galleryCategories[idx];
+                    galleryCategories[idx] = newName;
+                    localStorage.setItem('galleryCategories', JSON.stringify(galleryCategories));
+                    
+                    // 批量更新圖片分類
+                    galleryItems.forEach(item => {
+                        if(item.category === oldName) item.category = newName;
+                    });
+                    localStorage.setItem('galleryItems', JSON.stringify(galleryItems));
+                    if (currentGalleryCategory === oldName) currentGalleryCategory = newName;
+                    window.showToast("分類名稱已更新");
+                }
+                window.renderGallery();
+            };
+            el.onkeydown = (e) => {
+                if(e.key === 'Enter') {
+                    e.preventDefault();
+                    el.blur();
+                }
+            };
+        };
+
+        window.switchGalleryCategory = (cat) => {
+            currentGalleryCategory = cat;
+            window.renderGallery();
+        };
+
+        window.handleGalleryUpload = async (input) => {
+            const files = input.files;
+            if(!files || files.length===0) return;
+            window.showToast("壓縮與上傳中...");
+            for(let i=0; i<files.length; i++) {
+               try {
+                   const b64 = await compressImageAsync(files[i]);
+                   galleryItems.unshift({
+                       id: 'g_'+Date.now()+'_'+i,
+                       url: b64,
+                       title: currentGalleryCategory === '全部' ? '未命名相片' : currentGalleryCategory + '紀錄',
+                       category: currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory,
+                       timestamp: new Date().toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                   });
+               } catch(e) {}
+            }
+            try {
+                localStorage.setItem('galleryItems', JSON.stringify(galleryItems));
+                window.renderGallery();
+                window.showToast("圖庫上傳完成");
+            } catch(e) {
+                window.showToast("手機暫存空間不足！", true);
+            }
+            input.value = '';
+        };
+
+        window.deleteGalleryItem = (id) => {
+            galleryItems = galleryItems.filter(item => item.id !== id);
+            localStorage.setItem('galleryItems', JSON.stringify(galleryItems));
+            window.renderGallery();
+        };
+
+        window.updateGalleryTitle = (id, text) => {
+            const item = galleryItems.find(i => i.id === id);
+            if(item) {
+                item.title = text.trim() || '未命名相片';
+                localStorage.setItem('galleryItems', JSON.stringify(galleryItems));
             }
         };
 
@@ -555,9 +833,22 @@
             
             // 【核心機制】：勾選完成時，自動封裝資料並清空當前畫面
             if (isCompleted) {
-                const extras = taskExtrasState[taskId] || { currentPhotos: [], currentNotes: [] };
+                const extras = taskExtrasState[taskId] || { currentPhotos: [], currentNotes: [], subTasks: {} };
                 
-                if ((extras.currentPhotos && extras.currentPhotos.length > 0) || (extras.currentNotes && extras.currentNotes.length > 0)) {
+                let hasData = (extras.currentPhotos && extras.currentPhotos.length > 0) || 
+                              (extras.currentNotes && extras.currentNotes.length > 0);
+
+                // 檢查是否含有子任務資料
+                if (!hasData && extras.subTasks) {
+                    for (const key in extras.subTasks) {
+                        if (extras.subTasks[key].photos?.length > 0 || extras.subTasks[key].notes?.length > 0) {
+                            hasData = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if (hasData) {
                     if (!taskArchiveState[taskId]) taskArchiveState[taskId] = [];
                     
                     const now = new Date();
@@ -565,13 +856,15 @@
                         timestamp: now.getTime(),
                         dateStr: now.toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
                         photos: [...(extras.currentPhotos || [])],
-                        notes: [...(extras.currentNotes || [])]
+                        notes: [...(extras.currentNotes || [])],
+                        subTasks: JSON.parse(JSON.stringify(extras.subTasks || {})) // 深拷貝子任務紀錄
                     });
                     localStorage.setItem('dailyTasksArchive', JSON.stringify(taskArchiveState));
                     
                     // 重置當前記錄
                     extras.currentPhotos = [];
                     extras.currentNotes = [];
+                    extras.subTasks = {};
                     taskExtrasState[taskId] = extras;
                     localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
                     
@@ -581,6 +874,86 @@
 
             localStorage.setItem('dailyTasksState', JSON.stringify(taskCompletionState));
             renderDailySchedule(); 
+        };
+
+        // --- 子任務專屬紀錄方法 ---
+        function initTaskExtras(taskId) {
+            if (!taskExtrasState[taskId]) taskExtrasState[taskId] = { currentPhotos: [], currentNotes: [], subTasks: {} };
+            if (!taskExtrasState[taskId].subTasks) taskExtrasState[taskId].subTasks = {};
+            return taskExtrasState[taskId];
+        }
+
+        window.handleSubTaskPhotoUpload = async (taskId, subIdx, inputElement) => {
+            const files = inputElement.files;
+            if (!files || files.length === 0) return;
+
+            window.showToast("壓縮與處理子任務圖片中...");
+            try {
+                const extras = initTaskExtras(taskId);
+                if (!extras.subTasks[subIdx]) extras.subTasks[subIdx] = { photos: [], notes: [] };
+                
+                for(let i = 0; i < files.length; i++) {
+                    const compressedBase64 = await compressImageAsync(files[i]);
+                    extras.subTasks[subIdx].photos.push(compressedBase64);
+                }
+                
+                try {
+                    localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+                    renderDailySchedule();
+                } catch (storageError) {
+                    if (storageError.name === 'QuotaExceededError' || storageError.message.includes('quota')) {
+                        extras.subTasks[subIdx].photos.splice(-files.length, files.length);
+                        window.showToast("手機暫存空間不足！", true);
+                    } else { throw storageError; }
+                }
+            } catch (error) {
+                window.showToast("圖片處理失敗", true);
+            } finally {
+                inputElement.value = '';
+            }
+        };
+
+        window.toggleSubNoteInput = (taskId, subIdx) => {
+            const container = document.getElementById(`subnote-input-container-${taskId}-${subIdx}`);
+            if(container) {
+                container.classList.toggle('hidden');
+                if(!container.classList.contains('hidden')) {
+                    document.getElementById(`subnote-input-${taskId}-${subIdx}`).focus();
+                }
+            }
+        };
+
+        window.submitSubTaskNote = (taskId, subIdx) => {
+            const input = document.getElementById(`subnote-input-${taskId}-${subIdx}`);
+            if(!input) return;
+            const text = input.value.trim();
+            if(!text) {
+                window.toggleSubNoteInput(taskId, subIdx);
+                return;
+            }
+
+            const extras = initTaskExtras(taskId);
+            if (!extras.subTasks[subIdx]) extras.subTasks[subIdx] = { photos: [], notes: [] };
+            extras.subTasks[subIdx].notes.push(text);
+            
+            localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+            renderDailySchedule();
+        };
+
+        window.removeSubTaskPhoto = (taskId, subIdx, photoIdx) => {
+            if(taskExtrasState[taskId]?.subTasks?.[subIdx]?.photos) {
+                taskExtrasState[taskId].subTasks[subIdx].photos.splice(photoIdx, 1);
+                localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+                renderDailySchedule();
+            }
+        };
+
+        window.removeSubTaskNote = (taskId, subIdx, noteIdx) => {
+            if(taskExtrasState[taskId]?.subTasks?.[subIdx]?.notes) {
+                taskExtrasState[taskId].subTasks[subIdx].notes.splice(noteIdx, 1);
+                localStorage.setItem('dailyTasksExtras', JSON.stringify(taskExtrasState));
+                renderDailySchedule();
+            }
         };
 
         window.handleDailyPhotoUpload = async (taskId, inputElement) => {
@@ -656,33 +1029,42 @@
             const container = document.getElementById('archiveContent');
             const modal = document.getElementById('archiveModal');
             
-            if(archive.length === 0) {
-                container.innerHTML = '<div class="text-center text-cyan-600/60 mt-20 tracking-widest text-xs">目前沒有任何存檔紀錄</div>';
+            // 匯聚該任務的所有照片 (主任務 + 子任務)
+            let allPhotos = [];
+            archive.forEach(record => {
+                if(record.photos && record.photos.length > 0) {
+                    record.photos.forEach(p => allPhotos.push({url: p, time: record.dateStr, note: record.notes?.join(' ') || '主任務紀錄'}));
+                }
+                if(record.subTasks) {
+                    Object.keys(record.subTasks).forEach(subIdx => {
+                        const subData = record.subTasks[subIdx];
+                        if(subData.photos && subData.photos.length > 0) {
+                            const taskData = dailyScheduleData.find(t => t.id === taskId);
+                            const subTitle = taskData && taskData.subSteps ? taskData.subSteps[subIdx] : `子任務 ${parseInt(subIdx)+1}`;
+                            subData.photos.forEach(p => allPhotos.push({url: p, time: record.dateStr, note: subTitle}));
+                        }
+                    });
+                }
+            });
+            
+            if(allPhotos.length === 0) {
+                container.innerHTML = '<div class="flex flex-col items-center justify-center h-full mt-32"><i data-lucide="image-off" class="w-12 h-12 text-slate-700 mb-3"></i><div class="text-cyan-600/60 tracking-widest text-xs">該任務目前沒有任何圖片紀錄</div></div>';
             } else {
-                container.innerHTML = archive.map((record) => {
-                    let recordHtml = `<div class="bg-slate-900 rounded-lg p-3 border border-slate-700/80 mb-4 shadow-lg shadow-slate-950/50">`;
-                    recordHtml += `<div class="text-[10px] text-cyan-400 font-bold mb-2 border-b border-slate-800 pb-1.5 flex justify-between">
-                        <span><i data-lucide="clock" class="w-3 h-3 inline pb-0.5"></i> 紀錄時間</span>
-                        <span>${record.dateStr}</span>
+                // 高級畫廊排版 (2 欄網格)
+                let html = '<div class="grid grid-cols-2 gap-3 pb-8">';
+                allPhotos.forEach(item => {
+                    html += `
+                    <div class="bg-[#1a2332] rounded-md overflow-hidden border border-slate-800 shadow-lg flex flex-col">
+                        <div class="aspect-square w-full relative">
+                            <img src="${item.url}" class="w-full h-full object-cover active:scale-95 transition-transform" onclick="window.openFullscreenImg('${item.url}')"/>
+                        </div>
+                        <div class="p-2 flex flex-col bg-[#151c28] flex-1">
+                            <div class="text-[10px] text-slate-200 font-medium break-words whitespace-pre-wrap w-full text-left p-1">${item.note}</div>
+                        </div>
                     </div>`;
-                    
-                    if(record.photos && record.photos.length > 0) {
-                        recordHtml += `<div class="grid grid-cols-3 gap-2 mb-2">`;
-                        record.photos.forEach(p => {
-                            recordHtml += `<img src="${p}" class="w-full h-20 object-cover rounded border border-cyan-900/50 active:scale-95 transition-transform" onclick="window.openFullscreenImg('${p}')"/>`;
-                        });
-                        recordHtml += `</div>`;
-                    }
-                    if(record.notes && record.notes.length > 0) {
-                        recordHtml += `<div class="space-y-1 mt-2">`;
-                        record.notes.forEach(n => {
-                            recordHtml += `<div class="text-[11px] text-cyan-200 bg-cyan-950/20 p-2 rounded border border-cyan-900/30 break-words">• ${n}</div>`;
-                        });
-                        recordHtml += `</div>`;
-                    }
-                    recordHtml += `</div>`;
-                    return recordHtml;
-                }).join('');
+                });
+                html += '</div>';
+                container.innerHTML = html;
             }
             
             lucide.createIcons();
@@ -787,62 +1169,155 @@
                     if (status.state === 'overdue') { 
                         timeColor = 'text-rose-400 drop-shadow-[0_0_5px_rgba(244,63,94,0.8)]'; 
                         borderColor = 'border-rose-500/50'; 
-                        glowEffect = 'shadow-[0_0_15px_rgba(244,63,94,0.15)] animate-pulse';
+                        glowEffect = 'shadow-[0_0_15px_rgba(244,63,94,0.15)]';
                     }
                 }
+
+                // 編輯模式專用樣式與屬性生成器
+                const isEdit = window.isEditMode && !isCompleted;
+                const editClass = isEdit ? 'border-b border-dashed border-amber-500/60 focus:outline-none focus:bg-slate-800/80 px-1 -mx-1 rounded cursor-text transition-colors' : '';
+                const editAttrText = (field) => isEdit ? `contenteditable="true" onblur="window.updateTaskData('${task.id}', '${field}', this.innerText)" onclick="event.stopPropagation()"` : '';
+                const editAttrHtml = (field) => isEdit ? `contenteditable="true" onblur="window.updateTaskData('${task.id}', '${field}', this.innerHTML)" onclick="event.stopPropagation()"` : '';
+                const editSubAttr = (idx) => isEdit ? `contenteditable="true" onblur="window.updateTaskData('${task.id}', 'subSteps', this.innerText, ${idx})" onclick="event.stopPropagation()"` : '';
 
                 const taskHTML = `
                     <div class="bg-slate-900/80 backdrop-blur-md rounded-2xl p-4 border ${isCompleted ? 'border-slate-800/30 opacity-60' : borderColor} ${glowEffect} ${activeScale} relative transition-all duration-300 flex flex-col group hover:bg-slate-800">
                         
-                        <!-- 頂部任務資訊 (點擊可打勾) -->
-                        <div class="flex space-x-3 cursor-pointer" onclick="window.toggleTask('${task.id}')">
+                        <!-- 頂部任務資訊 (改為僅打勾按鈕可點) -->
+                        <div class="flex space-x-3">
                             <!-- Checkbox Area -->
-                            <div class="flex-shrink-0 pt-1">
-                                <div class="w-6 h-6 rounded-md border-2 ${isCompleted ? 'border-cyan-500 bg-cyan-500/20 text-cyan-400 drop-shadow-[0_0_5px_rgba(6,182,212,0.8)]' : 'border-slate-600 text-transparent group-hover:border-cyan-500/50'} flex items-center justify-center transition-all duration-300">
+                            <div class="flex-shrink-0 pt-1 cursor-pointer" onclick="window.toggleTask('${task.id}')">
+                                <div class="w-6 h-6 rounded-md border-2 ${isCompleted ? 'border-cyan-500 bg-cyan-500/20 text-cyan-400 drop-shadow-[0_0_5px_rgba(6,182,212,0.8)]' : 'border-slate-600 text-transparent group-hover:border-cyan-500/50'} flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95">
                                     <i data-lucide="check" class="w-4 h-4"></i>
                                 </div>
                             </div>
 
                             <!-- Content Area -->
-                            <div class="flex-1 space-y-2">
-                                <div class="flex justify-between items-start">
-                                    <span class="text-[11px] px-2 py-1 bg-slate-950/80 rounded border ${isCompleted ? 'border-slate-800 text-slate-500' : 'border-cyan-900/80 text-cyan-300 shadow-[0_0_8px_rgba(8,145,178,0.2)]'} tracking-widest">${task.start} - ${task.end}</span>
-                                    <span class="text-[11px] ${timeColor} tracking-widest font-bold">${isCompleted ? '✔ 已歸檔' : status.text}</span>
+                            <div class="flex-1 space-y-2 min-w-0">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-[11px] px-2 py-1 bg-slate-950/80 rounded border ${isCompleted ? 'border-slate-800 text-slate-500' : 'border-cyan-900/80 text-cyan-300 shadow-[0_0_8px_rgba(8,145,178,0.2)]'} tracking-widest flex-shrink-0">
+                                        <span ${editAttrText('start')} class="${isEdit ? 'border-b border-dashed border-amber-500/60 text-amber-300 cursor-text focus:outline-none focus:bg-slate-800/80 px-0.5 rounded transition-colors' : ''}">${task.start}</span>
+                                        <span class="mx-0.5">-</span>
+                                        <span ${editAttrText('end')} class="${isEdit ? 'border-b border-dashed border-amber-500/60 text-amber-300 cursor-text focus:outline-none focus:bg-slate-800/80 px-0.5 rounded transition-colors' : ''}">${task.end}</span>
+                                    </span>
+                                    <span class="text-[11px] ${timeColor} tracking-widest font-bold ml-2 text-right">${isCompleted ? '✔ 已歸檔' : status.text}</span>
                                 </div>
                                 
-                                <h3 class="text-sm tracking-widest ${isCompleted ? 'text-slate-600 line-through' : 'text-cyan-50 drop-shadow-[0_0_2px_rgba(255,255,255,0.3)]'}">${task.title}</h3>
-                                <p class="text-[11px] leading-relaxed tracking-wider ${isCompleted ? 'text-slate-700' : 'text-cyan-100/70'}">${task.content}</p>
+                                <h3 ${editAttrText('title')} class="text-sm tracking-widest ${isCompleted ? 'text-slate-600 line-through' : 'text-cyan-50 drop-shadow-[0_0_2px_rgba(255,255,255,0.3)]'} ${editClass}">${task.title}</h3>
+                                <p ${editAttrHtml('content')} class="text-[11px] leading-relaxed tracking-wider ${isCompleted ? 'text-slate-700' : 'text-cyan-100/70'} ${editClass}">${task.content}</p>
                                 
-                                ${task.note ? `<div class="mt-2 p-2 rounded-md bg-cyan-950/20 border border-cyan-800/30 text-[10px] text-cyan-400/80 leading-relaxed uppercase tracking-wider">${task.note}</div>` : ''}
+                                ${(task.note || isEdit) ? `<div ${editAttrHtml('note')} class="mt-2 p-2 rounded-md bg-cyan-950/20 border border-cyan-800/30 text-[10px] text-cyan-400/80 leading-relaxed uppercase tracking-wider ${isEdit ? 'border-dashed border-amber-500/50 focus:outline-none focus:bg-cyan-900/50 cursor-text' : ''}">${task.note || (isEdit ? '點擊此處新增備註...' : '')}</div>` : ''}
 
                                 <!-- 子流程展開按鈕與內容 -->
-                                ${task.subSteps && task.subSteps.length > 0 ? `
-                                    <div class="mt-2 text-right relative z-20">
-                                        <button type="button" onclick="window.toggleTaskDetails('${task.id}', event)" class="inline-flex items-center space-x-1 px-2 py-1 rounded border ${expandedTasksState[task.id] ? 'border-cyan-500 bg-cyan-950/50' : 'border-cyan-800/50 bg-slate-900/50'} text-[10px] text-cyan-400 hover:text-cyan-300 hover:bg-slate-800 transition-colors cursor-pointer active:scale-95 shadow-inner">
-                                            <i data-lucide="${expandedTasksState[task.id] ? 'chevron-up' : 'list-tree'}" class="w-3 h-3"></i>
-                                            <span class="tracking-widest">${expandedTasksState[task.id] ? '收起詳細流程' : '展開詳細流程'}</span>
+                                ${(task.subSteps && task.subSteps.length > 0) || isEdit ? `
+                                    <div class="mt-3 flex justify-center relative z-20">
+                                        <button type="button" onclick="window.toggleTaskDetails('${task.id}', event)" class="inline-flex items-center space-x-1 px-4 py-1.5 rounded-full border ${expandedTasksState[task.id] ? 'border-amber-500 bg-amber-950/50 text-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.3)]' : 'border-amber-700/50 bg-slate-900/80 text-amber-500'} text-[10px] hover:text-amber-300 hover:bg-slate-800 transition-colors cursor-pointer active:scale-95 shadow-inner">
+                                            <i data-lucide="${expandedTasksState[task.id] ? 'chevron-up' : 'list-tree'}" class="w-3.5 h-3.5"></i>
+                                            <span class="tracking-widest font-bold">${expandedTasksState[task.id] ? '收起詳細流程' : '展開詳細流程'}</span>
                                         </button>
                                     </div>
                                     <!-- 展開的子流程節點樹 -->
-                                    <div class="transition-all duration-300 overflow-hidden ${expandedTasksState[task.id] ? 'max-h-[500px] opacity-100 mt-3 mb-1' : 'max-h-0 opacity-0'}">
-                                        <div class="pl-4 ml-1 border-l border-dashed border-cyan-800/60 space-y-3 relative py-2">
-                                            ${task.subSteps.map((step, idx) => `
-                                                <div class="relative flex items-start group/step">
+                                    <div class="transition-all duration-300 overflow-hidden ${expandedTasksState[task.id] ? 'max-h-[1500px] opacity-100 mt-3 mb-1' : 'max-h-0 opacity-0'}">
+                                        <div class="ml-2 relative py-1">
+                                            ${(task.subSteps || []).map((step, idx) => {
+                                                const subExtras = extras.subTasks?.[idx] || { photos: [], notes: [] };
+                                                const isLastSubStep = idx === (task.subSteps || []).length - 1;
+                                                // 編輯模式下，若為最後一個項目，為了連接新增按鈕，線條要繼續往下延伸
+                                                const drawLine = !isLastSubStep || isEdit;
+                                                return `
+                                                <div class="relative flex flex-col group/step pl-5 ${isLastSubStep && !isEdit ? 'mb-1' : 'mb-6'}">
+                                                    
+                                                    <!-- 連接下一個節點的虛線 (精準計算) -->
+                                                    ${drawLine ? `<div class="absolute left-[3px] top-[14px] bottom-[-30px] w-[1px] border-l border-dashed border-cyan-800/60 z-0 pointer-events-none"></div>` : ''}
+
                                                     <!-- 發光節點 -->
-                                                    <div class="absolute -left-[21px] top-1.5 w-2 h-2 rounded-full bg-slate-800 border border-cyan-600 group-hover/step:bg-cyan-400 group-hover/step:border-cyan-400 group-hover/step:shadow-[0_0_8px_#22d3ee] transition-all duration-300"></div>
-                                                    <!-- 步驟文字 -->
-                                                    <p class="text-[11px] text-cyan-300/80 group-hover/step:text-cyan-100 tracking-wider leading-relaxed pr-2 transition-colors">${step}</p>
+                                                    <div class="absolute left-[-1px] top-1.5 w-2 h-2 rounded-full bg-slate-800 border border-cyan-600 group-hover/step:bg-cyan-400 group-hover/step:border-cyan-400 group-hover/step:shadow-[0_0_8px_#22d3ee] transition-all duration-300 z-10"></div>
+                                                    
+                                                    <!-- 子任務文字與右側按鈕區 -->
+                                                    <div class="flex justify-between items-start relative z-10">
+                                                        <div class="relative flex items-start flex-1 min-w-0">
+                                                            <!-- 步驟文字 -->
+                                                            <p ${editSubAttr(idx)} class="text-[11px] text-cyan-300/80 group-hover/step:text-cyan-100 tracking-wider leading-relaxed pr-2 transition-colors flex-1 ${editClass}">${step}</p>
+                                                        </div>
+                                                        <!-- 子任務專屬按鈕 -->
+                                                        ${!isCompleted ? `
+                                                        <div class="flex items-center space-x-2 shrink-0 ml-1 opacity-60 group-hover/step:opacity-100 transition-opacity">
+                                                            <label class="cursor-pointer text-cyan-500 hover:text-cyan-300 active:scale-95 transition-transform p-0.5" onclick="event.stopPropagation();">
+                                                                <i data-lucide="camera" class="w-3.5 h-3.5"></i>
+                                                                <input type="file" accept="image/*" multiple class="hidden" onchange="window.handleSubTaskPhotoUpload('${task.id}', ${idx}, this)" />
+                                                            </label>
+                                                            <button type="button" onclick="window.toggleSubNoteInput('${task.id}', ${idx}); event.stopPropagation();" class="text-cyan-500 hover:text-cyan-300 active:scale-95 transition-transform p-0.5">
+                                                                <i data-lucide="message-square" class="w-3.5 h-3.5"></i>
+                                                            </button>
+                                                        </div>
+                                                        ` : ''}
+                                                    </div>
+
+                                                    <!-- 子任務文字輸入框 -->
+                                                    ${!isCompleted ? `
+                                                    <div id="subnote-input-container-${task.id}-${idx}" class="hidden mt-1.5 flex h-7 shadow-inner rounded-md opacity-90 w-[85%] ml-1" onclick="event.stopPropagation();">
+                                                        <input type="text" id="subnote-input-${task.id}-${idx}" placeholder="輸入子任務紀錄..." class="flex-1 bg-slate-950/60 border border-slate-700 border-r-0 rounded-l-md px-2 text-[10px] text-cyan-100 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 tracking-widest w-full min-w-0">
+                                                        <button type="button" onclick="window.submitSubTaskNote('${task.id}', ${idx})" class="px-2.5 bg-slate-800 text-cyan-400 border border-slate-700 rounded-r-md active:bg-cyan-900 transition-colors flex items-center justify-center"><i data-lucide="check" class="w-3.5 h-3.5"></i></button>
+                                                    </div>
+                                                    ` : ''}
+
+                                                    <!-- 子任務微縮圖與縮排文字 (左下角) -->
+                                                    ${(subExtras.photos?.length > 0 || subExtras.notes?.length > 0) ? `
+                                                    <div class="mt-1.5 ml-1 space-y-1.5">
+                                                        ${subExtras.photos?.length > 0 ? `
+                                                            <div class="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
+                                                                ${subExtras.photos.map((p, pIdx) => `
+                                                                    <div class="relative w-10 h-10 shrink-0 rounded border border-cyan-800/60 overflow-hidden shadow-md">
+                                                                        <img src="${p}" class="w-full h-full object-cover cursor-pointer" onclick="window.openFullscreenImg('${p}'); event.stopPropagation();"/>
+                                                                        ${!isCompleted ? `<button type="button" onclick="window.removeSubTaskPhoto('${task.id}', ${idx}, ${pIdx}); event.stopPropagation();" class="absolute top-0 right-0 bg-rose-500/90 text-white p-0.5 rounded-bl active:bg-rose-600"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}
+                                                                    </div>
+                                                                `).join('')}
+                                                            </div>
+                                                        ` : ''}
+                                                        
+                                                        ${subExtras.notes?.length > 0 ? `
+                                                            <div class="space-y-1 w-[90%]">
+                                                                ${subExtras.notes.map((n, nIdx) => `
+                                                                    <div class="flex justify-between items-start bg-cyan-950/30 p-1.5 rounded border border-cyan-900/40 text-[10px] text-cyan-300/90 tracking-wider">
+                                                                        <span class="break-words flex-1 pr-2">↳ ${n}</span>
+                                                                        ${!isCompleted ? `<button type="button" onclick="window.removeSubTaskNote('${task.id}', ${idx}, ${nIdx}); event.stopPropagation();" class="text-rose-400/80 hover:text-rose-400 mt-0.5 shrink-0 active:scale-95"><i data-lucide="x" class="w-3 h-3"></i></button>` : ''}
+                                                                    </div>
+                                                                `).join('')}
+                                                            </div>
+                                                        ` : ''}
+                                                    </div>
+                                                    ` : ''}
+
                                                 </div>
-                                            `).join('')}
+                                                `;
+                                            }).join('')}
+                                            
+                                            <!-- 編輯模式：新增一筆子任務 -->
+                                            ${isEdit ? `
+                                                <div class="relative flex flex-col pl-5 mt-4">
+                                                    <div class="absolute left-[0px] top-1.5 w-1.5 h-1.5 rounded-full bg-amber-500/50 border border-amber-500 z-10 shadow-[0_0_5px_rgba(245,158,11,0.5)]"></div>
+                                                    <button type="button" onclick="window.addSubTask('${task.id}', event)" class="flex items-center justify-center space-x-1 py-1 px-3 rounded border border-dashed border-amber-600/60 text-amber-500/80 hover:text-amber-400 hover:bg-amber-950/30 transition-colors cursor-pointer active:scale-95 text-[10px] tracking-widest relative z-10 shadow-inner max-w-max ml-0.5">
+                                                        <i data-lucide="plus" class="w-3 h-3"></i>
+                                                        <span>新增一筆子任務</span>
+                                                    </button>
+                                                </div>
+                                            ` : ''}
                                         </div>
                                     </div>
                                 ` : ''}
                             </div>
                         </div>
 
+                        <!-- 編輯模式專屬：刪除卡片按鈕 -->
+                        ${isEdit ? `
+                            <button type="button" onclick="window.deleteTaskCard('${task.id}', event)" class="absolute top-3 right-3 text-rose-500/80 hover:text-white hover:bg-rose-600 p-1.5 rounded border border-dashed border-rose-900 transition-colors active:scale-95 shadow z-20 bg-slate-950/50 cursor-pointer">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
+                            </button>
+                        ` : ''}
+
                         <!-- 底部擴充操作區 (多重相片、多重備註與存檔庫) -->
                         ${!isCompleted ? `
-                        <div class="mt-4 pt-3 border-t border-slate-800/80 flex flex-col">
+                        <div class="mt-4 pt-3 border-t border-slate-800/80 flex flex-col relative z-10">
                             
                             <!-- 當前已加入紀錄預覽 (滿寬) -->
                             ${extras.currentPhotos && extras.currentPhotos.length > 0 ? `
@@ -908,13 +1383,26 @@
                 `;
                 container.insertAdjacentHTML('beforeend', taskHTML);
             });
+            
+            // 加入新增任務卡片的按鈕
+            if (window.isEditMode) {
+                const addTaskBtnHTML = `
+                    <div class="mt-6 flex justify-center pb-4">
+                        <button type="button" onclick="window.addNewTaskCard()" class="w-full bg-slate-900/60 backdrop-blur-md rounded-2xl p-5 border-2 border-dashed border-amber-600/50 text-amber-500/80 hover:text-amber-400 hover:bg-amber-950/20 hover:border-amber-500 transition-all duration-300 flex flex-col items-center justify-center active:scale-[0.98] group shadow-inner cursor-pointer">
+                            <i data-lucide="plus-circle" class="w-7 h-7 mb-2 group-hover:scale-110 transition-transform"></i>
+                            <span class="text-xs tracking-widest font-bold">新增排程卡片</span>
+                        </button>
+                    </div>
+                `;
+                container.insertAdjacentHTML('beforeend', addTaskBtnHTML);
+            }
 
             lucide.createIcons();
 
-            // Refresh timers automatically
+            // Refresh timers automatically (編輯模式下暫停刷新，防止輸入時失焦)
             if(timeUpdateInterval) clearInterval(timeUpdateInterval);
             timeUpdateInterval = setInterval(() => {
-                if(!document.getElementById('dailySchedulePage').classList.contains('hidden')) {
+                if(!document.getElementById('dailySchedulePage').classList.contains('hidden') && !window.isEditMode) {
                     renderDailySchedule(); // lazy auto-update for timers
                 }
             }, 60000); // Check every minute
@@ -950,9 +1438,10 @@
             </p>
 
             <!-- 分頁切換 (Tab Control) -->
-            <div class="mt-4 flex bg-slate-950 rounded-lg p-1 shadow-inner border border-slate-800">
-                <button id="tabCustom" onclick="window.switchTab('custom')" class="flex-1 py-1.5 text-sm rounded-md bg-slate-800 text-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.2)] border border-cyan-500/50 transition-all uppercase tracking-widest neon-text">自訂流程</button>
-                <button id="tabDaily" onclick="window.switchTab('daily')" class="flex-1 py-1.5 text-sm text-slate-600 hover:text-cyan-200/50 transition-all uppercase tracking-widest">每日排程</button>
+            <div class="mt-4 flex bg-slate-950 rounded-lg p-1 shadow-inner border border-slate-800 relative z-20">
+                <button id="tabCustom" onclick="window.switchTab('custom')" class="flex-1 py-1.5 text-[11px] sm:text-sm text-slate-600 hover:text-cyan-200/50 transition-all uppercase tracking-widest">自訂流程</button>
+                <button id="tabDaily" onclick="window.switchTab('daily')" class="flex-1 py-1.5 text-[11px] sm:text-sm rounded-md bg-slate-800 text-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.2)] border border-cyan-500/50 transition-all uppercase tracking-widest neon-text">每日排程</button>
+                <button id="tabGallery" onclick="window.switchTab('gallery')" class="flex-1 py-1.5 text-[11px] sm:text-sm text-slate-600 hover:text-cyan-200/50 transition-all uppercase tracking-widest">圖庫存檔</button>
             </div>
         </header>
 
@@ -980,6 +1469,18 @@
         <!-- Main Content (每日排程 - 預設隱藏) -->
         <main id="dailySchedulePage" class="p-5 space-y-2 hidden transition-opacity relative z-10">
             
+            <!-- 編輯模式切換開關 (新功能) -->
+            <div class="flex justify-end mb-2 px-1">
+                <label class="flex items-center cursor-pointer space-x-2 bg-slate-900/80 px-3 py-1.5 rounded-full border border-slate-700 shadow-inner active:scale-95 transition-transform">
+                    <span class="text-[10px] text-slate-300 font-bold uppercase tracking-widest transition-colors duration-300" id="editModeLabel">一般檢視模式</span>
+                    <div class="relative flex items-center">
+                        <input type="checkbox" id="editModeToggle" class="sr-only" onchange="window.toggleEditMode(this.checked)">
+                        <div class="block bg-slate-800 w-9 h-5 rounded-full border border-slate-600 transition-colors duration-300" id="editToggleBg"></div>
+                        <div class="dot absolute left-1 bg-cyan-500 w-3 h-3 rounded-full transition-transform duration-300 shadow-md" id="editToggleDot"></div>
+                    </div>
+                </label>
+            </div>
+
             <div id="hudContainer" class="flex flex-col items-center justify-center mb-6 p-5 bg-slate-900/60 backdrop-blur-md rounded-2xl border border-cyan-500/30 neon-border">
                 <div class="relative w-32 h-32 mb-2">
                     <!-- 背景環 -->
@@ -1003,6 +1504,32 @@
 
             <div id="scheduleContainer" class="space-y-4 pb-8">
                 <!-- Daily Schedule will be injected here -->
+            </div>
+        </main>
+
+        <!-- Main Content (獨立圖庫存檔 - 全新分頁) -->
+        <main id="galleryPage" class="hidden h-[calc(100vh-140px)] sm:h-[750px] flex-col relative z-10 bg-slate-950">
+            <!-- 搜尋與上傳區 (Header) -->
+            <div class="p-3 border-b border-cyan-900/50 flex space-x-2 bg-slate-900 shrink-0 shadow-md z-20 relative">
+                <div class="relative flex-1">
+                    <i data-lucide="search" class="absolute left-2.5 top-2 w-4 h-4 text-cyan-500/50"></i>
+                    <input type="text" id="gallerySearchInput" placeholder="搜尋圖片標題或日期..." oninput="window.renderGallery()" class="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-cyan-100 placeholder-slate-600 focus:border-cyan-500/50 focus:outline-none tracking-widest">
+                </div>
+                <label class="bg-cyan-950/80 text-cyan-400 border border-cyan-700/50 px-3 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-[11px] tracking-widest transition-colors hover:bg-cyan-900 shadow-inner">
+                    <i data-lucide="upload" class="w-3.5 h-3.5 mr-1"></i> 上傳
+                    <input type="file" accept="image/*" multiple class="hidden" onchange="window.handleGalleryUpload(this)">
+                </label>
+            </div>
+            
+            <div class="flex flex-1 overflow-hidden relative z-10">
+                <!-- 左側分類列 -->
+                <div class="w-[75px] shrink-0 border-r border-cyan-900/50 bg-slate-900/50 overflow-y-auto flex flex-col items-center py-2 space-y-2 scrollbar-hide shadow-[inset_-5px_0_10px_rgba(0,0,0,0.3)]" id="gallerySidebar">
+                    <!-- Categories will be injected -->
+                </div>
+                <!-- 右側圖片網格 -->
+                <div class="flex-1 p-3 overflow-y-auto bg-slate-950/80 relative scrollbar-hide" id="galleryGrid">
+                    <!-- Images will be injected -->
+                </div>
             </div>
         </main>
 
