@@ -37,7 +37,7 @@
         .tape-strip-3 { background-color: rgba(186, 230, 253, 0.5); }
 
         /* 卡片滾動對焦特效 */
-        .daily-task-card { transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1); }
+        .daily-task-card { transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), border-color 0.4s cubic-bezier(0.25, 0.8, 0.25, 1); }
         .card-focused {
             border-color: #60a5fa !important;
             box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.25), 0 8px 10px -6px rgba(59, 130, 246, 0.1) !important;
@@ -49,7 +49,8 @@
     <script type="module">
         import { initializeApp } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-firestore.js";
+        // 核心升級：導入 initializeFirestore 與 persistentLocalCache 達成完美離線與雲端雙軌同步
+        import { initializeFirestore, persistentLocalCache, getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-firestore.js";
 
         const userFirebaseConfig = {
             apiKey: "AIzaSyBsdBYBeJYqgeDDxF39lZ0pr785SMnwvJs",
@@ -64,7 +65,15 @@
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : userFirebaseConfig;
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
-        const db = getFirestore(app);
+        
+        let db;
+        try {
+            // 啟用軍規級離線快取，確保無網路也能秒寫入
+            db = initializeFirestore(app, { localCache: persistentLocalCache() });
+        } catch (error) {
+            db = getFirestore(app);
+        }
+        
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
         let steps = [];
@@ -137,7 +146,16 @@
         let timeUpdateInterval;
 
         // ==========================================
-        // 🚀 核心升級：配置 IndexedDB 大容量引擎 (突破 5MB 限制)
+        // 🌟 雲端同步助手 (Helper Functions)
+        // ==========================================
+        const saveScheduleToCloud = async () => { if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }); };
+        const saveTaskStatesToCloud = async () => { if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState }); };
+        const saveSubTaskStatesToCloud = async () => { if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState }); };
+        const saveExtrasToCloud = async (taskId) => { if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_extras', taskId), taskExtrasState[taskId] || {}); };
+        const saveCategoriesToCloud = async () => { if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories }); };
+
+        // ==========================================
+        // 🚀 核心升級：配置 IndexedDB 作為過渡讀取區，並實作無痛雲端遷移機制
         // ==========================================
         localforage.config({
             name: 'WorkLogApp',
@@ -146,6 +164,7 @@
 
         async function loadLocalData() {
             try {
+                // 僅作為斷網極速啟動時的本地備援，後續將由 Firestore onSnapshot 完全接管
                 const sd = await localforage.getItem('userDailyScheduleData');
                 if (sd) dailyScheduleData = sd;
 
@@ -184,7 +203,6 @@
                     }
                 });
 
-                // 資料載入完成後，確保畫面刷新
                 if(document.getElementById('dailySchedulePage') && !document.getElementById('dailySchedulePage').classList.contains('hidden')) {
                     renderDailySchedule();
                 }
@@ -192,13 +210,60 @@
                     window.renderGallery();
                 }
             } catch (error) {
-                console.error("載入本地資料失敗:", error);
-                window.showToast("資料讀取失敗，請重整", true);
+                console.error("載入本地備援失敗:", error);
             }
         }
         
-        // 觸發載入
         loadLocalData();
+
+        // 🚀 自動無痛轉移機制：把舊版手機內的資料一次性打上雲端，從此解放
+        async function migrateLocalToCloud() {
+            if (!currentUser) return;
+            const migrated = await localforage.getItem('cloud_migrated_v2');
+            if (migrated) return;
+
+            window.showToast("🚀 正在為您啟動雲端多裝置同步...", false);
+            try {
+                const sd = await localforage.getItem('userDailyScheduleData');
+                if (sd) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: sd });
+
+                const ts = await localforage.getItem('dailyTasksState');
+                if (ts) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: ts });
+
+                const st = await localforage.getItem('subTaskCompletionState');
+                if (st) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: st });
+
+                const gc = await localforage.getItem('galleryCategories');
+                if (gc) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: gc });
+
+                const te = await localforage.getItem('dailyTasksExtras');
+                if (te) {
+                    for (const taskId in te) {
+                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_extras', taskId), te[taskId]);
+                    }
+                }
+
+                const ta = await localforage.getItem('dailyTasksArchive');
+                if (ta) {
+                    for (const taskId in ta) {
+                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_archive', taskId), { archive: ta[taskId] });
+                    }
+                }
+
+                const gi = await localforage.getItem('galleryItems');
+                if (gi && gi.length > 0) {
+                    for (const item of gi) {
+                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item);
+                    }
+                }
+
+                await localforage.setItem('cloud_migrated_v2', true);
+                window.showToast("✅ 雲端同步開啟成功！已跨越儲存限制！");
+            } catch (e) {
+                console.error("Migration error:", e);
+                window.showToast("資料轉移稍有延遲，將於背景繼續處理");
+            }
+        }
 
         window.toggleEditMode = (isChecked) => {
             window.isEditMode = isChecked;
@@ -233,8 +298,8 @@
                 } else {
                     task[field] = cleanValue;
                 }
-                localforage.setItem('userDailyScheduleData', dailyScheduleData);
-                window.showToast("資料已儲存更新");
+                saveScheduleToCloud();
+                window.showToast("資料已同步更新");
             }
         };
 
@@ -245,7 +310,7 @@
                 content: '點擊編輯任務內容...', note: '', subSteps: []
             };
             dailyScheduleData.push(newTask);
-            localforage.setItem('userDailyScheduleData', dailyScheduleData);
+            saveScheduleToCloud();
             renderDailySchedule();
             window.showToast("已新增任務卡片");
         };
@@ -257,7 +322,7 @@
                 if (!task.subSteps) task.subSteps = [];
                 task.subSteps.push("點擊編輯新增的子任務");
                 expandedTasksState[taskId] = true; 
-                localforage.setItem('userDailyScheduleData', dailyScheduleData);
+                saveScheduleToCloud();
                 renderDailySchedule();
                 window.showToast("已新增子任務");
             }
@@ -268,7 +333,7 @@
             const task = dailyScheduleData.find(t => t.id === taskId);
             if (task && task.subSteps) {
                 task.subSteps.splice(subIdx, 1);
-                localforage.setItem('userDailyScheduleData', dailyScheduleData);
+                saveScheduleToCloud();
                 renderDailySchedule();
                 window.showToast("已刪除子任務");
             }
@@ -322,6 +387,7 @@
             const stepsRef = collection(db, 'artifacts', appId, 'public', 'data', 'workflow_steps');
             const imagesRef = collection(db, 'artifacts', appId, 'public', 'data', 'workflow_images');
             
+            // 原有的自訂流程監聽
             unsubscribeSnapshot = onSnapshot(stepsRef, (snapshot) => {
                 const fetchedSteps = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 
@@ -364,6 +430,47 @@
                     renderSteps();
                 }
             });
+
+            // 🌟 雲端全方位同步監聽 🌟
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), (docSnap) => {
+                if(docSnap.exists()) { dailyScheduleData = docSnap.data().tasks; renderDailySchedule(); }
+            });
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), (docSnap) => {
+                if(docSnap.exists()) { taskCompletionState = docSnap.data().states || {}; renderDailySchedule(); }
+            });
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), (docSnap) => {
+                if(docSnap.exists()) { subTaskCompletionState = docSnap.data().states || {}; renderDailySchedule(); }
+            });
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), (docSnap) => {
+                if(docSnap.exists()) { 
+                    galleryCategories = docSnap.data().categories || ['全部', '未分類', '街市檔口', '鮮風機', '價格表', '其他']; 
+                    window.renderGallery(); 
+                }
+            });
+
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'daily_extras'), (snapshot) => {
+                snapshot.docs.forEach(docSnap => { taskExtrasState[docSnap.id] = docSnap.data(); });
+                renderDailySchedule();
+            });
+
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'daily_archive'), (snapshot) => {
+                snapshot.docs.forEach(docSnap => { taskArchiveState[docSnap.id] = docSnap.data().archive || []; });
+                renderDailySchedule();
+            });
+
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snapshot) => {
+                galleryItems = snapshot.docs.map(docSnap => docSnap.data());
+                // 依照 ID (產生時間) 降序排列
+                galleryItems.sort((a,b) => {
+                    const idA = a.id || '';
+                    const idB = b.id || '';
+                    return idB.localeCompare(idA);
+                });
+                window.renderGallery();
+            });
+
+            // 初始化時檢查並執行一次性雲端遷移
+            migrateLocalToCloud();
         }
 
         function compressImageAsync(file) {
@@ -658,16 +765,19 @@
         window.deleteTaskCard = (taskId, event) => {
             if(event) event.stopPropagation();
             dailyScheduleData = dailyScheduleData.filter(t => t.id !== taskId);
-            localforage.setItem('userDailyScheduleData', dailyScheduleData);
+            saveScheduleToCloud();
             
             delete taskCompletionState[taskId];
-            delete taskExtrasState[taskId];
-            delete taskArchiveState[taskId];
+            saveTaskStatesToCloud();
+
             delete subTaskCompletionState[taskId];
-            localforage.setItem('dailyTasksState', taskCompletionState);
-            localforage.setItem('dailyTasksExtras', taskExtrasState);
-            localforage.setItem('dailyTasksArchive', taskArchiveState);
-            localforage.setItem('subTaskCompletionState', subTaskCompletionState);
+            saveSubTaskStatesToCloud();
+            
+            delete taskExtrasState[taskId];
+            deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_extras', taskId));
+            
+            delete taskArchiveState[taskId];
+            deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_archive', taskId));
             
             renderDailySchedule();
             window.showToast("排程卡片已刪除");
@@ -728,7 +838,7 @@
             const newName = prompt("請輸入新分類名稱：", "新分類");
             if(newName && newName.trim() !== '') {
                 galleryCategories.push(newName.trim());
-                localforage.setItem('galleryCategories', galleryCategories);
+                saveCategoriesToCloud();
                 window.renderGallery();
                 window.showToast("已新增分類");
             }
@@ -790,16 +900,19 @@
             const idx = galleryCategories.indexOf(oldName);
             if(idx !== -1) {
                 galleryCategories[idx] = newName;
-                await localforage.setItem('galleryCategories', galleryCategories);
+                saveCategoriesToCloud();
                 
+                // 同步更新圖庫內相片的歸屬分類
                 galleryItems.forEach(item => {
-                    if(item.category === oldName) item.category = newName;
+                    if(item.category === oldName) {
+                        item.category = newName;
+                        setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item, { merge: true });
+                    }
                 });
-                await localforage.setItem('galleryItems', galleryItems);
                 
                 if(currentGalleryCategory === oldName) currentGalleryCategory = newName;
                 
-                window.showToast("分類名稱已更新");
+                window.showToast("分類名稱已同步更新");
                 window.renderCategoryManager();
                 window.renderGallery();
             }
@@ -807,10 +920,13 @@
 
         window.deleteCategoryInModal = async (catName) => {
             if (confirm(`確定要刪除「${catName}」分類嗎？\n此分類下的圖片將自動移至「未分類」。`)) {
+                
                 galleryItems.forEach(item => {
-                    if(item.category === catName) item.category = '未分類';
+                    if(item.category === catName) {
+                        item.category = '未分類';
+                        setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item, { merge: true });
+                    }
                 });
-                await localforage.setItem('galleryItems', galleryItems);
                 
                 const idx = galleryCategories.indexOf(catName);
                 if(idx !== -1) {
@@ -820,7 +936,7 @@
                 if(galleryCategories.length === 0) {
                     galleryCategories.push('未分類');
                 }
-                await localforage.setItem('galleryCategories', galleryCategories);
+                saveCategoriesToCloud();
                 
                 if(currentGalleryCategory === catName) currentGalleryCategory = galleryCategories[0];
                 
@@ -838,33 +954,31 @@
         window.handleGalleryUpload = async (input) => {
             const files = input.files;
             if(!files || files.length===0) return;
-            window.showToast("處理與壓縮上傳中...");
+            window.showToast("處理與雲端上傳中...");
             for(let i=0; i<files.length; i++) {
                try {
                    const b64 = await compressImageAsync(files[i]);
-                   galleryItems.unshift({
+                   const newItem = {
                        id: 'g_'+Date.now()+'_'+i,
                        url: b64,
                        title: currentGalleryCategory === '全部' ? '未命名相片' : currentGalleryCategory + '紀錄',
                        category: currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory,
                        timestamp: new Date().toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-                   });
+                   };
+                   // 立即在前端畫面更新
+                   galleryItems.unshift(newItem);
+                   // 同時推上獨立雲端單據 (突破 1MB 限制)
+                   await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', newItem.id), newItem);
                } catch(e) {}
             }
-            try {
-                // 使用非同步資料庫寫入，徹底解決 QuotaExceededError
-                await localforage.setItem('galleryItems', galleryItems);
-                window.renderGallery();
-                window.showToast("圖庫上傳完成");
-            } catch(e) {
-                window.showToast("手機暫存空間不足！", true);
-            }
+            window.renderGallery();
+            window.showToast("圖庫雲端上傳完成");
             input.value = '';
         };
 
         window.deleteGalleryItem = (id) => {
             galleryItems = galleryItems.filter(item => item.id !== id);
-            localforage.setItem('galleryItems', galleryItems);
+            deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id));
             window.renderGallery();
         };
 
@@ -872,7 +986,7 @@
             const item = galleryItems.find(i => i.id === id);
             if(item) {
                 item.title = text.trim() || '未命名相片';
-                localforage.setItem('galleryItems', galleryItems);
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), { title: item.title }, { merge: true });
             }
         };
 
@@ -886,7 +1000,7 @@
             const isCompleted = !taskCompletionState[taskId];
             taskCompletionState[taskId] = isCompleted;
             
-            localforage.setItem('dailyTasksState', taskCompletionState);
+            saveTaskStatesToCloud();
             renderDailySchedule(); 
         };
 
@@ -895,7 +1009,7 @@
             if (!subTaskCompletionState[taskId]) subTaskCompletionState[taskId] = {};
             
             subTaskCompletionState[taskId][idx] = !subTaskCompletionState[taskId][idx];
-            localforage.setItem('subTaskCompletionState', subTaskCompletionState);
+            saveSubTaskStatesToCloud();
             renderDailySchedule();
         };
 
@@ -908,7 +1022,7 @@
         window.handleSubTaskPhotoUpload = async (taskId, subIdx, inputElement) => {
             const files = inputElement.files;
             if (!files || files.length === 0) return;
-            window.showToast("壓縮與處理中...");
+            window.showToast("壓縮與上傳中...");
             try {
                 const extras = initTaskExtras(taskId);
                 if (!extras.subTasks[subIdx]) extras.subTasks[subIdx] = { photos: [], notes: [] };
@@ -918,13 +1032,9 @@
                     extras.subTasks[subIdx].photos.push(compressedBase64);
                 }
                 
-                try {
-                    await localforage.setItem('dailyTasksExtras', taskExtrasState);
-                    renderDailySchedule();
-                } catch (storageError) {
-                    extras.subTasks[subIdx].photos.splice(-files.length, files.length);
-                    window.showToast("手機暫存空間不足！", true);
-                }
+                saveExtrasToCloud(taskId);
+                renderDailySchedule();
+                window.showToast("相片已附加至雲端");
             } catch (error) {
                 window.showToast("處理失敗", true);
             } finally {
@@ -952,14 +1062,14 @@
             if (!extras.subTasks[subIdx]) extras.subTasks[subIdx] = { photos: [], notes: [] };
             extras.subTasks[subIdx].notes.push(text);
             
-            localforage.setItem('dailyTasksExtras', taskExtrasState);
+            saveExtrasToCloud(taskId);
             renderDailySchedule();
         };
 
         window.removeSubTaskPhoto = (taskId, subIdx, photoIdx) => {
             if(taskExtrasState[taskId]?.subTasks?.[subIdx]?.photos) {
                 taskExtrasState[taskId].subTasks[subIdx].photos.splice(photoIdx, 1);
-                localforage.setItem('dailyTasksExtras', taskExtrasState);
+                saveExtrasToCloud(taskId);
                 renderDailySchedule();
             }
         };
@@ -967,7 +1077,7 @@
         window.removeSubTaskNote = (taskId, subIdx, noteIdx) => {
             if(taskExtrasState[taskId]?.subTasks?.[subIdx]?.notes) {
                 taskExtrasState[taskId].subTasks[subIdx].notes.splice(noteIdx, 1);
-                localforage.setItem('dailyTasksExtras', taskExtrasState);
+                saveExtrasToCloud(taskId);
                 renderDailySchedule();
             }
         };
@@ -975,7 +1085,7 @@
         window.handleDailyPhotoUpload = async (taskId, inputElement) => {
             const files = inputElement.files;
             if (!files || files.length === 0) return;
-            window.showToast("壓縮與處理中...");
+            window.showToast("壓縮與上傳中...");
             try {
                 if (!taskExtrasState[taskId]) taskExtrasState[taskId] = { currentPhotos: [], currentNotes: [] };
                 if (!taskExtrasState[taskId].currentPhotos) taskExtrasState[taskId].currentPhotos = [];
@@ -983,14 +1093,9 @@
                     const compressedBase64 = await compressImageAsync(files[i]);
                     taskExtrasState[taskId].currentPhotos.push(compressedBase64);
                 }
-                try {
-                    await localforage.setItem('dailyTasksExtras', taskExtrasState);
-                    renderDailySchedule();
-                    window.showToast("相片已附加");
-                } catch (storageError) {
-                    taskExtrasState[taskId].currentPhotos.splice(-files.length, files.length);
-                    window.showToast("手機暫存空間不足！", true);
-                }
+                saveExtrasToCloud(taskId);
+                renderDailySchedule();
+                window.showToast("相片已附加至雲端");
             } catch (error) {
                 window.showToast("處理失敗", true);
             } finally { inputElement.value = ''; }
@@ -999,7 +1104,7 @@
         window.removeCurrentPhoto = (taskId, index) => {
             if (taskExtrasState[taskId] && taskExtrasState[taskId].currentPhotos) {
                 taskExtrasState[taskId].currentPhotos.splice(index, 1);
-                localforage.setItem('dailyTasksExtras', taskExtrasState);
+                saveExtrasToCloud(taskId);
                 renderDailySchedule();
             }
         };
@@ -1014,14 +1119,14 @@
             if (!taskExtrasState[taskId].currentNotes) taskExtrasState[taskId].currentNotes = [];
             
             taskExtrasState[taskId].currentNotes.push(text);
-            localforage.setItem('dailyTasksExtras', taskExtrasState);
+            saveExtrasToCloud(taskId);
             renderDailySchedule(); 
         };
 
         window.removeCurrentNote = (taskId, index) => {
             if (taskExtrasState[taskId] && taskExtrasState[taskId].currentNotes) {
                 taskExtrasState[taskId].currentNotes.splice(index, 1);
-                localforage.setItem('dailyTasksExtras', taskExtrasState);
+                saveExtrasToCloud(taskId);
                 renderDailySchedule();
             }
         };
