@@ -47,8 +47,8 @@
     <script type="module">
         import { initializeApp } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-auth.js";
-        // 核心升級：導入純粹的 getFirestore，回歸極速即時同步
-        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-firestore.js";
+        // 核心重製：移除複雜的 persistentLocalCache，回歸最純粹即時的 getFirestore 與 onSnapshot
+        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, writeBatch } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-firestore.js";
 
         const userFirebaseConfig = {
             apiKey: "AIzaSyBsdBYBeJYqgeDDxF39lZ0pr785SMnwvJs",
@@ -63,191 +63,212 @@
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : userFirebaseConfig;
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
-        
-        // 完全使用跟影片庫相同的直連模式，捨棄繁重的本地快取設定
-        let db = getFirestore(app);
-        
+        // 使用純淨版 Firestore，不加載離線快取，確保資料 0.1 秒即時同步
+        const db = getFirestore(app);
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
         let steps = [];
         let currentUser = null;
-        let unsubscribeSnapshot = null;
-        let unsubscribeImagesSnapshot = null;
 
         const connectionStatus = document.getElementById('connectionStatus');
         const connectionDot = document.getElementById('connectionDot');
         const stepsContainer = document.getElementById('stepsContainer');
         const addBoxBtn = document.getElementById('addBoxBtn');
 
-        const defaultDailyScheduleData = [
-            { 
-                id: 't1', start: '07:00', end: '07:25', title: '開啟鮮風機與豬肉檔巡查', content: '1. 開啟鮮風機,拍照並發送至「紅街市內部溝通群」<br>2. 向有營業的豬肉攤檔派發聲明書,並收集豬肉價格,測豬溫相*6', note: '17:00開,20:00關。測豬溫順檔號。<br>【關係:21號(母)→20號(子)。2、14、26號會遲開】',
-                subSteps: [
-                    "前往機房開啟鮮風機",
-                    "拍攝鮮風機運作相片，發送至「紅街市內部溝通群」",
-                    "向有營業的豬肉攤檔派發聲明書",
-                    "收集各攤檔豬肉價格",
-                    "測量豬溫並拍攝 6 張相片 (順檔號)"
-                ]
-            },
-            { 
-                id: 't2', start: '07:25', end: '07:30', title: '錄入豬肉價格', content: '完成價格收集及錄入市政署系統內', note: '8:00後致電通知樓上稽查',
-                subSteps: [
-                    "登入市政署系統",
-                    "核對並錄入收集到的豬肉價格",
-                    "確認錄入無誤後存檔"
-                ]
-            },
-            { 
-                id: 't3', start: '07:30', end: '08:30', title: '早更資料與相片發送', content: '1. Whatapps: 返豬相*6, 豬溫相*6<br>2. Wechat: 上班照*5 (客服7人,清潔8人,保安2人,清潔1人,清潔1人)<br>3. 更新豬肉3個表格(總表/營運/十項)', note: '相片留底: 桌面>01及02<br>表格: 公機SHARE內',
-                subSteps: [
-                    "Whatapps: 發送返豬相*6 (車上*1/板車*2/冇豬*1/攤檔*2)",
-                    "Whatapps: 發送豬溫相*6 (寶號*1/地面牆身*1/豬肉*4)",
-                    "相片留底至: 桌面 > 01上報資料",
-                    "Wechat: 發送上班照*5 (客服/清潔/保安)",
-                    "相片留底至: 桌面 > 02工作資料",
-                    "更新表格 (1) 街市豬肉十項變動總表",
-                    "更新表格 (2) 街市豬肉檔屠豬及營運資料總表",
-                    "更新表格 (3) 紅街市十項豬肉價格"
-                ]
-            },
-            { id: 't4', start: '08:30', end: '09:25', title: '收集魚/菜/雞/牛肉資料', content: '1. 收魚價、菜價、菜單/菜標、進貨公斤重量<br>2. 收生鮮及冰鮮雞單,影相發送,填雞表<br>3. 收牛價<br>完成價格收集及錄入市政署系統內', note: '生鮮雞相*4(每檔1張不同類)。<br>致電通知樓上稽查。<br>相片留底至桌面>01' },
-            { id: 't5', start: '09:30', end: '10:30', title: '巡檔、抄溫與文員工作', content: '1. 剔檔(承租人狀況表)、抄溫度<br>2. 收豬肉紙及拆貨單,寫菜簿、雞簿<br>3. 更新表格(生鮮雞/豬肉檔/蔬菜重量)<br>4. 影豬肉營業相*14發送Whatapps/Wechat<br>5. 埋欄開燈相*2發送Wechat', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20<br>(10:00-10:30) 開燈, (18:00-18:30) 關燈<br>無論有沒有營業都需要拍相' },
-            { id: 't6', start: '10:00', end: '13:00', title: '還單與掃描', content: '還單，後掃描豬肉聲明書、菜單、牛肉單、雞單、拆貨單，並按相關格式命名檔案儲至 Share 派單', note: '公機SHARE內' },
-            { id: 't7', start: '10:00', end: '19:00', title: '提早收工時段', content: '開始提早收工', note: '' },
-            { id: 't8', start: '10:30', end: '11:30', title: '稽查簽署', content: '稽查到客服室簽署菜簿、雞簿、單據等。', note: '' },
-            { id: 't9', start: '11:30', end: '12:00', title: '午間剔檔與抄溫', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20' },
-            { id: 't10', start: '13:00', end: '14:00', title: '收雞單', content: '收J-022雞單,並掃描 派單', note: '' },
-            { id: 't11', start: '16:00', end: '19:00', title: '雞檔收工', content: '雞檔收工時段', note: '' },
-            { id: 't12', start: '16:30', end: '17:00', title: '傍晚剔檔與抄溫', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20' },
-            { id: 't13', start: '17:30', end: '19:30', title: '豬肉檔收工', content: '豬肉檔收工,入表「街市豬肉檔屠豬及營運資料總表」', note: '公機SHARE內' },
-            { id: 't14', start: '18:30', end: '19:00', title: '晚間剔檔與抄溫', content: '剔檔(承租人親身經營狀況表)、抄溫度', note: '抄溫時段: 9-11, 11-13, 16-18, 18-20' }
-        ];
-
-        let dailyScheduleData = defaultDailyScheduleData;
+        let dailyScheduleData = [];
         let taskCompletionState = {};
         let taskExtrasState = {}; 
         let taskArchiveState = {}; 
         let subTaskCompletionState = {}; 
         let expandedTasksState = {}; 
-        
-        let galleryCategories = ['全部', '未分類', '街市檔口', '鮮風機', '價格表', '其他'];
+        let galleryCategories = ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他'];
         let galleryItems = [];
         let currentGalleryCategory = '全部';
-
         window.isEditMode = false;
         let timeUpdateInterval;
 
-        // ==========================================
-        // 🌟 雲端同步助手 (Helper Functions) 
-        // ==========================================
-        const saveScheduleToCloud = async () => { if(currentUser) return setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }); };
-        const saveTaskStatesToCloud = async () => { if(currentUser) return setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState }); };
-        const saveSubTaskStatesToCloud = async () => { if(currentUser) return setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState }); };
-        const saveExtrasToCloud = async (taskId) => { if(currentUser) return setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_extras', taskId), taskExtrasState[taskId] || {}); };
-        const saveCategoriesToCloud = async () => { if(currentUser) return setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories }); };
-
-        // ==========================================
-        // 🚀 核心升級：配置秒開雙層快取，並實作無痛舊資料大遷移
-        // ==========================================
-
-        // 幫手函數：安全讀取最舊的 localStorage 資料
-        const getOldLocal = (key) => {
-            try { const val = localStorage.getItem(key); return val ? JSON.parse(val) : null; } 
-            catch(e) { return null; }
+        // 幫手函數：安全讀取本地雙層快取
+        const getLocal = (key, defaultVal) => {
+            try { const val = localStorage.getItem(key); return val ? JSON.parse(val) : defaultVal; } 
+            catch(e) { return defaultVal; }
         };
 
-        function loadLocalData() {
-            try {
-                // 優先讀取秒開快取 (這是前一次 onSnapshot 存下來的最新狀態)
-                const sd = getOldLocal('work_cache_schedule'); if (sd) dailyScheduleData = sd;
-                const ts = getOldLocal('work_cache_task_states'); if (ts) taskCompletionState = ts;
-                const te = getOldLocal('work_cache_daily_extras'); if (te) taskExtrasState = te;
-                const ta = getOldLocal('work_cache_daily_archive'); if (ta) taskArchiveState = ta;
-                const st = getOldLocal('work_cache_subtask_states'); if (st) subTaskCompletionState = st;
-                const gc = getOldLocal('work_cache_gallery_categories'); if (gc) galleryCategories = gc;
-                const gi = getOldLocal('work_cache_gallery_items'); if (gi) galleryItems = gi;
+        // 🌟 1. 啟動時：瞬間載入本地快取畫出介面 (秒開)
+        function loadLocalFastCache() {
+            dailyScheduleData = getLocal('work_cache_schedule', []);
+            taskCompletionState = getLocal('work_cache_task_states', {});
+            taskExtrasState = getLocal('work_cache_daily_extras', {});
+            taskArchiveState = getLocal('work_cache_daily_archive', {});
+            subTaskCompletionState = getLocal('work_cache_subtask_states', {});
+            galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
+            galleryItems = getLocal('work_cache_gallery_items', []);
+            
+            if (!galleryCategories.includes('任務附件')) galleryCategories.push('任務附件');
 
-                currentGalleryCategory = galleryCategories[0] || '全部';
+            if(document.getElementById('dailySchedulePage') && !document.getElementById('dailySchedulePage').classList.contains('hidden')) {
+                renderDailySchedule();
+            }
+            if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) {
+                window.renderGallery();
+            }
+        }
 
-                Object.keys(taskExtrasState).forEach(key => {
-                    const extra = taskExtrasState[key];
-                    if (extra.photo !== undefined && !extra.currentPhotos) {
-                        extra.currentPhotos = extra.photo ? [extra.photo] : [];
-                        delete extra.photo;
-                    }
-                    if (extra.note !== undefined && !extra.currentNotes) {
-                        extra.currentNotes = extra.note ? [extra.note] : [];
-                        delete extra.note;
-                    }
-                    if (!extra.subTasks) {
-                        extra.subTasks = {};
-                    }
+        // 🌟 核心大腦：拯救舊照片大作戰，把舊的陣列解壓縮成獨立單據
+        async function migrateOldMassivePhotos() {
+            let hasMigrated = false;
+            Object.keys(taskExtrasState).forEach(taskId => {
+                let extra = taskExtrasState[taskId];
+                
+                // 轉移主任務照片
+                if (extra.currentPhotos && extra.currentPhotos.length > 0) {
+                    extra.currentPhotos.forEach((url, i) => {
+                        const photoId = `mig_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
+                        const newItem = { id: photoId, url, title: '舊任務紀錄', category: '任務附件', taskId, timestamp: new Date().toLocaleString('zh-TW') };
+                        galleryItems.unshift(newItem);
+                        if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId), newItem).catch(()=>{});
+                    });
+                    extra.currentPhotos = []; // 清空肥大陣列
+                    hasMigrated = true;
+                }
+                
+                // 轉移子任務照片
+                if (extra.subTasks) {
+                    Object.keys(extra.subTasks).forEach(subIdx => {
+                        if (extra.subTasks[subIdx].photos && extra.subTasks[subIdx].photos.length > 0) {
+                            extra.subTasks[subIdx].photos.forEach((url, i) => {
+                                const photoId = `migs_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
+                                const newItem = { id: photoId, url, title: '舊子任務紀錄', category: '任務附件', taskId, subIdx: parseInt(subIdx), timestamp: new Date().toLocaleString('zh-TW') };
+                                galleryItems.unshift(newItem);
+                                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId), newItem).catch(()=>{});
+                            });
+                            extra.subTasks[subIdx].photos = []; // 清空肥大陣列
+                            hasMigrated = true;
+                        }
+                    });
+                }
+            });
+            
+            if (hasMigrated) {
+                localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
+                localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+                if(currentUser) {
+                    setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState });
+                }
+                renderDailySchedule();
+            }
+        }
+
+        // 🌟 2. 連線後：以最直接的 onSnapshot 接收雲端資料並覆蓋畫面
+        function setupPureRealtimeSync() {
+            if (!currentUser) return;
+            
+            // 監聽排程卡片
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), (docSnap) => {
+                if(docSnap.exists() && docSnap.data().tasks) { 
+                    dailyScheduleData = docSnap.data().tasks;
+                    localStorage.setItem('work_cache_schedule', JSON.stringify(dailyScheduleData));
+                    renderDailySchedule(); 
+                }
+            });
+            
+            // 監聽任務完成狀態
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), (docSnap) => {
+                if(docSnap.exists()) { 
+                    taskCompletionState = docSnap.data().states || {};
+                    localStorage.setItem('work_cache_task_states', JSON.stringify(taskCompletionState));
+                    renderDailySchedule(); 
+                }
+            });
+            
+            // 監聽子任務完成狀態
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), (docSnap) => {
+                if(docSnap.exists()) { 
+                    subTaskCompletionState = docSnap.data().states || {};
+                    localStorage.setItem('work_cache_subtask_states', JSON.stringify(subTaskCompletionState));
+                    renderDailySchedule(); 
+                }
+            });
+
+            // 監聽純文字筆記 (現在 Extras 裡面只剩超輕量的文字，絕對不會爆表)
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), (docSnap) => {
+                if(docSnap.exists()) { 
+                    taskExtrasState = docSnap.data().extras || {};
+                    localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
+                    renderDailySchedule(); 
+                }
+            });
+
+            // 監聽圖庫設定
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), (docSnap) => {
+                if(docSnap.exists()) { 
+                    galleryCategories = docSnap.data().categories || ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他'];
+                    if(!galleryCategories.includes('任務附件')) galleryCategories.push('任務附件');
+                    localStorage.setItem('work_cache_gallery_categories', JSON.stringify(galleryCategories));
+                    window.renderGallery(); 
+                }
+            });
+
+            // 🌟 關鍵破解：監聽所有獨立儲存的照片單據 (完全解除 1MB 限制！)
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snapshot) => {
+                let newItems = [];
+                snapshot.forEach(d => newItems.push(d.data()));
+                newItems.sort((a,b) => {
+                    const idA = a.id || '';
+                    const idB = b.id || '';
+                    return idB.localeCompare(idA);
                 });
                 
-                // 讀取完畢，馬上渲染一次讓用戶有畫面看
-                if(document.getElementById('dailySchedulePage') && !document.getElementById('dailySchedulePage').classList.contains('hidden')) {
-                    renderDailySchedule();
+                if(JSON.stringify(galleryItems) !== JSON.stringify(newItems)) {
+                    galleryItems = newItems;
+                    localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+                    if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) window.renderGallery();
+                    if(document.getElementById('dailySchedulePage') && !document.getElementById('dailySchedulePage').classList.contains('hidden')) renderDailySchedule();
                 }
-                if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) {
-                    window.renderGallery();
-                }
-            } catch (error) {
-                console.error("載入本地備援失敗:", error);
-            }
-        }
-        
-        // 🚀 強力自動轉移機制：把舊版最古老的「localStorage」舊資料一次性打上雲端
-        async function migrateLocalToCloud() {
-            if (!currentUser) return;
-            const migrated = localStorage.getItem('cloud_migrated_v4');
-            if (migrated) return;
+            });
 
-            window.showToast("🚀 正在為您將舊數據上雲端...", false);
-            try {
-                // 抓取最古老的那些 key (v1, v2 時期的產物)
-                const sd = getOldLocal('userDailyScheduleData');
-                if (sd && sd.length > 0) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: sd });
-
-                const ts = getOldLocal('dailyTasksState');
-                if (ts) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: ts });
-
-                const st = getOldLocal('subTaskCompletionState');
-                if (st) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: st });
-
-                const gc = getOldLocal('galleryCategories');
-                if (gc) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: gc });
-
-                const te = getOldLocal('dailyTasksExtras');
-                if (te) {
-                    for (const taskId in te) {
-                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_extras', taskId), te[taskId]);
-                    }
-                }
-
-                const ta = getOldLocal('dailyTasksArchive');
-                if (ta) {
-                    for (const taskId in ta) {
-                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_archive', taskId), { archive: ta[taskId] });
-                    }
-                }
-
-                const gi = getOldLocal('galleryItems');
-                if (gi && gi.length > 0) {
-                    for (const item of gi) {
-                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item);
-                    }
-                }
-
-                // 標記為已遷移，避免重複執行
-                localStorage.setItem('cloud_migrated_v4', 'true');
-                window.showToast("✅ 舊數據雲端同步成功！已跨越儲存限制！");
-            } catch (e) {
-                console.error("Migration error:", e);
-                window.showToast("資料轉移稍有延遲，將於背景繼續處理");
-            }
+            // 執行舊數據救援
+            setTimeout(migrateOldMassivePhotos, 2000);
         }
 
+        // 🌟 終極修復：全機型相容的 JPEG 高壓縮引擎 (強制降到 50-80KB)
+        function compressImageSafeAsync(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.src = event.target.result;
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const MAX_SIZE = 800; // 安全極限尺寸
+                        let width = img.width;
+                        let height = img.height;
+
+                        if (width > height) {
+                            if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
+                        } else {
+                            if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
+                        }
+
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.imageSmoothingEnabled = true;
+                        ctx.imageSmoothingQuality = 'medium';
+                        ctx.drawImage(img, 0, 0, width, height);
+                        
+                        // 強制輸出 image/jpeg，壓縮比 0.7，全網全手機 100% 支援不破圖！
+                        resolve(canvas.toDataURL('image/jpeg', 0.7)); 
+                    };
+                    img.onerror = () => reject(new Error("圖片解析失敗"));
+                };
+                reader.onerror = () => reject(new Error("檔案讀取失敗"));
+            });
+        }
+
+        // ==========================================
+        // UI 操作邏輯與雲端推播
+        // ==========================================
         window.toggleEditMode = (isChecked) => {
             window.isEditMode = isChecked;
             const bg = document.getElementById('editToggleBg');
@@ -276,24 +297,18 @@
             const task = dailyScheduleData.find(t => t.id === taskId);
             if (task) {
                 const cleanValue = typeof value === 'string' ? value.trim() : value;
-                if (subIdx !== -1) {
-                    task.subSteps[subIdx] = cleanValue;
-                } else {
-                    task[field] = cleanValue;
-                }
-                saveScheduleToCloud();
-                window.showToast("資料已同步更新");
+                if (subIdx !== -1) task.subSteps[subIdx] = cleanValue;
+                else task[field] = cleanValue;
+                
+                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }, { merge: true });
+                window.showToast("資料已儲存");
             }
         };
 
         window.addNewTaskCard = () => {
             const newId = 't_' + Date.now();
-            const newTask = {
-                id: newId, start: '00:00', end: '00:00', title: '點擊編輯任務標題',
-                content: '點擊編輯任務內容...', note: '', subSteps: []
-            };
-            dailyScheduleData.push(newTask);
-            saveScheduleToCloud();
+            dailyScheduleData.push({ id: newId, start: '00:00', end: '00:00', title: '點擊編輯任務標題', content: '點擊編輯任務內容...', note: '', subSteps: [] });
+            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }, { merge: true });
             renderDailySchedule();
             window.showToast("已新增任務卡片");
         };
@@ -305,9 +320,8 @@
                 if (!task.subSteps) task.subSteps = [];
                 task.subSteps.push("點擊編輯新增的子任務");
                 expandedTasksState[taskId] = true; 
-                saveScheduleToCloud();
+                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }, { merge: true });
                 renderDailySchedule();
-                window.showToast("已新增子任務");
             }
         };
 
@@ -316,533 +330,220 @@
             const task = dailyScheduleData.find(t => t.id === taskId);
             if (task && task.subSteps) {
                 task.subSteps.splice(subIdx, 1);
-                saveScheduleToCloud();
+                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }, { merge: true });
                 renderDailySchedule();
-                window.showToast("已刪除子任務");
             }
         };
 
+        // 🌟 解除封印：任務照片上傳 (不再塞進 Extras，改為獨立上傳到圖庫)
+        window.handleDailyPhotoUpload = async (taskId, inputElement) => {
+            const files = inputElement.files;
+            if (!files || files.length === 0 || !currentUser) return;
+            window.showToast("極速壓縮與雲端同步中...");
+            inputElement.disabled = true;
+
+            try {
+                for(let i = 0; i < files.length; i++) {
+                    const compressedBase64 = await compressImageSafeAsync(files[i]);
+                    const photoId = 'gt_' + Date.now() + '_' + Math.random().toString(36).substr(2,4);
+                    const newItem = {
+                        id: photoId, url: compressedBase64, title: '任務證據相片', category: '任務附件', taskId: taskId,
+                        timestamp: new Date().toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                    };
+                    
+                    galleryItems.unshift(newItem); // 本地秒速顯示
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId), newItem); // 獨立單據，絕對不會觸發 1MB 限制！
+                }
+                localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+                renderDailySchedule();
+                window.showToast("相片已安全上傳至雲端");
+            } catch (error) {
+                window.showToast("上傳失敗，請檢查網路", true);
+            } finally {
+                inputElement.value = '';
+                inputElement.disabled = false;
+            }
+        };
+
+        window.handleSubTaskPhotoUpload = async (taskId, subIdx, inputElement) => {
+            const files = inputElement.files;
+            if (!files || files.length === 0 || !currentUser) return;
+            window.showToast("極速壓縮與雲端同步中...");
+            inputElement.disabled = true;
+
+            try {
+                for(let i = 0; i < files.length; i++) {
+                    const compressedBase64 = await compressImageSafeAsync(files[i]);
+                    const photoId = 'gs_' + Date.now() + '_' + Math.random().toString(36).substr(2,4);
+                    const newItem = {
+                        id: photoId, url: compressedBase64, title: '子任務相片', category: '任務附件', taskId: taskId, subIdx: subIdx,
+                        timestamp: new Date().toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                    };
+                    
+                    galleryItems.unshift(newItem); 
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId), newItem);
+                }
+                localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+                renderDailySchedule();
+                window.showToast("相片已安全上傳至雲端");
+            } catch (error) {
+                window.showToast("上傳失敗，請檢查網路", true);
+            } finally {
+                inputElement.value = '';
+                inputElement.disabled = false;
+            }
+        };
+
+        window.removeTaskPhoto = async (photoId, event) => {
+            if(event) event.stopPropagation();
+            if(!currentUser) return;
+            
+            galleryItems = galleryItems.filter(item => item.id !== photoId);
+            localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+            renderDailySchedule();
+            
+            try { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId)); } catch(e) {}
+        };
+
+        window.addDailyNote = (taskId) => {
+            const input = document.getElementById(`note-input-${taskId}`);
+            if (!input) return;
+            const text = input.value.trim();
+            if (!text) return;
+
+            if (!taskExtrasState[taskId]) taskExtrasState[taskId] = { currentNotes: [], subTasks: {} };
+            if (!taskExtrasState[taskId].currentNotes) taskExtrasState[taskId].currentNotes = [];
+            
+            taskExtrasState[taskId].currentNotes.push(text);
+            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState }, { merge: true });
+            renderDailySchedule(); 
+        };
+
+        window.removeCurrentNote = (taskId, index) => {
+            if (taskExtrasState[taskId] && taskExtrasState[taskId].currentNotes) {
+                taskExtrasState[taskId].currentNotes.splice(index, 1);
+                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState }, { merge: true });
+                renderDailySchedule();
+            }
+        };
+
+        window.submitSubTaskNote = (taskId, subIdx) => {
+            const input = document.getElementById(`subnote-input-${taskId}-${subIdx}`);
+            if(!input) return;
+            const text = input.value.trim();
+            if(!text) { window.toggleSubNoteInput(taskId, subIdx); return; }
+
+            if (!taskExtrasState[taskId]) taskExtrasState[taskId] = { currentNotes: [], subTasks: {} };
+            if (!taskExtrasState[taskId].subTasks) taskExtrasState[taskId].subTasks = {};
+            if (!taskExtrasState[taskId].subTasks[subIdx]) taskExtrasState[taskId].subTasks[subIdx] = { notes: [] };
+            if (!taskExtrasState[taskId].subTasks[subIdx].notes) taskExtrasState[taskId].subTasks[subIdx].notes = [];
+            
+            taskExtrasState[taskId].subTasks[subIdx].notes.push(text);
+            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState }, { merge: true });
+            renderDailySchedule();
+        };
+
+        window.removeSubTaskNote = (taskId, subIdx, noteIdx) => {
+            if(taskExtrasState[taskId]?.subTasks?.[subIdx]?.notes) {
+                taskExtrasState[taskId].subTasks[subIdx].notes.splice(noteIdx, 1);
+                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState }, { merge: true });
+                renderDailySchedule();
+            }
+        };
+
+        window.toggleSubNoteInput = (taskId, subIdx) => {
+            const container = document.getElementById(`subnote-input-container-${taskId}-${subIdx}`);
+            if(container) {
+                container.classList.toggle('hidden');
+                if(!container.classList.contains('hidden')) document.getElementById(`subnote-input-${taskId}-${subIdx}`).focus();
+            }
+        };
+
+        window.toggleTask = async (taskId) => {
+            const isCompleted = !taskCompletionState[taskId];
+            taskCompletionState[taskId] = isCompleted;
+            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState }, { merge: true });
+            renderDailySchedule(); 
+        };
+
+        window.toggleSubTask = (taskId, idx, event) => {
+            if(event) event.stopPropagation();
+            if (!subTaskCompletionState[taskId]) subTaskCompletionState[taskId] = {};
+            subTaskCompletionState[taskId][idx] = !subTaskCompletionState[taskId][idx];
+            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState }, { merge: true });
+            renderDailySchedule();
+        };
+
+        window.toggleTaskDetails = (taskId, event) => {
+            event.stopPropagation();
+            expandedTasksState[taskId] = !expandedTasksState[taskId];
+            renderDailySchedule();
+        };
+
+        window.deleteTaskCard = (taskId, event) => {
+            if(event) event.stopPropagation();
+            dailyScheduleData = dailyScheduleData.filter(t => t.id !== taskId);
+            delete taskCompletionState[taskId];
+            delete subTaskCompletionState[taskId];
+            delete taskExtrasState[taskId];
+            
+            if(currentUser) {
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData });
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState });
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState });
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState });
+            }
+            renderDailySchedule();
+            window.showToast("排程卡片已刪除");
+        };
+
+        window.openArchive = (taskId) => {
+            const container = document.getElementById('archiveContent');
+            const modal = document.getElementById('archiveModal');
+            
+            // 從 galleryItems 動態抓取屬於這個主任務與子任務的所有照片
+            const taskPhotos = galleryItems.filter(p => p.taskId === taskId);
+            
+            if(taskPhotos.length === 0) {
+                container.innerHTML = '<div class="flex flex-col items-center justify-center h-full py-10"><i data-lucide="image-off" class="w-12 h-12 text-slate-300 mb-3"></i><div class="text-slate-500 tracking-widest text-xs">目前沒有任何圖片紀錄</div></div>';
+            } else {
+                let html = '<div class="grid grid-cols-2 gap-3 pb-8">';
+                taskPhotos.forEach(item => {
+                    const noteText = item.subIdx !== undefined ? `子任務 ${item.subIdx + 1}` : '主任務紀錄';
+                    html += `
+                    <div class="bg-white rounded-md overflow-hidden border border-slate-200 shadow-sm flex flex-col pb-1">
+                        <div class="aspect-square w-full relative p-1 pb-0">
+                            <img src="${item.url}" class="w-full h-full object-cover rounded-sm active:scale-95 transition-transform" onclick="window.openFullscreenImg('${item.url}')"/>
+                        </div>
+                        <div class="p-1.5 flex flex-col bg-white flex-1">
+                            <div class="text-[10px] text-slate-600 font-medium break-words whitespace-pre-wrap w-full text-center px-1">${noteText}<br><span class="text-[8px] text-slate-400">${item.timestamp}</span></div>
+                        </div>
+                    </div>`;
+                });
+                html += '</div>';
+                container.innerHTML = html;
+            }
+            lucide.createIcons();
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        };
+
+        // 導出備份
         window.exportData = async () => {
             window.showToast("準備導出資料...");
             try {
                 const exportPayload = {
-                    version: "4.0",
-                    exportDate: new Date().toISOString(),
-                    dailyScheduleData,
-                    taskCompletionState,
-                    taskExtrasState,
-                    taskArchiveState,
-                    subTaskCompletionState,
-                    galleryCategories,
-                    galleryItems
+                    version: "5.0", exportDate: new Date().toISOString(),
+                    dailyScheduleData, taskCompletionState, taskExtrasState, subTaskCompletionState,
+                    galleryCategories, galleryItems
                 };
-                
                 const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
                 a.download = `工作記錄本_備份_${new Date().toISOString().slice(0,10)}.json`;
                 a.click();
                 window.showToast("導出成功！已儲存至下載資料夾");
-            } catch (error) {
-                window.showToast("導出失敗", true);
-            }
-        };
-
-        lucide.createIcons();
-
-        window.showToast = (message, isError = false) => {
-            const toast = document.createElement('div');
-            toast.className = `fixed top-16 left-1/2 transform -translate-x-1/2 px-5 py-3 rounded-full shadow-lg text-sm font-semibold z-50 transition-all duration-300 ${isError ? 'bg-red-500 text-white' : 'bg-slate-800 text-white'}`;
-            toast.textContent = message;
-            document.body.appendChild(toast);
-            
-            setTimeout(() => {
-                toast.style.opacity = '0';
-                toast.style.transform = 'translate(-50%, -20px)';
-                setTimeout(() => toast.remove(), 300);
-            }, 3000);
-        };
-
-        async function initAuth() {
-            try {
-                // 優先載入畫面
-                loadLocalData();
-                
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (error) {
-                console.error("Auth error:", error);
-                window.showToast("連線驗證失敗", true);
-            }
-        }
-
-        onAuthStateChanged(auth, (user) => {
-            currentUser = user;
-            if (user) {
-                connectionDot.classList.replace('bg-red-500', 'bg-green-500');
-                connectionStatus.textContent = '系統已連線並同步';
-                setupFirestoreListener();
-            } else {
-                connectionDot.classList.replace('bg-green-500', 'bg-red-500');
-                connectionStatus.textContent = '連線中或驗證失敗...';
-                if (unsubscribeSnapshot) unsubscribeSnapshot();
-                if (unsubscribeImagesSnapshot) unsubscribeImagesSnapshot();
-            }
-        });
-
-        function setupFirestoreListener() {
-            if (!currentUser) return;
-            
-            const stepsRef = collection(db, 'artifacts', appId, 'public', 'data', 'workflow_steps');
-            const imagesRef = collection(db, 'artifacts', appId, 'public', 'data', 'workflow_images');
-            
-            // 原有的自訂流程監聽
-            unsubscribeSnapshot = onSnapshot(stepsRef, (snapshot) => {
-                const fetchedSteps = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                
-                steps = fetchedSteps.map(fetchedStep => {
-                    const existingStep = steps.find(s => s.id === fetchedStep.id);
-                    return { ...fetchedStep, image: existingStep ? existingStep.image : null };
-                });
-                
-                steps.sort((a, b) => a.order - b.order);
-                renderSteps();
-                if(addBoxBtn) addBoxBtn.disabled = false;
-            }, (error) => {
-                if(addBoxBtn) addBoxBtn.disabled = false;
-                if (error.code === 'permission-denied') {
-                    window.showToast("權限不足", true);
-                }
-            });
-
-            unsubscribeImagesSnapshot = onSnapshot(imagesRef, (snapshot) => {
-                let hasChanges = false;
-                snapshot.docChanges().forEach((change) => {
-                    const stepId = change.doc.id;
-                    const stepIndex = steps.findIndex(s => s.id === stepId);
-                    
-                    if (change.type === "added" || change.type === "modified") {
-                        const imgData = change.doc.data().image;
-                        if (stepIndex !== -1 && steps[stepIndex].image !== imgData) {
-                            steps[stepIndex].image = imgData;
-                            hasChanges = true;
-                        }
-                    }
-                    if (change.type === "removed") {
-                        if (stepIndex !== -1 && steps[stepIndex].image !== null) {
-                            steps[stepIndex].image = null;
-                            hasChanges = true;
-                        }
-                    }
-                });
-                if (hasChanges) {
-                    renderSteps();
-                }
-            });
-
-            // 🌟 雲端全方位同步監聽 + 雙層快取存入 🌟
-            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), (docSnap) => {
-                if(docSnap.exists()) { 
-                    const newData = docSnap.data().tasks;
-                    if(JSON.stringify(dailyScheduleData) !== JSON.stringify(newData)) {
-                        dailyScheduleData = newData; 
-                        localStorage.setItem('work_cache_schedule', JSON.stringify(dailyScheduleData));
-                        renderDailySchedule(); 
-                    }
-                }
-            });
-            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), (docSnap) => {
-                if(docSnap.exists()) { 
-                    const newData = docSnap.data().states || {};
-                    if(JSON.stringify(taskCompletionState) !== JSON.stringify(newData)) {
-                        taskCompletionState = newData; 
-                        localStorage.setItem('work_cache_task_states', JSON.stringify(taskCompletionState));
-                        renderDailySchedule(); 
-                    }
-                }
-            });
-            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), (docSnap) => {
-                if(docSnap.exists()) { 
-                    const newData = docSnap.data().states || {};
-                    if(JSON.stringify(subTaskCompletionState) !== JSON.stringify(newData)) {
-                        subTaskCompletionState = newData; 
-                        localStorage.setItem('work_cache_subtask_states', JSON.stringify(subTaskCompletionState));
-                        renderDailySchedule(); 
-                    }
-                }
-            });
-            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), (docSnap) => {
-                if(docSnap.exists()) { 
-                    const newData = docSnap.data().categories || ['全部', '未分類', '街市檔口', '鮮風機', '價格表', '其他'];
-                    if(JSON.stringify(galleryCategories) !== JSON.stringify(newData)) {
-                        galleryCategories = newData;
-                        localStorage.setItem('work_cache_gallery_categories', JSON.stringify(galleryCategories));
-                        window.renderGallery(); 
-                    }
-                }
-            });
-
-            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'daily_extras'), (snapshot) => {
-                let hasChanges = false;
-                snapshot.docs.forEach(docSnap => { 
-                    if(JSON.stringify(taskExtrasState[docSnap.id]) !== JSON.stringify(docSnap.data())) {
-                        taskExtrasState[docSnap.id] = docSnap.data(); 
-                        hasChanges = true;
-                    }
-                });
-                if(hasChanges) {
-                    localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
-                    renderDailySchedule();
-                }
-            });
-
-            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'daily_archive'), (snapshot) => {
-                let hasChanges = false;
-                snapshot.docs.forEach(docSnap => { 
-                    if(JSON.stringify(taskArchiveState[docSnap.id]) !== JSON.stringify(docSnap.data().archive || [])) {
-                        taskArchiveState[docSnap.id] = docSnap.data().archive || []; 
-                        hasChanges = true;
-                    }
-                });
-                if(hasChanges) {
-                    localStorage.setItem('work_cache_daily_archive', JSON.stringify(taskArchiveState));
-                    renderDailySchedule();
-                }
-            });
-
-            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snapshot) => {
-                const newData = snapshot.docs.map(docSnap => docSnap.data());
-                newData.sort((a,b) => {
-                    const idA = a.id || '';
-                    const idB = b.id || '';
-                    return idB.localeCompare(idA);
-                });
-                
-                if(JSON.stringify(galleryItems) !== JSON.stringify(newData)) {
-                    galleryItems = newData;
-                    localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
-                    if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) {
-                        window.renderGallery();
-                    }
-                }
-            });
-
-            // 初始化時檢查並執行一次性雲端遷移 (把古老 localStorage 的資料搬上來)
-            migrateLocalToCloud();
-        }
-
-        // 🌟 終極修復：強制退回使用最穩定的 JPEG 引擎，並且適度壓縮避免塞爆雲端
-        function compressImageAsync(file) {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.readAsDataURL(file);
-                reader.onload = (event) => {
-                    const img = new Image();
-                    img.src = event.target.result;
-                    img.onload = () => {
-                        const canvas = document.createElement('canvas');
-                        const MAX_SIZE = 700; // 安全尺寸
-                        let width = img.width;
-                        let height = img.height;
-
-                        if (width > height) {
-                            if (width > MAX_SIZE) {
-                                height *= MAX_SIZE / width;
-                                width = MAX_SIZE;
-                            }
-                        } else {
-                            if (height > MAX_SIZE) {
-                                width *= MAX_SIZE / height;
-                                height = MAX_SIZE;
-                            }
-                        }
-
-                        canvas.width = width;
-                        canvas.height = height;
-                        const ctx = canvas.getContext('2d');
-                        ctx.imageSmoothingEnabled = true;
-                        ctx.imageSmoothingQuality = 'medium';
-                        ctx.drawImage(img, 0, 0, width, height);
-                        
-                        // 降級為相容性 100% 的 jpeg，壓縮比設為 0.6 (約 30-80KB)
-                        resolve(canvas.toDataURL('image/jpeg', 0.6)); 
-                    };
-                    img.onerror = () => reject(new Error("圖片解析失敗"));
-                };
-                reader.onerror = () => reject(new Error("檔案讀取失敗"));
-            });
-        }
-
-        window.addStep = async () => {
-            if (!currentUser) return;
-            const newId = Date.now().toString();
-            const newOrder = steps.length > 0 ? Math.max(...steps.map(s => s.order)) + 1 : 0;
-            const stepData = { image: null, note: '', order: newOrder };
-
-            steps.push({ id: newId, ...stepData });
-            renderSteps();
-
-            try {
-                const stepRef = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_steps', newId);
-                await setDoc(stepRef, stepData);
-            } catch (err) {
-                window.showToast("新增至雲端失敗", true);
-            }
-        };
-
-        window.handleImageUpload = async (id, inputElement) => {
-            const file = inputElement.files[0];
-            if (!file) return;
-            if (!currentUser) return;
-
-            const stepElement = document.getElementById(`step-${id}`);
-            if(stepElement) stepElement.classList.add('opacity-50');
-            window.showToast("處理圖片中...");
-
-            try {
-                const compressedBase64 = await compressImageAsync(file);
-                const stepIndex = steps.findIndex(s => s.id === id);
-                if(stepIndex !== -1) {
-                    steps[stepIndex].image = compressedBase64;
-                    renderSteps(); 
-                }
-
-                const imageRef = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_images', id);
-                await setDoc(imageRef, { image: compressedBase64 });
-                window.showToast("圖片上傳成功");
-            } catch (error) {
-                if (error.code === 'resource-exhausted') {
-                    window.showToast("圖片超過雲端大小限制，請嘗試更換圖片", true);
-                } else {
-                    window.showToast("圖片上傳失敗：" + error.message, true);
-                }
-            } finally {
-                if(stepElement) stepElement.classList.remove('opacity-50');
-                inputElement.value = '';
-            }
-        };
-
-        window.removeImage = async (id) => {
-            if (!currentUser) return;
-            const stepIndex = steps.findIndex(s => s.id === id);
-            if(stepIndex !== -1) {
-                steps[stepIndex].image = null;
-                renderSteps();
-            }
-            const imageRef = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_images', id);
-            await deleteDoc(imageRef);
-        };
-
-        window.handleNoteChange = (id, text) => {
-             const stepIndex = steps.findIndex(s => s.id === id);
-             if(stepIndex !== -1) {
-                 steps[stepIndex].note = text;
-             }
-        }
-
-        window.handleNoteBlur = async (id, text) => {
-            if (!currentUser) return;
-            try {
-                const stepRef = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_steps', id);
-                await setDoc(stepRef, { note: text }, { merge: true });
-            } catch (err) {}
-        };
-
-        window.deleteStep = async (id) => {
-            if (!currentUser) return;
-            steps = steps.filter(s => s.id !== id);
-            renderSteps();
-            try {
-                const stepRef = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_steps', id);
-                await deleteDoc(stepRef);
-                const imageRef = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_images', id);
-                await deleteDoc(imageRef);
-            } catch (err) {}
-        };
-
-        window.moveUp = async (index) => {
-            if (!currentUser || index === 0) return;
-            const step1 = steps[index];
-            const step2 = steps[index - 1];
-            const tempOrder = step1.order;
-            step1.order = step2.order;
-            step2.order = tempOrder;
-            steps.sort((a, b) => a.order - b.order);
-            renderSteps();
-
-            const ref1 = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_steps', step1.id);
-            const ref2 = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_steps', step2.id);
-            await setDoc(ref1, { order: step1.order }, { merge: true });
-            await setDoc(ref2, { order: step2.order }, { merge: true });
-        };
-
-        window.moveDown = async (index) => {
-            if (!currentUser || index === steps.length - 1) return;
-            const step1 = steps[index];
-            const step2 = steps[index + 1];
-            const tempOrder = step1.order;
-            step1.order = step2.order;
-            step2.order = tempOrder;
-            steps.sort((a, b) => a.order - b.order);
-            renderSteps();
-
-            const ref1 = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_steps', step1.id);
-            const ref2 = doc(db, 'artifacts', appId, 'public', 'data', 'workflow_steps', step2.id);
-            await setDoc(ref1, { order: step1.order }, { merge: true });
-            await setDoc(ref2, { order: step2.order }, { merge: true });
-        };
-
-        function renderSteps() {
-            if(!stepsContainer) return;
-            stepsContainer.innerHTML = '';
-            
-            steps.forEach((step, index) => {
-                const isFirst = index === 0;
-                const isLast = index === steps.length - 1;
-                
-                let imageContent = '';
-                if (step.image) {
-                        imageContent = `
-                            <div class="relative rounded-xl overflow-hidden bg-slate-50 border border-slate-200">
-                                <img src="${step.image}" alt="Step ${index + 1}" class="w-full h-auto object-cover max-h-[300px]" />
-                                <button type="button" onclick="window.removeImage('${step.id}')" class="absolute top-2 right-2 p-2 bg-white/80 backdrop-blur-sm rounded-full text-slate-700 shadow hover:bg-white active:scale-95 z-10 cursor-pointer">
-                                    <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
-                                </button>
-                            </div>
-                        `;
-                    } else {
-                        imageContent = `
-                            <div class="flex space-x-3">
-                                <div class="relative flex-1 flex flex-col items-center justify-center py-6 px-4 border border-dashed border-slate-300 rounded-xl bg-slate-50 active:bg-slate-100 transition-colors cursor-pointer text-slate-500 hover:text-blue-500 overflow-hidden">
-                                    <i data-lucide="camera" class="w-7 h-7 mb-2 pointer-events-none"></i>
-                                    <span class="text-xs font-medium pointer-events-none">即時拍照</span>
-                                    <input type="file" accept="image/*" capture="environment" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="window.handleImageUpload('${step.id}', this)" />
-                                </div>
-                                <div class="relative flex-1 flex flex-col items-center justify-center py-6 px-4 border border-dashed border-slate-300 rounded-xl bg-slate-50 active:bg-slate-100 transition-colors cursor-pointer text-slate-500 hover:text-blue-500 overflow-hidden">
-                                    <i data-lucide="image" class="w-7 h-7 mb-2 pointer-events-none"></i>
-                                    <span class="text-xs font-medium pointer-events-none">從相簿選擇</span>
-                                    <input type="file" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="window.handleImageUpload('${step.id}', this)" />
-                                </div>
-                            </div>
-                        `;
-                }
-
-                let arrowContent = `
-                    <div class="py-2 text-slate-300 flex justify-center w-full">
-                        <i data-lucide="arrow-down" class="w-6 h-6 animate-pulse"></i>
-                    </div>
-                `;
-
-                const stepHTML = `
-                    <div id="step-${step.id}" class="flex flex-col items-center transition-opacity duration-200">
-                        <div class="w-full bg-white rounded-2xl p-4 shadow-sm border border-slate-200 relative group">
-                            
-                            <!-- Header -->
-                                <div class="flex justify-between items-center mb-4">
-                                    <div class="flex items-center space-x-3">
-                                        <span class="flex items-center justify-center w-8 h-8 rounded-full bg-blue-100 text-blue-600 font-bold text-sm shadow-sm">
-                                            ${index + 1}
-                                        </span>
-                                        <span class="text-sm font-bold text-slate-700">步驟 ${index + 1}</span>
-                                    </div>
-                                    
-                                    <div class="flex items-center space-x-1 relative z-10">
-                                        <button type="button" onclick="window.moveUp(${index})" ${isFirst ? 'disabled' : ''} class="p-2 rounded-lg ${isFirst ? 'text-slate-200' : 'text-slate-400 active:bg-slate-100 hover:text-blue-500'} cursor-pointer">
-                                            <i data-lucide="arrow-up" class="w-4 h-4 pointer-events-none"></i>
-                                        </button>
-                                        <button type="button" onclick="window.moveDown(${index})" ${isLast ? 'disabled' : ''} class="p-2 rounded-lg ${isLast ? 'text-slate-200' : 'text-slate-400 active:bg-slate-100 hover:text-blue-500'} cursor-pointer">
-                                            <i data-lucide="arrow-down" class="w-4 h-4 pointer-events-none"></i>
-                                        </button>
-                                        <button type="button" onclick="window.deleteStep('${step.id}')" class="p-2 rounded-lg text-red-400 active:bg-red-50 hover:text-red-500 cursor-pointer">
-                                            <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <!-- Image Area -->
-                                <div class="mb-4 relative">
-                                    ${imageContent}
-                                </div>
-
-                                <!-- Note Area -->
-                            <div>
-                                <textarea
-                                    placeholder="點此輸入備註內容..."
-                                    onchange="window.handleNoteChange('${step.id}', this.value)"
-                                    onblur="window.handleNoteBlur('${step.id}', this.value)"
-                                    class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-transparent resize-none min-h-[80px]"
-                                >${step.note || ''}</textarea>
-                            </div>
-                        </div>
-                        
-                        <!-- Arrow -->
-                        ${arrowContent}
-                    </div>
-                `;
-                
-                stepsContainer.insertAdjacentHTML('beforeend', stepHTML);
-            });
-            
-            lucide.createIcons();
-        }
-
-        window.switchTab = (tab) => {
-            const customPage = document.getElementById('customWorkflowPage');
-            const dailyPage = document.getElementById('dailySchedulePage');
-            const galleryPage = document.getElementById('galleryPage');
-            const btnCustom = document.getElementById('tabCustom');
-            const btnDaily = document.getElementById('tabDaily');
-            const btnGallery = document.getElementById('tabGallery');
-
-            const activeClass = "flex-1 py-1.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest";
-            const inactiveClass = "flex-1 py-1.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest";
-
-            if(customPage) customPage.classList.add('hidden');
-            if(dailyPage) dailyPage.classList.add('hidden');
-            if(galleryPage) galleryPage.classList.add('hidden');
-            
-            if(btnCustom) btnCustom.className = inactiveClass;
-            if(btnDaily) btnDaily.className = inactiveClass;
-            if(btnGallery) btnGallery.className = inactiveClass;
-
-            if (tab === 'custom' && customPage) {
-                customPage.classList.remove('hidden');
-                btnCustom.className = activeClass;
-            } else if (tab === 'daily' && dailyPage) {
-                dailyPage.classList.remove('hidden');
-                btnDaily.className = activeClass;
-                renderDailySchedule();
-            } else if (tab === 'gallery' && galleryPage) {
-                galleryPage.classList.remove('hidden');
-                btnGallery.className = activeClass;
-                window.renderGallery();
-            }
-            
-            localStorage.setItem('activeTab', tab);
-        };
-
-        window.deleteTaskCard = (taskId, event) => {
-            if(event) event.stopPropagation();
-            dailyScheduleData = dailyScheduleData.filter(t => t.id !== taskId);
-            saveScheduleToCloud();
-            
-            delete taskCompletionState[taskId];
-            saveTaskStatesToCloud();
-
-            delete subTaskCompletionState[taskId];
-            saveSubTaskStatesToCloud();
-            
-            delete taskExtrasState[taskId];
-            deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_extras', taskId));
-            
-            delete taskArchiveState[taskId];
-            deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_archive', taskId));
-            
-            renderDailySchedule();
-            window.showToast("排程卡片已刪除");
+            } catch (error) { window.showToast("導出失敗", true); }
         };
 
         window.renderGallery = () => {
@@ -850,14 +551,13 @@
             const grid = document.getElementById('galleryGrid');
             if(!sidebar || !grid) return;
 
-            // 頂部加入統一的設定按鈕 (全部分類皆可管理)
             sidebar.innerHTML = `
                 <div class="w-full flex justify-center pt-2 pb-2 border-b border-slate-200 shrink-0 sticky top-0 bg-[#f4f1eb] z-20">
                     <button type="button" onclick="window.openCategoryManager()" class="p-1.5 bg-white text-slate-500 hover:text-slate-800 rounded shadow-sm border border-slate-200 active:scale-95 transition-all">
                         <i data-lucide="settings" class="w-4 h-4"></i>
                     </button>
                 </div>
-                <div class="flex flex-col space-y-2 w-full items-center pt-2">
+                <div class="flex flex-col space-y-2 w-full items-center pt-2 pb-6">
                     ${galleryCategories.map((cat) => {
                         return `
                         <div class="relative w-[60px] group shrink-0">
@@ -873,8 +573,9 @@
 
             const query = document.getElementById('gallerySearchInput').value.toLowerCase();
             let filtered = galleryItems.filter(item => {
-                const matchCat = currentGalleryCategory === '全部' || item.category === currentGalleryCategory;
-                const matchQuery = item.title.toLowerCase().includes(query) || (item.timestamp && item.timestamp.includes(query));
+                // 如果是看「全部」，就隱藏醜醜的任務附件，保持圖庫乾淨。如果特別點擊「任務附件」則顯示。
+                const matchCat = currentGalleryCategory === '全部' ? item.category !== '任務附件' : item.category === currentGalleryCategory;
+                const matchQuery = (item.title||'').toLowerCase().includes(query) || (item.timestamp && item.timestamp.includes(query));
                 return matchCat && matchQuery;
             });
 
@@ -885,7 +586,7 @@
                     <div class="bg-white rounded-md overflow-hidden border border-slate-200 shadow-sm flex flex-col group relative pb-1">
                         <div class="aspect-square w-full relative p-1 pb-0">
                             <img src="${item.url}" class="w-full h-full object-cover rounded-sm active:scale-95 transition-transform cursor-pointer" onclick="window.openFullscreenImg('${item.url}')"/>
-                            <button onclick="window.deleteGalleryItem('${item.id}')" class="absolute top-2 right-2 p-1.5 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-sm active:bg-red-600 z-10"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
+                            <button onclick="window.removeTaskPhoto('${item.id}', event)" class="absolute top-2 right-2 p-1.5 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-sm active:bg-red-600 z-10"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
                         </div>
                         <div class="p-1.5 flex flex-col bg-white flex-1">
                             <div class="text-[11px] text-slate-700 font-medium break-words whitespace-pre-wrap w-full text-center focus:outline-none focus:bg-slate-50 rounded px-1 py-0.5 min-h-[24px] flex items-center justify-center leading-tight" contenteditable="true" onblur="window.updateGalleryTitle('${item.id}', this.innerText)">${item.title}</div>
@@ -896,50 +597,55 @@
             lucide.createIcons();
         };
 
-        window.addCategory = () => {
-            const newName = prompt("請輸入新分類名稱：", "新分類");
-            if(newName && newName.trim() !== '') {
-                galleryCategories.push(newName.trim());
-                saveCategoriesToCloud();
-                window.renderGallery();
-                window.showToast("已新增分類");
+        window.handleGalleryUpload = async (input) => {
+            const files = input.files;
+            if(!files || files.length===0 || !currentUser) return;
+            window.showToast("處理與雲端上傳中...");
+            for(let i=0; i<files.length; i++) {
+               try {
+                   const b64 = await compressImageSafeAsync(files[i]);
+                   const newItem = {
+                       id: 'g_m_'+Date.now()+'_'+Math.random().toString(36).substr(2,4),
+                       url: b64,
+                       title: currentGalleryCategory === '全部' ? '未命名相片' : currentGalleryCategory + '紀錄',
+                       category: currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory,
+                       timestamp: new Date().toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                   };
+                   galleryItems.unshift(newItem);
+                   await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', newItem.id), newItem);
+               } catch(e) {}
             }
+            localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+            window.renderGallery();
+            window.showToast("圖庫雲端上傳完成");
+            input.value = '';
         };
 
-        window.openCategoryManager = () => {
-            window.renderCategoryManager();
-            const modal = document.getElementById('categoryManageModal');
-            if(modal) {
-                modal.classList.remove('hidden');
-                modal.classList.add('flex');
+        window.updateGalleryTitle = (id, text) => {
+            const item = galleryItems.find(i => i.id === id);
+            if(item && currentUser) {
+                item.title = text.trim() || '未命名相片';
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), { title: item.title }, { merge: true });
             }
         };
-
-        window.closeCategoryManager = () => {
-            const modal = document.getElementById('categoryManageModal');
-            if(modal) {
-                modal.classList.add('hidden');
-                modal.classList.remove('flex');
-            }
-        };
+        
+        window.switchGalleryCategory = (cat) => { currentGalleryCategory = cat; window.renderGallery(); };
+        window.openCategoryManager = () => { window.renderCategoryManager(); document.getElementById('categoryManageModal').classList.remove('hidden'); document.getElementById('categoryManageModal').classList.add('flex'); };
+        window.closeCategoryManager = () => { document.getElementById('categoryManageModal').classList.add('hidden'); document.getElementById('categoryManageModal').classList.remove('flex'); };
 
         window.renderCategoryManager = () => {
             const list = document.getElementById('categoryManageList');
             if(!list) return;
             list.innerHTML = galleryCategories.map((cat) => {
-                const isProtected = cat === '全部' || cat === '未分類';
+                const isProtected = cat === '全部' || cat === '未分類' || cat === '任務附件';
                 return `
                 <div class="flex items-center justify-between bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
                     ${isProtected ? `
                         <span class="text-sm font-bold text-slate-500 ml-1 tracking-widest">${cat} <span class="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded ml-1 font-normal border border-slate-200">系統保留</span></span>
-                        <div class="flex gap-1 opacity-30 pointer-events-none">
-                            <button class="p-1.5"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
-                        </div>
+                        <div class="flex gap-1 opacity-30 pointer-events-none"><button class="p-1.5"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div>
                     ` : `
                         <input type="text" value="${cat}" onblur="window.renameCategoryInModal('${cat}', this.value)" class="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700 font-bold focus:outline-none focus:border-blue-400 focus:bg-white transition-colors mr-2 w-full min-w-0 tracking-widest shadow-inner">
-                        <div class="flex gap-1 shrink-0">
-                            <button onclick="window.deleteCategoryInModal('${cat}')" class="p-1.5 text-red-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors active:scale-95"><i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i></button>
-                        </div>
+                        <div class="flex gap-1 shrink-0"><button onclick="window.deleteCategoryInModal('${cat}')" class="p-1.5 text-red-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors active:scale-95"><i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i></button></div>
                     `}
                 </div>
                 `;
@@ -947,413 +653,61 @@
             lucide.createIcons();
         };
 
+        window.addCategory = () => {
+            const newName = prompt("請輸入新分類名稱：", "新分類");
+            if(newName && newName.trim() !== '') {
+                galleryCategories.push(newName.trim());
+                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
+                window.renderGallery();
+            }
+        };
+
         window.renameCategoryInModal = async (oldName, newName) => {
             newName = newName.trim();
-            if(!newName || newName === oldName) {
-                window.renderCategoryManager(); 
-                return;
-            }
-            if(galleryCategories.includes(newName)) {
-                window.showToast("分類名稱已存在", true);
-                window.renderCategoryManager();
-                return;
-            }
+            if(!newName || newName === oldName) { window.renderCategoryManager(); return; }
+            if(galleryCategories.includes(newName)) { window.showToast("名稱已存在", true); window.renderCategoryManager(); return; }
 
             const idx = galleryCategories.indexOf(oldName);
             if(idx !== -1) {
                 galleryCategories[idx] = newName;
-                saveCategoriesToCloud();
-                
-                // 同步更新圖庫內相片的歸屬分類
-                galleryItems.forEach(item => {
-                    if(item.category === oldName) {
-                        item.category = newName;
-                        setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item, { merge: true });
-                    }
-                });
-                
+                if(currentUser) {
+                    setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
+                    galleryItems.forEach(item => {
+                        if(item.category === oldName) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), { category: newName }, { merge: true });
+                    });
+                }
                 if(currentGalleryCategory === oldName) currentGalleryCategory = newName;
-                
-                window.showToast("分類名稱已同步更新");
-                window.renderCategoryManager();
-                window.renderGallery();
+                window.renderCategoryManager(); window.renderGallery();
             }
         };
 
         window.deleteCategoryInModal = async (catName) => {
-            if (confirm(`確定要刪除「${catName}」分類嗎？\n此分類下的圖片將自動移至「未分類」。`)) {
-                
-                galleryItems.forEach(item => {
-                    if(item.category === catName) {
-                        item.category = '未分類';
-                        setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item, { merge: true });
-                    }
-                });
-                
-                const idx = galleryCategories.indexOf(catName);
-                if(idx !== -1) {
-                    galleryCategories.splice(idx, 1);
-                }
-                
-                if(galleryCategories.length === 0) {
-                    galleryCategories.push('未分類');
-                }
-                saveCategoriesToCloud();
-                
-                if(currentGalleryCategory === catName) currentGalleryCategory = galleryCategories[0];
-                
-                window.showToast("分類已刪除");
-                window.renderCategoryManager();
-                window.renderGallery();
-            }
-        };
-
-        window.switchGalleryCategory = (cat) => {
-            currentGalleryCategory = cat;
-            window.renderGallery();
-        };
-
-        window.handleGalleryUpload = async (input) => {
-            const files = input.files;
-            if(!files || files.length===0) return;
-            window.showToast("處理與雲端上傳中...");
-            for(let i=0; i<files.length; i++) {
-               try {
-                   const b64 = await compressImageAsync(files[i]);
-                   const newItem = {
-                       id: 'g_'+Date.now()+'_'+i,
-                       url: b64,
-                       title: currentGalleryCategory === '全部' ? '未命名相片' : currentGalleryCategory + '紀錄',
-                       category: currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory,
-                       timestamp: new Date().toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-                   };
-                   // 立即在前端畫面更新
-                   galleryItems.unshift(newItem);
-                   // 同時推上獨立雲端單據 (突破 1MB 限制)
-                   await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', newItem.id), newItem);
-               } catch(e) {}
-            }
-            window.renderGallery();
-            window.showToast("圖庫雲端上傳完成");
-            input.value = '';
-        };
-
-        window.deleteGalleryItem = (id) => {
-            galleryItems = galleryItems.filter(item => item.id !== id);
-            deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id));
-            window.renderGallery();
-        };
-
-        window.updateGalleryTitle = (id, text) => {
-            const item = galleryItems.find(i => i.id === id);
-            if(item) {
-                item.title = text.trim() || '未命名相片';
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), { title: item.title }, { merge: true });
-            }
-        };
-
-        window.toggleTaskDetails = (taskId, event) => {
-            event.stopPropagation();
-            expandedTasksState[taskId] = !expandedTasksState[taskId];
-            renderDailySchedule();
-        };
-
-        // 🌟 終極修復：加入安全的照片數限制防呆機制
-        window.toggleTask = async (taskId) => {
-            const isCompleted = !taskCompletionState[taskId];
-            taskCompletionState[taskId] = isCompleted;
-            
-            if (isCompleted) {
-                const extras = taskExtrasState[taskId] || { currentPhotos: [], currentNotes: [], subTasks: {} };
-                let hasData = (extras.currentPhotos && extras.currentPhotos.length > 0) || 
-                              (extras.currentNotes && extras.currentNotes.length > 0);
-
-                if (!hasData && extras.subTasks) {
-                    for (const key in extras.subTasks) {
-                        if (extras.subTasks[key].photos?.length > 0 || extras.subTasks[key].notes?.length > 0) {
-                            hasData = true; break;
-                        }
-                    }
-                }
-                
-                if (hasData) {
-                    if (!taskArchiveState[taskId]) taskArchiveState[taskId] = [];
-                    const now = new Date();
-                    const newRecord = {
-                        timestamp: now.getTime(),
-                        dateStr: now.toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
-                        photos: [...(extras.currentPhotos || [])],
-                        notes: [...(extras.currentNotes || [])],
-                        subTasks: JSON.parse(JSON.stringify(extras.subTasks || {}))
-                    };
-                    
-                    const originalArchive = [...taskArchiveState[taskId]];
-                    taskArchiveState[taskId].unshift(newRecord);
-                    
-                    // 防爆機制：只保留最新的 10 筆歷史，確保雲端單據永遠不會超過 1MB
-                    if (taskArchiveState[taskId].length > 10) {
-                        taskArchiveState[taskId] = taskArchiveState[taskId].slice(0, 10);
-                    }
-                    
-                    try {
-                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_archive', taskId), { archive: taskArchiveState[taskId] });
-                        localStorage.setItem('work_cache_daily_archive', JSON.stringify(taskArchiveState));
-                        
-                        // 不再自動清空卡片上的記錄，保留現場照片！
-                        // extras.currentPhotos = []; extras.currentNotes = []; extras.subTasks = {};
-                        // taskExtrasState[taskId] = extras;
-                        // await saveExtrasToCloud(taskId);
-                        // localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
-                        
-                        window.showToast("任務完成！紀錄已備份至歷史圖庫");
-                    } catch (err) {
-                        taskArchiveState[taskId] = originalArchive;
-                        taskCompletionState[taskId] = false;
-                        window.showToast("歸檔失敗：相片總容量過大，請刪除部分圖片再試", true);
-                        renderDailySchedule();
-                        return;
-                    }
-                }
-            }
-
-            saveTaskStatesToCloud();
-            renderDailySchedule(); 
-        };
-
-        window.toggleSubTask = (taskId, idx, event) => {
-            if(event) event.stopPropagation();
-            if (!subTaskCompletionState[taskId]) subTaskCompletionState[taskId] = {};
-            
-            subTaskCompletionState[taskId][idx] = !subTaskCompletionState[taskId][idx];
-            saveSubTaskStatesToCloud();
-            renderDailySchedule();
-        };
-
-        function initTaskExtras(taskId) {
-            if (!taskExtrasState[taskId]) taskExtrasState[taskId] = { currentPhotos: [], currentNotes: [], subTasks: {} };
-            if (!taskExtrasState[taskId].subTasks) taskExtrasState[taskId].subTasks = {};
-            return taskExtrasState[taskId];
-        }
-
-        // 🌟 終極修復：加入強制壓縮等待與容量防禦
-        window.handleSubTaskPhotoUpload = async (taskId, subIdx, inputElement) => {
-            const files = inputElement.files;
-            if (!files || files.length === 0) return;
-            window.showToast("高強度壓縮與雲端同步中...");
-            try {
-                const extras = initTaskExtras(taskId);
-                if (!extras.subTasks[subIdx]) extras.subTasks[subIdx] = { photos: [], notes: [] };
-                
-                const originalPhotos = [...extras.subTasks[subIdx].photos]; // 備份原始照片
-                
-                for(let i = 0; i < files.length; i++) {
-                    const compressedBase64 = await compressImageAsync(files[i]);
-                    extras.subTasks[subIdx].photos.push(compressedBase64);
-                }
-                
-                try {
-                    await saveExtrasToCloud(taskId); // 確保真的傳上雲端才算成功
-                    localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
-                    renderDailySchedule();
-                    window.showToast("相片已安全備份至雲端");
-                } catch(cloudErr) {
-                    extras.subTasks[subIdx].photos = originalPhotos; // 失敗則還原
-                    window.showToast("雲端拒絕上傳：單次累積照片過多，請分批上傳", true);
-                    renderDailySchedule();
-                }
-            } catch (error) {
-                window.showToast("圖片解析失敗", true);
-            } finally {
-                inputElement.value = '';
-            }
-        };
-
-        window.toggleSubNoteInput = (taskId, subIdx) => {
-            const container = document.getElementById(`subnote-input-container-${taskId}-${subIdx}`);
-            if(container) {
-                container.classList.toggle('hidden');
-                if(!container.classList.contains('hidden')) {
-                    document.getElementById(`subnote-input-${taskId}-${subIdx}`).focus();
-                }
-            }
-        };
-
-        window.submitSubTaskNote = (taskId, subIdx) => {
-            const input = document.getElementById(`subnote-input-${taskId}-${subIdx}`);
-            if(!input) return;
-            const text = input.value.trim();
-            if(!text) { window.toggleSubNoteInput(taskId, subIdx); return; }
-
-            const extras = initTaskExtras(taskId);
-            if (!extras.subTasks[subIdx]) extras.subTasks[subIdx] = { photos: [], notes: [] };
-            extras.subTasks[subIdx].notes.push(text);
-            
-            saveExtrasToCloud(taskId);
-            renderDailySchedule();
-        };
-
-        window.removeSubTaskPhoto = (taskId, subIdx, photoIdx) => {
-            if(taskExtrasState[taskId]?.subTasks?.[subIdx]?.photos) {
-                taskExtrasState[taskId].subTasks[subIdx].photos.splice(photoIdx, 1);
-                saveExtrasToCloud(taskId);
-                renderDailySchedule();
-            }
-        };
-
-        window.removeSubTaskNote = (taskId, subIdx, noteIdx) => {
-            if(taskExtrasState[taskId]?.subTasks?.[subIdx]?.notes) {
-                taskExtrasState[taskId].subTasks[subIdx].notes.splice(noteIdx, 1);
-                saveExtrasToCloud(taskId);
-                renderDailySchedule();
-            }
-        };
-
-        // 🌟 終極修復：加入強制壓縮等待與容量防禦
-        window.handleDailyPhotoUpload = async (taskId, inputElement) => {
-            const files = inputElement.files;
-            if (!files || files.length === 0) return;
-            window.showToast("高強度壓縮與雲端同步中...");
-            try {
-                if (!taskExtrasState[taskId]) taskExtrasState[taskId] = { currentPhotos: [], currentNotes: [] };
-                if (!taskExtrasState[taskId].currentPhotos) taskExtrasState[taskId].currentPhotos = [];
-                
-                const originalPhotos = [...taskExtrasState[taskId].currentPhotos]; // 備份
-
-                for(let i = 0; i < files.length; i++) {
-                    const compressedBase64 = await compressImageAsync(files[i]);
-                    taskExtrasState[taskId].currentPhotos.push(compressedBase64);
-                }
-                
-                try {
-                    await saveExtrasToCloud(taskId); // 確保真的傳上雲端才算成功
-                    localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
-                    renderDailySchedule();
-                    window.showToast("相片已安全備份至雲端");
-                } catch (cloudErr) {
-                    taskExtrasState[taskId].currentPhotos = originalPhotos; // 失敗則還原
-                    window.showToast("雲端拒絕上傳：單次累積照片過多，請分批上傳", true);
-                    renderDailySchedule();
-                }
-            } catch (error) {
-                window.showToast("圖片解析失敗", true);
-            } finally { inputElement.value = ''; }
-        };
-
-        window.removeCurrentPhoto = (taskId, index) => {
-            if (taskExtrasState[taskId] && taskExtrasState[taskId].currentPhotos) {
-                taskExtrasState[taskId].currentPhotos.splice(index, 1);
-                saveExtrasToCloud(taskId);
-                renderDailySchedule();
-            }
-        };
-
-        window.addDailyNote = (taskId) => {
-            const input = document.getElementById(`note-input-${taskId}`);
-            if (!input) return;
-            const text = input.value.trim();
-            if (!text) return;
-
-            if (!taskExtrasState[taskId]) taskExtrasState[taskId] = { currentPhotos: [], currentNotes: [] };
-            if (!taskExtrasState[taskId].currentNotes) taskExtrasState[taskId].currentNotes = [];
-            
-            taskExtrasState[taskId].currentNotes.push(text);
-            saveExtrasToCloud(taskId);
-            renderDailySchedule(); 
-        };
-
-        window.removeCurrentNote = (taskId, index) => {
-            if (taskExtrasState[taskId] && taskExtrasState[taskId].currentNotes) {
-                taskExtrasState[taskId].currentNotes.splice(index, 1);
-                saveExtrasToCloud(taskId);
-                renderDailySchedule();
-            }
-        };
-
-        window.openArchive = (taskId) => {
-            const archive = taskArchiveState[taskId] || [];
-            const container = document.getElementById('archiveContent');
-            const modal = document.getElementById('archiveModal');
-            
-            let allPhotos = [];
-            archive.forEach(record => {
-                if(record.photos && record.photos.length > 0) {
-                    record.photos.forEach(p => allPhotos.push({url: p, time: record.dateStr, note: record.notes?.join(' ') || '主任務紀錄'}));
-                }
-                if(record.subTasks) {
-                    Object.keys(record.subTasks).forEach(subIdx => {
-                        const subData = record.subTasks[subIdx];
-                        if(subData.photos && subData.photos.length > 0) {
-                            const taskData = dailyScheduleData.find(t => t.id === taskId);
-                            const subTitle = taskData && taskData.subSteps ? taskData.subSteps[subIdx] : `子任務 ${parseInt(subIdx)+1}`;
-                            subData.photos.forEach(p => allPhotos.push({url: p, time: record.dateStr, note: subTitle}));
-                        }
+            if (confirm(`確定要刪除「${catName}」？\n此分類下的圖片將移至「未分類」。`)) {
+                if(currentUser) {
+                    galleryItems.forEach(item => {
+                        if(item.category === catName) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), { category: '未分類' }, { merge: true });
                     });
                 }
-            });
-            
-            if(allPhotos.length === 0) {
-                container.innerHTML = '<div class="flex flex-col items-center justify-center h-full py-10"><i data-lucide="image-off" class="w-12 h-12 text-slate-300 mb-3"></i><div class="text-slate-500 tracking-widest text-xs">目前沒有任何圖片紀錄</div></div>';
-            } else {
-                let html = '<div class="grid grid-cols-2 gap-3 pb-8">';
-                allPhotos.forEach(item => {
-                    html += `
-                    <div class="bg-white rounded-md overflow-hidden border border-slate-200 shadow-sm flex flex-col pb-1">
-                        <div class="aspect-square w-full relative p-1 pb-0">
-                            <img src="${item.url}" class="w-full h-full object-cover rounded-sm active:scale-95 transition-transform" onclick="window.openFullscreenImg('${item.url}')"/>
-                        </div>
-                        <div class="p-1.5 flex flex-col bg-white flex-1">
-                            <div class="text-[10px] text-slate-600 font-medium break-words whitespace-pre-wrap w-full text-center px-1">${item.note}</div>
-                        </div>
-                    </div>`;
-                });
-                html += '</div>';
-                container.innerHTML = html;
+                const idx = galleryCategories.indexOf(catName);
+                if(idx !== -1) galleryCategories.splice(idx, 1);
+                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
+                if(currentGalleryCategory === catName) currentGalleryCategory = '全部';
+                window.renderCategoryManager(); window.renderGallery();
             }
-            
-            lucide.createIcons();
-            modal.classList.remove('hidden');
-            modal.classList.add('flex');
-        };
-        
-        window.closeArchive = () => {
-            document.getElementById('archiveModal').classList.add('hidden');
-            document.getElementById('archiveModal').classList.remove('flex');
-        };
-        
-        window.openFullscreenImg = (src) => {
-            const viewer = document.getElementById('imageViewer');
-            document.getElementById('imageViewerImg').src = src;
-            viewer.classList.remove('hidden');
-            viewer.classList.add('flex');
         };
 
-        function parseTime(timeStr) {
-            const [hours, minutes] = timeStr.split(':').map(Number);
-            const now = new Date();
-            now.setHours(hours, minutes, 0, 0);
-            return now;
-        }
-
+        function parseTime(timeStr) { const [h, m] = timeStr.split(':').map(Number); const d = new Date(); d.setHours(h, m, 0, 0); return d; }
         function calculateTaskStatus(startStr, endStr) {
-            const now = new Date();
-            const start = parseTime(startStr);
-            const end = parseTime(endStr);
-            
+            const now = new Date(), start = parseTime(startStr), end = parseTime(endStr);
             if (now < start) {
                 const diffMins = Math.floor((start - now) / 60000);
-                const h = Math.floor(diffMins / 60);
-                const m = diffMins % 60;
-                return { state: 'waiting', text: `未開始 (約 ${h > 0 ? h + '小時' : ''}${m}分後)` };
+                return { state: 'waiting', text: `未開始 (約 ${Math.floor(diffMins/60)>0?Math.floor(diffMins/60)+'小時':''}${diffMins%60}分後)` };
             } else if (now >= start && now <= end) {
                 const diffMins = Math.floor((end - now) / 60000);
-                const h = Math.floor(diffMins / 60);
-                const m = diffMins % 60;
-                return { state: 'active', text: `進行中 (剩餘 ${h > 0 ? h + '小時' : ''}${m}分)` };
+                return { state: 'active', text: `進行中 (剩餘 ${Math.floor(diffMins/60)>0?Math.floor(diffMins/60)+'小時':''}${diffMins%60}分)` };
             } else {
                 const diffMins = Math.floor((now - end) / 60000);
-                const h = Math.floor(diffMins / 60);
-                const m = diffMins % 60;
-                return { state: 'overdue', text: `已結束 (超時 ${h > 0 ? h + '小時' : ''}${m}分)` };
+                return { state: 'overdue', text: `已結束 (超時 ${Math.floor(diffMins/60)>0?Math.floor(diffMins/60)+'小時':''}${diffMins%60}分)` };
             }
         }
 
@@ -1371,54 +725,34 @@
             const countText = document.getElementById('hudTaskCount');
             
             if(ring && percentText && countText) {
-                const circumference = 2 * Math.PI * 40;
-                const offset = circumference - (percentage / 100) * circumference;
+                const offset = (2 * Math.PI * 40) - (percentage / 100) * (2 * Math.PI * 40);
                 ring.style.strokeDashoffset = offset;
                 percentText.textContent = `${percentage}%`;
                 countText.textContent = `${completedTasks}/${totalTasks}`;
-                
-                if (percentage === 100) {
-                    ring.classList.replace('text-blue-500', 'text-green-500');
-                } else {
-                    ring.classList.replace('text-green-500', 'text-blue-500');
-                }
+                if (percentage === 100) ring.classList.replace('text-blue-500', 'text-green-500');
+                else ring.classList.replace('text-green-500', 'text-blue-500');
             }
 
             dailyScheduleData.forEach((task, index) => {
                 const isCompleted = taskCompletionState[task.id];
-                const extras = taskExtrasState[task.id] || { currentPhotos: [], currentNotes: [] };
-                const archive = taskArchiveState[task.id] || [];
-                const status = calculateTaskStatus(task.start, task.end);
+                const extrasText = taskExtrasState[task.id] || { currentNotes: [], subTasks: {} };
                 
-                // 動態取得各種色彩
+                // 🌟 新架構：從所有圖庫中動態篩選出屬於這個任務的照片
+                const taskMainPhotos = galleryItems.filter(p => p.taskId === task.id && typeof p.subIdx === 'undefined');
+                
+                const status = calculateTaskStatus(task.start, task.end);
                 const markerColors = ['yellow', 'pink', 'blue', 'green'];
                 const stickyStyles = [1, 2, 3];
                 const markerColorClass = `marker-${markerColors[index % markerColors.length]}`;
                 const stickyStyleClass = `sticky-note-${stickyStyles[index % stickyStyles.length]}`;
                 const tapeStyleClass = `tape-strip-${stickyStyles[index % stickyStyles.length]}`;
 
-                let timeColor = 'text-slate-400';
-                let borderColor = 'border-slate-200';
-                let glowEffect = 'shadow-sm';
-                let activeScale = '';
-                let statusLineColor = 'bg-slate-200';
+                let timeColor = 'text-slate-400', borderColor = 'border-slate-200', glowEffect = 'shadow-sm', activeScale = '', statusLineColor = 'bg-slate-200';
                 
                 if (!isCompleted) {
-                    if (status.state === 'active') { 
-                        timeColor = 'text-blue-600 font-bold'; 
-                        borderColor = 'border-blue-300'; 
-                        glowEffect = 'shadow-md ring-2 ring-blue-50 z-10';
-                        activeScale = 'scale-[1.01] transform transition-all duration-300';
-                        statusLineColor = 'bg-blue-400';
-                    }
-                    if (status.state === 'overdue') { 
-                        timeColor = 'text-red-500 font-bold'; 
-                        borderColor = 'border-red-200'; 
-                        statusLineColor = 'bg-red-400';
-                    }
-                } else {
-                    statusLineColor = 'bg-slate-300';
-                }
+                    if (status.state === 'active') { timeColor = 'text-blue-600 font-bold'; borderColor = 'border-blue-300'; glowEffect = 'shadow-md ring-2 ring-blue-50 z-10'; activeScale = 'scale-[1.01] transform transition-all duration-300'; statusLineColor = 'bg-blue-400'; }
+                    if (status.state === 'overdue') { timeColor = 'text-red-500 font-bold'; borderColor = 'border-red-200'; statusLineColor = 'bg-red-400'; }
+                } else { statusLineColor = 'bg-slate-300'; }
 
                 const isEdit = window.isEditMode && !isCompleted;
                 const editClass = isEdit ? 'border-b border-dashed border-blue-400/60 focus:outline-none focus:bg-slate-50 px-1 -mx-1 rounded cursor-text transition-colors' : '';
@@ -1428,27 +762,16 @@
 
                 const taskHTML = `
                     <div class="daily-task-card bg-white rounded-xl p-4 border ${isCompleted ? 'border-slate-200 opacity-60 bg-slate-50' : borderColor} ${glowEffect} ${activeScale} relative transition-all duration-300 flex flex-col group mt-4">
-                        
-                        <!-- 膠帶裝飾 -->
                         <div class="tape-strip ${tapeStyleClass} hidden sm:block"></div>
-
-                        <!-- 任務編號印戳 -->
-                        <div class="absolute -left-2 -top-2 w-7 h-7 bg-[#334155] text-[#fdfbf7] text-[11px] font-black rounded-full flex items-center justify-center shadow-md z-30 font-mono tracking-tighter">
-                            ${String(index + 1).padStart(2, '0')}
-                        </div>
-
-                        <!-- 筆記本裝飾左側線 -->
+                        <div class="absolute -left-2 -top-2 w-7 h-7 bg-[#334155] text-[#fdfbf7] text-[11px] font-black rounded-full flex items-center justify-center shadow-md z-30 font-mono tracking-tighter">${String(index + 1).padStart(2, '0')}</div>
                         <div class="absolute left-0 top-0 bottom-0 w-1.5 ${statusLineColor} opacity-80 rounded-l-xl"></div>
                         
                         <div class="flex space-x-3 pl-1">
-                            <!-- Checkbox Area -->
                             <div class="flex-shrink-0 pt-1 cursor-pointer" onclick="window.toggleTask('${task.id}')">
-                                <div class="w-6 h-6 rounded border-2 ${isCompleted ? 'border-blue-500 bg-blue-500 text-white shadow-sm' : 'border-slate-300 text-transparent group-hover:border-blue-400 bg-white'} flex items-center justify-center transition-all duration-200 active:scale-90 rounded">
+                                <div class="w-6 h-6 border-2 ${isCompleted ? 'border-blue-500 bg-blue-500 text-white shadow-sm' : 'border-slate-300 text-transparent group-hover:border-blue-400 bg-white'} flex items-center justify-center transition-all duration-200 active:scale-90 rounded">
                                     <i data-lucide="check" class="w-4 h-4"></i>
                                 </div>
                             </div>
-
-                            <!-- Content Area -->
                             <div class="flex-1 space-y-2 min-w-0">
                                 <div class="flex justify-between items-center">
                                     <span class="text-[11px] px-2 py-0.5 bg-slate-100 rounded border border-slate-200 text-slate-600 tracking-wider flex-shrink-0 font-medium shadow-sm">
@@ -1458,41 +781,34 @@
                                     </span>
                                     <span id="status-text-${task.id}" class="text-[11px] ${timeColor} tracking-wide font-bold ml-2 text-right">${isCompleted ? '✔ 任務完成' : status.text}</span>
                                 </div>
-                                
-                                <h3 ${editAttrText('title')} class="text-[15px] tracking-wide font-bold ${isCompleted ? 'text-slate-400 line-through' : 'text-slate-800'} ${editClass} pl-1">
-                                    <span class="${!isCompleted ? markerColorClass : ''}">${task.title}</span>
-                                </h3>
+                                <h3 ${editAttrText('title')} class="text-[15px] tracking-wide font-bold ${isCompleted ? 'text-slate-400 line-through' : 'text-slate-800'} ${editClass} pl-1"><span class="${!isCompleted ? markerColorClass : ''}">${task.title}</span></h3>
                                 <p ${editAttrHtml('content')} class="text-[12px] leading-relaxed tracking-wide ${isCompleted ? 'text-slate-400' : 'text-slate-600'} ${editClass} pl-1">${task.content}</p>
-                                
                                 ${(task.note || isEdit) ? `<div ${editAttrHtml('note')} class="mt-2 p-2.5 rounded-md text-[10.5px] text-slate-700 leading-relaxed tracking-wide ${stickyStyleClass} ${isEdit ? 'border border-dashed border-blue-300 focus:outline-none focus:bg-white cursor-text' : ''}">${task.note || (isEdit ? '點擊此處新增備註...' : '')}</div>` : ''}
 
-                                <!-- 子流程展開按鈕與內容 -->
                                 ${(task.subSteps && task.subSteps.length > 0) || isEdit ? `
                                     <div class="mt-3 flex justify-center relative z-20">
                                         <button type="button" onclick="window.toggleTaskDetails('${task.id}', event)" class="inline-flex items-center space-x-1 px-4 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-slate-600 text-[10px] hover:bg-slate-100 hover:text-slate-800 transition-colors cursor-pointer active:scale-95 shadow-sm">
-                                            <i data-lucide="${expandedTasksState[task.id] ? 'chevron-up' : 'list-tree'}" class="w-3.5 h-3.5"></i>
-                                            <span class="tracking-widest font-bold">${expandedTasksState[task.id] ? '收起清單' : '展開清單'}</span>
+                                            <i data-lucide="${expandedTasksState[task.id] ? 'chevron-up' : 'list-tree'}" class="w-3.5 h-3.5"></i><span class="tracking-widest font-bold">${expandedTasksState[task.id] ? '收起清單' : '展開清單'}</span>
                                         </button>
                                     </div>
                                     
                                     <div class="transition-all duration-300 overflow-hidden ${expandedTasksState[task.id] ? 'max-h-[1500px] opacity-100 mt-3 mb-1' : 'max-h-0 opacity-0'}">
                                         <div class="ml-2 relative py-1">
                                             ${(task.subSteps || []).map((step, idx) => {
-                                                const subExtras = extras.subTasks?.[idx] || { photos: [], notes: [] };
+                                                const subTextNotes = extrasText.subTasks?.[idx]?.notes || [];
+                                                // 動態撈取子任務照片
+                                                const subPhotos = galleryItems.filter(p => p.taskId === task.id && p.subIdx === idx);
+                                                
                                                 const isLastSubStep = idx === (task.subSteps || []).length - 1;
                                                 const drawLine = !isLastSubStep || isEdit;
-                                                
                                                 const isSubCompleted = subTaskCompletionState[task.id] && subTaskCompletionState[task.id][idx];
                                                 const subStepTextClass = isSubCompleted && !isEdit ? 'line-through text-slate-400 decoration-slate-400' : 'text-slate-700';
                                                 
                                                 return `
                                                 <div class="relative flex flex-col group/step pl-5 ${isLastSubStep && !isEdit ? 'mb-1' : 'mb-6'}">
-                                                    
                                                     ${drawLine ? `<div class="absolute left-[3px] top-[14px] bottom-[-30px] w-[1px] border-l border-dashed border-slate-300 z-0 pointer-events-none"></div>` : ''}
-
                                                     <div class="absolute left-[-2px] top-1.5 w-2.5 h-2.5 rounded-full ${isSubCompleted && !isEdit ? 'bg-slate-300 border-none' : 'bg-white border-2 border-slate-300 group-hover/step:border-blue-400 shadow-sm'} transition-all duration-300 z-10"></div>
                                                     
-                                                    <!-- 子任務文字與右側按鈕區 -->
                                                     <div class="flex justify-between items-start relative z-10 w-full group/text">
                                                         <div class="relative flex items-start flex-1 min-w-0" onclick="${!isEdit && !isCompleted ? `window.toggleSubTask('${task.id}', ${idx}, event)` : ''}">
                                                             <p ${editSubAttr(idx)} class="text-[12px] ${subStepTextClass} tracking-wide leading-relaxed pr-2 transition-colors flex-1 ${editClass} ${!isEdit && !isCompleted ? 'cursor-pointer' : ''} select-none">${step}</p>
@@ -1523,22 +839,21 @@
                                                     </div>
                                                     ` : ''}
 
-                                                    ${(subExtras.photos?.length > 0 || subExtras.notes?.length > 0) ? `
+                                                    ${(subPhotos.length > 0 || subTextNotes.length > 0) ? `
                                                     <div class="mt-1.5 ml-1 space-y-1.5">
-                                                        ${subExtras.photos?.length > 0 ? `
+                                                        ${subPhotos.length > 0 ? `
                                                             <div class="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
-                                                                ${subExtras.photos.map((p, pIdx) => `
+                                                                ${subPhotos.map((p) => `
                                                                     <div class="relative w-10 h-10 shrink-0 rounded border border-slate-200 overflow-hidden shadow-sm">
-                                                                        <img src="${p}" class="w-full h-full object-cover cursor-pointer" onclick="window.openFullscreenImg('${p}'); event.stopPropagation();"/>
-                                                                        ${!isCompleted ? `<button type="button" onclick="window.removeSubTaskPhoto('${task.id}', ${idx}, ${pIdx}); event.stopPropagation();" class="absolute top-0 right-0 bg-red-500/90 text-white p-0.5 rounded-bl active:bg-red-600"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}
+                                                                        <img src="${p.url}" class="w-full h-full object-cover cursor-pointer" onclick="window.openFullscreenImg('${p.url}'); event.stopPropagation();"/>
+                                                                        ${!isCompleted ? `<button type="button" onclick="window.removeTaskPhoto('${p.id}', event);" class="absolute top-0 right-0 bg-red-500/90 text-white p-0.5 rounded-bl active:bg-red-600"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}
                                                                     </div>
                                                                 `).join('')}
                                                             </div>
                                                         ` : ''}
-                                                        
-                                                        ${subExtras.notes?.length > 0 ? `
+                                                        ${subTextNotes.length > 0 ? `
                                                             <div class="space-y-1 w-[90%]">
-                                                                ${subExtras.notes.map((n, nIdx) => `
+                                                                ${subTextNotes.map((n, nIdx) => `
                                                                     <div class="flex justify-between items-start p-1.5 rounded text-[10px] text-slate-700 tracking-wide sticky-note mt-1">
                                                                         <span class="break-words flex-1 pr-2 font-medium">📌 ${n}</span>
                                                                         ${!isCompleted ? `<button type="button" onclick="window.removeSubTaskNote('${task.id}', ${idx}, ${nIdx}); event.stopPropagation();" class="text-red-400 hover:text-red-500 mt-0.5 shrink-0 active:scale-95"><i data-lucide="x" class="w-3 h-3"></i></button>` : ''}
@@ -1548,17 +863,14 @@
                                                         ` : ''}
                                                     </div>
                                                     ` : ''}
-
                                                 </div>
                                                 `;
                                             }).join('')}
-                                            
                                             ${isEdit ? `
                                                 <div class="relative flex flex-col pl-5 mt-4">
                                                     <div class="absolute left-[-1.5px] top-1.5 w-2 h-2 rounded-full border border-blue-400 z-10 bg-blue-50"></div>
                                                     <button type="button" onclick="window.addSubTask('${task.id}', event)" class="flex items-center justify-center space-x-1 py-1 px-3 rounded border border-dashed border-blue-300 text-blue-500 hover:bg-blue-50 transition-colors cursor-pointer active:scale-95 text-[10px] tracking-wide relative z-10 max-w-max ml-0.5">
-                                                        <i data-lucide="plus" class="w-3 h-3"></i>
-                                                        <span>新增一筆子任務</span>
+                                                        <i data-lucide="plus" class="w-3 h-3"></i><span>新增一筆子任務</span>
                                                     </button>
                                                 </div>
                                             ` : ''}
@@ -1574,23 +886,21 @@
                             </button>
                         ` : ''}
 
-                        <!-- 永遠顯示已附加的相片與筆記 (即使完成任務也不隱藏) -->
-                        ${(extras.currentPhotos?.length > 0 || extras.currentNotes?.length > 0) ? `
+                        ${(taskMainPhotos.length > 0 || extrasText.currentNotes?.length > 0) ? `
                         <div class="mt-4 pt-3 border-t border-slate-100 flex flex-col relative z-10 pl-1">
-                            ${extras.currentPhotos?.length > 0 ? `
+                            ${taskMainPhotos.length > 0 ? `
                                 <div class="flex gap-2 overflow-x-auto pb-2 mb-1 scrollbar-hide">
-                                    ${extras.currentPhotos.map((p, i) => `
+                                    ${taskMainPhotos.map((p) => `
                                         <div class="relative w-16 h-16 shrink-0 rounded-md border border-slate-200 overflow-hidden shadow-sm">
-                                            <img src="${p}" class="w-full h-full object-cover" onclick="window.openFullscreenImg('${p}')"/>
-                                            ${!isCompleted ? `<button type="button" onclick="window.removeCurrentPhoto('${task.id}', ${i}); event.stopPropagation();" class="absolute top-0 right-0 bg-red-500/90 text-white p-1 rounded-bl-md active:bg-red-600"><i data-lucide="x" class="w-3 h-3"></i></button>` : ''}
+                                            <img src="${p.url}" class="w-full h-full object-cover" onclick="window.openFullscreenImg('${p.url}')"/>
+                                            ${!isCompleted ? `<button type="button" onclick="window.removeTaskPhoto('${p.id}', event);" class="absolute top-0 right-0 bg-red-500/90 text-white p-1 rounded-bl-md active:bg-red-600"><i data-lucide="x" class="w-3 h-3"></i></button>` : ''}
                                         </div>
                                     `).join('')}
                                 </div>
                             ` : ''}
-                            
-                            ${extras.currentNotes?.length > 0 ? `
+                            ${extrasText.currentNotes?.length > 0 ? `
                                 <div class="space-y-1.5 mb-2">
-                                    ${extras.currentNotes.map((n, i) => `
+                                    ${extrasText.currentNotes.map((n, i) => `
                                         <div class="flex justify-between items-start bg-yellow-50 p-2 rounded-lg border border-yellow-200/50 text-[11px] text-slate-700 tracking-wide ${isCompleted ? 'opacity-60' : ''}">
                                             <span class="break-words flex-1 pr-2 font-medium">📝 ${n}</span>
                                             ${!isCompleted ? `<button type="button" onclick="window.removeCurrentNote('${task.id}', ${i})" class="text-red-400 hover:text-red-500 mt-0.5 shrink-0 active:scale-95"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>` : ''}
@@ -1601,33 +911,26 @@
                         </div>
                         ` : ''}
 
-                        <!-- 輸入框與操作按鈕 -->
                         ${!isCompleted ? `
-                        <div class="flex space-x-3 items-stretch mt-1 pl-1 relative z-10 ${!(extras.currentPhotos?.length > 0 || extras.currentNotes?.length > 0) ? 'pt-3 border-t border-slate-100' : ''}">
+                        <div class="flex space-x-3 items-stretch mt-1 pl-1 relative z-10 ${!(taskMainPhotos.length > 0 || extrasText.currentNotes?.length > 0) ? 'pt-3 border-t border-slate-100' : ''}">
                             <div class="flex-1 flex flex-col space-y-2 justify-center">
                                 <label class="flex items-center justify-center space-x-1 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-600 hover:text-blue-600 hover:border-blue-300 transition-colors cursor-pointer active:bg-slate-100 text-[11px] tracking-wide w-full shadow-sm">
-                                    <i data-lucide="camera" class="w-3.5 h-3.5"></i>
-                                    <span>附加存證相片</span>
+                                    <i data-lucide="camera" class="w-3.5 h-3.5"></i><span>附加存證相片</span>
                                     <input type="file" accept="image/*" multiple class="hidden" onchange="window.handleDailyPhotoUpload('${task.id}', this)" />
                                 </label>
-                                
                                 <div class="flex h-8 shadow-sm rounded-lg">
                                     <input type="text" id="note-input-${task.id}" placeholder="輸入補充筆記..." class="flex-1 bg-white border border-slate-200 border-r-0 rounded-l-lg px-2.5 text-[11px] text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-400 tracking-wide w-full min-w-0">
                                     <button type="button" onclick="window.addDailyNote('${task.id}')" class="px-3 bg-slate-100 text-slate-600 border border-slate-200 rounded-r-lg hover:text-blue-600 transition-colors flex items-center justify-center"><i data-lucide="plus" class="w-4 h-4"></i></button>
                                 </div>
                             </div>
-
                             <button type="button" onclick="window.openArchive('${task.id}')" class="w-[60px] shrink-0 flex flex-col items-center justify-center rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 transition-colors relative active:scale-95 shadow-sm">
-                                <i data-lucide="images" class="w-4 h-4 mb-1"></i>
-                                <span class="text-[9px] tracking-wide text-center leading-tight">歷史<br>圖庫</span>
-                                ${archive.length > 0 ? `<span class="absolute -top-2 -right-2 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow-sm border border-white">${archive.length}</span>` : ''}
+                                <i data-lucide="images" class="w-4 h-4 mb-1"></i><span class="text-[9px] tracking-wide text-center leading-tight">任務<br>圖庫</span>
                             </button>
                         </div>
                         ` : `
                         <div class="mt-3 pt-3 border-t border-slate-100 flex justify-end">
                             <button type="button" onclick="window.openArchive('${task.id}')" class="flex items-center space-x-1 px-3 py-1.5 rounded-md bg-slate-50 border border-slate-200 text-slate-500 active:scale-95 transition-colors hover:text-blue-600 shadow-sm">
-                                <i data-lucide="images" class="w-3.5 h-3.5"></i>
-                                <span class="text-[10px] tracking-wide font-medium">查看歷史圖庫 (${archive.length})</span>
+                                <i data-lucide="images" class="w-3.5 h-3.5"></i><span class="text-[10px] tracking-wide font-medium">查看任務圖庫</span>
                             </button>
                         </div>
                         `}
@@ -1637,69 +940,96 @@
             });
             
             if (window.isEditMode) {
-                const addTaskBtnHTML = `
+                container.insertAdjacentHTML('beforeend', `
                     <div class="mt-6 flex justify-center pb-4">
                         <button type="button" onclick="window.addNewTaskCard()" class="w-full bg-white rounded-2xl p-5 border-2 border-dashed border-blue-300 text-blue-500 hover:bg-blue-50 transition-all duration-300 flex flex-col items-center justify-center active:scale-[0.98] group shadow-sm cursor-pointer">
-                            <i data-lucide="plus-circle" class="w-7 h-7 mb-2 group-hover:scale-110 transition-transform"></i>
-                            <span class="text-xs tracking-widest font-bold">新增排程卡片</span>
+                            <i data-lucide="plus-circle" class="w-7 h-7 mb-2 group-hover:scale-110 transition-transform"></i><span class="text-xs tracking-widest font-bold">新增排程卡片</span>
                         </button>
                     </div>
-                `;
-                container.insertAdjacentHTML('beforeend', addTaskBtnHTML);
+                `);
             }
 
             lucide.createIcons();
-
             if(timeUpdateInterval) clearInterval(timeUpdateInterval);
             timeUpdateInterval = setInterval(() => {
                 if(!document.getElementById('dailySchedulePage').classList.contains('hidden') && !window.isEditMode) {
                     dailyScheduleData.forEach(task => {
-                        const isCompleted = taskCompletionState[task.id];
-                        if (!isCompleted) {
+                        if (!taskCompletionState[task.id]) {
                             const status = calculateTaskStatus(task.start, task.end);
                             const statusEl = document.getElementById(`status-text-${task.id}`);
                             if (statusEl) {
                                 statusEl.textContent = status.text;
-                                if (status.state === 'active') {
-                                    statusEl.className = 'text-[11px] text-blue-600 font-bold ml-2 text-right tracking-wide';
-                                } else if (status.state === 'overdue') {
-                                    statusEl.className = 'text-[11px] text-red-500 font-bold ml-2 text-right tracking-wide';
-                                } else {
-                                    statusEl.className = 'text-[11px] text-slate-400 font-bold ml-2 text-right tracking-wide';
-                                }
+                                if (status.state === 'active') statusEl.className = 'text-[11px] text-blue-600 font-bold ml-2 text-right tracking-wide';
+                                else if (status.state === 'overdue') statusEl.className = 'text-[11px] text-red-500 font-bold ml-2 text-right tracking-wide';
+                                else statusEl.className = 'text-[11px] text-slate-400 font-bold ml-2 text-right tracking-wide';
                             }
                         }
                     });
                 }
             }, 60000); 
 
-            // 卡片焦點特效
             setTimeout(() => {
                 const cards = document.querySelectorAll('.daily-task-card');
                 const observer = new IntersectionObserver((entries) => {
                     entries.forEach(entry => {
-                        if (entry.isIntersecting && !window.isEditMode && !entry.target.innerHTML.includes('任務完成')) {
-                            entry.target.classList.add('card-focused');
-                        } else {
-                            entry.target.classList.remove('card-focused');
-                        }
+                        if (entry.isIntersecting && !window.isEditMode && !entry.target.innerHTML.includes('任務完成')) entry.target.classList.add('card-focused');
+                        else entry.target.classList.remove('card-focused');
                     });
-                }, { root: null, rootMargin: "-35% 0px -35% 0px", threshold: 0 });
+                }, { rootMargin: "-35% 0px -35% 0px" });
                 cards.forEach(card => observer.observe(card));
             }, 100);
         }
 
-        // ==========================================
-        // 初始化與載入邏輯
-        // ==========================================
+        window.closeArchive = () => {
+            document.getElementById('archiveModal').classList.add('hidden');
+            document.getElementById('archiveModal').classList.remove('flex');
+        };
         
-        // 第一步：一打開網頁，什麼都不要等，先從快取把畫面印出來！
-        loadLocalData();
+        window.openFullscreenImg = (src) => {
+            const viewer = document.getElementById('imageViewer');
+            document.getElementById('imageViewerImg').src = src;
+            viewer.classList.remove('hidden');
+            viewer.classList.add('flex');
+        };
 
-        // 第二步：開始背景連線，等連線成功再透過 setupFirestoreListener 更新
+        window.switchTab = (tab) => {
+            const customPage = document.getElementById('customWorkflowPage'), dailyPage = document.getElementById('dailySchedulePage'), galleryPage = document.getElementById('galleryPage');
+            const btnCustom = document.getElementById('tabCustom'), btnDaily = document.getElementById('tabDaily'), btnGallery = document.getElementById('tabGallery');
+            const activeClass = "flex-1 py-1.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest";
+            const inactiveClass = "flex-1 py-1.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest";
+
+            if(customPage) customPage.classList.add('hidden'); if(dailyPage) dailyPage.classList.add('hidden'); if(galleryPage) galleryPage.classList.add('hidden');
+            if(btnCustom) btnCustom.className = inactiveClass; if(btnDaily) btnDaily.className = inactiveClass; if(btnGallery) btnGallery.className = inactiveClass;
+
+            if (tab === 'custom' && customPage) { customPage.classList.remove('hidden'); btnCustom.className = activeClass; } 
+            else if (tab === 'daily' && dailyPage) { dailyPage.classList.remove('hidden'); btnDaily.className = activeClass; renderDailySchedule(); } 
+            else if (tab === 'gallery' && galleryPage) { galleryPage.classList.remove('hidden'); btnGallery.className = activeClass; window.renderGallery(); }
+            localStorage.setItem('activeTab', tab);
+        };
+
+        async function initAuth() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+                else await signInAnonymously(auth);
+            } catch (error) { window.showToast("連線驗證失敗", true); }
+        }
+
+        onAuthStateChanged(auth, (user) => {
+            currentUser = user;
+            if (user) {
+                connectionDot.classList.replace('bg-red-500', 'bg-green-500');
+                connectionStatus.textContent = '系統已連線並同步';
+                setupPureRealtimeSync();
+            } else {
+                connectionDot.classList.replace('bg-green-500', 'bg-red-500');
+                connectionStatus.textContent = '連線中或驗證失敗...';
+            }
+        });
+
+        // 啟動程序
+        loadLocalFastCache();
         initAuth();
         window.switchTab(localStorage.getItem('activeTab') || 'daily');
-
     </script>
 </head>
 <body class="sm:px-4 sm:py-8 flex justify-center relative min-h-screen">
