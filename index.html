@@ -87,6 +87,20 @@
         window.isEditMode = false;
         let timeUpdateInterval;
 
+        // 🌟 修復：補回全局提示 Toast 功能
+        window.showToast = (message, isError = false) => {
+            const toast = document.createElement('div');
+            toast.className = `fixed top-16 left-1/2 transform -translate-x-1/2 px-5 py-3 rounded-full shadow-lg text-sm font-bold z-[9999] transition-all duration-300 ${isError ? 'bg-red-500 text-white' : 'bg-slate-800 text-white'}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translate(-50%, -20px)';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        };
+
         // 幫手函數：安全讀取本地雙層快取
         const getLocal = (key, defaultVal) => {
             try { const val = localStorage.getItem(key); return val ? JSON.parse(val) : defaultVal; } 
@@ -544,6 +558,104 @@
                 a.click();
                 window.showToast("導出成功！已儲存至下載資料夾");
             } catch (error) { window.showToast("導出失敗", true); }
+        };
+
+        // 🌟 新增：導入並自動轉檔舊資料
+        window.importData = (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    window.showToast("正在讀取並智能轉檔...");
+                    const importedData = JSON.parse(e.target.result);
+                    
+                    let impSchedule = importedData.dailyScheduleData || dailyScheduleData;
+                    let impTaskStates = importedData.taskCompletionState || taskCompletionState;
+                    let impExtras = importedData.taskExtrasState || taskExtrasState;
+                    let impSubStates = importedData.subTaskCompletionState || subTaskCompletionState;
+                    let impGalCats = importedData.galleryCategories || galleryCategories;
+                    let impGalItems = importedData.galleryItems || galleryItems;
+
+                    // 🛠️ 自動轉檔核心：掃描舊格式，把包在 extras 裡面的大相片全部挖出來變成獨立圖庫檔案
+                    let hasMigrated = false;
+                    Object.keys(impExtras).forEach(taskId => {
+                        let extra = impExtras[taskId];
+                        // 轉移主任務舊照片
+                        if (extra.currentPhotos && extra.currentPhotos.length > 0) {
+                            extra.currentPhotos.forEach(url => {
+                                const photoId = `mig_imp_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
+                                impGalItems.unshift({ id: photoId, url, title: '舊版任務紀錄 (已轉檔)', category: '任務附件', taskId, timestamp: new Date().toLocaleString('zh-TW') });
+                            });
+                            extra.currentPhotos = []; // 清空肥大陣列
+                            hasMigrated = true;
+                        }
+                        // 轉移子任務舊照片
+                        if (extra.subTasks) {
+                            Object.keys(extra.subTasks).forEach(subIdx => {
+                                if (extra.subTasks[subIdx].photos && extra.subTasks[subIdx].photos.length > 0) {
+                                    extra.subTasks[subIdx].photos.forEach(url => {
+                                        const photoId = `migs_imp_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
+                                        impGalItems.unshift({ id: photoId, url, title: '舊版子任務紀錄 (已轉檔)', category: '任務附件', taskId, subIdx: parseInt(subIdx), timestamp: new Date().toLocaleString('zh-TW') });
+                                    });
+                                    extra.subTasks[subIdx].photos = []; // 清空肥大陣列
+                                    hasMigrated = true;
+                                }
+                            });
+                        }
+                    });
+
+                    // 寫入變數
+                    dailyScheduleData = impSchedule;
+                    taskCompletionState = impTaskStates;
+                    taskExtrasState = impExtras;
+                    subTaskCompletionState = impSubStates;
+                    galleryCategories = impGalCats;
+                    galleryItems = impGalItems;
+
+                    // 寫入本地快取
+                    localStorage.setItem('work_cache_schedule', JSON.stringify(dailyScheduleData));
+                    localStorage.setItem('work_cache_task_states', JSON.stringify(taskCompletionState));
+                    localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
+                    localStorage.setItem('work_cache_subtask_states', JSON.stringify(subTaskCompletionState));
+                    localStorage.setItem('work_cache_gallery_categories', JSON.stringify(galleryCategories));
+                    localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+
+                    // 如果有連線，強制覆蓋上雲端
+                    if (currentUser) {
+                        window.showToast("資料轉檔完畢，正在同步至雲端...");
+                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData });
+                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState });
+                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState });
+                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState });
+                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
+                        
+                        // 獨立寫入轉檔後的相片們 (分塊寫入以防超過限制)
+                        const batchLimit = 300;
+                        for (let i = 0; i < galleryItems.length; i += batchLimit) {
+                            const batch = writeBatch(db);
+                            const chunk = galleryItems.slice(i, i + batchLimit);
+                            chunk.forEach(item => {
+                                batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item);
+                            });
+                            await batch.commit();
+                        }
+                    }
+
+                    renderDailySchedule();
+                    if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) {
+                        window.renderGallery();
+                    }
+                    
+                    window.showToast("導入與轉檔全部成功！");
+                    
+                } catch (error) {
+                    window.showToast("導入失敗，檔案可能已損壞", true);
+                }
+                event.target.value = ''; // 重置 input 讓下次同檔也能點擊
+            };
+            reader.readAsText(file);
         };
 
         window.renderGallery = () => {
@@ -1042,9 +1154,17 @@
             <div class="flex items-center justify-between relative">
                 <div class="w-8"></div> <!-- 平衡用空白 -->
                 <h1 class="text-xl text-slate-800 tracking-widest font-black">工作記錄本</h1>
-                <button type="button" onclick="window.exportData()" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="導出備份資料">
-                    <i data-lucide="download" class="w-4 h-4 pointer-events-none"></i>
-                </button>
+                
+                <!-- 新增：右側操作按鈕群 -->
+                <div class="flex items-center gap-2">
+                    <input type="file" id="importInput" accept=".json" class="hidden" onchange="window.importData(event)">
+                    <button type="button" onclick="document.getElementById('importInput').click()" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="導入舊資料 (自動轉檔)">
+                        <i data-lucide="upload" class="w-4 h-4 pointer-events-none"></i>
+                    </button>
+                    <button type="button" onclick="window.exportData()" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="導出備份資料">
+                        <i data-lucide="download" class="w-4 h-4 pointer-events-none"></i>
+                    </button>
+                </div>
             </div>
             <p class="text-[10px] text-center mt-2 flex items-center justify-center space-x-2 tracking-wide text-slate-500">
                 <span id="connectionDot" class="w-2 h-2 rounded-full bg-red-500 transition-colors duration-300"></span>
