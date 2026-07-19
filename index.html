@@ -8,8 +8,6 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- 核心升級：導入大容量本地資料庫引擎 (突破 5MB 限制) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
     <!-- Google Fonts for Notebook style -->
     <link href="https://gs.jurieo.com/gemini/fonts-googleapis/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
     
@@ -150,12 +148,8 @@
         const saveCategoriesToCloud = async () => { if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories }); };
 
         // ==========================================
-        // 🚀 核心升級：配置 IndexedDB 作為過渡讀取區，並實作無痛雲端遷移機制
+        // 🚀 核心升級：配置秒開雙層快取，並實作無痛舊資料大遷移
         // ==========================================
-        localforage.config({
-            name: 'WorkLogApp',
-            storeName: 'work_records'
-        });
 
         // 幫手函數：安全讀取最舊的 localStorage 資料
         const getOldLocal = (key) => {
@@ -163,29 +157,16 @@
             catch(e) { return null; }
         };
 
-        async function loadLocalData() {
+        function loadLocalData() {
             try {
-                // 僅作為斷網極速啟動時的本地備援，後續將由 Firestore onSnapshot 完全接管
-                const sd = getOldLocal('userDailyScheduleData') || await localforage.getItem('userDailyScheduleData');
-                if (sd) dailyScheduleData = sd;
-
-                const ts = getOldLocal('dailyTasksState') || await localforage.getItem('dailyTasksState');
-                if (ts) taskCompletionState = ts;
-
-                const te = getOldLocal('dailyTasksExtras') || await localforage.getItem('dailyTasksExtras');
-                if (te) taskExtrasState = te;
-
-                const ta = getOldLocal('dailyTasksArchive') || await localforage.getItem('dailyTasksArchive');
-                if (ta) taskArchiveState = ta;
-
-                const st = getOldLocal('subTaskCompletionState') || await localforage.getItem('subTaskCompletionState');
-                if (st) subTaskCompletionState = st;
-
-                const gc = getOldLocal('galleryCategories') || await localforage.getItem('galleryCategories');
-                if (gc) galleryCategories = gc;
-
-                const gi = getOldLocal('galleryItems') || await localforage.getItem('galleryItems');
-                if (gi) galleryItems = gi;
+                // 優先讀取秒開快取 (這是前一次 onSnapshot 存下來的最新狀態)
+                const sd = getOldLocal('work_cache_schedule'); if (sd) dailyScheduleData = sd;
+                const ts = getOldLocal('work_cache_task_states'); if (ts) taskCompletionState = ts;
+                const te = getOldLocal('work_cache_daily_extras'); if (te) taskExtrasState = te;
+                const ta = getOldLocal('work_cache_daily_archive'); if (ta) taskArchiveState = ta;
+                const st = getOldLocal('work_cache_subtask_states'); if (st) subTaskCompletionState = st;
+                const gc = getOldLocal('work_cache_gallery_categories'); if (gc) galleryCategories = gc;
+                const gi = getOldLocal('work_cache_gallery_items'); if (gi) galleryItems = gi;
 
                 currentGalleryCategory = galleryCategories[0] || '全部';
 
@@ -203,7 +184,8 @@
                         extra.subTasks = {};
                     }
                 });
-
+                
+                // 讀取完畢，馬上渲染一次讓用戶有畫面看
                 if(document.getElementById('dailySchedulePage') && !document.getElementById('dailySchedulePage').classList.contains('hidden')) {
                     renderDailySchedule();
                 }
@@ -215,43 +197,42 @@
             }
         }
         
-        loadLocalData();
-
-        // 🚀 強力自動轉移機制：把舊版手機內「所有的」舊資料一次性打上雲端
+        // 🚀 強力自動轉移機制：把舊版最古老的「localStorage」舊資料一次性打上雲端
         async function migrateLocalToCloud() {
             if (!currentUser) return;
-            const migrated = localStorage.getItem('cloud_migrated_v3');
+            const migrated = localStorage.getItem('cloud_migrated_v4');
             if (migrated) return;
 
             window.showToast("🚀 正在為您將舊數據上雲端...", false);
             try {
-                const sd = getOldLocal('userDailyScheduleData') || await localforage.getItem('userDailyScheduleData');
+                // 抓取最古老的那些 key (v1, v2 時期的產物)
+                const sd = getOldLocal('userDailyScheduleData');
                 if (sd && sd.length > 0) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: sd });
 
-                const ts = getOldLocal('dailyTasksState') || await localforage.getItem('dailyTasksState');
+                const ts = getOldLocal('dailyTasksState');
                 if (ts) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: ts });
 
-                const st = getOldLocal('subTaskCompletionState') || await localforage.getItem('subTaskCompletionState');
+                const st = getOldLocal('subTaskCompletionState');
                 if (st) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: st });
 
-                const gc = getOldLocal('galleryCategories') || await localforage.getItem('galleryCategories');
+                const gc = getOldLocal('galleryCategories');
                 if (gc) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: gc });
 
-                const te = getOldLocal('dailyTasksExtras') || await localforage.getItem('dailyTasksExtras');
+                const te = getOldLocal('dailyTasksExtras');
                 if (te) {
                     for (const taskId in te) {
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_extras', taskId), te[taskId]);
                     }
                 }
 
-                const ta = getOldLocal('dailyTasksArchive') || await localforage.getItem('dailyTasksArchive');
+                const ta = getOldLocal('dailyTasksArchive');
                 if (ta) {
                     for (const taskId in ta) {
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_archive', taskId), { archive: ta[taskId] });
                     }
                 }
 
-                const gi = getOldLocal('galleryItems') || await localforage.getItem('galleryItems');
+                const gi = getOldLocal('galleryItems');
                 if (gi && gi.length > 0) {
                     for (const item of gi) {
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item);
@@ -259,7 +240,7 @@
                 }
 
                 // 標記為已遷移，避免重複執行
-                localStorage.setItem('cloud_migrated_v3', 'true');
+                localStorage.setItem('cloud_migrated_v4', 'true');
                 window.showToast("✅ 舊數據雲端同步成功！已跨越儲存限制！");
             } catch (e) {
                 console.error("Migration error:", e);
@@ -341,6 +322,32 @@
             }
         };
 
+        window.exportData = async () => {
+            window.showToast("準備導出資料...");
+            try {
+                const exportPayload = {
+                    version: "4.0",
+                    exportDate: new Date().toISOString(),
+                    dailyScheduleData,
+                    taskCompletionState,
+                    taskExtrasState,
+                    taskArchiveState,
+                    subTaskCompletionState,
+                    galleryCategories,
+                    galleryItems
+                };
+                
+                const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `工作記錄本_備份_${new Date().toISOString().slice(0,10)}.json`;
+                a.click();
+                window.showToast("導出成功！已儲存至下載資料夾");
+            } catch (error) {
+                window.showToast("導出失敗", true);
+            }
+        };
+
         lucide.createIcons();
 
         window.showToast = (message, isError = false) => {
@@ -358,6 +365,9 @@
 
         async function initAuth() {
             try {
+                // 優先載入畫面
+                loadLocalData();
+                
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
@@ -433,47 +443,94 @@
                 }
             });
 
-            // 🌟 雲端全方位同步監聽 🌟
+            // 🌟 雲端全方位同步監聽 + 雙層快取存入 🌟
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), (docSnap) => {
-                if(docSnap.exists()) { dailyScheduleData = docSnap.data().tasks; renderDailySchedule(); }
+                if(docSnap.exists()) { 
+                    const newData = docSnap.data().tasks;
+                    if(JSON.stringify(dailyScheduleData) !== JSON.stringify(newData)) {
+                        dailyScheduleData = newData; 
+                        localStorage.setItem('work_cache_schedule', JSON.stringify(dailyScheduleData));
+                        renderDailySchedule(); 
+                    }
+                }
             });
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), (docSnap) => {
-                if(docSnap.exists()) { taskCompletionState = docSnap.data().states || {}; renderDailySchedule(); }
+                if(docSnap.exists()) { 
+                    const newData = docSnap.data().states || {};
+                    if(JSON.stringify(taskCompletionState) !== JSON.stringify(newData)) {
+                        taskCompletionState = newData; 
+                        localStorage.setItem('work_cache_task_states', JSON.stringify(taskCompletionState));
+                        renderDailySchedule(); 
+                    }
+                }
             });
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), (docSnap) => {
-                if(docSnap.exists()) { subTaskCompletionState = docSnap.data().states || {}; renderDailySchedule(); }
+                if(docSnap.exists()) { 
+                    const newData = docSnap.data().states || {};
+                    if(JSON.stringify(subTaskCompletionState) !== JSON.stringify(newData)) {
+                        subTaskCompletionState = newData; 
+                        localStorage.setItem('work_cache_subtask_states', JSON.stringify(subTaskCompletionState));
+                        renderDailySchedule(); 
+                    }
+                }
             });
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), (docSnap) => {
                 if(docSnap.exists()) { 
-                    galleryCategories = docSnap.data().categories || ['全部', '未分類', '街市檔口', '鮮風機', '價格表', '其他']; 
-                    window.renderGallery(); 
+                    const newData = docSnap.data().categories || ['全部', '未分類', '街市檔口', '鮮風機', '價格表', '其他'];
+                    if(JSON.stringify(galleryCategories) !== JSON.stringify(newData)) {
+                        galleryCategories = newData;
+                        localStorage.setItem('work_cache_gallery_categories', JSON.stringify(galleryCategories));
+                        window.renderGallery(); 
+                    }
                 }
             });
 
             onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'daily_extras'), (snapshot) => {
-                snapshot.docs.forEach(docSnap => { taskExtrasState[docSnap.id] = docSnap.data(); });
-                renderDailySchedule();
+                let hasChanges = false;
+                snapshot.docs.forEach(docSnap => { 
+                    if(JSON.stringify(taskExtrasState[docSnap.id]) !== JSON.stringify(docSnap.data())) {
+                        taskExtrasState[docSnap.id] = docSnap.data(); 
+                        hasChanges = true;
+                    }
+                });
+                if(hasChanges) {
+                    localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
+                    renderDailySchedule();
+                }
             });
 
             onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'daily_archive'), (snapshot) => {
-                snapshot.docs.forEach(docSnap => { taskArchiveState[docSnap.id] = docSnap.data().archive || []; });
-                renderDailySchedule();
+                let hasChanges = false;
+                snapshot.docs.forEach(docSnap => { 
+                    if(JSON.stringify(taskArchiveState[docSnap.id]) !== JSON.stringify(docSnap.data().archive || [])) {
+                        taskArchiveState[docSnap.id] = docSnap.data().archive || []; 
+                        hasChanges = true;
+                    }
+                });
+                if(hasChanges) {
+                    localStorage.setItem('work_cache_daily_archive', JSON.stringify(taskArchiveState));
+                    renderDailySchedule();
+                }
             });
 
             onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snapshot) => {
-                galleryItems = snapshot.docs.map(docSnap => docSnap.data());
-                // 依照 ID (產生時間) 降序排列
-                galleryItems.sort((a,b) => {
+                const newData = snapshot.docs.map(docSnap => docSnap.data());
+                newData.sort((a,b) => {
                     const idA = a.id || '';
                     const idB = b.id || '';
                     return idB.localeCompare(idA);
                 });
-                if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) {
-                    window.renderGallery();
+                
+                if(JSON.stringify(galleryItems) !== JSON.stringify(newData)) {
+                    galleryItems = newData;
+                    localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+                    if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) {
+                        window.renderGallery();
+                    }
                 }
             });
 
-            // 初始化時檢查並執行一次性雲端遷移
+            // 初始化時檢查並執行一次性雲端遷移 (把古老 localStorage 的資料搬上來)
             migrateLocalToCloud();
         }
 
@@ -1299,17 +1356,17 @@
                         <div class="tape-strip ${tapeStyleClass} hidden sm:block"></div>
 
                         <!-- 任務編號印戳 -->
-                        <div class="absolute -left-2 -top-2 w-7 h-7 bg-[#334155] text-[#fdfbf7] text-[11px] font-black rounded-full flex items-center justify-center shadow-md border-[2px] border-[#fdfbf7] z-30 font-mono tracking-tighter">
+                        <div class="absolute -left-2 -top-2 w-7 h-7 bg-[#334155] text-[#fdfbf7] text-[11px] font-black rounded-full flex items-center justify-center shadow-md z-30 font-mono tracking-tighter">
                             ${String(index + 1).padStart(2, '0')}
                         </div>
 
                         <!-- 筆記本裝飾左側線 -->
-                        <div class="absolute left-0 top-0 bottom-0 w-1.5 ${statusLineColor} opacity-80" style="border-radius: 10px 0 0 10px;"></div>
+                        <div class="absolute left-0 top-0 bottom-0 w-1.5 ${statusLineColor} opacity-80 rounded-l-xl"></div>
                         
                         <div class="flex space-x-3 pl-1">
                             <!-- Checkbox Area -->
                             <div class="flex-shrink-0 pt-1 cursor-pointer" onclick="window.toggleTask('${task.id}')">
-                                <div class="w-6 h-6 rounded border-2 ${isCompleted ? 'border-blue-500 bg-blue-500 text-white shadow-sm' : 'border-slate-300 text-transparent group-hover:border-blue-400 bg-white'} flex items-center justify-center transition-all duration-200 active:scale-90">
+                                <div class="w-6 h-6 rounded border-2 ${isCompleted ? 'border-blue-500 bg-blue-500 text-white shadow-sm' : 'border-slate-300 text-transparent group-hover:border-blue-400 bg-white'} flex items-center justify-center transition-all duration-200 active:scale-90 rounded">
                                     <i data-lucide="check" class="w-4 h-4"></i>
                                 </div>
                             </div>
@@ -1555,6 +1612,14 @@
             }, 100);
         }
 
+        // ==========================================
+        // 初始化與載入邏輯
+        // ==========================================
+        
+        // 第一步：一打開網頁，什麼都不要等，先從快取把畫面印出來！
+        loadLocalData();
+
+        // 第二步：開始背景連線，等連線成功再透過 setupFirestoreListener 更新
         initAuth();
         window.switchTab(localStorage.getItem('activeTab') || 'daily');
 
@@ -1567,8 +1632,12 @@
         
         <!-- Header -->
         <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-10 border-b border-[#e5dfd3] p-5 pt-8 sm:pt-12 shadow-sm">
-            <div class="flex items-center justify-center relative">
+            <div class="flex items-center justify-between relative">
+                <div class="w-8"></div> <!-- 平衡用空白 -->
                 <h1 class="text-xl text-slate-800 tracking-widest font-black">工作記錄本</h1>
+                <button type="button" onclick="window.exportData()" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="導出備份資料">
+                    <i data-lucide="download" class="w-4 h-4 pointer-events-none"></i>
+                </button>
             </div>
             <p class="text-[10px] text-center mt-2 flex items-center justify-center space-x-2 tracking-wide text-slate-500">
                 <span id="connectionDot" class="w-2 h-2 rounded-full bg-red-500 transition-colors duration-300"></span>
