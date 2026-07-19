@@ -49,8 +49,8 @@
     <script type="module">
         import { initializeApp } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-auth.js";
-        // 核心升級：導入 initializeFirestore 與 persistentLocalCache 達成完美離線與雲端雙軌同步
-        import { initializeFirestore, persistentLocalCache, getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-firestore.js";
+        // 核心升級：導入純粹的 getFirestore，回歸極速即時同步
+        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-firestore.js";
 
         const userFirebaseConfig = {
             apiKey: "AIzaSyBsdBYBeJYqgeDDxF39lZ0pr785SMnwvJs",
@@ -66,13 +66,8 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         
-        let db;
-        try {
-            // 啟用軍規級離線快取，確保無網路也能秒寫入
-            db = initializeFirestore(app, { localCache: persistentLocalCache() });
-        } catch (error) {
-            db = getFirestore(app);
-        }
+        // 完全使用跟影片庫相同的直連模式，捨棄繁重的本地快取設定
+        let db = getFirestore(app);
         
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
@@ -466,7 +461,9 @@
                     const idB = b.id || '';
                     return idB.localeCompare(idA);
                 });
-                window.renderGallery();
+                if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) {
+                    window.renderGallery();
+                }
             });
 
             // 初始化時檢查並執行一次性雲端遷移
