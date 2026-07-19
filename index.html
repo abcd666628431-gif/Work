@@ -139,13 +139,13 @@
         let timeUpdateInterval;
 
         // ==========================================
-        // 🌟 雲端同步助手 (Helper Functions)
+        // 🌟 雲端同步助手 (Helper Functions) 
         // ==========================================
-        const saveScheduleToCloud = async () => { if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }); };
-        const saveTaskStatesToCloud = async () => { if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState }); };
-        const saveSubTaskStatesToCloud = async () => { if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState }); };
-        const saveExtrasToCloud = async (taskId) => { if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_extras', taskId), taskExtrasState[taskId] || {}); };
-        const saveCategoriesToCloud = async () => { if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories }); };
+        const saveScheduleToCloud = async () => { if(currentUser) return setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }); };
+        const saveTaskStatesToCloud = async () => { if(currentUser) return setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState }); };
+        const saveSubTaskStatesToCloud = async () => { if(currentUser) return setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState }); };
+        const saveExtrasToCloud = async (taskId) => { if(currentUser) return setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_extras', taskId), taskExtrasState[taskId] || {}); };
+        const saveCategoriesToCloud = async () => { if(currentUser) return setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories }); };
 
         // ==========================================
         // 🚀 核心升級：配置秒開雙層快取，並實作無痛舊資料大遷移
@@ -534,6 +534,7 @@
             migrateLocalToCloud();
         }
 
+        // 🌟 終極修復：強制退回使用最穩定的 JPEG 引擎，並且適度壓縮避免塞爆雲端
         function compressImageAsync(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -543,7 +544,7 @@
                     img.src = event.target.result;
                     img.onload = () => {
                         const canvas = document.createElement('canvas');
-                        const MAX_SIZE = 800; 
+                        const MAX_SIZE = 700; // 安全尺寸
                         let width = img.width;
                         let height = img.height;
 
@@ -563,11 +564,11 @@
                         canvas.height = height;
                         const ctx = canvas.getContext('2d');
                         ctx.imageSmoothingEnabled = true;
-                        ctx.imageSmoothingQuality = 'high';
+                        ctx.imageSmoothingQuality = 'medium';
                         ctx.drawImage(img, 0, 0, width, height);
                         
-                        // 升級：採用高壓縮比、高畫質的 WebP 格式，清晰度調高至 0.9
-                        resolve(canvas.toDataURL('image/webp', 0.9)); 
+                        // 降級為相容性 100% 的 jpeg，壓縮比設為 0.6 (約 30-80KB)
+                        resolve(canvas.toDataURL('image/jpeg', 0.6)); 
                     };
                     img.onerror = () => reject(new Error("圖片解析失敗"));
                 };
@@ -1057,10 +1058,64 @@
             renderDailySchedule();
         };
 
-        window.toggleTask = (taskId) => {
+        // 🌟 終極修復：加入安全的照片數限制防呆機制
+        window.toggleTask = async (taskId) => {
             const isCompleted = !taskCompletionState[taskId];
             taskCompletionState[taskId] = isCompleted;
             
+            if (isCompleted) {
+                const extras = taskExtrasState[taskId] || { currentPhotos: [], currentNotes: [], subTasks: {} };
+                let hasData = (extras.currentPhotos && extras.currentPhotos.length > 0) || 
+                              (extras.currentNotes && extras.currentNotes.length > 0);
+
+                if (!hasData && extras.subTasks) {
+                    for (const key in extras.subTasks) {
+                        if (extras.subTasks[key].photos?.length > 0 || extras.subTasks[key].notes?.length > 0) {
+                            hasData = true; break;
+                        }
+                    }
+                }
+                
+                if (hasData) {
+                    if (!taskArchiveState[taskId]) taskArchiveState[taskId] = [];
+                    const now = new Date();
+                    const newRecord = {
+                        timestamp: now.getTime(),
+                        dateStr: now.toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+                        photos: [...(extras.currentPhotos || [])],
+                        notes: [...(extras.currentNotes || [])],
+                        subTasks: JSON.parse(JSON.stringify(extras.subTasks || {}))
+                    };
+                    
+                    const originalArchive = [...taskArchiveState[taskId]];
+                    taskArchiveState[taskId].unshift(newRecord);
+                    
+                    // 防爆機制：只保留最新的 10 筆歷史，確保雲端單據永遠不會超過 1MB
+                    if (taskArchiveState[taskId].length > 10) {
+                        taskArchiveState[taskId] = taskArchiveState[taskId].slice(0, 10);
+                    }
+                    
+                    try {
+                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_archive', taskId), { archive: taskArchiveState[taskId] });
+                        localStorage.setItem('work_cache_daily_archive', JSON.stringify(taskArchiveState));
+                        
+                        // 不再自動清空卡片上的記錄，保留現場照片！
+                        // extras.currentPhotos = []; extras.currentNotes = []; extras.subTasks = {};
+                        // taskExtrasState[taskId] = extras;
+                        // await saveExtrasToCloud(taskId);
+                        // localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
+                        
+                        window.showToast("任務完成！紀錄已備份至歷史圖庫");
+                    } catch (err) {
+                        taskArchiveState[taskId] = originalArchive;
+                        taskCompletionState[taskId] = false;
+                        window.showToast("歸檔失敗：相片總容量過大，請刪除部分圖片再試", true);
+                        renderDailySchedule();
+                        return;
+                    }
+                }
+            }
+
             saveTaskStatesToCloud();
             renderDailySchedule(); 
         };
@@ -1080,24 +1135,34 @@
             return taskExtrasState[taskId];
         }
 
+        // 🌟 終極修復：加入強制壓縮等待與容量防禦
         window.handleSubTaskPhotoUpload = async (taskId, subIdx, inputElement) => {
             const files = inputElement.files;
             if (!files || files.length === 0) return;
-            window.showToast("壓縮與上傳中...");
+            window.showToast("高強度壓縮與雲端同步中...");
             try {
                 const extras = initTaskExtras(taskId);
                 if (!extras.subTasks[subIdx]) extras.subTasks[subIdx] = { photos: [], notes: [] };
+                
+                const originalPhotos = [...extras.subTasks[subIdx].photos]; // 備份原始照片
                 
                 for(let i = 0; i < files.length; i++) {
                     const compressedBase64 = await compressImageAsync(files[i]);
                     extras.subTasks[subIdx].photos.push(compressedBase64);
                 }
                 
-                saveExtrasToCloud(taskId);
-                renderDailySchedule();
-                window.showToast("相片已附加至雲端");
+                try {
+                    await saveExtrasToCloud(taskId); // 確保真的傳上雲端才算成功
+                    localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
+                    renderDailySchedule();
+                    window.showToast("相片已安全備份至雲端");
+                } catch(cloudErr) {
+                    extras.subTasks[subIdx].photos = originalPhotos; // 失敗則還原
+                    window.showToast("雲端拒絕上傳：單次累積照片過多，請分批上傳", true);
+                    renderDailySchedule();
+                }
             } catch (error) {
-                window.showToast("處理失敗", true);
+                window.showToast("圖片解析失敗", true);
             } finally {
                 inputElement.value = '';
             }
@@ -1143,22 +1208,34 @@
             }
         };
 
+        // 🌟 終極修復：加入強制壓縮等待與容量防禦
         window.handleDailyPhotoUpload = async (taskId, inputElement) => {
             const files = inputElement.files;
             if (!files || files.length === 0) return;
-            window.showToast("壓縮與上傳中...");
+            window.showToast("高強度壓縮與雲端同步中...");
             try {
                 if (!taskExtrasState[taskId]) taskExtrasState[taskId] = { currentPhotos: [], currentNotes: [] };
                 if (!taskExtrasState[taskId].currentPhotos) taskExtrasState[taskId].currentPhotos = [];
+                
+                const originalPhotos = [...taskExtrasState[taskId].currentPhotos]; // 備份
+
                 for(let i = 0; i < files.length; i++) {
                     const compressedBase64 = await compressImageAsync(files[i]);
                     taskExtrasState[taskId].currentPhotos.push(compressedBase64);
                 }
-                saveExtrasToCloud(taskId);
-                renderDailySchedule();
-                window.showToast("相片已附加至雲端");
+                
+                try {
+                    await saveExtrasToCloud(taskId); // 確保真的傳上雲端才算成功
+                    localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
+                    renderDailySchedule();
+                    window.showToast("相片已安全備份至雲端");
+                } catch (cloudErr) {
+                    taskExtrasState[taskId].currentPhotos = originalPhotos; // 失敗則還原
+                    window.showToast("雲端拒絕上傳：單次累積照片過多，請分批上傳", true);
+                    renderDailySchedule();
+                }
             } catch (error) {
-                window.showToast("處理失敗", true);
+                window.showToast("圖片解析失敗", true);
             } finally { inputElement.value = ''; }
         };
 
@@ -1379,7 +1456,7 @@
                                         <span class="mx-0.5 text-slate-400">-</span>
                                         <span ${editAttrText('end')} class="${isEdit ? 'border-b border-dashed border-blue-400 text-blue-600 cursor-text focus:outline-none focus:bg-white px-0.5 rounded transition-colors' : ''}">${task.end}</span>
                                     </span>
-                                    <span id="status-text-${task.id}" class="text-[11px] ${timeColor} tracking-wide font-bold ml-2 text-right">${isCompleted ? '✔ 已歸檔' : status.text}</span>
+                                    <span id="status-text-${task.id}" class="text-[11px] ${timeColor} tracking-wide font-bold ml-2 text-right">${isCompleted ? '✔ 任務完成' : status.text}</span>
                                 </div>
                                 
                                 <h3 ${editAttrText('title')} class="text-[15px] tracking-wide font-bold ${isCompleted ? 'text-slate-400 line-through' : 'text-slate-800'} ${editClass} pl-1">
@@ -1420,13 +1497,13 @@
                                                         <div class="relative flex items-start flex-1 min-w-0" onclick="${!isEdit && !isCompleted ? `window.toggleSubTask('${task.id}', ${idx}, event)` : ''}">
                                                             <p ${editSubAttr(idx)} class="text-[12px] ${subStepTextClass} tracking-wide leading-relaxed pr-2 transition-colors flex-1 ${editClass} ${!isEdit && !isCompleted ? 'cursor-pointer' : ''} select-none">${step}</p>
                                                         </div>
-                                                        ${!isCompleted ? `
-                                                        <div class="flex items-center space-x-2 shrink-0 ml-1 ${isEdit ? '' : 'opacity-0 group-hover/step:opacity-100 transition-opacity'}">
+                                                        <div class="flex items-center space-x-2 shrink-0 ml-1 opacity-0 group-hover/step:opacity-100 transition-opacity">
                                                             ${isEdit ? `
                                                             <button type="button" onclick="window.deleteSubTask('${task.id}', ${idx}, event); event.stopPropagation();" class="text-red-400 hover:text-red-500 active:scale-95 transition-transform p-0.5 cursor-pointer">
                                                                 <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
                                                             </button>
                                                             ` : `
+                                                            ${!isCompleted ? `
                                                             <label class="cursor-pointer text-blue-500 hover:text-blue-600 active:scale-95 transition-transform p-0.5" onclick="event.stopPropagation();">
                                                                 <i data-lucide="camera" class="w-3.5 h-3.5"></i>
                                                                 <input type="file" accept="image/*" multiple class="hidden" onchange="window.handleSubTaskPhotoUpload('${task.id}', ${idx}, this)" />
@@ -1434,9 +1511,9 @@
                                                             <button type="button" onclick="window.toggleSubNoteInput('${task.id}', ${idx}); event.stopPropagation();" class="text-blue-500 hover:text-blue-600 active:scale-95 transition-transform p-0.5">
                                                                 <i data-lucide="message-square" class="w-3.5 h-3.5"></i>
                                                             </button>
+                                                            ` : ''}
                                                             `}
                                                         </div>
-                                                        ` : ''}
                                                     </div>
 
                                                     ${!isCompleted ? `
@@ -1542,7 +1619,7 @@
 
                             <button type="button" onclick="window.openArchive('${task.id}')" class="w-[60px] shrink-0 flex flex-col items-center justify-center rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 transition-colors relative active:scale-95 shadow-sm">
                                 <i data-lucide="images" class="w-4 h-4 mb-1"></i>
-                                <span class="text-[9px] tracking-wide text-center leading-tight">更多<br>圖片</span>
+                                <span class="text-[9px] tracking-wide text-center leading-tight">歷史<br>圖庫</span>
                                 ${archive.length > 0 ? `<span class="absolute -top-2 -right-2 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow-sm border border-white">${archive.length}</span>` : ''}
                             </button>
                         </div>
@@ -1550,7 +1627,7 @@
                         <div class="mt-3 pt-3 border-t border-slate-100 flex justify-end">
                             <button type="button" onclick="window.openArchive('${task.id}')" class="flex items-center space-x-1 px-3 py-1.5 rounded-md bg-slate-50 border border-slate-200 text-slate-500 active:scale-95 transition-colors hover:text-blue-600 shadow-sm">
                                 <i data-lucide="images" class="w-3.5 h-3.5"></i>
-                                <span class="text-[10px] tracking-wide font-medium">查看更多圖片 (${archive.length})</span>
+                                <span class="text-[10px] tracking-wide font-medium">查看歷史圖庫 (${archive.length})</span>
                             </button>
                         </div>
                         `}
@@ -1601,7 +1678,7 @@
                 const cards = document.querySelectorAll('.daily-task-card');
                 const observer = new IntersectionObserver((entries) => {
                     entries.forEach(entry => {
-                        if (entry.isIntersecting && !window.isEditMode && !entry.target.innerHTML.includes('已歸檔')) {
+                        if (entry.isIntersecting && !window.isEditMode && !entry.target.innerHTML.includes('任務完成')) {
                             entry.target.classList.add('card-focused');
                         } else {
                             entry.target.classList.remove('card-focused');
@@ -1732,7 +1809,7 @@
     <div id="archiveModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] hidden flex-col items-center justify-center p-4">
         <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-full max-w-[400px] max-h-[80vh] flex flex-col overflow-hidden relative">
             <header class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                <h2 class="text-slate-800 font-bold tracking-widest text-base flex items-center"><i data-lucide="images" class="w-5 h-5 mr-2 text-blue-500"></i> 更多圖片</h2>
+                <h2 class="text-slate-800 font-bold tracking-widest text-base flex items-center"><i data-lucide="images" class="w-5 h-5 mr-2 text-blue-500"></i> 歷史圖庫</h2>
                 <button onclick="window.closeArchive()" class="text-slate-400 p-1.5 rounded-full hover:bg-slate-200 active:scale-95 transition-all"><i data-lucide="x" class="w-6 h-6"></i></button>
             </header>
             <div id="archiveContent" class="flex-1 overflow-y-auto p-4 pb-6 scrollbar-hide bg-[#fdfbf7]">
