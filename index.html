@@ -157,28 +157,34 @@
             storeName: 'work_records'
         });
 
+        // 幫手函數：安全讀取最舊的 localStorage 資料
+        const getOldLocal = (key) => {
+            try { const val = localStorage.getItem(key); return val ? JSON.parse(val) : null; } 
+            catch(e) { return null; }
+        };
+
         async function loadLocalData() {
             try {
                 // 僅作為斷網極速啟動時的本地備援，後續將由 Firestore onSnapshot 完全接管
-                const sd = await localforage.getItem('userDailyScheduleData');
+                const sd = getOldLocal('userDailyScheduleData') || await localforage.getItem('userDailyScheduleData');
                 if (sd) dailyScheduleData = sd;
 
-                const ts = await localforage.getItem('dailyTasksState');
+                const ts = getOldLocal('dailyTasksState') || await localforage.getItem('dailyTasksState');
                 if (ts) taskCompletionState = ts;
 
-                const te = await localforage.getItem('dailyTasksExtras');
+                const te = getOldLocal('dailyTasksExtras') || await localforage.getItem('dailyTasksExtras');
                 if (te) taskExtrasState = te;
 
-                const ta = await localforage.getItem('dailyTasksArchive');
+                const ta = getOldLocal('dailyTasksArchive') || await localforage.getItem('dailyTasksArchive');
                 if (ta) taskArchiveState = ta;
 
-                const st = await localforage.getItem('subTaskCompletionState');
+                const st = getOldLocal('subTaskCompletionState') || await localforage.getItem('subTaskCompletionState');
                 if (st) subTaskCompletionState = st;
 
-                const gc = await localforage.getItem('galleryCategories');
+                const gc = getOldLocal('galleryCategories') || await localforage.getItem('galleryCategories');
                 if (gc) galleryCategories = gc;
 
-                const gi = await localforage.getItem('galleryItems');
+                const gi = getOldLocal('galleryItems') || await localforage.getItem('galleryItems');
                 if (gi) galleryItems = gi;
 
                 currentGalleryCategory = galleryCategories[0] || '全部';
@@ -211,49 +217,50 @@
         
         loadLocalData();
 
-        // 🚀 自動無痛轉移機制：把舊版手機內的資料一次性打上雲端，從此解放
+        // 🚀 強力自動轉移機制：把舊版手機內「所有的」舊資料一次性打上雲端
         async function migrateLocalToCloud() {
             if (!currentUser) return;
-            const migrated = await localforage.getItem('cloud_migrated_v2');
+            const migrated = localStorage.getItem('cloud_migrated_v3');
             if (migrated) return;
 
-            window.showToast("🚀 正在為您啟動雲端多裝置同步...", false);
+            window.showToast("🚀 正在為您將舊數據上雲端...", false);
             try {
-                const sd = await localforage.getItem('userDailyScheduleData');
-                if (sd) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: sd });
+                const sd = getOldLocal('userDailyScheduleData') || await localforage.getItem('userDailyScheduleData');
+                if (sd && sd.length > 0) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: sd });
 
-                const ts = await localforage.getItem('dailyTasksState');
+                const ts = getOldLocal('dailyTasksState') || await localforage.getItem('dailyTasksState');
                 if (ts) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: ts });
 
-                const st = await localforage.getItem('subTaskCompletionState');
+                const st = getOldLocal('subTaskCompletionState') || await localforage.getItem('subTaskCompletionState');
                 if (st) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: st });
 
-                const gc = await localforage.getItem('galleryCategories');
+                const gc = getOldLocal('galleryCategories') || await localforage.getItem('galleryCategories');
                 if (gc) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: gc });
 
-                const te = await localforage.getItem('dailyTasksExtras');
+                const te = getOldLocal('dailyTasksExtras') || await localforage.getItem('dailyTasksExtras');
                 if (te) {
                     for (const taskId in te) {
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_extras', taskId), te[taskId]);
                     }
                 }
 
-                const ta = await localforage.getItem('dailyTasksArchive');
+                const ta = getOldLocal('dailyTasksArchive') || await localforage.getItem('dailyTasksArchive');
                 if (ta) {
                     for (const taskId in ta) {
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'daily_archive', taskId), { archive: ta[taskId] });
                     }
                 }
 
-                const gi = await localforage.getItem('galleryItems');
+                const gi = getOldLocal('galleryItems') || await localforage.getItem('galleryItems');
                 if (gi && gi.length > 0) {
                     for (const item of gi) {
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item);
                     }
                 }
 
-                await localforage.setItem('cloud_migrated_v2', true);
-                window.showToast("✅ 雲端同步開啟成功！已跨越儲存限制！");
+                // 標記為已遷移，避免重複執行
+                localStorage.setItem('cloud_migrated_v3', 'true');
+                window.showToast("✅ 舊數據雲端同步成功！已跨越儲存限制！");
             } catch (e) {
                 console.error("Migration error:", e);
                 window.showToast("資料轉移稍有延遲，將於背景繼續處理");
