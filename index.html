@@ -107,6 +107,12 @@
             catch(e) { return defaultVal; }
         };
 
+        // 🌟 新增：安全寫入本地快取 (防止手機 5MB 容量爆表導致報錯)
+        const safeSetLocal = (key, data) => {
+            try { localStorage.setItem(key, JSON.stringify(data)); } 
+            catch(e) { console.warn(`手機端快取空間已滿，跳過本地備份: ${key}`); }
+        };
+
         // 🌟 1. 啟動時：瞬間載入本地快取畫出介面 (秒開)
         function loadLocalFastCache() {
             dailyScheduleData = getLocal('work_cache_schedule', []);
@@ -165,8 +171,8 @@
             }
             
             if (hasMigrated) {
-                localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
-                localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+                safeSetLocal('work_cache_daily_extras', taskExtrasState);
+                safeSetLocal('work_cache_gallery_items', galleryItems);
                 if(currentUser) {
                     setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState });
                 }
@@ -182,7 +188,7 @@
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), (docSnap) => {
                 if(docSnap.exists() && docSnap.data().tasks) { 
                     dailyScheduleData = docSnap.data().tasks;
-                    localStorage.setItem('work_cache_schedule', JSON.stringify(dailyScheduleData));
+                    safeSetLocal('work_cache_schedule', dailyScheduleData);
                     renderDailySchedule(); 
                 }
             });
@@ -191,7 +197,7 @@
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), (docSnap) => {
                 if(docSnap.exists()) { 
                     taskCompletionState = docSnap.data().states || {};
-                    localStorage.setItem('work_cache_task_states', JSON.stringify(taskCompletionState));
+                    safeSetLocal('work_cache_task_states', taskCompletionState);
                     renderDailySchedule(); 
                 }
             });
@@ -200,7 +206,7 @@
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), (docSnap) => {
                 if(docSnap.exists()) { 
                     subTaskCompletionState = docSnap.data().states || {};
-                    localStorage.setItem('work_cache_subtask_states', JSON.stringify(subTaskCompletionState));
+                    safeSetLocal('work_cache_subtask_states', subTaskCompletionState);
                     renderDailySchedule(); 
                 }
             });
@@ -209,7 +215,7 @@
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), (docSnap) => {
                 if(docSnap.exists()) { 
                     taskExtrasState = docSnap.data().extras || {};
-                    localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
+                    safeSetLocal('work_cache_daily_extras', taskExtrasState);
                     renderDailySchedule(); 
                 }
             });
@@ -219,7 +225,7 @@
                 if(docSnap.exists()) { 
                     galleryCategories = docSnap.data().categories || ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他'];
                     if(!galleryCategories.includes('任務附件')) galleryCategories.push('任務附件');
-                    localStorage.setItem('work_cache_gallery_categories', JSON.stringify(galleryCategories));
+                    safeSetLocal('work_cache_gallery_categories', galleryCategories);
                     window.renderGallery(); 
                 }
             });
@@ -236,7 +242,7 @@
                 
                 if(JSON.stringify(galleryItems) !== JSON.stringify(newItems)) {
                     galleryItems = newItems;
-                    localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+                    safeSetLocal('work_cache_gallery_items', galleryItems);
                     if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) window.renderGallery();
                     if(document.getElementById('dailySchedulePage') && !document.getElementById('dailySchedulePage').classList.contains('hidden')) renderDailySchedule();
                 }
@@ -404,7 +410,7 @@
                     galleryItems.unshift(newItem); // 本地秒速顯示
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId), newItem); // 獨立單據，絕對不會觸發 1MB 限制！
                 }
-                localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+                safeSetLocal('work_cache_gallery_items', galleryItems);
                 renderDailySchedule();
                 window.showToast("相片已安全上傳至雲端");
             } catch (error) {
@@ -433,7 +439,7 @@
                     galleryItems.unshift(newItem); 
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId), newItem);
                 }
-                localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+                safeSetLocal('work_cache_gallery_items', galleryItems);
                 renderDailySchedule();
                 window.showToast("相片已安全上傳至雲端");
             } catch (error) {
@@ -449,7 +455,7 @@
             if(!currentUser) return;
             
             galleryItems = galleryItems.filter(item => item.id !== photoId);
-            localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+            safeSetLocal('work_cache_gallery_items', galleryItems);
             renderDailySchedule();
             
             try { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId)); } catch(e) {}
@@ -655,12 +661,12 @@
                     galleryItems = impGalItems;
 
                     // 寫入本地快取
-                    localStorage.setItem('work_cache_schedule', JSON.stringify(dailyScheduleData));
-                    localStorage.setItem('work_cache_task_states', JSON.stringify(taskCompletionState));
-                    localStorage.setItem('work_cache_daily_extras', JSON.stringify(taskExtrasState));
-                    localStorage.setItem('work_cache_subtask_states', JSON.stringify(subTaskCompletionState));
-                    localStorage.setItem('work_cache_gallery_categories', JSON.stringify(galleryCategories));
-                    localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+                    safeSetLocal('work_cache_schedule', dailyScheduleData);
+                    safeSetLocal('work_cache_task_states', taskCompletionState);
+                    safeSetLocal('work_cache_daily_extras', taskExtrasState);
+                    safeSetLocal('work_cache_subtask_states', subTaskCompletionState);
+                    safeSetLocal('work_cache_gallery_categories', galleryCategories);
+                    safeSetLocal('work_cache_gallery_items', galleryItems);
 
                     // 如果有連線，強制覆蓋上雲端
                     if (currentUser) {
@@ -768,7 +774,7 @@
                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', newItem.id), newItem);
                } catch(e) {}
             }
-            localStorage.setItem('work_cache_gallery_items', JSON.stringify(galleryItems));
+            safeSetLocal('work_cache_gallery_items', galleryItems);
             window.renderGallery();
             window.showToast("圖庫雲端上傳完成");
             input.value = '';
