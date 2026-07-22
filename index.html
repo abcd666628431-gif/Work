@@ -907,7 +907,6 @@
             `;
 
             html += '<div class="relative pt-[2vh] pb-[40vh] w-full max-w-[500px] mx-auto flex flex-col">';
-            html += '<div class="absolute left-[24px] top-0 bottom-0 w-[4px] bg-[#d6d0c4] z-0 rounded-full"></div>';
 
             let hasCurrent = false;
             let targetScrollId = null;
@@ -918,6 +917,12 @@
             timelineTasks.forEach((task, index) => {
                 const isCompleted = taskCompletionState[task.id];
                 const status = calculateTaskStatus(task.start, task.end);
+                
+                const isFirst = index === 0;
+                const isLast = index === timelineTasks.length - 1;
+                let lineTop = isFirst ? 'top-1/2' : 'top-[-30px]'; 
+                let lineBottom = isLast ? 'bottom-1/2' : 'bottom-[-30px]';
+                let verticalLineHtml = `<div class="absolute left-[24px] w-[4px] bg-[#d6d0c4] z-0 rounded-full ${lineTop} ${lineBottom}"></div>`;
                 
                 let wrapperClass = 'timeline-wrapper mb-1 relative transition-all duration-500';
                 let wrapperStyle = 'max-height: 250px;';
@@ -986,6 +991,7 @@
 
                 html += `
                     <div id="tl-task-wrapper-${task.id}" class="${wrapperClass}" style="${wrapperStyle}">
+                        ${verticalLineHtml}
                         ${activeLineHtml}
                         <div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div>
                         
@@ -1020,7 +1026,7 @@
                     if (el && page) {
                         const containerRect = page.getBoundingClientRect();
                         const elRect = el.getBoundingClientRect();
-                        const scrollTop = el.offsetTop - (containerRect.height / 2) + (elRect.height / 2);
+                        const scrollTop = page.scrollTop + (elRect.top - containerRect.top) - (containerRect.height / 2) + (elRect.height / 2);
                         page.scrollTo({ top: scrollTop, behavior: 'smooth' });
                     }
                 }, 150); 
@@ -1057,8 +1063,8 @@
             if(!task) return;
 
             const modalHtml = `
-                <div id="dynamicEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="this.remove()">
-                    <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onclick="event.stopPropagation()">
+                <div id="dynamicEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onmousedown="if(event.target === this) this.isBg = true;" onmouseup="if(event.target === this && this.isBg) this.remove(); this.isBg = false;">
+                    <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative">
                         <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i>編輯任務</h3>
                         <div class="space-y-4">
                             <div>
