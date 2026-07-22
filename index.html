@@ -856,11 +856,30 @@
             }
         };
 
-        window.completeTimelineTask = (taskId) => {
+        window.completeTimelineTask = (taskId, event) => {
+            if (event) {
+                event.stopPropagation();
+            }
             window.toggleTask(taskId); 
             if(!document.getElementById('timelinePage').classList.contains('hidden')) {
                 window.renderTimeline(false); 
             }
+        };
+
+        window.addTimelineTask = () => {
+            const newId = 't_' + Date.now();
+            const now = window.getNow();
+            const startStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit' });
+            now.setMinutes(now.getMinutes() + 30);
+            const endStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit' });
+
+            dailyScheduleData.push({ id: newId, start: startStr, end: endStr, title: '新動態任務', content: '點擊編輯內容...', note: '', subSteps: [] });
+            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }, { merge: true });
+            
+            renderDailySchedule();
+            if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+            
+            window.editTimelineTask(newId);
         };
 
         window.renderTimeline = (scrollToCenter = false) => {
@@ -916,9 +935,9 @@
                     cardClass = 'opacity-60 scale-[0.92] border-slate-200 bg-slate-100';
                     dotClass = 'bg-slate-300 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
                     timeText = '<span class="text-slate-500 font-bold">✔ 已完成</span>';
-                    checkBtnHtml = `<div class="w-10 h-10 rounded-full bg-slate-200 text-white flex items-center justify-center shadow-inner z-10 relative">
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-slate-200 text-white flex items-center justify-center shadow-inner z-10 relative hover:bg-slate-300 transition-colors active:scale-90 cursor-pointer" title="點擊取消完成">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none"></i>
-                                    </div>`;
+                                    </button>`;
                 } else if (status.state === 'overdue') {
                     stackIndex++;
                     if (lastWasStacked) {
@@ -934,7 +953,7 @@
                     dotClass = 'bg-red-400 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
                     timeText = '<span class="text-red-500 font-bold">🔴 已逾時 (' + status.text.replace('已結束 (超時 ', '').replace(')', '') + ')</span>';
                     if (!hasCurrent && !targetScrollId) targetScrollId = `tl-task-wrapper-${task.id}`;
-                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}')" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
                 } else if (status.state === 'active') {
@@ -946,7 +965,7 @@
                     timeText = '<span class="text-blue-600 font-bold">🟢 當前任務</span>';
                     hasCurrent = true;
                     targetScrollId = `tl-task-wrapper-${task.id}`;
-                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}')" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
                     activeLineHtml = `<div class="absolute left-[24px] right-[10px] top-1/2 -translate-y-1/2 h-[4px] bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.6)] z-0 pointer-events-none rounded-full animate-pulse"></div>`;
@@ -960,7 +979,7 @@
                     if (!hasCurrent && !targetScrollId) {
                         targetScrollId = `tl-task-wrapper-${task.id}`; 
                     }
-                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}')" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
                 }
@@ -1594,13 +1613,13 @@
                 </button>
             </div>
 
-            <!-- 浮動按鈕：右側 (對焦與新增) -->
+            <!-- 浮動按鈕：右側 (新增與對焦) -->
             <div class="fixed bottom-10 right-6 sm:absolute sm:bottom-6 sm:right-6 flex flex-col gap-3 z-30">
-                <!-- 新增任務 -->
-                <button type="button" onclick="window.addTimelineTask()" class="bg-blue-500 text-white rounded-full p-3 shadow-[0_8px_20px_-6px_rgba(59,130,246,0.5)] hover:bg-blue-600 active:scale-95 transition-transform flex items-center justify-center" title="新增任務">
+                <!-- 新增動態任務按鈕 -->
+                <button type="button" onclick="window.addTimelineTask()" class="bg-blue-500 hover:bg-blue-600 text-white rounded-full p-3 shadow-[0_8px_20px_-6px_rgba(59,130,246,0.4)] active:scale-95 transition-transform flex items-center justify-center" title="新增動態任務">
                     <i data-lucide="plus" class="w-5 h-5 pointer-events-none"></i>
                 </button>
-                <!-- 手動對焦回到當前進行中的任務 -->
+                <!-- 浮動按鈕：手動對焦回到當前進行中的任務 -->
                 <button type="button" onclick="window.renderTimeline(true)" class="bg-slate-800 text-white rounded-full p-3 shadow-[0_8px_20px_-6px_rgba(0,0,0,0.4)] hover:bg-slate-700 active:scale-95 transition-transform flex items-center justify-center" title="對焦當前任務">
                     <i data-lucide="crosshair" class="w-5 h-5 pointer-events-none"></i>
                 </button>
