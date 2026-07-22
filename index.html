@@ -43,8 +43,18 @@
             z-index: 30;
         }
 
-        /* 新增：動態任務滑動消除過渡動畫 */
+        /* 動態任務滑動消除過渡動畫 */
         .timeline-card { transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
+        
+        /* 堆疊卡片查看動畫 */
+        .bring-to-front {
+            z-index: 9999 !important;
+        }
+        .bring-to-front .timeline-card {
+            transform: translateY(-20px) scale(1.03) !important;
+            box-shadow: 0 25px 30px -5px rgba(0, 0, 0, 0.25), 0 15px 15px -5px rgba(0, 0, 0, 0.1) !important;
+            opacity: 1 !important;
+        }
     </style>
 
     <script type="module">
@@ -87,13 +97,13 @@
         let currentGalleryCategory = '全部';
         window.isEditMode = false;
         let timeUpdateInterval;
-        let timelineUpdateInterval; // 專屬動態任務計時器
+        let timelineUpdateInterval; 
         
-        // 新增：模擬模式全域變數
-        let isSimulating = false;
-        let simulationTime = new Date();
+        // 模擬模式全域變數
+        let timeOffset = 0; 
+        let isFastForwarding = false; 
         let simInterval = null;
-        window.getNow = () => isSimulating ? simulationTime : new Date();
+        window.getNow = () => new Date(Date.now() + timeOffset);
 
         window.showToast = (message, isError = false) => {
             const toast = document.createElement('div');
@@ -405,7 +415,7 @@
                 renderDailySchedule();
                 window.showToast("相片已安全上傳至雲端");
             } catch (error) {
-                window.showToast("上傳失敗，可能是手機快取已滿，但雲端仍會儲存", false); // 修改：容錯顯示
+                window.showToast("上傳失敗，可能是手機快取已滿，但雲端仍會儲存", false); 
             } finally {
                 inputElement.value = '';
                 inputElement.disabled = false;
@@ -835,8 +845,18 @@
             }
         };
 
+        window.viewStackedCard = (taskId, event) => {
+            if (event && event.target.closest('button')) return; // ignore check button clicks
+            const el = document.getElementById(`tl-task-wrapper-${taskId}`);
+            if (el) {
+                el.classList.add('bring-to-front');
+                setTimeout(() => {
+                    el.classList.remove('bring-to-front');
+                }, 5000);
+            }
+        };
+
         window.completeTimelineTask = (taskId) => {
-            // 直接完成或取消任務，不再讓卡片消失
             window.toggleTask(taskId); 
             if(!document.getElementById('timelinePage').classList.contains('hidden')) {
                 window.renderTimeline(false); 
@@ -847,7 +867,6 @@
             const container = document.getElementById('timelineContainer');
             if(!container) return;
 
-            // 1. 取得所有任務 (不再剔除已完成)，並依據時間排序
             let timelineTasks = [...dailyScheduleData];
             timelineTasks.sort((a, b) => parseTime(a.start) - parseTime(b.start));
 
@@ -857,68 +876,89 @@
                 return;
             }
 
-            // 取得現在時間，避免每次更新閃爍 (支援模擬模式)
             const now = window.getNow();
             const timeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
             const dateStr = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
 
-            // 新增大時鐘 (Sticky 置頂懸浮)
             let html = `
-                <div class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-3 pb-8 px-4 flex flex-col items-center justify-center pointer-events-none">
-                    <div id="tlBigClock" class="font-mono text-3xl sm:text-4xl font-black text-slate-800 tracking-tighter bg-white/90 backdrop-blur-md px-5 py-1.5 rounded-[1.25rem] border-2 border-slate-200 shadow-sm pointer-events-auto transition-all">${timeStr}</div>
+                <div class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-3 pb-8 px-4 flex flex-col items-center justify-center pointer-events-none transition-all">
+                    <div id="tlBigClock" ondblclick="window.promptChangeTime()" title="雙擊設定指定時間" class="cursor-pointer hover:scale-105 font-mono text-3xl font-black text-slate-800 tracking-tighter bg-white/90 backdrop-blur-md px-5 py-1.5 rounded-[1.25rem] border border-slate-200 shadow-sm pointer-events-auto transition-all">${timeStr}</div>
                     <div id="tlBigDate" class="text-[11px] font-bold text-slate-500 mt-1.5 tracking-widest pointer-events-auto">${dateStr}</div>
                 </div>
             `;
 
-            // 調整左側空位：將 ml-[76px] 縮減為 ml-[56px] 讓卡片變寬，並對齊時間軸線
-            html += '<div class="relative pt-[2vh] pb-[40vh] w-full max-w-md mx-auto flex flex-col px-2">';
-            html += '<div class="absolute left-[32px] top-0 bottom-0 w-[3px] bg-[#d6d0c4] z-0 rounded-full"></div>';
+            html += '<div class="relative pt-[2vh] pb-[40vh] w-full max-w-[500px] mx-auto flex flex-col">';
+            html += '<div class="absolute left-[24px] top-0 bottom-0 w-[4px] bg-[#d6d0c4] z-0 rounded-full"></div>';
 
             let hasCurrent = false;
             let targetScrollId = null;
+            
+            let lastWasStacked = false;
+            let stackIndex = 0;
 
             timelineTasks.forEach((task, index) => {
                 const isCompleted = taskCompletionState[task.id];
                 const status = calculateTaskStatus(task.start, task.end);
+                
+                let wrapperClass = 'timeline-wrapper mb-1 relative transition-all duration-500';
+                let wrapperStyle = 'max-height: 250px;';
+                
                 let cardClass = '';
                 let dotClass = '';
                 let timeText = '';
                 let checkBtnHtml = '';
+                let activeLineHtml = '';
                 
                 if (isCompleted) {
-                    // 已完成：半透明，變灰色
-                    cardClass = 'opacity-60 scale-[0.96] border-slate-200 bg-slate-100';
-                    dotClass = 'bg-slate-300 w-4 h-4 left-[17.5px] border-[3px] border-[#fdfbf7]';
+                    if (lastWasStacked) wrapperStyle += ' margin-top: 10px;'; 
+                    lastWasStacked = false;
+
+                    cardClass = 'opacity-60 scale-[0.92] border-slate-200 bg-slate-100';
+                    dotClass = 'bg-slate-300 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
                     timeText = '<span class="text-slate-500 font-bold">✔ 已完成</span>';
-                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}')" class="w-10 h-10 rounded-full bg-green-500 border-2 border-green-500 text-white transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 z-10 relative cursor-pointer">
+                    checkBtnHtml = `<div class="w-10 h-10 rounded-full bg-slate-200 text-white flex items-center justify-center shadow-inner z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none"></i>
-                                    </button>`;
+                                    </div>`;
                 } else if (status.state === 'overdue') {
-                    // 已逾時：堆積在上方，半透明縮小
-                    cardClass = 'opacity-80 scale-[0.96] border-[#d6d0c4] bg-[#fdfbf7] hover:opacity-100 transition-opacity';
-                    dotClass = 'bg-red-400 w-4 h-4 left-[17.5px] border-[3px] border-[#fdfbf7]';
+                    stackIndex++;
+                    if (lastWasStacked) {
+                        wrapperClass = 'timeline-wrapper relative transition-all duration-500'; 
+                        wrapperStyle += ` margin-top: -60px; z-index: ${stackIndex};`; 
+                    } else {
+                        wrapperClass = 'timeline-wrapper relative transition-all duration-500'; 
+                        wrapperStyle += ` z-index: ${stackIndex};`;
+                    }
+                    lastWasStacked = true;
+
+                    cardClass = 'opacity-95 scale-[0.92] border-[#d6d0c4] bg-[#fdfbf7] shadow-sm transition-all duration-300';
+                    dotClass = 'bg-red-400 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
                     timeText = '<span class="text-red-500 font-bold">🔴 已逾時 (' + status.text.replace('已結束 (超時 ', '').replace(')', '') + ')</span>';
                     if (!hasCurrent && !targetScrollId) targetScrollId = `tl-task-wrapper-${task.id}`;
                     checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}')" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
                 } else if (status.state === 'active') {
-                    // 當前任務：強烈高亮放大
-                    cardClass = 'border-blue-500 shadow-xl scale-105 bg-blue-50 z-20';
-                    dotClass = 'bg-blue-500 w-6 h-6 left-[13.5px] border-[4px] border-[#fdfbf7] shadow-md animate-[pulse_2s_ease-in-out_infinite]';
+                    if (lastWasStacked) wrapperStyle += ' margin-top: 15px;'; 
+                    lastWasStacked = false;
+
+                    cardClass = 'border-blue-500 shadow-xl bg-blue-50 z-20';
+                    dotClass = 'bg-blue-500 w-6 h-6 left-[14px] border-[4px] border-[#fdfbf7] shadow-md animate-[pulse_2s_ease-in-out_infinite]';
                     timeText = '<span class="text-blue-600 font-bold">🟢 當前任務</span>';
                     hasCurrent = true;
                     targetScrollId = `tl-task-wrapper-${task.id}`;
                     checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}')" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
+                    activeLineHtml = `<div class="absolute left-[24px] right-[10px] top-1/2 -translate-y-1/2 h-[4px] bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.6)] z-0 pointer-events-none rounded-full animate-pulse"></div>`;
                 } else { 
-                    // 未來即將到來：正常顯示
-                    cardClass = 'opacity-95 scale-100 border-[#d6d0c4] bg-white';
-                    dotClass = 'bg-amber-400 w-4 h-4 left-[17.5px] border-[3px] border-[#fdfbf7]';
+                    if (lastWasStacked) wrapperStyle += ' margin-top: 15px;'; 
+                    lastWasStacked = false;
+
+                    cardClass = 'opacity-95 scale-[0.92] border-[#d6d0c4] bg-white';
+                    dotClass = 'bg-amber-400 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
                     timeText = '<span class="text-amber-600 font-bold">⏳ ' + status.text.replace('未開始 (', '還有 ').replace('後)', '') + ' 到來</span>';
                     if (!hasCurrent && !targetScrollId) {
-                        targetScrollId = `tl-task-wrapper-${task.id}`; // 如果沒有正在進行的，對焦下一個即將到來的
+                        targetScrollId = `tl-task-wrapper-${task.id}`; 
                     }
                     checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}')" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
@@ -926,27 +966,22 @@
                 }
 
                 html += `
-                    <div id="tl-task-wrapper-${task.id}" class="timeline-wrapper mb-5 relative" style="max-height: 250px;">
-                        
-                        <!-- 時間軸圓點 (相對於 wrapper 獨立定位，防止被溢出隱藏裁切) -->
+                    <div id="tl-task-wrapper-${task.id}" class="${wrapperClass}" style="${wrapperStyle}">
+                        ${activeLineHtml}
                         <div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div>
                         
-                        <!-- 卡片加寬：邊距減小 ml-[56px] -->
-                        <div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[56px] mr-1 sm:mr-2 ${cardClass} overflow-hidden">
+                        <div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[44px] mr-[10px] ${cardClass} overflow-hidden cursor-pointer" onclick="window.viewStackedCard('${task.id}', event)" ondblclick="window.editTimelineTask('${task.id}')" title="單擊查看整張卡片，雙擊編輯或刪除此卡片">
                             
-                            <!-- 左側具體時間 (寬度微微縮減，給文字更多空間) -->
-                            <div class="flex flex-col items-center justify-center shrink-0 w-[64px] bg-slate-100/50 border-r border-slate-200/60 p-2">
+                            <div class="flex flex-col items-center justify-center shrink-0 w-[60px] bg-slate-100/50 border-r border-slate-200/60 p-2">
                                 <span class="font-black text-[15px] text-slate-700 tracking-tighter ${isCompleted ? 'opacity-50 line-through decoration-slate-400' : ''}">${task.start}</span>
                                 <span class="text-[9px] text-slate-400 font-bold mt-0.5">${task.end}</span>
                             </div>
                             
-                            <!-- 中間任務內容 -->
                             <div class="flex-1 p-3 min-w-0 flex flex-col justify-center">
                                 <h3 class="font-bold text-slate-800 text-[14px] truncate ${isCompleted ? 'opacity-50 line-through decoration-slate-400' : ''}" title="${task.title}">${task.title}</h3>
                                 <div class="text-[11px] mt-1.5 tracking-widest">${timeText}</div>
                             </div>
                             
-                            <!-- 右側完成按鈕 -->
                             <div class="shrink-0 flex items-center justify-center pr-3 pl-1">
                                 ${checkBtnHtml}
                             </div>
@@ -959,11 +994,10 @@
             container.innerHTML = html;
             lucide.createIcons();
             
-            // 自動對焦：只滑動容器本身，不動整個網頁
             if (scrollToCenter && targetScrollId) {
                 setTimeout(() => {
                     const el = document.getElementById(targetScrollId);
-                    const page = document.getElementById('timelinePage'); // 以這個為滾動容器
+                    const page = document.getElementById('timelinePage'); 
                     if (el && page) {
                         const containerRect = page.getBoundingClientRect();
                         const elRect = el.getBoundingClientRect();
@@ -973,57 +1007,127 @@
                 }, 150); 
             }
 
-            // 啟動專屬的時間軸計時器 (卡片狀態更新)
             if(timelineUpdateInterval) clearInterval(timelineUpdateInterval);
             timelineUpdateInterval = setInterval(() => {
                 if(!document.getElementById('timelinePage').classList.contains('hidden')) {
-                    // 每分鐘靜默更新一次時間狀態，但不強制改變用戶的滾動位置
                     window.renderTimeline(false); 
                 }
             }, 60000);
         };
 
-        // 新增：模擬模式開關與加速邏輯
+        window.promptChangeTime = () => {
+            const input = prompt("請輸入指定的穿越時間 (格式 HH:MM，例如 14:30) \\n設定後，時間將從該點繼續自然流逝：", "14:30");
+            if (input) {
+                const [h, m] = input.split(':').map(Number);
+                if (!isNaN(h) && !isNaN(m)) {
+                    const targetDate = new Date();
+                    targetDate.setHours(h, m, 0, 0);
+                    timeOffset = targetDate.getTime() - Date.now(); 
+                    
+                    const restoreBtn = document.getElementById('simRestoreBtn');
+                    if (restoreBtn) restoreBtn.classList.remove('hidden');
+                    
+                    window.showToast(`🕒 時間已跳躍至 ${input}，並持續流逝`);
+                    if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
+                }
+            }
+        };
+
+        window.editTimelineTask = (taskId) => {
+            const task = dailyScheduleData.find(t => t.id === taskId);
+            if(!task) return;
+
+            const modalHtml = `
+                <div id="dynamicEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="this.remove()">
+                    <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onclick="event.stopPropagation()">
+                        <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i>編輯任務</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="text-[11px] font-bold text-slate-500 mb-1 block">任務標題</label>
+                                <input type="text" id="dyEditTitle" value="${task.title}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 shadow-inner">
+                            </div>
+                            <div class="flex gap-3">
+                                <div class="flex-1">
+                                    <label class="text-[11px] font-bold text-slate-500 mb-1 block">開始時間</label>
+                                    <input type="time" id="dyEditStart" value="${task.start}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner">
+                                </div>
+                                <div class="flex-1">
+                                    <label class="text-[11px] font-bold text-slate-500 mb-1 block">結束時間</label>
+                                    <input type="time" id="dyEditEnd" value="${task.end}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-6 flex justify-between items-center border-t border-slate-100 pt-4">
+                            <button onclick="window.deleteTimelineTask('${taskId}')" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-2.5 rounded-lg text-sm font-bold transition-colors flex items-center shadow-sm active:scale-95"><i data-lucide="trash-2" class="w-4 h-4 mr-1"></i>刪除</button>
+                            <div class="space-x-2 flex">
+                                <button onclick="document.getElementById('dynamicEditModal').remove()" class="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-bold transition-colors active:scale-95">取消</button>
+                                <button onclick="window.saveTimelineTask('${taskId}')" class="px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-bold shadow-sm transition-colors active:scale-95">儲存</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            lucide.createIcons();
+        };
+
+        window.saveTimelineTask = (taskId) => {
+            const title = document.getElementById('dyEditTitle').value.trim();
+            const start = document.getElementById('dyEditStart').value;
+            const end = document.getElementById('dyEditEnd').value;
+            
+            const task = dailyScheduleData.find(t => t.id === taskId);
+            if (task && title) {
+                task.title = title;
+                task.start = start;
+                task.end = end;
+                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }, { merge: true });
+                document.getElementById('dynamicEditModal').remove();
+                window.showToast("卡片資料已儲存");
+                renderDailySchedule(); 
+                if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+            }
+        };
+
+        window.deleteTimelineTask = (taskId) => {
+            if(confirm('確定要永久刪除這張任務卡片嗎？')) {
+                document.getElementById('dynamicEditModal').remove();
+                window.deleteTaskCard(taskId); 
+            }
+        };
+
         window.toggleSimulation = () => {
-            isSimulating = !isSimulating;
+            isFastForwarding = !isFastForwarding;
             const btn = document.getElementById('simToggleBtn');
             const restoreBtn = document.getElementById('simRestoreBtn');
             
-            if (isSimulating) {
-                // 如果是第一次啟動，從當前時間開始
-                if (simulationTime.getTime() === new Date().getTime()) {
-                    simulationTime = new Date();
-                }
-                
+            if (isFastForwarding) {
                 btn.classList.replace('bg-slate-800', 'bg-amber-500');
                 btn.classList.replace('hover:bg-slate-700', 'hover:bg-amber-600');
                 btn.classList.add('animate-pulse');
-                window.showToast("🚀 模擬模式：時間加速中 (每跳1分鐘)");
+                window.showToast("🚀 模擬模式：時間推進中");
                 
-                if (restoreBtn) restoreBtn.classList.remove('hidden'); // 顯示還原按鈕
+                if (restoreBtn) restoreBtn.classList.remove('hidden'); 
                 
                 simInterval = setInterval(() => {
-                    // 核心修改：精準地每次加上 60,000 毫秒 (也就是 1 分鐘)
-                    simulationTime = new Date(simulationTime.getTime() + 60000); 
-                    
+                    timeOffset += 60000; 
                     if(!document.getElementById('timelinePage').classList.contains('hidden')) {
                         window.renderTimeline(false);
                     }
-                }, 200); // 每 0.2 秒跳動一次，維持流暢感
+                }, 200); 
             } else {
                 clearInterval(simInterval);
                 btn.classList.replace('bg-amber-500', 'bg-slate-800');
                 btn.classList.replace('hover:bg-amber-600', 'hover:bg-slate-700');
                 btn.classList.remove('animate-pulse');
-                window.showToast("⏸️ 模擬已暫停");
+                window.showToast("⏸️ 暫停加速，時間恢復平穩流逝");
             }
         };
 
-        // 新增：還原真實時間功能
         window.restoreRealTime = () => {
-            isSimulating = false;
+            isFastForwarding = false;
             clearInterval(simInterval);
-            simulationTime = new Date(); // 強制重置回當下真實時間
+            timeOffset = 0; 
             
             const btn = document.getElementById('simToggleBtn');
             const restoreBtn = document.getElementById('simRestoreBtn');
@@ -1032,15 +1136,14 @@
             btn.classList.replace('hover:bg-amber-600', 'hover:bg-slate-700');
             btn.classList.remove('animate-pulse');
             
-            if (restoreBtn) restoreBtn.classList.add('hidden'); // 隱藏還原按鈕
+            if (restoreBtn) restoreBtn.classList.add('hidden'); 
             
-            window.showToast("🌍 已恢復現實時間");
+            window.showToast("🌍 已回到現實時間");
             if(!document.getElementById('timelinePage').classList.contains('hidden')) {
-                window.renderTimeline(false);
+                window.renderTimeline(true);
             }
         };
 
-        // 獨立的大時鐘跳動計時器 (每秒即時跳動)
         setInterval(() => {
             const clockEl = document.getElementById('tlBigClock');
             const dateEl = document.getElementById('tlBigDate');
