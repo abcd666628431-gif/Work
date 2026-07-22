@@ -88,6 +88,12 @@
         window.isEditMode = false;
         let timeUpdateInterval;
         let timelineUpdateInterval; // 專屬動態任務計時器
+        
+        // 新增：模擬模式全域變數
+        let isSimulating = false;
+        let simulationTime = new Date();
+        let simInterval = null;
+        window.getNow = () => isSimulating ? simulationTime : new Date();
 
         window.showToast = (message, isError = false) => {
             const toast = document.createElement('div');
@@ -851,16 +857,16 @@
                 return;
             }
 
-            // 取得現在時間，避免每次更新閃爍
-            const now = new Date();
+            // 取得現在時間，避免每次更新閃爍 (支援模擬模式)
+            const now = window.getNow();
             const timeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
             const dateStr = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
 
             // 新增大時鐘 (Sticky 置頂懸浮)
             let html = `
                 <div class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-3 pb-8 px-4 flex flex-col items-center justify-center pointer-events-none">
-                    <div id="tlBigClock" class="font-mono text-[2.5rem] sm:text-5xl font-black text-slate-800 tracking-tighter bg-white/90 backdrop-blur-md px-6 py-1.5 sm:py-2 rounded-3xl border-[3px] border-slate-200 shadow-sm pointer-events-auto transition-all">${timeStr}</div>
-                    <div id="tlBigDate" class="text-[11px] font-bold text-slate-500 mt-2 tracking-widest pointer-events-auto">${dateStr}</div>
+                    <div id="tlBigClock" class="font-mono text-3xl sm:text-4xl font-black text-slate-800 tracking-tighter bg-white/90 backdrop-blur-md px-5 py-1.5 rounded-[1.25rem] border-2 border-slate-200 shadow-sm pointer-events-auto transition-all">${timeStr}</div>
+                    <div id="tlBigDate" class="text-[11px] font-bold text-slate-500 mt-1.5 tracking-widest pointer-events-auto">${dateStr}</div>
                 </div>
             `;
 
@@ -977,20 +983,77 @@
             }, 60000);
         };
 
+        // 新增：模擬模式開關與加速邏輯
+        window.toggleSimulation = () => {
+            isSimulating = !isSimulating;
+            const btn = document.getElementById('simToggleBtn');
+            const restoreBtn = document.getElementById('simRestoreBtn');
+            
+            if (isSimulating) {
+                // 如果是第一次啟動，從當前時間開始
+                if (simulationTime.getTime() === new Date().getTime()) {
+                    simulationTime = new Date();
+                }
+                
+                btn.classList.replace('bg-slate-800', 'bg-amber-500');
+                btn.classList.replace('hover:bg-slate-700', 'hover:bg-amber-600');
+                btn.classList.add('animate-pulse');
+                window.showToast("🚀 模擬模式：時間加速中 (每跳1分鐘)");
+                
+                if (restoreBtn) restoreBtn.classList.remove('hidden'); // 顯示還原按鈕
+                
+                simInterval = setInterval(() => {
+                    // 核心修改：精準地每次加上 60,000 毫秒 (也就是 1 分鐘)
+                    simulationTime = new Date(simulationTime.getTime() + 60000); 
+                    
+                    if(!document.getElementById('timelinePage').classList.contains('hidden')) {
+                        window.renderTimeline(false);
+                    }
+                }, 200); // 每 0.2 秒跳動一次，維持流暢感
+            } else {
+                clearInterval(simInterval);
+                btn.classList.replace('bg-amber-500', 'bg-slate-800');
+                btn.classList.replace('hover:bg-amber-600', 'hover:bg-slate-700');
+                btn.classList.remove('animate-pulse');
+                window.showToast("⏸️ 模擬已暫停");
+            }
+        };
+
+        // 新增：還原真實時間功能
+        window.restoreRealTime = () => {
+            isSimulating = false;
+            clearInterval(simInterval);
+            simulationTime = new Date(); // 強制重置回當下真實時間
+            
+            const btn = document.getElementById('simToggleBtn');
+            const restoreBtn = document.getElementById('simRestoreBtn');
+            
+            btn.classList.replace('bg-amber-500', 'bg-slate-800');
+            btn.classList.replace('hover:bg-amber-600', 'hover:bg-slate-700');
+            btn.classList.remove('animate-pulse');
+            
+            if (restoreBtn) restoreBtn.classList.add('hidden'); // 隱藏還原按鈕
+            
+            window.showToast("🌍 已恢復現實時間");
+            if(!document.getElementById('timelinePage').classList.contains('hidden')) {
+                window.renderTimeline(false);
+            }
+        };
+
         // 獨立的大時鐘跳動計時器 (每秒即時跳動)
         setInterval(() => {
             const clockEl = document.getElementById('tlBigClock');
             const dateEl = document.getElementById('tlBigDate');
             if (clockEl && dateEl && !document.getElementById('timelinePage').classList.contains('hidden')) {
-                const now = new Date();
+                const now = window.getNow();
                 clockEl.textContent = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
                 dateEl.textContent = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
             }
         }, 1000);
 
-        function parseTime(timeStr) { const [h, m] = timeStr.split(':').map(Number); const d = new Date(); d.setHours(h, m, 0, 0); return d; }
+        function parseTime(timeStr) { const [h, m] = timeStr.split(':').map(Number); const d = window.getNow(); d.setHours(h, m, 0, 0); return d; }
         function calculateTaskStatus(startStr, endStr) {
-            const now = new Date(), start = parseTime(startStr), end = parseTime(endStr);
+            const now = window.getNow(), start = parseTime(startStr), end = parseTime(endStr);
             if (now < start) {
                 const diffMins = Math.floor((start - now) / 60000);
                 return { state: 'waiting', text: `未開始 (約 ${Math.floor(diffMins/60)>0?Math.floor(diffMins/60)+'小時':''}${diffMins%60}分後)` };
@@ -1329,10 +1392,18 @@
         <!-- Header -->
         <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-10 border-b border-[#e5dfd3] p-5 pt-8 sm:pt-12 shadow-sm">
             <div class="flex items-center justify-between relative">
-                <div class="w-8"></div>
-                <h1 class="text-xl text-slate-800 tracking-widest font-black">工作記錄本</h1>
+                <div class="w-1 sm:w-8"></div>
                 
-                <div class="flex items-center gap-2">
+                <!-- Title & Status Badge -->
+                <div class="flex items-center justify-center space-x-2 shrink-0">
+                    <h1 class="text-lg sm:text-xl text-slate-800 tracking-widest font-black">工作記錄本</h1>
+                    <div class="flex items-center space-x-1.5 bg-white/70 px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
+                        <span id="connectionDot" class="w-2 h-2 rounded-full bg-red-500 transition-colors duration-300 shadow-inner"></span>
+                        <span id="connectionStatus" class="text-[9px] font-bold text-slate-500 tracking-wider">連線中...</span>
+                    </div>
+                </div>
+                
+                <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
                     <input type="file" id="importInput" accept=".json" class="hidden" onchange="window.importData(event)">
                     <button type="button" onclick="document.getElementById('importInput').click()" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="導入舊資料 (自動轉檔)">
                         <i data-lucide="upload" class="w-4 h-4 pointer-events-none"></i>
@@ -1342,10 +1413,6 @@
                     </button>
                 </div>
             </div>
-            <p class="text-[10px] text-center mt-2 flex items-center justify-center space-x-2 tracking-wide text-slate-500">
-                <span id="connectionDot" class="w-2 h-2 rounded-full bg-red-500 transition-colors duration-300"></span>
-                <span id="connectionStatus">System Connecting...</span>
-            </p>
 
             <!-- 分頁切換 (Tab Control) -->
             <div class="mt-4 flex bg-[#f0ebe1] rounded-lg p-1 shadow-inner border border-[#e5dfd3] relative z-20">
@@ -1412,6 +1479,18 @@
                 <!-- 動態內容生成區 -->
             </div>
             
+            <!-- 浮動按鈕：左側 (時間控制群組) -->
+            <div class="fixed bottom-10 left-6 sm:absolute sm:bottom-6 sm:left-6 flex flex-col gap-3 z-30">
+                <!-- 還原真實時間按鈕 (預設隱藏) -->
+                <button type="button" id="simRestoreBtn" onclick="window.restoreRealTime()" class="hidden bg-white border-2 border-slate-200 text-slate-600 hover:text-blue-600 hover:border-blue-300 rounded-full p-3 shadow-[0_8px_20px_-6px_rgba(0,0,0,0.2)] active:scale-95 transition-all flex items-center justify-center" title="還原真實時間">
+                    <i data-lucide="rotate-ccw" class="w-5 h-5 pointer-events-none"></i>
+                </button>
+                <!-- 模擬加速按鈕 -->
+                <button type="button" id="simToggleBtn" onclick="window.toggleSimulation()" class="bg-slate-800 hover:bg-slate-700 text-white rounded-full p-3 shadow-[0_8px_20px_-6px_rgba(0,0,0,0.4)] active:scale-95 transition-all flex items-center justify-center" title="開啟時間加速模擬">
+                    <i data-lucide="fast-forward" class="w-5 h-5 pointer-events-none"></i>
+                </button>
+            </div>
+
             <!-- 浮動按鈕：手動對焦回到當前進行中的任務 -->
             <button type="button" onclick="window.renderTimeline(true)" class="fixed bottom-10 right-6 sm:absolute sm:bottom-6 sm:right-6 bg-slate-800 text-white rounded-full p-3 shadow-[0_8px_20px_-6px_rgba(0,0,0,0.4)] hover:bg-slate-700 active:scale-95 transition-transform z-30 flex items-center justify-center">
                 <i data-lucide="crosshair" class="w-5 h-5 pointer-events-none"></i>
