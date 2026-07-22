@@ -882,6 +882,54 @@
             window.editTimelineTask(newId);
         };
 
+        window.updateConveyorBelt = () => {
+            if(document.getElementById('timelinePage').classList.contains('hidden')) return;
+            const now = window.getNow();
+            let previousTime = now;
+            
+            // 更新當前進行中任務的時間文字
+            document.querySelectorAll('.active-task').forEach(wrapper => {
+                 const startStr = wrapper.dataset.start;
+                 const endStr = wrapper.dataset.end;
+                 const status = calculateTaskStatus(startStr, endStr);
+                 if (status.state !== 'active') {
+                     window.renderTimeline(false); // 狀態改變時觸發全面重新渲染
+                     return;
+                 }
+                 const timeTextEl = wrapper.querySelector('.time-text');
+                 if (timeTextEl) {
+                     timeTextEl.innerHTML = '<span class="text-blue-600 font-bold">🟢 當前任務 (' + status.text.replace('進行中 (', '').replace(')', '') + ')</span>';
+                 }
+                 previousTime = now; // 未來任務的基準點重置為當前時間
+            });
+
+            // 更新未來任務的「輸送帶」間距與倒數時間
+            const wrappers = document.querySelectorAll('.conveyor-task');
+            wrappers.forEach(wrapper => {
+                const startStr = wrapper.dataset.start;
+                const endStr = wrapper.dataset.end;
+                if (!startStr) return;
+                
+                const status = calculateTaskStatus(startStr, endStr);
+                if (status.state !== 'waiting') {
+                    window.renderTimeline(false); // 時間到了，觸發重新渲染轉為當前任務
+                    return;
+                }
+                
+                // 動態時間差轉換為像素高度 (平滑向上推移)
+                const startTime = parseTime(startStr);
+                let gapMins = Math.max(0, (startTime - previousTime) / 60000);
+                let extraGap = Math.min(gapMins * 2.5, 350); // 縮放係數與最大間距限制
+                wrapper.style.marginTop = `${15 + extraGap}px`;
+                
+                const timeTextEl = wrapper.querySelector('.time-text');
+                if (timeTextEl) {
+                    timeTextEl.innerHTML = '<span class="text-amber-600 font-bold">⏳ ' + status.text.replace('未開始 (', '還有 ').replace('後)', '') + ' 到來</span>';
+                }
+                previousTime = startTime; // 下一個任務的基準點設為這個任務的開始時間
+            });
+        };
+
         window.renderTimeline = (scrollToCenter = false) => {
             const container = document.getElementById('timelineContainer');
             if(!container) return;
@@ -910,9 +958,9 @@
 
             let hasCurrent = false;
             let targetScrollId = null;
-            
             let lastWasStacked = false;
             let stackIndex = 0;
+            let previousTimeForGap = window.getNow();
 
             timelineTasks.forEach((task, index) => {
                 const isCompleted = taskCompletionState[task.id];
@@ -920,91 +968,107 @@
                 
                 const isFirst = index === 0;
                 const isLast = index === timelineTasks.length - 1;
+                
                 let lineTop = isFirst ? 'top-1/2' : 'top-[-30px]'; 
                 let lineBottom = isLast ? 'bottom-1/2' : 'bottom-[-30px]';
                 let verticalLineHtml = `<div class="absolute left-[24px] w-[4px] bg-[#d6d0c4] z-0 rounded-full ${lineTop} ${lineBottom}"></div>`;
                 
-                let wrapperClass = 'timeline-wrapper mb-1 relative transition-all duration-500';
+                let wrapperClass = 'timeline-wrapper mb-1 relative transition-all duration-500 ease-out';
                 let wrapperStyle = 'max-height: 250px;';
                 
                 let cardClass = '';
                 let dotClass = '';
-                let timeText = '';
+                let timeTextHtml = '';
                 let checkBtnHtml = '';
                 let activeLineHtml = '';
+                
+                // 為輸送帶動畫準備的 Dataset
+                let dataAttrs = `data-task-id="${task.id}" data-start="${task.start}" data-end="${task.end}"`;
+                let timeTextContainer = "time-text text-[11px] mt-1.5 tracking-widest";
                 
                 if (isCompleted) {
                     if (lastWasStacked) wrapperStyle += ' margin-top: 10px;'; 
                     lastWasStacked = false;
 
-                    cardClass = 'opacity-60 scale-[0.92] border-slate-200 bg-slate-100';
+                    cardClass = 'opacity-60 scale-[0.92] border-slate-200 bg-slate-100 grayscale-[0.5]';
                     dotClass = 'bg-slate-300 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
-                    timeText = '<span class="text-slate-500 font-bold">✔ 已完成</span>';
-                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-slate-200 text-white flex items-center justify-center shadow-inner z-10 relative hover:bg-slate-300 transition-colors active:scale-90 cursor-pointer" title="點擊取消完成">
+                    timeTextHtml = `<div class="${timeTextContainer}"><span class="text-slate-500 font-bold">✔ 已完成</span></div>`;
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event, false)" class="w-10 h-10 rounded-full bg-slate-200 text-white flex items-center justify-center shadow-inner z-10 relative hover:bg-slate-300 transition-colors active:scale-90 cursor-pointer" title="點擊取消完成">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none"></i>
                                     </button>`;
                 } else if (status.state === 'overdue') {
                     stackIndex++;
                     if (lastWasStacked) {
-                        wrapperClass = 'timeline-wrapper relative transition-all duration-500'; 
-                        wrapperStyle += ` margin-top: -60px; z-index: ${stackIndex};`; 
+                        wrapperClass = 'timeline-wrapper relative transition-all duration-500 ease-out'; 
+                        wrapperStyle += ` margin-top: -65px; z-index: ${stackIndex};`; 
                     } else {
-                        wrapperClass = 'timeline-wrapper relative transition-all duration-500'; 
+                        wrapperClass = 'timeline-wrapper relative transition-all duration-500 ease-out'; 
                         wrapperStyle += ` z-index: ${stackIndex};`;
                     }
                     lastWasStacked = true;
 
-                    cardClass = 'opacity-95 scale-[0.92] border-[#d6d0c4] bg-[#fdfbf7] shadow-sm transition-all duration-300';
+                    cardClass = 'opacity-90 scale-[0.95] border-[#d6d0c4] bg-[#fdfbf7] shadow-sm hover:translate-y-[-10px] hover:shadow-xl transition-all duration-300';
                     dotClass = 'bg-red-400 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
-                    timeText = '<span class="text-red-500 font-bold">🔴 已逾時 (' + status.text.replace('已結束 (超時 ', '').replace(')', '') + ')</span>';
+                    timeTextHtml = `<div class="${timeTextContainer}"><span class="text-red-500 font-bold opacity-80">🔴 已逾時 (${status.text.replace('已結束 (超時 ', '').replace(')', '')})</span></div>`;
                     if (!hasCurrent && !targetScrollId) targetScrollId = `tl-task-wrapper-${task.id}`;
-                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event, false)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
                 } else if (status.state === 'active') {
                     if (lastWasStacked) wrapperStyle += ' margin-top: 15px;'; 
                     lastWasStacked = false;
+                    
+                    wrapperClass += ' active-task';
 
-                    cardClass = 'border-blue-500 shadow-xl bg-blue-50 z-20';
+                    cardClass = 'border-blue-500 shadow-xl bg-blue-50 z-20 opacity-100';
                     dotClass = 'bg-blue-500 w-6 h-6 left-[14px] border-[4px] border-[#fdfbf7] shadow-md animate-[pulse_2s_ease-in-out_infinite]';
-                    timeText = '<span class="text-blue-600 font-bold">🟢 當前任務</span>';
+                    timeTextHtml = `<div class="${timeTextContainer}"><span class="text-blue-600 font-bold">🟢 當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})</span></div>`;
                     hasCurrent = true;
                     targetScrollId = `tl-task-wrapper-${task.id}`;
-                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
+                    previousTimeForGap = window.getNow();
+                    
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event, false)" class="w-10 h-10 rounded-full bg-white border-2 border-blue-200 text-blue-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
                     activeLineHtml = `<div class="absolute left-[24px] right-[10px] top-1/2 -translate-y-1/2 h-[4px] bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.6)] z-0 pointer-events-none rounded-full animate-pulse"></div>`;
                 } else { 
-                    if (lastWasStacked) wrapperStyle += ' margin-top: 15px;'; 
+                    // 計算未來任務動態間距 (從基準點算起)
+                    let gapMins = Math.max(0, (parseTime(task.start) - previousTimeForGap) / 60000);
+                    let extraGap = Math.min(gapMins * 2.5, 350); 
+                    
+                    wrapperClass = 'timeline-wrapper relative transition-all duration-1000 ease-linear conveyor-task';
+                    wrapperStyle += ` margin-top: ${15 + extraGap}px;`; 
                     lastWasStacked = false;
 
-                    cardClass = 'opacity-95 scale-[0.92] border-[#d6d0c4] bg-white';
+                    cardClass = 'opacity-85 scale-[0.92] border-[#d6d0c4] bg-white';
                     dotClass = 'bg-amber-400 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
-                    timeText = '<span class="text-amber-600 font-bold">⏳ ' + status.text.replace('未開始 (', '還有 ').replace('後)', '') + ' 到來</span>';
+                    timeTextHtml = `<div class="${timeTextContainer}"><span class="text-amber-600 font-bold">⏳ ${status.text.replace('未開始 (', '還有 ').replace('後)', '')} 到來</span></div>`;
                     if (!hasCurrent && !targetScrollId) {
                         targetScrollId = `tl-task-wrapper-${task.id}`; 
                     }
-                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
+                    previousTimeForGap = parseTime(task.start); // 設定為下一個未來任務的起點基準
+                    
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event, false)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
                 }
 
                 html += `
-                    <div id="tl-task-wrapper-${task.id}" class="${wrapperClass}" style="${wrapperStyle}">
+                    <div id="tl-task-wrapper-${task.id}" class="${wrapperClass}" style="${wrapperStyle}" ${dataAttrs}>
                         ${verticalLineHtml}
                         ${activeLineHtml}
                         <div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div>
                         
-                        <div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[44px] mr-[10px] ${cardClass} overflow-hidden cursor-pointer" onclick="window.viewStackedCard('${task.id}', event)" ondblclick="window.editTimelineTask('${task.id}')" title="單擊查看整張卡片，雙擊編輯或刪除此卡片">
+                        <div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[44px] mr-[10px] ${cardClass} overflow-hidden cursor-pointer group/card hover:shadow-md transition-all duration-300" onclick="window.completeTimelineTask('${task.id}', event, true)" ondblclick="window.editTimelineTask('${task.id}', event)" title="點擊切換完成狀態，雙擊編輯內容">
                             
                             <div class="flex flex-col items-center justify-center shrink-0 w-[60px] bg-slate-100/50 border-r border-slate-200/60 p-2">
                                 <span class="font-black text-[15px] text-slate-700 tracking-tighter ${isCompleted ? 'opacity-50 line-through decoration-slate-400' : ''}">${task.start}</span>
                                 <span class="text-[9px] text-slate-400 font-bold mt-0.5">${task.end}</span>
                             </div>
                             
-                            <div class="flex-1 p-3 min-w-0 flex flex-col justify-center">
+                            <div class="flex-1 p-3 min-w-0 flex flex-col justify-center select-none">
                                 <h3 class="font-bold text-slate-800 text-[14px] truncate ${isCompleted ? 'opacity-50 line-through decoration-slate-400' : ''}" title="${task.title}">${task.title}</h3>
-                                <div class="text-[11px] mt-1.5 tracking-widest">${timeText}</div>
+                                ${timeTextHtml}
                             </div>
                             
                             <div class="shrink-0 flex items-center justify-center pr-3 pl-1">
@@ -1032,12 +1096,19 @@
                 }, 150); 
             }
 
+            // 安全網：每分鐘強制重繪以確保邊界狀態正確切換
             if(timelineUpdateInterval) clearInterval(timelineUpdateInterval);
             timelineUpdateInterval = setInterval(() => {
-                if(!document.getElementById('timelinePage').classList.contains('hidden')) {
+                if(!document.getElementById('timelinePage').classList.contains('hidden') && !isFastForwarding) {
                     window.renderTimeline(false); 
                 }
             }, 60000);
+
+            // 啟動實時「輸送帶」推進器 (每 1 秒更新卡片高度)
+            if(window.conveyorInterval) clearInterval(window.conveyorInterval);
+            window.conveyorInterval = setInterval(() => {
+                if(!isFastForwarding) window.updateConveyorBelt();
+            }, 1000);
         };
 
         window.promptChangeTime = () => {
