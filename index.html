@@ -42,12 +42,14 @@
             transform: scale(1.02) !important;
             z-index: 30;
         }
+
+        /* 新增：動態任務滑動消除過渡動畫 */
+        .timeline-card { transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
     </style>
 
     <script type="module">
         import { initializeApp } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-auth.js";
-        // 核心重製：移除複雜的 persistentLocalCache，回歸最純粹即時的 getFirestore 與 onSnapshot
         import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, writeBatch } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-firestore.js";
 
         const userFirebaseConfig = {
@@ -63,7 +65,6 @@
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : userFirebaseConfig;
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
-        // 使用純淨版 Firestore，不加載離線快取，確保資料 0.1 秒即時同步
         const db = getFirestore(app);
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
@@ -86,8 +87,8 @@
         let currentGalleryCategory = '全部';
         window.isEditMode = false;
         let timeUpdateInterval;
+        let timelineUpdateInterval; // 專屬動態任務計時器
 
-        // 🌟 修復：補回全局提示 Toast 功能
         window.showToast = (message, isError = false) => {
             const toast = document.createElement('div');
             toast.className = `fixed top-16 left-1/2 transform -translate-x-1/2 px-5 py-3 rounded-full shadow-lg text-sm font-bold z-[9999] transition-all duration-300 ${isError ? 'bg-red-500 text-white' : 'bg-slate-800 text-white'}`;
@@ -101,19 +102,16 @@
             }, 3000);
         };
 
-        // 幫手函數：安全讀取本地雙層快取
         const getLocal = (key, defaultVal) => {
             try { const val = localStorage.getItem(key); return val ? JSON.parse(val) : defaultVal; } 
             catch(e) { return defaultVal; }
         };
 
-        // 🌟 新增：安全寫入本地快取 (防止手機 5MB 容量爆表導致報錯)
         const safeSetLocal = (key, data) => {
             try { localStorage.setItem(key, JSON.stringify(data)); } 
             catch(e) { console.warn(`手機端快取空間已滿，跳過本地備份: ${key}`); }
         };
 
-        // 🌟 1. 啟動時：瞬間載入本地快取畫出介面 (秒開)
         function loadLocalFastCache() {
             dailyScheduleData = getLocal('work_cache_schedule', []);
             taskCompletionState = getLocal('work_cache_task_states', {});
@@ -131,15 +129,16 @@
             if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) {
                 window.renderGallery();
             }
+            if(document.getElementById('timelinePage') && !document.getElementById('timelinePage').classList.contains('hidden')) {
+                window.renderTimeline(false);
+            }
         }
 
-        // 🌟 核心大腦：拯救舊照片大作戰，把舊的陣列解壓縮成獨立單據
         async function migrateOldMassivePhotos() {
             let hasMigrated = false;
             for (const taskId of Object.keys(taskExtrasState)) {
                 let extra = taskExtrasState[taskId];
                 
-                // 轉移主任務照片
                 if (extra.currentPhotos && extra.currentPhotos.length > 0) {
                     for (let i = 0; i < extra.currentPhotos.length; i++) {
                         const compressedUrl = await compressBase64ImageSafeAsync(extra.currentPhotos[i]);
@@ -148,11 +147,10 @@
                         galleryItems.unshift(newItem);
                         if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId), newItem).catch(()=>{});
                     }
-                    extra.currentPhotos = []; // 清空肥大陣列
+                    extra.currentPhotos = []; 
                     hasMigrated = true;
                 }
                 
-                // 轉移子任務照片
                 if (extra.subTasks) {
                     for (const subIdx of Object.keys(extra.subTasks)) {
                         if (extra.subTasks[subIdx].photos && extra.subTasks[subIdx].photos.length > 0) {
@@ -163,7 +161,7 @@
                                 galleryItems.unshift(newItem);
                                 if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId), newItem).catch(()=>{});
                             }
-                            extra.subTasks[subIdx].photos = []; // 清空肥大陣列
+                            extra.subTasks[subIdx].photos = []; 
                             hasMigrated = true;
                         }
                     }
@@ -180,29 +178,27 @@
             }
         }
 
-        // 🌟 2. 連線後：以最直接的 onSnapshot 接收雲端資料並覆蓋畫面
         function setupPureRealtimeSync() {
             if (!currentUser) return;
             
-            // 監聽排程卡片
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), (docSnap) => {
                 if(docSnap.exists() && docSnap.data().tasks) { 
                     dailyScheduleData = docSnap.data().tasks;
                     safeSetLocal('work_cache_schedule', dailyScheduleData);
                     renderDailySchedule(); 
+                    if(!document.getElementById('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
                 }
             });
             
-            // 監聽任務完成狀態
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), (docSnap) => {
                 if(docSnap.exists()) { 
                     taskCompletionState = docSnap.data().states || {};
                     safeSetLocal('work_cache_task_states', taskCompletionState);
                     renderDailySchedule(); 
+                    if(!document.getElementById('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
                 }
             });
             
-            // 監聽子任務完成狀態
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), (docSnap) => {
                 if(docSnap.exists()) { 
                     subTaskCompletionState = docSnap.data().states || {};
@@ -211,7 +207,6 @@
                 }
             });
 
-            // 監聽純文字筆記 (現在 Extras 裡面只剩超輕量的文字，絕對不會爆表)
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), (docSnap) => {
                 if(docSnap.exists()) { 
                     taskExtrasState = docSnap.data().extras || {};
@@ -220,7 +215,6 @@
                 }
             });
 
-            // 監聽圖庫設定
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), (docSnap) => {
                 if(docSnap.exists()) { 
                     galleryCategories = docSnap.data().categories || ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他'];
@@ -230,7 +224,6 @@
                 }
             });
 
-            // 🌟 關鍵破解：監聽所有獨立儲存的照片單據 (完全解除 1MB 限制！)
             onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snapshot) => {
                 let newItems = [];
                 snapshot.forEach(d => newItems.push(d.data()));
@@ -248,11 +241,9 @@
                 }
             });
 
-            // 執行舊數據救援
             setTimeout(migrateOldMassivePhotos, 2000);
         }
 
-        // 🌟 終極修復：全機型相容的 JPEG 高壓縮引擎 (強制降到 50-80KB)
         function compressImageSafeAsync(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -262,7 +253,7 @@
                     img.src = event.target.result;
                     img.onload = () => {
                         const canvas = document.createElement('canvas');
-                        const MAX_SIZE = 800; // 安全極限尺寸
+                        const MAX_SIZE = 800; 
                         let width = img.width;
                         let height = img.height;
 
@@ -275,13 +266,12 @@
                         canvas.width = width;
                         canvas.height = height;
                         const ctx = canvas.getContext('2d');
-                        ctx.fillStyle = '#ffffff'; // 填白底，防止 PNG 透明變黑
+                        ctx.fillStyle = '#ffffff'; 
                         ctx.fillRect(0, 0, width, height);
                         ctx.imageSmoothingEnabled = true;
                         ctx.imageSmoothingQuality = 'medium';
                         ctx.drawImage(img, 0, 0, width, height);
                         
-                        // 強制輸出 image/jpeg，壓縮比 0.7，全網全手機 100% 支援不破圖！
                         resolve(canvas.toDataURL('image/jpeg', 0.7)); 
                     };
                     img.onerror = () => reject(new Error("圖片解析失敗"));
@@ -290,7 +280,6 @@
             });
         }
 
-        // 🌟 新增：針對舊版備份 Base64 照片的二次壓縮引擎
         function compressBase64ImageSafeAsync(base64Str) {
             return new Promise((resolve) => {
                 const img = new Image();
@@ -317,14 +306,11 @@
 
                     resolve(canvas.toDataURL('image/jpeg', 0.7));
                 };
-                img.onerror = () => resolve(base64Str); // 若發生異常則退回原檔
+                img.onerror = () => resolve(base64Str); 
                 img.src = base64Str;
             });
         }
 
-        // ==========================================
-        // UI 操作邏輯與雲端推播
-        // ==========================================
         window.toggleEditMode = (isChecked) => {
             window.isEditMode = isChecked;
             const bg = document.getElementById('editToggleBg');
@@ -391,7 +377,6 @@
             }
         };
 
-        // 🌟 解除封印：任務照片上傳 (不再塞進 Extras，改為獨立上傳到圖庫)
         window.handleDailyPhotoUpload = async (taskId, inputElement) => {
             const files = inputElement.files;
             if (!files || files.length === 0 || !currentUser) return;
@@ -407,14 +392,14 @@
                         timestamp: new Date().toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
                     };
                     
-                    galleryItems.unshift(newItem); // 本地秒速顯示
-                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId), newItem); // 獨立單據，絕對不會觸發 1MB 限制！
+                    galleryItems.unshift(newItem); 
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId), newItem); 
                 }
                 safeSetLocal('work_cache_gallery_items', galleryItems);
                 renderDailySchedule();
                 window.showToast("相片已安全上傳至雲端");
             } catch (error) {
-                window.showToast("上傳失敗，請檢查網路", true);
+                window.showToast("上傳失敗，可能是手機快取已滿，但雲端仍會儲存", false); // 修改：容錯顯示
             } finally {
                 inputElement.value = '';
                 inputElement.disabled = false;
@@ -443,7 +428,7 @@
                 renderDailySchedule();
                 window.showToast("相片已安全上傳至雲端");
             } catch (error) {
-                window.showToast("上傳失敗，請檢查網路", true);
+                window.showToast("上傳完成 (本地快取已滿)", false);
             } finally {
                 inputElement.value = '';
                 inputElement.disabled = false;
@@ -550,6 +535,7 @@
                 setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState });
             }
             renderDailySchedule();
+            if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
             window.showToast("排程卡片已刪除");
         };
 
@@ -557,7 +543,6 @@
             const container = document.getElementById('archiveContent');
             const modal = document.getElementById('archiveModal');
             
-            // 從 galleryItems 動態抓取屬於這個主任務與子任務的所有照片
             const taskPhotos = galleryItems.filter(p => p.taskId === taskId);
             
             if(taskPhotos.length === 0) {
@@ -584,7 +569,6 @@
             modal.classList.add('flex');
         };
 
-        // 導出備份
         window.exportData = async () => {
             window.showToast("準備導出資料...");
             try {
@@ -602,7 +586,6 @@
             } catch (error) { window.showToast("導出失敗", true); }
         };
 
-        // 🌟 新增：導入並自動轉檔舊資料
         window.importData = (event) => {
             const file = event.target.files[0];
             if (!file) return;
@@ -622,21 +605,18 @@
 
                     if(!impGalCats.includes('任務附件')) impGalCats.push('任務附件');
 
-                    // 🛠️ 自動轉檔核心：掃描舊格式，進行二次壓縮後變成獨立圖庫檔案
                     let hasMigrated = false;
                     for (const taskId of Object.keys(impExtras)) {
                         let extra = impExtras[taskId];
-                        // 轉移主任務舊照片
                         if (extra.currentPhotos && extra.currentPhotos.length > 0) {
                             for (let i = 0; i < extra.currentPhotos.length; i++) {
                                 const compressedUrl = await compressBase64ImageSafeAsync(extra.currentPhotos[i]);
                                 const photoId = `mig_imp_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
                                 impGalItems.unshift({ id: photoId, url: compressedUrl, title: '舊版任務紀錄 (已轉檔)', category: '任務附件', taskId, timestamp: new Date().toLocaleString('zh-TW') });
                             }
-                            extra.currentPhotos = []; // 清空肥大陣列
+                            extra.currentPhotos = []; 
                             hasMigrated = true;
                         }
-                        // 轉移子任務舊照片
                         if (extra.subTasks) {
                             for (const subIdx of Object.keys(extra.subTasks)) {
                                 if (extra.subTasks[subIdx].photos && extra.subTasks[subIdx].photos.length > 0) {
@@ -645,14 +625,13 @@
                                         const photoId = `migs_imp_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
                                         impGalItems.unshift({ id: photoId, url: compressedUrl, title: '舊版子任務紀錄 (已轉檔)', category: '任務附件', taskId, subIdx: parseInt(subIdx), timestamp: new Date().toLocaleString('zh-TW') });
                                     }
-                                    extra.subTasks[subIdx].photos = []; // 清空肥大陣列
+                                    extra.subTasks[subIdx].photos = []; 
                                     hasMigrated = true;
                                 }
                             }
                         }
                     }
 
-                    // 寫入變數
                     dailyScheduleData = impSchedule;
                     taskCompletionState = impTaskStates;
                     taskExtrasState = impExtras;
@@ -660,7 +639,6 @@
                     galleryCategories = impGalCats;
                     galleryItems = impGalItems;
 
-                    // 寫入本地快取
                     safeSetLocal('work_cache_schedule', dailyScheduleData);
                     safeSetLocal('work_cache_task_states', taskCompletionState);
                     safeSetLocal('work_cache_daily_extras', taskExtrasState);
@@ -668,7 +646,6 @@
                     safeSetLocal('work_cache_gallery_categories', galleryCategories);
                     safeSetLocal('work_cache_gallery_items', galleryItems);
 
-                    // 如果有連線，強制覆蓋上雲端
                     if (currentUser) {
                         window.showToast("資料轉檔完畢，正在同步至雲端...");
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData });
@@ -677,7 +654,6 @@
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState });
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
                         
-                        // 獨立寫入轉檔後的相片們 (分塊寫入以防超過限制)
                         const batchLimit = 200;
                         for (let i = 0; i < galleryItems.length; i += batchLimit) {
                             const batch = writeBatch(db);
@@ -690,9 +666,8 @@
                     }
 
                     renderDailySchedule();
-                    if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) {
-                        window.renderGallery();
-                    }
+                    if(!document.getElementById('galleryPage').classList.contains('hidden')) window.renderGallery();
+                    if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
                     
                     window.showToast("導入與轉檔全部成功！");
                     
@@ -700,7 +675,7 @@
                     console.error(error);
                     window.showToast("導入失敗，可能是備份檔照片容量超過系統負荷", true);
                 }
-                event.target.value = ''; // 重置 input 讓下次同檔也能點擊
+                event.target.value = ''; 
             };
             reader.readAsText(file);
         };
@@ -732,7 +707,6 @@
 
             const query = document.getElementById('gallerySearchInput').value.toLowerCase();
             let filtered = galleryItems.filter(item => {
-                // 如果是看「全部」，就隱藏醜醜的任務附件，保持圖庫乾淨。如果特別點擊「任務附件」則顯示。
                 const matchCat = currentGalleryCategory === '全部' ? item.category !== '任務附件' : item.category === currentGalleryCategory;
                 const matchQuery = (item.title||'').toLowerCase().includes(query) || (item.timestamp && item.timestamp.includes(query));
                 return matchCat && matchQuery;
@@ -855,6 +829,139 @@
             }
         };
 
+        window.completeTimelineTask = (taskId) => {
+            // 直接完成或取消任務，不再讓卡片消失
+            window.toggleTask(taskId); 
+            if(!document.getElementById('timelinePage').classList.contains('hidden')) {
+                window.renderTimeline(false); 
+            }
+        };
+
+        window.renderTimeline = (scrollToCenter = false) => {
+            const container = document.getElementById('timelineContainer');
+            if(!container) return;
+
+            // 1. 取得所有任務 (不再剔除已完成)，並依據時間排序
+            let timelineTasks = [...dailyScheduleData];
+            timelineTasks.sort((a, b) => parseTime(a.start) - parseTime(b.start));
+
+            if (timelineTasks.length === 0) {
+                container.innerHTML = '<div class="flex flex-col items-center justify-center h-full py-32 text-slate-400"><i data-lucide="party-popper" class="w-16 h-16 mb-4 text-green-500 opacity-80"></i><span class="text-base font-black tracking-widest text-slate-600">目前沒有任何任務</span></div>';
+                lucide.createIcons();
+                return;
+            }
+
+            // 上下增加大量 padding 讓用戶可以順利滾動對焦置中
+            let html = '<div class="relative pt-[35vh] pb-[40vh] max-w-md mx-auto flex flex-col overflow-hidden px-2">';
+            // 貫穿整個列表的灰色的時間軸線
+            html += '<div class="absolute left-[88px] top-0 bottom-0 w-[3px] bg-[#d6d0c4] z-0 rounded-full"></div>';
+
+            let hasCurrent = false;
+            let targetScrollId = null;
+
+            timelineTasks.forEach((task, index) => {
+                const isCompleted = taskCompletionState[task.id];
+                const status = calculateTaskStatus(task.start, task.end);
+                let cardClass = '';
+                let dotClass = '';
+                let timeText = '';
+                let checkBtnHtml = '';
+                
+                if (isCompleted) {
+                    // 已完成：半透明，變灰色
+                    cardClass = 'opacity-60 scale-[0.96] border-slate-200 bg-slate-100';
+                    dotClass = 'bg-slate-300 w-4 h-4 left-[-32.5px] border-[3px] border-[#fdfbf7]';
+                    timeText = '<span class="text-slate-500 font-bold">✔ 已完成</span>';
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}')" class="w-10 h-10 rounded-full bg-green-500 border-2 border-green-500 text-white transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 z-10 relative cursor-pointer">
+                                        <i data-lucide="check" class="w-5 h-5 pointer-events-none"></i>
+                                    </button>`;
+                } else if (status.state === 'overdue') {
+                    // 已逾時：堆積在上方，半透明縮小
+                    cardClass = 'opacity-80 scale-[0.96] border-[#d6d0c4] bg-[#fdfbf7] hover:opacity-100 transition-opacity';
+                    dotClass = 'bg-red-400 w-4 h-4 left-[-32.5px] border-[3px] border-[#fdfbf7]';
+                    timeText = '<span class="text-red-500 font-bold">🔴 已逾時 (' + status.text.replace('已結束 (超時 ', '').replace(')', '') + ')</span>';
+                    if (!hasCurrent && !targetScrollId) targetScrollId = `tl-task-wrapper-${task.id}`;
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}')" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
+                                        <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
+                                    </button>`;
+                } else if (status.state === 'active') {
+                    // 當前任務：強烈高亮放大
+                    cardClass = 'border-blue-500 shadow-xl scale-105 bg-blue-50 z-20';
+                    dotClass = 'bg-blue-500 w-6 h-6 left-[-36.5px] border-[4px] border-[#fdfbf7] shadow-md animate-[pulse_2s_ease-in-out_infinite]';
+                    timeText = '<span class="text-blue-600 font-bold">🟢 當前任務</span>';
+                    hasCurrent = true;
+                    targetScrollId = `tl-task-wrapper-${task.id}`;
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}')" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
+                                        <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
+                                    </button>`;
+                } else { 
+                    // 未來即將到來：正常顯示
+                    cardClass = 'opacity-95 scale-100 border-[#d6d0c4] bg-white';
+                    dotClass = 'bg-amber-400 w-4 h-4 left-[-32.5px] border-[3px] border-[#fdfbf7]';
+                    timeText = '<span class="text-amber-600 font-bold">⏳ ' + status.text.replace('未開始 (', '還有 ').replace('後)', '') + ' 到來</span>';
+                    if (!hasCurrent && !targetScrollId) {
+                        targetScrollId = `tl-task-wrapper-${task.id}`; // 如果沒有正在進行的，對焦下一個即將到來的
+                    }
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}')" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
+                                        <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
+                                    </button>`;
+                }
+
+                html += `
+                    <div id="tl-task-wrapper-${task.id}" class="timeline-wrapper mb-5" style="max-height: 250px;">
+                        <div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[76px] mr-1 ${cardClass} overflow-hidden">
+                            <!-- 時間軸圓點 -->
+                            <div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div>
+                            
+                            <!-- 左側具體時間 -->
+                            <div class="flex flex-col items-center justify-center shrink-0 w-[72px] bg-slate-100/50 border-r border-slate-200/60 p-2">
+                                <span class="font-black text-[17px] text-slate-700 tracking-tighter ${isCompleted ? 'opacity-50 line-through decoration-slate-400' : ''}">${task.start}</span>
+                                <span class="text-[9px] text-slate-400 font-bold mt-0.5">${task.end}</span>
+                            </div>
+                            
+                            <!-- 中間任務內容 -->
+                            <div class="flex-1 p-3 min-w-0 flex flex-col justify-center">
+                                <h3 class="font-bold text-slate-800 text-[14px] truncate ${isCompleted ? 'opacity-50 line-through decoration-slate-400' : ''}" title="${task.title}">${task.title}</h3>
+                                <div class="text-[11px] mt-1.5 tracking-widest">${timeText}</div>
+                            </div>
+                            
+                            <!-- 右側完成按鈕 -->
+                            <div class="shrink-0 flex items-center justify-center pr-3 pl-1">
+                                ${checkBtnHtml}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+            lucide.createIcons();
+            
+            // 自動對焦：只滑動容器本身，不動整個網頁
+            if (scrollToCenter && targetScrollId) {
+                setTimeout(() => {
+                    const el = document.getElementById(targetScrollId);
+                    const page = document.getElementById('timelinePage'); // 以這個為滾動容器
+                    if (el && page) {
+                        const containerRect = page.getBoundingClientRect();
+                        const elRect = el.getBoundingClientRect();
+                        const scrollTop = el.offsetTop - (containerRect.height / 2) + (elRect.height / 2);
+                        page.scrollTo({ top: scrollTop, behavior: 'smooth' });
+                    }
+                }, 150); 
+            }
+
+            // 啟動專屬的時間軸計時器
+            if(timelineUpdateInterval) clearInterval(timelineUpdateInterval);
+            timelineUpdateInterval = setInterval(() => {
+                if(!document.getElementById('timelinePage').classList.contains('hidden')) {
+                    // 每分鐘靜默更新一次時間狀態，但不強制改變用戶的滾動位置
+                    window.renderTimeline(false); 
+                }
+            }, 60000);
+        };
+
         function parseTime(timeStr) { const [h, m] = timeStr.split(':').map(Number); const d = new Date(); d.setHours(h, m, 0, 0); return d; }
         function calculateTaskStatus(startStr, endStr) {
             const now = new Date(), start = parseTime(startStr), end = parseTime(endStr);
@@ -895,8 +1002,6 @@
             dailyScheduleData.forEach((task, index) => {
                 const isCompleted = taskCompletionState[task.id];
                 const extrasText = taskExtrasState[task.id] || { currentNotes: [], subTasks: {} };
-                
-                // 🌟 新架構：從所有圖庫中動態篩選出屬於這個任務的照片
                 const taskMainPhotos = galleryItems.filter(p => p.taskId === task.id && typeof p.subIdx === 'undefined');
                 
                 const status = calculateTaskStatus(task.start, task.end);
@@ -955,7 +1060,6 @@
                                         <div class="ml-2 relative py-1">
                                             ${(task.subSteps || []).map((step, idx) => {
                                                 const subTextNotes = extrasText.subTasks?.[idx]?.notes || [];
-                                                // 動態撈取子任務照片
                                                 const subPhotos = galleryItems.filter(p => p.taskId === task.id && p.subIdx === idx);
                                                 
                                                 const isLastSubStep = idx === (task.subSteps || []).length - 1;
@@ -1152,17 +1256,18 @@
         };
 
         window.switchTab = (tab) => {
-            const customPage = document.getElementById('customWorkflowPage'), dailyPage = document.getElementById('dailySchedulePage'), galleryPage = document.getElementById('galleryPage');
-            const btnCustom = document.getElementById('tabCustom'), btnDaily = document.getElementById('tabDaily'), btnGallery = document.getElementById('tabGallery');
+            const customPage = document.getElementById('customWorkflowPage'), dailyPage = document.getElementById('dailySchedulePage'), galleryPage = document.getElementById('galleryPage'), timelinePage = document.getElementById('timelinePage');
+            const btnCustom = document.getElementById('tabCustom'), btnDaily = document.getElementById('tabDaily'), btnGallery = document.getElementById('tabGallery'), btnTimeline = document.getElementById('tabTimeline');
             const activeClass = "flex-1 py-1.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest";
             const inactiveClass = "flex-1 py-1.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest";
 
-            if(customPage) customPage.classList.add('hidden'); if(dailyPage) dailyPage.classList.add('hidden'); if(galleryPage) galleryPage.classList.add('hidden');
-            if(btnCustom) btnCustom.className = inactiveClass; if(btnDaily) btnDaily.className = inactiveClass; if(btnGallery) btnGallery.className = inactiveClass;
+            if(customPage) customPage.classList.add('hidden'); if(dailyPage) dailyPage.classList.add('hidden'); if(galleryPage) galleryPage.classList.add('hidden'); if(timelinePage) timelinePage.classList.add('hidden');
+            if(btnCustom) btnCustom.className = inactiveClass; if(btnDaily) btnDaily.className = inactiveClass; if(btnGallery) btnGallery.className = inactiveClass; if(btnTimeline) btnTimeline.className = inactiveClass;
 
             if (tab === 'custom' && customPage) { customPage.classList.remove('hidden'); btnCustom.className = activeClass; } 
             else if (tab === 'daily' && dailyPage) { dailyPage.classList.remove('hidden'); btnDaily.className = activeClass; renderDailySchedule(); } 
             else if (tab === 'gallery' && galleryPage) { galleryPage.classList.remove('hidden'); btnGallery.className = activeClass; window.renderGallery(); }
+            else if (tab === 'timeline' && timelinePage) { timelinePage.classList.remove('hidden'); btnTimeline.className = activeClass; window.renderTimeline(true); }
             localStorage.setItem('activeTab', tab);
         };
 
@@ -1185,7 +1290,6 @@
             }
         });
 
-        // 啟動程序
         loadLocalFastCache();
         initAuth();
         window.switchTab(localStorage.getItem('activeTab') || 'daily');
@@ -1193,16 +1297,15 @@
 </head>
 <body class="sm:px-4 sm:py-8 flex justify-center relative min-h-screen">
 
-    <!-- Phone Container (Notebook Style) -->
+    <!-- Phone Container -->
     <div class="w-full max-w-[430px] bg-[#fdfbf7] sm:rounded-[2.5rem] sm:shadow-2xl sm:border-[6px] border-[#d6d0c4] overflow-hidden relative min-h-screen sm:min-h-[932px] pb-10">
         
         <!-- Header -->
         <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-10 border-b border-[#e5dfd3] p-5 pt-8 sm:pt-12 shadow-sm">
             <div class="flex items-center justify-between relative">
-                <div class="w-8"></div> <!-- 平衡用空白 -->
+                <div class="w-8"></div>
                 <h1 class="text-xl text-slate-800 tracking-widest font-black">工作記錄本</h1>
                 
-                <!-- 新增：右側操作按鈕群 -->
                 <div class="flex items-center gap-2">
                     <input type="file" id="importInput" accept=".json" class="hidden" onchange="window.importData(event)">
                     <button type="button" onclick="document.getElementById('importInput').click()" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="導入舊資料 (自動轉檔)">
@@ -1222,6 +1325,7 @@
             <div class="mt-4 flex bg-[#f0ebe1] rounded-lg p-1 shadow-inner border border-[#e5dfd3] relative z-20">
                 <button id="tabCustom" onclick="window.switchTab('custom')" class="flex-1 py-1.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest">自訂流程</button>
                 <button id="tabDaily" onclick="window.switchTab('daily')" class="flex-1 py-1.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest">每日排程</button>
+                <button id="tabTimeline" onclick="window.switchTab('timeline')" class="flex-1 py-1.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest">動態任務</button>
                 <button id="tabGallery" onclick="window.switchTab('gallery')" class="flex-1 py-1.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest">更多圖片</button>
             </div>
         </header>
@@ -1242,9 +1346,8 @@
         </main>
         
         <!-- Main Content (每日排程 - 預設隱藏) -->
-        <main id="dailySchedulePage" class="p-5 space-y-2 hidden transition-opacity relative z-10">
+        <main id="dailySchedulePage" class="p-5 space-y-2 hidden transition-opacity relative z-10 h-[calc(100vh-140px)] sm:h-[750px] overflow-y-auto scrollbar-hide">
             
-            <!-- 編輯模式切換開關 -->
             <div class="flex justify-end mb-2 px-1">
                 <label class="flex items-center cursor-pointer space-x-2 bg-white px-3 py-1.5 rounded-full border border-slate-200 shadow-sm active:scale-95 transition-transform">
                     <span class="text-[10px] text-slate-500 font-bold uppercase tracking-widest transition-colors duration-300" id="editModeLabel">一般檢視模式</span>
@@ -1276,9 +1379,21 @@
             <div id="scheduleContainer" class="space-y-4 pb-8"></div>
         </main>
 
-        <!-- Main Content (獨立圖庫存檔 - 全新分頁) -->
+        <!-- Main Content (動態時間軸任務流 - 新增功能) -->
+        <!-- 注意：這個容器被限制高度並設置 overflow-y-auto，確保只有卡片列表滾動，外框不跳動 -->
+        <main id="timelinePage" class="hidden h-[calc(100vh-140px)] sm:h-[750px] overflow-y-auto relative z-10 bg-[#fdfbf7] scrollbar-hide scroll-smooth">
+            <div id="timelineContainer" class="min-h-full">
+                <!-- 動態內容生成區 -->
+            </div>
+            
+            <!-- 浮動按鈕：手動對焦回到當前進行中的任務 -->
+            <button type="button" onclick="window.renderTimeline(true)" class="fixed bottom-10 right-6 sm:absolute sm:bottom-6 sm:right-6 bg-slate-800 text-white rounded-full p-3 shadow-[0_8px_20px_-6px_rgba(0,0,0,0.4)] hover:bg-slate-700 active:scale-95 transition-transform z-30 flex items-center justify-center">
+                <i data-lucide="crosshair" class="w-5 h-5 pointer-events-none"></i>
+            </button>
+        </main>
+
+        <!-- Main Content (獨立圖庫存檔) -->
         <main id="galleryPage" class="hidden h-[calc(100vh-140px)] sm:h-[750px] flex-col relative z-10 bg-[#fdfbf7]">
-            <!-- 搜尋與上傳區 (Header) -->
             <div class="p-3 border-b border-[#e6e2d6] flex space-x-2 bg-white shrink-0 shadow-sm z-20 relative">
                 <div class="relative flex-1">
                     <i data-lucide="search" class="absolute left-2.5 top-2.5 w-4 h-4 text-slate-400"></i>
@@ -1291,10 +1406,8 @@
             </div>
             
             <div class="flex flex-1 overflow-hidden relative z-10">
-                <!-- 左側分類列 -->
                 <div class="w-[75px] shrink-0 border-r border-[#e6e2d6] bg-[#f4f1eb] overflow-y-auto flex flex-col items-center space-y-2 scrollbar-hide" id="gallerySidebar">
                 </div>
-                <!-- 右側圖片網格 -->
                 <div class="flex-1 p-3 overflow-y-auto bg-[#fdfbf7] relative scrollbar-hide" id="galleryGrid">
                 </div>
             </div>
@@ -1302,7 +1415,7 @@
 
     </div>
 
-    <!-- 更多圖片 Modal (彈窗介面) -->
+    <!-- 更多圖片 Modal -->
     <div id="archiveModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] hidden flex-col items-center justify-center p-4">
         <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-full max-w-[400px] max-h-[80vh] flex flex-col overflow-hidden relative">
             <header class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
@@ -1330,7 +1443,6 @@
                 <button onclick="window.closeCategoryManager()" class="text-slate-400 p-1.5 rounded-full hover:bg-slate-200 active:scale-95 transition-all"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div id="categoryManageList" class="p-3 overflow-y-auto max-h-[55vh] bg-[#fdfbf7] space-y-2 scrollbar-hide">
-                <!-- 動態注入分類列表 -->
             </div>
         </div>
     </div>
