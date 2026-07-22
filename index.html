@@ -851,10 +851,22 @@
                 return;
             }
 
-            // 上下增加大量 padding 讓用戶可以順利滾動對焦置中
-            let html = '<div class="relative pt-[35vh] pb-[40vh] max-w-md mx-auto flex flex-col overflow-hidden px-2">';
-            // 貫穿整個列表的灰色的時間軸線
-            html += '<div class="absolute left-[88px] top-0 bottom-0 w-[3px] bg-[#d6d0c4] z-0 rounded-full"></div>';
+            // 取得現在時間，避免每次更新閃爍
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+            const dateStr = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
+
+            // 新增大時鐘 (Sticky 置頂懸浮)
+            let html = `
+                <div class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-3 pb-8 px-4 flex flex-col items-center justify-center pointer-events-none">
+                    <div id="tlBigClock" class="font-mono text-[2.5rem] sm:text-5xl font-black text-slate-800 tracking-tighter bg-white/90 backdrop-blur-md px-6 py-1.5 sm:py-2 rounded-3xl border-[3px] border-slate-200 shadow-sm pointer-events-auto transition-all">${timeStr}</div>
+                    <div id="tlBigDate" class="text-[11px] font-bold text-slate-500 mt-2 tracking-widest pointer-events-auto">${dateStr}</div>
+                </div>
+            `;
+
+            // 調整左側空位：將 ml-[76px] 縮減為 ml-[56px] 讓卡片變寬，並對齊時間軸線
+            html += '<div class="relative pt-[2vh] pb-[40vh] w-full max-w-md mx-auto flex flex-col px-2">';
+            html += '<div class="absolute left-[32px] top-0 bottom-0 w-[3px] bg-[#d6d0c4] z-0 rounded-full"></div>';
 
             let hasCurrent = false;
             let targetScrollId = null;
@@ -870,7 +882,7 @@
                 if (isCompleted) {
                     // 已完成：半透明，變灰色
                     cardClass = 'opacity-60 scale-[0.96] border-slate-200 bg-slate-100';
-                    dotClass = 'bg-slate-300 w-4 h-4 left-[-32.5px] border-[3px] border-[#fdfbf7]';
+                    dotClass = 'bg-slate-300 w-4 h-4 left-[17.5px] border-[3px] border-[#fdfbf7]';
                     timeText = '<span class="text-slate-500 font-bold">✔ 已完成</span>';
                     checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}')" class="w-10 h-10 rounded-full bg-green-500 border-2 border-green-500 text-white transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 z-10 relative cursor-pointer">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none"></i>
@@ -878,7 +890,7 @@
                 } else if (status.state === 'overdue') {
                     // 已逾時：堆積在上方，半透明縮小
                     cardClass = 'opacity-80 scale-[0.96] border-[#d6d0c4] bg-[#fdfbf7] hover:opacity-100 transition-opacity';
-                    dotClass = 'bg-red-400 w-4 h-4 left-[-32.5px] border-[3px] border-[#fdfbf7]';
+                    dotClass = 'bg-red-400 w-4 h-4 left-[17.5px] border-[3px] border-[#fdfbf7]';
                     timeText = '<span class="text-red-500 font-bold">🔴 已逾時 (' + status.text.replace('已結束 (超時 ', '').replace(')', '') + ')</span>';
                     if (!hasCurrent && !targetScrollId) targetScrollId = `tl-task-wrapper-${task.id}`;
                     checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}')" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
@@ -887,7 +899,7 @@
                 } else if (status.state === 'active') {
                     // 當前任務：強烈高亮放大
                     cardClass = 'border-blue-500 shadow-xl scale-105 bg-blue-50 z-20';
-                    dotClass = 'bg-blue-500 w-6 h-6 left-[-36.5px] border-[4px] border-[#fdfbf7] shadow-md animate-[pulse_2s_ease-in-out_infinite]';
+                    dotClass = 'bg-blue-500 w-6 h-6 left-[13.5px] border-[4px] border-[#fdfbf7] shadow-md animate-[pulse_2s_ease-in-out_infinite]';
                     timeText = '<span class="text-blue-600 font-bold">🟢 當前任務</span>';
                     hasCurrent = true;
                     targetScrollId = `tl-task-wrapper-${task.id}`;
@@ -897,7 +909,7 @@
                 } else { 
                     // 未來即將到來：正常顯示
                     cardClass = 'opacity-95 scale-100 border-[#d6d0c4] bg-white';
-                    dotClass = 'bg-amber-400 w-4 h-4 left-[-32.5px] border-[3px] border-[#fdfbf7]';
+                    dotClass = 'bg-amber-400 w-4 h-4 left-[17.5px] border-[3px] border-[#fdfbf7]';
                     timeText = '<span class="text-amber-600 font-bold">⏳ ' + status.text.replace('未開始 (', '還有 ').replace('後)', '') + ' 到來</span>';
                     if (!hasCurrent && !targetScrollId) {
                         targetScrollId = `tl-task-wrapper-${task.id}`; // 如果沒有正在進行的，對焦下一個即將到來的
@@ -908,14 +920,17 @@
                 }
 
                 html += `
-                    <div id="tl-task-wrapper-${task.id}" class="timeline-wrapper mb-5" style="max-height: 250px;">
-                        <div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[76px] mr-1 ${cardClass} overflow-hidden">
-                            <!-- 時間軸圓點 -->
-                            <div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div>
+                    <div id="tl-task-wrapper-${task.id}" class="timeline-wrapper mb-5 relative" style="max-height: 250px;">
+                        
+                        <!-- 時間軸圓點 (相對於 wrapper 獨立定位，防止被溢出隱藏裁切) -->
+                        <div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div>
+                        
+                        <!-- 卡片加寬：邊距減小 ml-[56px] -->
+                        <div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[56px] mr-1 sm:mr-2 ${cardClass} overflow-hidden">
                             
-                            <!-- 左側具體時間 -->
-                            <div class="flex flex-col items-center justify-center shrink-0 w-[72px] bg-slate-100/50 border-r border-slate-200/60 p-2">
-                                <span class="font-black text-[17px] text-slate-700 tracking-tighter ${isCompleted ? 'opacity-50 line-through decoration-slate-400' : ''}">${task.start}</span>
+                            <!-- 左側具體時間 (寬度微微縮減，給文字更多空間) -->
+                            <div class="flex flex-col items-center justify-center shrink-0 w-[64px] bg-slate-100/50 border-r border-slate-200/60 p-2">
+                                <span class="font-black text-[15px] text-slate-700 tracking-tighter ${isCompleted ? 'opacity-50 line-through decoration-slate-400' : ''}">${task.start}</span>
                                 <span class="text-[9px] text-slate-400 font-bold mt-0.5">${task.end}</span>
                             </div>
                             
@@ -952,7 +967,7 @@
                 }, 150); 
             }
 
-            // 啟動專屬的時間軸計時器
+            // 啟動專屬的時間軸計時器 (卡片狀態更新)
             if(timelineUpdateInterval) clearInterval(timelineUpdateInterval);
             timelineUpdateInterval = setInterval(() => {
                 if(!document.getElementById('timelinePage').classList.contains('hidden')) {
@@ -961,6 +976,17 @@
                 }
             }, 60000);
         };
+
+        // 獨立的大時鐘跳動計時器 (每秒即時跳動)
+        setInterval(() => {
+            const clockEl = document.getElementById('tlBigClock');
+            const dateEl = document.getElementById('tlBigDate');
+            if (clockEl && dateEl && !document.getElementById('timelinePage').classList.contains('hidden')) {
+                const now = new Date();
+                clockEl.textContent = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+                dateEl.textContent = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
+            }
+        }, 1000);
 
         function parseTime(timeStr) { const [h, m] = timeStr.split(':').map(Number); const d = new Date(); d.setHours(h, m, 0, 0); return d; }
         function calculateTaskStatus(startStr, endStr) {
