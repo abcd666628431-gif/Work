@@ -376,7 +376,7 @@
 
         window.addNewTaskCard = () => {
             const newId = 't_' + Date.now();
-            dailyScheduleData.push({ id: newId, start: '00:00', end: '00:00', title: '點擊編輯任務標題', content: '點擊編輯任務內容...', note: '', subSteps: [] });
+            dailyScheduleData.push({ id: newId, start: '00:00', end: '00:00', title: '點擊編輯任務標題', content: '點擊編輯任務內容...', note: '', group: '', subSteps: [] });
             if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }, { merge: true });
             renderDailySchedule();
             window.showToast("已新增任務卡片");
@@ -568,67 +568,27 @@
             window.showToast("排程卡片已刪除");
         };
 
-        window.resetDailyTasks = () => {
-            window.saveStateSnapshot();
-            taskCompletionState = {};
-            subTaskCompletionState = {};
-            
-            if(currentUser) {
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState });
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState });
-            }
-            
-            safeSetLocal('work_cache_task_states', taskCompletionState);
-            safeSetLocal('work_cache_subtask_states', subTaskCompletionState);
-            
+        window.changeTaskGroup = (taskId) => {
+            const grps = ['無', 'A', 'B', 'C'];
+            const task = dailyScheduleData.find(t => t.id === taskId);
+            if(!task) return;
+            let currentIdx = grps.indexOf(task.group || '無');
+            let nextIdx = (currentIdx + 1) % grps.length;
+            let nextGrp = grps[nextIdx] === '無' ? '' : grps[nextIdx];
+            task.group = nextGrp;
+            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }, { merge: true });
             renderDailySchedule();
             if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
-            window.showToast("☀️ 已為您重設為新的一天");
         };
 
-        window.undoLastAction = () => {
-            if (actionHistory.length === 0) {
-                window.showToast("沒有可以還原的步驟", true);
-                return;
-            }
-            const prevState = actionHistory.pop();
-            taskCompletionState = prevState.tasks;
-            subTaskCompletionState = prevState.subtasks;
-
-            if(currentUser) {
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState });
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState });
-            }
-            
-            safeSetLocal('work_cache_task_states', taskCompletionState);
-            safeSetLocal('work_cache_subtask_states', subTaskCompletionState);
-
-            renderDailySchedule();
-            if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
-            window.showToast("↩️ 已還原上一步狀態");
-        };
-
-        window.promptResetOptions = () => {
-            const modalHtml = `
-                <div id="resetOptionsModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onmousedown="if(event.target === this) this.remove();">
-                    <div class="bg-white rounded-2xl p-5 w-full max-w-[280px] shadow-2xl relative" onmousedown="event.stopPropagation()">
-                        <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="list-restart" class="w-5 h-5 mr-2 text-red-500"></i>狀態還原</h3>
-                        <div class="space-y-3">
-                            <button onclick="document.getElementById('resetOptionsModal').remove(); window.undoLastAction();" class="w-full py-3 px-4 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-600 rounded-xl font-bold flex items-center justify-center transition-colors active:scale-95 shadow-sm">
-                                <i data-lucide="undo-2" class="w-4 h-4 mr-2 text-blue-500"></i>還原上一步狀態
-                            </button>
-                            <button onclick="document.getElementById('resetOptionsModal').remove(); window.resetDailyTasks();" class="w-full py-3 px-4 bg-red-50 hover:bg-red-100 border border-red-200 hover:border-red-300 text-red-600 rounded-xl font-bold flex items-center justify-center transition-colors active:scale-95 shadow-sm">
-                                <i data-lucide="sun" class="w-4 h-4 mr-2"></i>還原為新的一天
-                            </button>
-                        </div>
-                        <div class="mt-5 pt-3 border-t border-slate-100 flex justify-end">
-                            <button onclick="document.getElementById('resetOptionsModal').remove()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-bold transition-colors active:scale-95">取消</button>
-                        </div>
-                    </div>
-                </div>
-            `;
-            document.body.insertAdjacentHTML('beforeend', modalHtml);
-            lucide.createIcons();
+        window.getGroupColor = (group) => {
+            if (!group) return '';
+            const map = {
+                'A': 'bg-pink-50 text-pink-600 border-pink-200',
+                'B': 'bg-blue-50 text-blue-600 border-blue-200',
+                'C': 'bg-emerald-50 text-emerald-600 border-emerald-200'
+            };
+            return map[group] || 'bg-slate-50 text-slate-600 border-slate-200';
         };
 
         window.openArchive = (taskId) => {
@@ -983,7 +943,7 @@
             now.setMinutes(now.getMinutes() + 30);
             const endStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit' });
 
-            dailyScheduleData.push({ id: newId, start: startStr, end: endStr, title: '新動態任務', content: '點擊編輯內容...', note: '', subSteps: [] });
+            dailyScheduleData.push({ id: newId, start: startStr, end: endStr, title: '新動態任務', content: '點擊編輯內容...', note: '', group: '', subSteps: [] });
             if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }, { merge: true });
             
             renderDailySchedule();
@@ -1124,6 +1084,7 @@
                 
                 let dataAttrs = `data-task-id="${task.id}" data-start="${task.start}" data-end="${task.end}"`;
                 let timeTextContainer = "time-text text-[11px] mt-1.5 tracking-widest";
+                let groupBadge = task.group ? `<span class="text-[10px] px-1.5 py-0.5 rounded border font-bold mr-1.5 inline-flex items-center justify-center shadow-sm shrink-0 ${window.getGroupColor(task.group)}">${task.group}組</span>` : '';
                 
                 if (isCompleted) {
                     if (lastWasStacked) wrapperStyle += ' margin-top: 10px;'; 
@@ -1220,7 +1181,10 @@
                             </div>
                             
                             <div class="flex-1 p-3 min-w-0 flex flex-col justify-center select-none">
-                                <h3 class="font-bold text-slate-800 text-[14px] truncate ${isCompleted ? 'opacity-50 line-through decoration-slate-400' : ''}" title="${task.title}">${task.title}</h3>
+                                <div class="flex items-center pr-1">
+                                    ${groupBadge}
+                                    <h3 class="font-bold text-slate-800 text-[14px] truncate flex-1 min-w-0 ${isCompleted ? 'opacity-50 line-through decoration-slate-400' : ''}" title="${task.title}">${task.title}</h3>
+                                </div>
                                 ${timeTextHtml}
                             </div>
                             
@@ -1332,6 +1296,12 @@
                                     <input type="time" id="dyEditEnd" value="${task.end}" onclick="this.showPicker && this.showPicker()" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner cursor-pointer">
                                 </div>
                             </div>
+                            <div class="mt-3">
+                                <label class="text-[11px] font-bold text-slate-500 mb-1 block">任務分組 (選填)</label>
+                                <div class="flex gap-2">
+                                    ${['', 'A', 'B', 'C'].map(g => `<label class="flex-1 text-center cursor-pointer active:scale-95 transition-transform"><input type="radio" name="dyEditGroup" value="${g}" ${task.group === g || (!task.group && g === '') ? 'checked' : ''} class="sr-only peer"><div class="py-1.5 rounded-lg border border-slate-200 text-slate-500 text-xs font-bold peer-checked:bg-blue-50 peer-checked:text-blue-600 peer-checked:border-blue-300 peer-checked:shadow-sm transition-all">${g ? g + '組' : '無'}</div></label>`).join('')}
+                                </div>
+                            </div>
                         </div>
                         <div class="mt-6 flex justify-between items-center border-t border-slate-100 pt-4">
                             <button onclick="window.deleteTimelineTask('${taskId}')" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-2.5 rounded-lg text-sm font-bold transition-colors flex items-center shadow-sm active:scale-95"><i data-lucide="trash-2" class="w-4 h-4 mr-1"></i>刪除</button>
@@ -1351,12 +1321,15 @@
             const title = document.getElementById('dyEditTitle').value.trim();
             const start = document.getElementById('dyEditStart').value;
             const end = document.getElementById('dyEditEnd').value;
+            const groupEl = document.querySelector('input[name="dyEditGroup"]:checked');
+            const group = groupEl ? groupEl.value : '';
             
             const task = dailyScheduleData.find(t => t.id === taskId);
             if (task && title) {
                 task.title = title;
                 task.start = start;
                 task.end = end;
+                task.group = group;
                 if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }, { merge: true });
                 document.getElementById('dynamicEditModal').remove();
                 window.showToast("卡片資料已儲存");
@@ -1476,6 +1449,10 @@
                 const editAttrHtml = (field) => isEdit ? `contenteditable="true" onblur="window.updateTaskData('${task.id}', '${field}', this.innerHTML)" onclick="event.stopPropagation()"` : '';
                 const editSubAttr = (idx) => isEdit ? `contenteditable="true" onblur="window.updateTaskData('${task.id}', 'subSteps', this.innerText, ${idx})" onclick="event.stopPropagation()"` : '';
 
+                let groupBadge = task.group 
+                    ? `<span class="text-[10px] px-1.5 py-0.5 rounded border font-bold mr-2 shadow-sm ${window.getGroupColor(task.group)} ${isEdit ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-transform' : ''}" onclick="if(window.isEditMode){ event.stopPropagation(); window.changeTaskGroup('${task.id}'); } else { event.stopPropagation(); }">${task.group}組</span>` 
+                    : `<span class="text-[10px] px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-400 mr-2 shadow-sm ${isEdit ? 'cursor-pointer hover:bg-slate-50 hover:text-blue-500 transition-colors' : 'hidden'}" onclick="if(window.isEditMode){ event.stopPropagation(); window.changeTaskGroup('${task.id}'); } else { event.stopPropagation(); }">+ 分組</span>`;
+
                 const taskHTML = `
                     <div class="daily-task-card bg-white rounded-xl p-4 border ${isCompleted ? 'border-slate-200 opacity-60 bg-slate-50' : borderColor} ${glowEffect} ${activeScale} relative transition-all duration-300 flex flex-col group mt-4">
                         <div class="tape-strip ${tapeStyleClass} hidden sm:block"></div>
@@ -1490,11 +1467,14 @@
                             </div>
                             <div class="flex-1 space-y-2 min-w-0">
                                 <div class="flex justify-between items-center">
-                                    <span class="text-[11px] px-2 py-0.5 bg-slate-100 rounded border border-slate-200 text-slate-600 tracking-wider flex-shrink-0 font-medium shadow-sm">
-                                        <span ${editAttrText('start')} class="${isEdit ? 'border-b border-dashed border-blue-400 text-blue-600 cursor-text focus:outline-none focus:bg-white px-0.5 rounded transition-colors' : ''}">${task.start}</span>
-                                        <span class="mx-0.5 text-slate-400">-</span>
-                                        <span ${editAttrText('end')} class="${isEdit ? 'border-b border-dashed border-blue-400 text-blue-600 cursor-text focus:outline-none focus:bg-white px-0.5 rounded transition-colors' : ''}">${task.end}</span>
-                                    </span>
+                                    <div class="flex items-center">
+                                        ${groupBadge}
+                                        <span class="text-[11px] px-2 py-0.5 bg-slate-100 rounded border border-slate-200 text-slate-600 tracking-wider flex-shrink-0 font-medium shadow-sm">
+                                            <span ${editAttrText('start')} class="${isEdit ? 'border-b border-dashed border-blue-400 text-blue-600 cursor-text focus:outline-none focus:bg-white px-0.5 rounded transition-colors' : ''}">${task.start}</span>
+                                            <span class="mx-0.5 text-slate-400">-</span>
+                                            <span ${editAttrText('end')} class="${isEdit ? 'border-b border-dashed border-blue-400 text-blue-600 cursor-text focus:outline-none focus:bg-white px-0.5 rounded transition-colors' : ''}">${task.end}</span>
+                                        </span>
+                                    </div>
                                     <span id="status-text-${task.id}" class="text-[11px] ${timeColor} tracking-wide font-bold ml-2 text-right">${isCompleted ? '✔ 任務完成' : status.text}</span>
                                 </div>
                                 <h3 ${editAttrText('title')} class="text-[15px] tracking-wide font-bold ${isCompleted ? 'text-slate-400 line-through' : 'text-slate-800'} ${editClass} pl-1"><span class="${!isCompleted ? markerColorClass : ''}">${task.title}</span></h3>
