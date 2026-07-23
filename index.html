@@ -921,7 +921,7 @@
             const now = window.getNow();
             let previousTime = now;
             
-            // 更新當前進行中任務的時間文字與「動態時間中線」
+            // 更新當前進行中任務的時間文字
             document.querySelectorAll('.active-task').forEach(wrapper => {
                  const startStr = wrapper.dataset.start;
                  const endStr = wrapper.dataset.end;
@@ -930,33 +930,10 @@
                      window.renderTimeline(false); // 狀態改變時觸發全面重新渲染
                      return;
                  }
-
-                 // 精準計算時間流逝百分比 (0% ~ 100%)
-                 const start = parseTime(startStr);
-                 const end = parseTime(endStr);
-                 const totalMins = (end - start) / 60000;
-                 const passedMins = (now - start) / 60000;
-                 const progressPercent = Math.max(0, Math.min(100, (passedMins / totalMins) * 100));
-                 const svgOffset = 62.8 - (progressPercent / 100) * 62.8;
-
                  const timeTextEl = wrapper.querySelector('.time-text');
                  if (timeTextEl) {
-                     // 實時更新：微型計時儀表板與剩餘時間
-                     timeTextEl.innerHTML = `<span class="text-blue-600 font-bold flex items-center">
-                        <svg class="w-3.5 h-3.5 mr-1.5 shrink-0 transform -rotate-90" viewBox="0 0 24 24">
-                            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="4" class="text-blue-200"></circle>
-                            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="4" class="text-blue-600 transition-all duration-1000 ease-linear" stroke-dasharray="62.8" stroke-dashoffset="${svgOffset}"></circle>
-                        </svg>
-                        🟢 當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})
-                     </span>`;
+                     timeTextEl.innerHTML = '<span class="text-green-600 font-bold flex items-center"><i data-lucide="play" class="w-3.5 h-3.5 mr-1 shrink-0 fill-green-600"></i>當前任務 (' + status.text.replace('進行中 (', '').replace(')', '') + ')</span>';
                  }
-
-                 // 實時更新：雷射橫線 (NOW) 隨著時間往下墜落
-                 const activeLine = wrapper.querySelector('.now-indicator-line');
-                 if(activeLine) {
-                     activeLine.style.top = `${progressPercent}%`;
-                 }
-
                  previousTime = now; // 未來任務的基準點重置為當前時間
             });
 
@@ -973,7 +950,7 @@
                     return;
                 }
                 
-                // 動態時間差轉換為像素高度 (平滑向上推移)，並設定合理的上限值避免斷開
+                // 動態時間差轉換為像素高度 (平滑向上推移)，並設定合理的上限值
                 const startTime = parseTime(startStr);
                 let gapMins = Math.max(0, (startTime - previousTime) / 60000);
                 let extraGap = Math.min(gapMins * 1.5, 120); 
@@ -981,10 +958,11 @@
                 
                 const timeTextEl = wrapper.querySelector('.time-text');
                 if (timeTextEl) {
-                    timeTextEl.innerHTML = '<span class="text-amber-600 font-bold">⏳ ' + status.text.replace('未開始 (', '還有 ').replace('後)', '') + ' 到來</span>';
+                    timeTextEl.innerHTML = '<span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ' + status.text.replace('未開始 (', '還有 ').replace('後)', '') + ' 到來</span>';
                 }
                 previousTime = startTime; // 下一個任務的基準點設為這個任務的開始時間
             });
+            lucide.createIcons();
         };
 
         window.renderTimeline = (scrollToCenter = false) => {
@@ -1024,8 +1002,8 @@
                 
                 const isLast = index === timelineTasks.length - 1;
                 
-                // 【核心修正】：確保 z-index 嚴格遞增，並且直線只往下畫 (穿進下一張卡片底部)
-                // 這樣不僅永遠不會斷開，圓點也絕對不會被線條覆蓋！
+                // 1. 嚴格遞增的 Z-Index：保證下一張卡片永遠疊在上一張卡片的上方！
+                // 2. 向下延伸的防斷線：只往底層下方畫長線，會自動被下一張卡片與圓點蓋住，完美解決斷開與遮擋問題！
                 let wrapperStyle = `max-height: 250px; z-index: ${index + 1};`;
                 let wrapperClass = 'timeline-wrapper mb-1 relative transition-all duration-500 ease-out';
                 let verticalLineHtml = isLast ? '' : `<div class="absolute left-[24px] w-[4px] bg-[#d6d0c4] top-1/2 -bottom-[300px] z-0 rounded-full"></div>`;
@@ -1068,28 +1046,10 @@
                     
                     wrapperClass += ' active-task';
 
-                    // 實心質感邊框
-                    cardClass = 'border-blue-500 border-[2px] shadow-xl bg-blue-50 z-20 opacity-100';
-                    // 靜止的高級質感圓點 (取消閃爍)
-                    dotClass = 'bg-blue-500 w-6 h-6 left-[14px] border-[4px] border-[#fdfbf7] shadow-md';
-                    
-                    // 初始計算時間進度
-                    const start = parseTime(task.start);
-                    const end = parseTime(task.end);
-                    const totalMins = (end - start) / 60000;
-                    const passedMins = (window.getNow() - start) / 60000;
-                    const progressPercent = Math.max(0, Math.min(100, (passedMins / totalMins) * 100));
-                    const svgOffset = 62.8 - (progressPercent / 100) * 62.8;
-
-                    // 微型計時儀表板
-                    timeTextHtml = `<div class="${timeTextContainer}"><span class="text-blue-600 font-bold flex items-center">
-                        <svg class="w-3.5 h-3.5 mr-1.5 shrink-0 transform -rotate-90" viewBox="0 0 24 24">
-                            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="4" class="text-blue-200"></circle>
-                            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="4" class="text-blue-600 transition-all duration-1000 ease-linear" stroke-dasharray="62.8" stroke-dashoffset="${svgOffset}"></circle>
-                        </svg>
-                        🟢 當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})
-                    </span></div>`;
-
+                    // 恢復實心乾淨的邊框設計
+                    cardClass = 'border-blue-400 border-[2px] shadow-xl bg-blue-50 z-20 opacity-100';
+                    dotClass = 'bg-green-500 w-6 h-6 left-[14px] border-[4px] border-[#fdfbf7] shadow-md';
+                    timeTextHtml = `<div class="${timeTextContainer}"><span class="text-green-600 font-bold flex items-center"><i data-lucide="play" class="w-3.5 h-3.5 mr-1 shrink-0 fill-green-600"></i>當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})</span></div>`;
                     hasCurrent = true;
                     targetScrollId = `tl-task-wrapper-${task.id}`;
                     previousTimeForGap = window.getNow();
@@ -1098,22 +1058,22 @@
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
                     
-                    // 動態雷射橫線 (NOW): 改為專業的高級「播放指針 (Playhead)」漸層樣式
-                    activeLineHtml = `<div class="now-indicator-line absolute left-[21px] right-2 z-30 pointer-events-none flex items-center transition-all duration-1000 ease-linear" style="top: ${progressPercent}%; margin-top: -5px;">
-                                        <!-- 軌道上的呼吸燈游標點 -->
-                                        <div class="w-2.5 h-2.5 rounded-full bg-blue-600 border-[1.5px] border-white shadow-[0_0_10px_rgba(37,99,235,0.9)] flex-shrink-0 relative z-10">
-                                            <div class="absolute inset-0 rounded-full bg-blue-400 animate-ping opacity-60 scale-150"></div>
-                                        </div>
-                                        <!-- 掃描漸層細線 (優雅地穿透卡片並淡出) -->
-                                        <div class="h-[1.5px] flex-1 bg-gradient-to-r from-blue-500 via-blue-400/50 to-transparent shadow-sm"></div>
+                    // 中間定位雷射橫線 (保留科技感與時間對位)
+                    activeLineHtml = `<div class="absolute left-[-15px] right-[-15px] top-1/2 -translate-y-1/2 h-[2px] bg-green-400 shadow-[0_0_12px_rgba(74,222,128,0.8)] z-0 pointer-events-none rounded-full flex justify-between items-center px-1">
+                                        <div class="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(74,222,128,1)]"></div>
+                                        <div class="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(74,222,128,1)]"></div>
                                       </div>`;
                 } else { 
-                    // 計算未來任務動態間距 (從基準點算起)
+                    let gapMins = Math.max(0, (parseTime(task.start) - previousTimeForGap) / 60000);
+                    let extraGap = Math.min(gapMins * 1.5, 120); 
+                    
+                    wrapperClass = 'timeline-wrapper relative transition-all duration-1000 ease-linear conveyor-task';
+                    wrapperStyle += ` margin-top: ${8 + extraGap}px;`; 
                     lastWasStacked = false;
 
                     cardClass = 'opacity-85 scale-[0.92] border-[#d6d0c4] bg-white';
                     dotClass = 'bg-amber-400 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
-                    timeTextHtml = `<div class="${timeTextContainer}"><span class="text-amber-600 font-bold">⏳ ${status.text.replace('未開始 (', '還有 ').replace('後)', '')} 到來</span></div>`;
+                    timeTextHtml = `<div class="${timeTextContainer}"><span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ${status.text.replace('未開始 (', '還有 ').replace('後)', '')} 到來</span></div>`;
                     if (!hasCurrent && !targetScrollId) {
                         targetScrollId = `tl-task-wrapper-${task.id}`; 
                     }
