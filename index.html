@@ -859,10 +859,44 @@
         window.completeTimelineTask = (taskId, event) => {
             if (event) {
                 event.stopPropagation();
-            }
-            window.toggleTask(taskId); 
-            if(!document.getElementById('timelinePage').classList.contains('hidden')) {
-                window.renderTimeline(false); 
+                const btn = event.currentTarget;
+                const card = btn.closest('.timeline-card');
+                const isCompleting = !taskCompletionState[taskId]; 
+
+                // 點擊動畫：按鈕高亮與圖示旋轉
+                btn.classList.remove('text-slate-400', 'text-blue-400', 'hover:bg-green-500', 'hover:border-green-500', 'bg-white');
+                if (isCompleting) {
+                    btn.classList.add('scale-110', 'bg-green-500', 'text-white', 'border-green-500', 'shadow-[0_0_15px_rgba(34,197,94,0.6)]');
+                    const icon = btn.querySelector('i');
+                    if (icon) icon.classList.add('scale-150', 'rotate-12');
+                    
+                    // 新增：整個卡片的慶祝閃爍與彈跳動畫
+                    if (card) {
+                        card.style.transition = 'all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)'; // 物理彈性特效
+                        card.classList.add('bg-green-50', 'border-green-400', 'scale-[1.03]', 'shadow-lg');
+                        card.classList.remove('bg-white', 'bg-blue-50', 'border-[#d6d0c4]', 'border-blue-500');
+                    }
+                } else {
+                    btn.classList.add('scale-90', 'opacity-50');
+                    if (card) {
+                        card.style.transition = 'all 0.3s ease';
+                        card.classList.add('scale-[1.02]', 'opacity-100');
+                        card.classList.remove('opacity-60', 'grayscale-[0.5]', 'scale-[0.92]');
+                    }
+                }
+                
+                // 延遲 0.4 秒讓動畫跑完，再執行狀態切換與重新渲染
+                setTimeout(() => {
+                    window.toggleTask(taskId); 
+                    if(!document.getElementById('timelinePage').classList.contains('hidden')) {
+                        window.renderTimeline(false); 
+                    }
+                }, 400);
+            } else {
+                window.toggleTask(taskId); 
+                if(!document.getElementById('timelinePage').classList.contains('hidden')) {
+                    window.renderTimeline(false); 
+                }
             }
         };
 
@@ -887,7 +921,7 @@
             const now = window.getNow();
             let previousTime = now;
             
-            // 更新當前進行中任務的時間文字
+            // 更新當前進行中任務的時間文字與「動態時間中線」
             document.querySelectorAll('.active-task').forEach(wrapper => {
                  const startStr = wrapper.dataset.start;
                  const endStr = wrapper.dataset.end;
@@ -896,10 +930,33 @@
                      window.renderTimeline(false); // 狀態改變時觸發全面重新渲染
                      return;
                  }
+
+                 // 精準計算時間流逝百分比 (0% ~ 100%)
+                 const start = parseTime(startStr);
+                 const end = parseTime(endStr);
+                 const totalMins = (end - start) / 60000;
+                 const passedMins = (now - start) / 60000;
+                 const progressPercent = Math.max(0, Math.min(100, (passedMins / totalMins) * 100));
+                 const svgOffset = 62.8 - (progressPercent / 100) * 62.8;
+
                  const timeTextEl = wrapper.querySelector('.time-text');
                  if (timeTextEl) {
-                     timeTextEl.innerHTML = '<span class="text-blue-600 font-bold">🟢 當前任務 (' + status.text.replace('進行中 (', '').replace(')', '') + ')</span>';
+                     // 實時更新：微型計時儀表板與剩餘時間
+                     timeTextEl.innerHTML = `<span class="text-blue-600 font-bold flex items-center">
+                        <svg class="w-3.5 h-3.5 mr-1.5 shrink-0 transform -rotate-90" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="4" class="text-blue-200"></circle>
+                            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="4" class="text-blue-600 transition-all duration-1000 ease-linear" stroke-dasharray="62.8" stroke-dashoffset="${svgOffset}"></circle>
+                        </svg>
+                        🟢 當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})
+                     </span>`;
                  }
+
+                 // 實時更新：雷射橫線 (NOW) 隨著時間往下墜落
+                 const activeLine = wrapper.querySelector('.now-indicator-line');
+                 if(activeLine) {
+                     activeLine.style.top = `${progressPercent}%`;
+                 }
+
                  previousTime = now; // 未來任務的基準點重置為當前時間
             });
 
@@ -916,11 +973,11 @@
                     return;
                 }
                 
-                // 動態時間差轉換為像素高度 (平滑向上推移)
+                // 動態時間差轉換為像素高度 (平滑向上推移)，並設定合理的上限值避免斷開
                 const startTime = parseTime(startStr);
                 let gapMins = Math.max(0, (startTime - previousTime) / 60000);
-                let extraGap = Math.min(gapMins * 2.5, 350); // 縮放係數與最大間距限制
-                wrapper.style.marginTop = `${15 + extraGap}px`;
+                let extraGap = Math.min(gapMins * 1.5, 120); 
+                wrapper.style.marginTop = `${8 + extraGap}px`;
                 
                 const timeTextEl = wrapper.querySelector('.time-text');
                 if (timeTextEl) {
@@ -959,22 +1016,19 @@
             let hasCurrent = false;
             let targetScrollId = null;
             let lastWasStacked = false;
-            let stackIndex = 0;
             let previousTimeForGap = window.getNow();
 
             timelineTasks.forEach((task, index) => {
                 const isCompleted = taskCompletionState[task.id];
                 const status = calculateTaskStatus(task.start, task.end);
                 
-                const isFirst = index === 0;
                 const isLast = index === timelineTasks.length - 1;
                 
-                let lineTop = isFirst ? 'top-1/2' : 'top-[-30px]'; 
-                let lineBottom = isLast ? 'bottom-1/2' : 'bottom-[-30px]';
-                let verticalLineHtml = `<div class="absolute left-[24px] w-[4px] bg-[#d6d0c4] z-0 rounded-full ${lineTop} ${lineBottom}"></div>`;
-                
+                // 【核心修正】：確保 z-index 嚴格遞增，並且直線只往下畫 (穿進下一張卡片底部)
+                // 這樣不僅永遠不會斷開，圓點也絕對不會被線條覆蓋！
+                let wrapperStyle = `max-height: 250px; z-index: ${index + 1};`;
                 let wrapperClass = 'timeline-wrapper mb-1 relative transition-all duration-500 ease-out';
-                let wrapperStyle = 'max-height: 250px;';
+                let verticalLineHtml = isLast ? '' : `<div class="absolute left-[24px] w-[4px] bg-[#d6d0c4] top-1/2 -bottom-[300px] z-0 rounded-full"></div>`;
                 
                 let cardClass = '';
                 let dotClass = '';
@@ -982,7 +1036,6 @@
                 let checkBtnHtml = '';
                 let activeLineHtml = '';
                 
-                // 為輸送帶動畫準備的 Dataset
                 let dataAttrs = `data-task-id="${task.id}" data-start="${task.start}" data-end="${task.end}"`;
                 let timeTextContainer = "time-text text-[11px] mt-1.5 tracking-widest";
                 
@@ -993,17 +1046,12 @@
                     cardClass = 'opacity-60 scale-[0.92] border-slate-200 bg-slate-100 grayscale-[0.5]';
                     dotClass = 'bg-slate-300 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
                     timeTextHtml = `<div class="${timeTextContainer}"><span class="text-slate-500 font-bold">✔ 已完成</span></div>`;
-                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event, false)" class="w-10 h-10 rounded-full bg-slate-200 text-white flex items-center justify-center shadow-inner z-10 relative hover:bg-slate-300 transition-colors active:scale-90 cursor-pointer" title="點擊取消完成">
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-slate-200 text-white flex items-center justify-center shadow-inner z-10 relative hover:bg-slate-300 transition-colors active:scale-90 cursor-pointer" title="點擊取消完成">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none"></i>
                                     </button>`;
                 } else if (status.state === 'overdue') {
-                    stackIndex++;
                     if (lastWasStacked) {
-                        wrapperClass = 'timeline-wrapper relative transition-all duration-500 ease-out'; 
-                        wrapperStyle += ` margin-top: -65px; z-index: ${stackIndex};`; 
-                    } else {
-                        wrapperClass = 'timeline-wrapper relative transition-all duration-500 ease-out'; 
-                        wrapperStyle += ` z-index: ${stackIndex};`;
+                        wrapperStyle += ` margin-top: -45px;`; 
                     }
                     lastWasStacked = true;
 
@@ -1011,7 +1059,7 @@
                     dotClass = 'bg-red-400 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
                     timeTextHtml = `<div class="${timeTextContainer}"><span class="text-red-500 font-bold opacity-80">🔴 已逾時 (${status.text.replace('已結束 (超時 ', '').replace(')', '')})</span></div>`;
                     if (!hasCurrent && !targetScrollId) targetScrollId = `tl-task-wrapper-${task.id}`;
-                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event, false)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
                 } else if (status.state === 'active') {
@@ -1020,24 +1068,47 @@
                     
                     wrapperClass += ' active-task';
 
-                    cardClass = 'border-blue-500 shadow-xl bg-blue-50 z-20 opacity-100';
-                    dotClass = 'bg-blue-500 w-6 h-6 left-[14px] border-[4px] border-[#fdfbf7] shadow-md animate-[pulse_2s_ease-in-out_infinite]';
-                    timeTextHtml = `<div class="${timeTextContainer}"><span class="text-blue-600 font-bold">🟢 當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})</span></div>`;
+                    // 實心質感邊框
+                    cardClass = 'border-blue-500 border-[2px] shadow-xl bg-blue-50 z-20 opacity-100';
+                    // 靜止的高級質感圓點 (取消閃爍)
+                    dotClass = 'bg-blue-500 w-6 h-6 left-[14px] border-[4px] border-[#fdfbf7] shadow-md';
+                    
+                    // 初始計算時間進度
+                    const start = parseTime(task.start);
+                    const end = parseTime(task.end);
+                    const totalMins = (end - start) / 60000;
+                    const passedMins = (window.getNow() - start) / 60000;
+                    const progressPercent = Math.max(0, Math.min(100, (passedMins / totalMins) * 100));
+                    const svgOffset = 62.8 - (progressPercent / 100) * 62.8;
+
+                    // 微型計時儀表板
+                    timeTextHtml = `<div class="${timeTextContainer}"><span class="text-blue-600 font-bold flex items-center">
+                        <svg class="w-3.5 h-3.5 mr-1.5 shrink-0 transform -rotate-90" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="4" class="text-blue-200"></circle>
+                            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="4" class="text-blue-600 transition-all duration-1000 ease-linear" stroke-dasharray="62.8" stroke-dashoffset="${svgOffset}"></circle>
+                        </svg>
+                        🟢 當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})
+                    </span></div>`;
+
                     hasCurrent = true;
                     targetScrollId = `tl-task-wrapper-${task.id}`;
                     previousTimeForGap = window.getNow();
                     
-                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event, false)" class="w-10 h-10 rounded-full bg-white border-2 border-blue-200 text-blue-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-blue-200 text-blue-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
-                    activeLineHtml = `<div class="absolute left-[24px] right-[10px] top-1/2 -translate-y-1/2 h-[4px] bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.6)] z-0 pointer-events-none rounded-full animate-pulse"></div>`;
+                    
+                    // 動態雷射橫線 (NOW): 改為專業的高級「播放指針 (Playhead)」漸層樣式
+                    activeLineHtml = `<div class="now-indicator-line absolute left-[21px] right-2 z-30 pointer-events-none flex items-center transition-all duration-1000 ease-linear" style="top: ${progressPercent}%; margin-top: -5px;">
+                                        <!-- 軌道上的呼吸燈游標點 -->
+                                        <div class="w-2.5 h-2.5 rounded-full bg-blue-600 border-[1.5px] border-white shadow-[0_0_10px_rgba(37,99,235,0.9)] flex-shrink-0 relative z-10">
+                                            <div class="absolute inset-0 rounded-full bg-blue-400 animate-ping opacity-60 scale-150"></div>
+                                        </div>
+                                        <!-- 掃描漸層細線 (優雅地穿透卡片並淡出) -->
+                                        <div class="h-[1.5px] flex-1 bg-gradient-to-r from-blue-500 via-blue-400/50 to-transparent shadow-sm"></div>
+                                      </div>`;
                 } else { 
                     // 計算未來任務動態間距 (從基準點算起)
-                    let gapMins = Math.max(0, (parseTime(task.start) - previousTimeForGap) / 60000);
-                    let extraGap = Math.min(gapMins * 2.5, 350); 
-                    
-                    wrapperClass = 'timeline-wrapper relative transition-all duration-1000 ease-linear conveyor-task';
-                    wrapperStyle += ` margin-top: ${15 + extraGap}px;`; 
                     lastWasStacked = false;
 
                     cardClass = 'opacity-85 scale-[0.92] border-[#d6d0c4] bg-white';
@@ -1046,9 +1117,9 @@
                     if (!hasCurrent && !targetScrollId) {
                         targetScrollId = `tl-task-wrapper-${task.id}`; 
                     }
-                    previousTimeForGap = parseTime(task.start); // 設定為下一個未來任務的起點基準
+                    previousTimeForGap = parseTime(task.start); 
                     
-                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event, false)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
+                    checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
                 }
@@ -1059,7 +1130,7 @@
                         ${activeLineHtml}
                         <div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div>
                         
-                        <div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[44px] mr-[10px] ${cardClass} overflow-hidden cursor-pointer group/card hover:shadow-md transition-all duration-300" onclick="window.completeTimelineTask('${task.id}', event, true)" ondblclick="window.editTimelineTask('${task.id}', event)" title="點擊切換完成狀態，雙擊編輯內容">
+                        <div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[44px] mr-[10px] ${cardClass} overflow-hidden cursor-pointer group/card hover:shadow-md transition-all duration-300" onclick="window.viewStackedCard('${task.id}', event)" ondblclick="window.editTimelineTask('${task.id}', event)" title="雙擊編輯內容">
                             
                             <div class="flex flex-col items-center justify-center shrink-0 w-[60px] bg-slate-100/50 border-r border-slate-200/60 p-2">
                                 <span class="font-black text-[15px] text-slate-700 tracking-tighter ${isCompleted ? 'opacity-50 line-through decoration-slate-400' : ''}">${task.start}</span>
@@ -1090,7 +1161,8 @@
                     if (el && page) {
                         const containerRect = page.getBoundingClientRect();
                         const elRect = el.getBoundingClientRect();
-                        const scrollTop = page.scrollTop + (elRect.top - containerRect.top) - (containerRect.height / 2) + (elRect.height / 2);
+                        // 加入些微偏移，讓焦點對得更順
+                        const scrollTop = page.scrollTop + (elRect.top - containerRect.top) - (containerRect.height / 2) + (elRect.height / 2) - 40;
                         page.scrollTo({ top: scrollTop, behavior: 'smooth' });
                     }
                 }, 150); 
@@ -1134,8 +1206,8 @@
             if(!task) return;
 
             const modalHtml = `
-                <div id="dynamicEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onmousedown="if(event.target === this) this.isBg = true;" onmouseup="if(event.target === this && this.isBg) this.remove(); this.isBg = false;">
-                    <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative">
+                <div id="dynamicEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onmousedown="if(event.target === this) this.isBg = true;" onmouseup="if(event.target === this && this.isBg) { this.remove(); this.isBg = false; }">
+                    <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onmousedown="event.stopPropagation()">
                         <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i>編輯任務</h3>
                         <div class="space-y-4">
                             <div>
@@ -1143,13 +1215,14 @@
                                 <input type="text" id="dyEditTitle" value="${task.title}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 shadow-inner">
                             </div>
                             <div class="flex gap-3">
-                                <div class="flex-1">
+                                <div class="flex-1 relative">
                                     <label class="text-[11px] font-bold text-slate-500 mb-1 block">開始時間</label>
-                                    <input type="time" id="dyEditStart" value="${task.start}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner">
+                                    <!-- 點擊任意處皆可呼叫系統選單 -->
+                                    <input type="time" id="dyEditStart" value="${task.start}" onclick="this.showPicker && this.showPicker()" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner cursor-pointer">
                                 </div>
-                                <div class="flex-1">
+                                <div class="flex-1 relative">
                                     <label class="text-[11px] font-bold text-slate-500 mb-1 block">結束時間</label>
-                                    <input type="time" id="dyEditEnd" value="${task.end}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner">
+                                    <input type="time" id="dyEditEnd" value="${task.end}" onclick="this.showPicker && this.showPicker()" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner cursor-pointer">
                                 </div>
                             </div>
                         </div>
