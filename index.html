@@ -963,12 +963,25 @@
                  const endStr = wrapper.dataset.end;
                  const status = calculateTaskStatus(startStr, endStr);
                  if (status.state !== 'active') {
-                     window.renderTimeline(false); // 狀態改變時觸發全面重新渲染
+                     window.renderTimeline(true); // 狀態改變時觸發重新渲染並自動對焦
                      return;
                  }
+                 
+                 // 重新計算當下的時間圓環進度，確保它每秒都在倒數且不會消失
+                 const startTime = parseTime(startStr);
+                 const endTime = parseTime(endStr);
+                 const progress = Math.min(1, Math.max(0, (now - startTime) / (endTime - startTime)));
+                 const dashoffset = 25.12 * progress;
+
                  const timeTextEl = wrapper.querySelector('.time-text');
                  if (timeTextEl) {
-                     timeTextEl.innerHTML = '<span class="text-green-600 font-bold flex items-center"><i data-lucide="play" class="w-3.5 h-3.5 mr-1 shrink-0 fill-green-600"></i>當前任務 (' + status.text.replace('進行中 (', '').replace(')', '') + ')</span>';
+                     timeTextEl.innerHTML = `<span class="text-green-600 font-bold flex items-center">
+                        <svg class="w-3.5 h-3.5 mr-1.5 shrink-0 transform -rotate-90" viewBox="0 0 10 10">
+                            <circle cx="5" cy="5" r="4" fill="none" stroke="#dcfce7" stroke-width="2"></circle>
+                            <circle cx="5" cy="5" r="4" fill="none" stroke="#16a34a" stroke-width="2" stroke-dasharray="25.12" stroke-dashoffset="${dashoffset}" stroke-linecap="round"></circle>
+                        </svg>
+                        當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})
+                     </span>`;
                  }
                  previousTime = now; // 未來任務的基準點重置為當前時間
             });
@@ -982,7 +995,7 @@
                 
                 const status = calculateTaskStatus(startStr, endStr);
                 if (status.state !== 'waiting') {
-                    window.renderTimeline(false); // 時間到了，觸發重新渲染轉為當前任務
+                    window.renderTimeline(true); // 時間到了，觸發重新渲染並自動對焦當前任務
                     return;
                 }
                 
@@ -1008,12 +1021,6 @@
             let timelineTasks = [...dailyScheduleData];
             timelineTasks.sort((a, b) => parseTime(a.start) - parseTime(b.start));
 
-            if (timelineTasks.length === 0) {
-                container.innerHTML = '<div class="flex flex-col items-center justify-center h-full py-32 text-slate-400"><i data-lucide="party-popper" class="w-16 h-16 mb-4 text-green-500 opacity-80"></i><span class="text-base font-black tracking-widest text-slate-600">目前沒有任何任務</span></div>';
-                lucide.createIcons();
-                return;
-            }
-
             const now = window.getNow();
             const timeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
             const dateStr = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
@@ -1024,6 +1031,7 @@
             
             let simBtnClass = isFastForwarding ? 'bg-amber-500 hover:bg-amber-600 animate-pulse' : 'bg-slate-800 hover:bg-slate-700';
 
+            // 確保頂部儀表板永遠優先渲染
             let html = `
                 <div class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-3 pb-8 px-4 flex flex-col items-center justify-center pointer-events-none transition-all">
                     <div class="flex items-center justify-center gap-2 sm:gap-3 w-full max-w-[500px]">
@@ -1056,6 +1064,14 @@
                     <div id="tlBigDate" class="text-[10px] sm:text-[11px] font-bold text-slate-500 mt-2 tracking-widest pointer-events-auto">${dateStr}</div>
                 </div>
             `;
+
+            // 如果沒有卡片，則在儀表板下方顯示空狀態，而不是覆蓋掉整個畫面
+            if (timelineTasks.length === 0) {
+                html += '<div class="flex flex-col items-center justify-center pt-24 pb-32 text-slate-400"><i data-lucide="party-popper" class="w-16 h-16 mb-4 text-green-500 opacity-80"></i><span class="text-base font-black tracking-widest text-slate-600">目前沒有任何任務</span></div>';
+                container.innerHTML = html;
+                lucide.createIcons();
+                return;
+            }
 
             html += '<div class="relative pt-[2vh] pb-[40vh] w-full max-w-[500px] mx-auto flex flex-col">';
 
@@ -1123,7 +1139,7 @@
                     const startTime = parseTime(task.start);
                     const endTime = parseTime(task.end);
                     const progress = Math.min(1, Math.max(0, (now - startTime) / (endTime - startTime)));
-                    const dashoffset = 25.12 * (1 - progress);
+                    const dashoffset = 25.12 * progress;
                     
                     timeTextHtml = `<div class="${timeTextContainer}"><span class="text-green-600 font-bold flex items-center">
                         <svg class="w-3.5 h-3.5 mr-1.5 shrink-0 transform -rotate-90" viewBox="0 0 10 10">
@@ -1203,13 +1219,8 @@
             if (scrollToCenter && targetScrollId) {
                 setTimeout(() => {
                     const el = document.getElementById(targetScrollId);
-                    const page = document.getElementById('timelinePage'); 
-                    if (el && page) {
-                        const containerRect = page.getBoundingClientRect();
-                        const elRect = el.getBoundingClientRect();
-                        // 加入些微偏移，讓焦點對得更順
-                        const scrollTop = page.scrollTop + (elRect.top - containerRect.top) - (containerRect.height / 2) + (elRect.height / 2) - 40;
-                        page.scrollTo({ top: scrollTop, behavior: 'smooth' });
+                    if (el) {
+                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     }
                 }, 150); 
             }
