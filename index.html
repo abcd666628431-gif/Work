@@ -210,35 +210,48 @@
             
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), (docSnap) => {
                 if(docSnap.exists() && docSnap.data().tasks) { 
-                    dailyScheduleData = docSnap.data().tasks;
-                    safeSetLocal('work_cache_schedule', dailyScheduleData);
-                    renderDailySchedule(); 
-                    if(!document.getElementById('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
+                    const newData = docSnap.data().tasks;
+                    // 智慧比對：如果新資料與本地記憶完全相同，阻斷多餘的重繪，節省效能與流量
+                    if (JSON.stringify(dailyScheduleData) !== JSON.stringify(newData)) {
+                        dailyScheduleData = newData;
+                        safeSetLocal('work_cache_schedule', dailyScheduleData);
+                        renderDailySchedule(); 
+                        if(!document.getElementById('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
+                    }
                 }
             });
             
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), (docSnap) => {
                 if(docSnap.exists()) { 
-                    taskCompletionState = docSnap.data().states || {};
-                    safeSetLocal('work_cache_task_states', taskCompletionState);
-                    renderDailySchedule(); 
-                    if(!document.getElementById('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
+                    const newData = docSnap.data().states || {};
+                    if (JSON.stringify(taskCompletionState) !== JSON.stringify(newData)) {
+                        taskCompletionState = newData;
+                        safeSetLocal('work_cache_task_states', taskCompletionState);
+                        renderDailySchedule(); 
+                        if(!document.getElementById('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
+                    }
                 }
             });
             
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), (docSnap) => {
                 if(docSnap.exists()) { 
-                    subTaskCompletionState = docSnap.data().states || {};
-                    safeSetLocal('work_cache_subtask_states', subTaskCompletionState);
-                    renderDailySchedule(); 
+                    const newData = docSnap.data().states || {};
+                    if (JSON.stringify(subTaskCompletionState) !== JSON.stringify(newData)) {
+                        subTaskCompletionState = newData;
+                        safeSetLocal('work_cache_subtask_states', subTaskCompletionState);
+                        renderDailySchedule(); 
+                    }
                 }
             });
 
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), (docSnap) => {
                 if(docSnap.exists()) { 
-                    taskExtrasState = docSnap.data().extras || {};
-                    safeSetLocal('work_cache_daily_extras', taskExtrasState);
-                    renderDailySchedule(); 
+                    const newData = docSnap.data().extras || {};
+                    if (JSON.stringify(taskExtrasState) !== JSON.stringify(newData)) {
+                        taskExtrasState = newData;
+                        safeSetLocal('work_cache_daily_extras', taskExtrasState);
+                        renderDailySchedule(); 
+                    }
                 }
             });
 
@@ -963,7 +976,7 @@
                  const endStr = wrapper.dataset.end;
                  const status = calculateTaskStatus(startStr, endStr);
                  if (status.state !== 'active') {
-                     window.renderTimeline(true); // 狀態改變時觸發重新渲染並自動對焦
+                     window.renderTimeline(false); // 狀態改變時觸發全面重新渲染
                      return;
                  }
                  
@@ -1014,66 +1027,41 @@
             lucide.createIcons();
         };
 
+        window.updateClockUI = () => {
+            const clockEl = document.getElementById('tlBigClock');
+            const dateEl = document.getElementById('tlBigDate');
+            if (clockEl && dateEl && !document.getElementById('timelinePage').classList.contains('hidden')) {
+                const now = window.getNow();
+                clockEl.textContent = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+                dateEl.textContent = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
+                
+                // 動態同步還原按鈕的顯示狀態
+                const restoreBtn = document.getElementById('simRestoreBtn');
+                if (restoreBtn) {
+                    if (timeOffset !== 0 || isFastForwarding) restoreBtn.classList.remove('hidden');
+                    else restoreBtn.classList.add('hidden');
+                }
+            }
+        };
+
         window.renderTimeline = (scrollToCenter = false) => {
             const container = document.getElementById('timelineContainer');
             if(!container) return;
+
+            window.updateClockUI();
 
             let timelineTasks = [...dailyScheduleData];
             timelineTasks.sort((a, b) => parseTime(a.start) - parseTime(b.start));
 
             const now = window.getNow();
-            const timeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-            const dateStr = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
 
-            let simRestoreHtml = (timeOffset !== 0 || isFastForwarding) 
-                ? `<button type="button" id="simRestoreBtn" onclick="window.restoreRealTime()" class="bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="還原真實時間"><i data-lucide="rotate-ccw" class="w-4 h-4 pointer-events-none"></i></button>` 
-                : `<button type="button" id="simRestoreBtn" onclick="window.restoreRealTime()" class="hidden bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="還原真實時間"><i data-lucide="rotate-ccw" class="w-4 h-4 pointer-events-none"></i></button>`;
-            
-            let simBtnClass = isFastForwarding ? 'bg-amber-500 hover:bg-amber-600 animate-pulse' : 'bg-slate-800 hover:bg-slate-700';
-
-            // 確保頂部儀表板永遠優先渲染
-            let html = `
-                <div class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-3 pb-8 px-4 flex flex-col items-center justify-center pointer-events-none transition-all">
-                    <div class="flex items-center justify-center gap-2 sm:gap-3 w-full max-w-[500px]">
-                        
-                        <!-- 左側控制區：重設與還原與加速 -->
-                        <div class="flex items-center gap-1.5 sm:gap-2 justify-end flex-1">
-                            <button type="button" onclick="window.promptResetOptions()" class="bg-white border border-slate-200 text-red-500 hover:bg-red-50 hover:border-red-200 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="狀態還原選項">
-                                <i data-lucide="list-restart" class="w-4 h-4 pointer-events-none"></i>
-                            </button>
-                            ${simRestoreHtml}
-                            <button type="button" id="simToggleBtn" onclick="window.toggleSimulation()" class="text-white rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0 ${simBtnClass}" title="開啟時間加速模擬">
-                                <i data-lucide="fast-forward" class="w-4 h-4 pointer-events-none"></i>
-                            </button>
-                        </div>
-
-                        <!-- 中央時間：大時鐘 -->
-                        <div id="tlBigClock" ondblclick="window.promptChangeTime()" title="雙擊設定指定時間" class="cursor-pointer hover:scale-105 font-mono text-2xl sm:text-3xl font-black text-slate-800 tracking-tighter bg-white/90 backdrop-blur-md px-4 sm:px-5 py-1.5 rounded-[1.25rem] border border-slate-200 shadow-sm pointer-events-auto transition-all shrink-0">${timeStr}</div>
-
-                        <!-- 右側控制區：對焦與新增 -->
-                        <div class="flex items-center gap-1.5 sm:gap-2 justify-start flex-1">
-                            <button type="button" onclick="window.renderTimeline(true)" class="bg-slate-800 text-white rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm hover:bg-slate-700 active:scale-95 transition-transform flex items-center justify-center pointer-events-auto shrink-0" title="對焦當前任務">
-                                <i data-lucide="crosshair" class="w-4 h-4 pointer-events-none"></i>
-                            </button>
-                            <button type="button" onclick="window.addTimelineTask()" class="bg-blue-500 hover:bg-blue-600 text-white rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-[0_4px_10px_-2px_rgba(59,130,246,0.4)] active:scale-95 transition-transform flex items-center justify-center pointer-events-auto shrink-0" title="新增動態任務">
-                                <i data-lucide="plus" class="w-4 h-4 sm:w-5 sm:h-5 pointer-events-none"></i>
-                            </button>
-                        </div>
-
-                    </div>
-                    <div id="tlBigDate" class="text-[10px] sm:text-[11px] font-bold text-slate-500 mt-2 tracking-widest pointer-events-auto">${dateStr}</div>
-                </div>
-            `;
-
-            // 如果沒有卡片，則在儀表板下方顯示空狀態，而不是覆蓋掉整個畫面
             if (timelineTasks.length === 0) {
-                html += '<div class="flex flex-col items-center justify-center pt-24 pb-32 text-slate-400"><i data-lucide="party-popper" class="w-16 h-16 mb-4 text-green-500 opacity-80"></i><span class="text-base font-black tracking-widest text-slate-600">目前沒有任何任務</span></div>';
-                container.innerHTML = html;
+                container.innerHTML = '<div class="flex flex-col items-center justify-center pt-24 pb-32 text-slate-400"><i data-lucide="party-popper" class="w-16 h-16 mb-4 text-green-500 opacity-80"></i><span class="text-base font-black tracking-widest text-slate-600">目前沒有任何任務</span></div>';
                 lucide.createIcons();
                 return;
             }
 
-            html += '<div class="relative pt-[2vh] pb-[40vh] w-full max-w-[500px] mx-auto flex flex-col">';
+            let html = '<div class="relative pt-[2vh] pb-[40vh] w-full max-w-[500px] mx-auto flex flex-col">';
 
             let hasCurrent = false;
             let targetScrollId = null;
@@ -1219,19 +1207,20 @@
             if (scrollToCenter && targetScrollId) {
                 setTimeout(() => {
                     const el = document.getElementById(targetScrollId);
-                    if (el) {
-                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    const page = document.getElementById('timelinePage'); 
+                    if (el && page) {
+                        const containerRect = page.getBoundingClientRect();
+                        const elRect = el.getBoundingClientRect();
+                        // 加入些微偏移，讓焦點對得更順
+                        const scrollTop = page.scrollTop + (elRect.top - containerRect.top) - (containerRect.height / 2) + (elRect.height / 2) - 40;
+                        page.scrollTo({ top: scrollTop, behavior: 'smooth' });
                     }
                 }, 150); 
             }
 
-            // 安全網：每分鐘強制重繪以確保邊界狀態正確切換
+            // 優化畫面渲染：移除原本每分鐘暴力全畫面重繪的區塊
+            // 改由底層 updateConveyorBelt 精準局部修改文字與間距DOM，大幅節省手機效能
             if(timelineUpdateInterval) clearInterval(timelineUpdateInterval);
-            timelineUpdateInterval = setInterval(() => {
-                if(!document.getElementById('timelinePage').classList.contains('hidden') && !isFastForwarding) {
-                    window.renderTimeline(false); 
-                }
-            }, 60000);
 
             // 啟動實時「輸送帶」推進器 (每 1 秒更新卡片高度)
             if(window.conveyorInterval) clearInterval(window.conveyorInterval);
@@ -1358,20 +1347,36 @@
 
         window.toggleSimulation = () => {
             isFastForwarding = !isFastForwarding;
+            const btn = document.getElementById('simToggleBtn');
+            const restoreBtn = document.getElementById('simRestoreBtn');
             
             if (isFastForwarding) {
+                if (btn) {
+                    btn.classList.replace('bg-slate-800', 'bg-amber-500');
+                    btn.classList.replace('hover:bg-slate-700', 'hover:bg-amber-600');
+                    btn.classList.add('animate-pulse');
+                }
                 window.showToast("🚀 模擬模式：時間推進中");
+                
+                if (restoreBtn) restoreBtn.classList.remove('hidden'); 
                 
                 simInterval = setInterval(() => {
                     timeOffset += 60000; 
+                    window.updateClockUI(); // 加速時只需單獨更新時鐘
                     if(!document.getElementById('timelinePage').classList.contains('hidden')) {
-                        window.renderTimeline(false);
+                        window.renderTimeline(false); // 渲染卡片 (因為儀表板已獨立，不會干擾按鈕點擊)
                     }
                 }, 200); 
             } else {
                 clearInterval(simInterval);
+                if (btn) {
+                    btn.classList.replace('bg-amber-500', 'bg-slate-800');
+                    btn.classList.replace('hover:bg-amber-600', 'hover:bg-slate-700');
+                    btn.classList.remove('animate-pulse');
+                }
                 window.showToast("⏸️ 暫停加速，時間恢復平穩流逝");
             }
+            
             if(!document.getElementById('timelinePage').classList.contains('hidden')) {
                 window.renderTimeline(false);
             }
@@ -1382,20 +1387,88 @@
             clearInterval(simInterval);
             timeOffset = 0; 
             
+            const btn = document.getElementById('simToggleBtn');
+            const restoreBtn = document.getElementById('simRestoreBtn');
+            
+            if (btn) {
+                btn.classList.replace('bg-amber-500', 'bg-slate-800');
+                btn.classList.replace('hover:bg-amber-600', 'hover:bg-slate-700');
+                btn.classList.remove('animate-pulse');
+            }
+            if (restoreBtn) restoreBtn.classList.add('hidden'); 
+            
             window.showToast("🌍 已回到現實時間");
+            window.updateClockUI();
+            
             if(!document.getElementById('timelinePage').classList.contains('hidden')) {
                 window.renderTimeline(true);
             }
         };
 
-        setInterval(() => {
-            const clockEl = document.getElementById('tlBigClock');
-            const dateEl = document.getElementById('tlBigDate');
-            if (clockEl && dateEl && !document.getElementById('timelinePage').classList.contains('hidden')) {
-                const now = window.getNow();
-                clockEl.textContent = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-                dateEl.textContent = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
+        window.promptResetOptions = () => {
+            const modalHtml = `
+                <div id="resetOptionsModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onmousedown="if(event.target === this) this.isBg = true;" onmouseup="if(event.target === this && this.isBg) { this.remove(); this.isBg = false; }">
+                    <div class="bg-white rounded-2xl p-5 w-full max-w-[280px] shadow-2xl relative" onmousedown="event.stopPropagation()">
+                        <h3 class="font-bold text-lg mb-2 text-slate-800 flex items-center"><i data-lucide="list-restart" class="w-5 h-5 mr-2 text-red-500"></i>狀態還原</h3>
+                        <p class="text-[11px] text-slate-500 mb-4 leading-relaxed tracking-wide">選擇您要執行的還原動作，系統已啟動時光機備份。</p>
+                        
+                        <div class="space-y-3">
+                            <button onclick="window.undoLastAction()" class="w-full flex items-center justify-center p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold active:scale-95 transition-all shadow-sm">
+                                <i data-lucide="undo-2" class="w-4 h-4 mr-2 text-slate-500"></i>還原上一步 (Undo)
+                            </button>
+                            <button onclick="window.resetToNewDay()" class="w-full flex items-center justify-center p-3 rounded-xl border-2 border-red-100 bg-red-50 hover:bg-red-100 text-red-600 font-bold active:scale-95 transition-all shadow-sm">
+                                <i data-lucide="sun" class="w-4 h-4 mr-2 text-red-500"></i>清除狀態 (新的一天)
+                            </button>
+                        </div>
+                        
+                        <div class="mt-4 pt-3 border-t border-slate-100">
+                            <button onclick="document.getElementById('resetOptionsModal').remove()" class="w-full p-2.5 bg-white border border-slate-200 text-slate-500 hover:text-slate-800 rounded-xl text-sm font-bold transition-colors active:scale-95">取消</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            lucide.createIcons();
+        };
+
+        window.undoLastAction = () => {
+            if (actionHistory.length > 0) {
+                const prevState = actionHistory.pop();
+                taskCompletionState = prevState.tasks;
+                subTaskCompletionState = prevState.subtasks;
+                
+                if (currentUser) {
+                    setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState });
+                    setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState });
+                }
+                
+                document.getElementById('resetOptionsModal')?.remove();
+                window.showToast("↩️ 已還原至上一個狀態");
+                renderDailySchedule();
+                if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+            } else {
+                window.showToast("已經是最初狀態，無法再還原", true);
             }
+        };
+
+        window.resetToNewDay = () => {
+            window.saveStateSnapshot();
+            taskCompletionState = {};
+            subTaskCompletionState = {};
+            
+            if (currentUser) {
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState });
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState });
+            }
+            
+            document.getElementById('resetOptionsModal')?.remove();
+            window.showToast("🌅 已清空任務狀態，新的一天開始！");
+            renderDailySchedule();
+            if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
+        };
+
+        setInterval(() => {
+            if(!isFastForwarding) window.updateClockUI();
         }, 1000);
 
         function parseTime(timeStr) { const [h, m] = timeStr.split(':').map(Number); const d = window.getNow(); d.setHours(h, m, 0, 0); return d; }
@@ -1829,9 +1902,45 @@
         <!-- Main Content (動態時間軸任務流 - 新增功能) -->
         <!-- 注意：這個容器被限制高度並設置 overflow-y-auto，確保只有卡片列表滾動，外框不跳動 -->
         <main id="timelinePage" class="hidden h-[calc(100vh-140px)] sm:h-[750px] overflow-y-auto relative z-10 bg-[#fdfbf7] scrollbar-hide scroll-smooth">
+            
+            <!-- 將頂部控制列從動態渲染中獨立，解決按鈕頻繁重建導致點擊失效（無法暫停）的問題 -->
+            <div id="timelineStickyHeader" class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-3 pb-8 px-4 flex flex-col items-center justify-center pointer-events-none transition-all">
+                <div class="flex items-center justify-center gap-2 sm:gap-3 w-full max-w-[500px]">
+                    
+                    <!-- 左側控制區：重設與還原與加速 -->
+                    <div class="flex items-center gap-1.5 sm:gap-2 justify-end flex-1">
+                        <button type="button" onclick="window.promptResetOptions()" class="bg-white border border-slate-200 text-red-500 hover:bg-red-50 hover:border-red-200 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="狀態還原選項">
+                            <i data-lucide="list-restart" class="w-4 h-4 pointer-events-none"></i>
+                        </button>
+                        <button type="button" id="simRestoreBtn" onclick="window.restoreRealTime()" class="hidden bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="還原真實時間">
+                            <i data-lucide="rotate-ccw" class="w-4 h-4 pointer-events-none"></i>
+                        </button>
+                        <button type="button" id="simToggleBtn" onclick="window.toggleSimulation()" class="bg-slate-800 hover:bg-slate-700 text-white rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="開啟時間加速模擬">
+                            <i data-lucide="fast-forward" class="w-4 h-4 pointer-events-none"></i>
+                        </button>
+                    </div>
+
+                    <!-- 中央時間：大時鐘 -->
+                    <div id="tlBigClock" ondblclick="window.promptChangeTime()" title="雙擊設定指定時間" class="cursor-pointer hover:scale-105 font-mono text-2xl sm:text-3xl font-black text-slate-800 tracking-tighter bg-white/90 backdrop-blur-md px-4 sm:px-5 py-1.5 rounded-[1.25rem] border border-slate-200 shadow-sm pointer-events-auto transition-all shrink-0">--:--:--</div>
+
+                    <!-- 右側控制區：對焦與新增 -->
+                    <div class="flex items-center gap-1.5 sm:gap-2 justify-start flex-1">
+                        <button type="button" onclick="window.renderTimeline(true)" class="bg-slate-800 text-white rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm hover:bg-slate-700 active:scale-95 transition-transform flex items-center justify-center pointer-events-auto shrink-0" title="對焦當前任務">
+                            <i data-lucide="crosshair" class="w-4 h-4 pointer-events-none"></i>
+                        </button>
+                        <button type="button" onclick="window.addTimelineTask()" class="bg-blue-500 hover:bg-blue-600 text-white rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-[0_4px_10px_-2px_rgba(59,130,246,0.4)] active:scale-95 transition-transform flex items-center justify-center pointer-events-auto shrink-0" title="新增動態任務">
+                            <i data-lucide="plus" class="w-4 h-4 sm:w-5 sm:h-5 pointer-events-none"></i>
+                        </button>
+                    </div>
+
+                </div>
+                <div id="tlBigDate" class="text-[10px] sm:text-[11px] font-bold text-slate-500 mt-2 tracking-widest pointer-events-auto">---</div>
+            </div>
+
             <div id="timelineContainer" class="min-h-full">
                 <!-- 動態內容生成區 -->
             </div>
+            
         </main>
 
         <!-- Main Content (獨立圖庫存檔) -->
