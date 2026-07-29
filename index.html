@@ -13,7 +13,7 @@
     
     <style>
         /* 筆記本風格樣式設定 */
-        body { font-family: 'Inter', 'Noto Sans TC', sans-serif; background-color: #f0ebe1; color: #334155; }
+        html, body { font-family: 'Inter', 'Noto Sans TC', sans-serif; background-color: #f0ebe1; color: #334155; overflow-x: hidden; width: 100%; position: relative; }
         .hud-ring { transition: stroke-dashoffset 1s cubic-bezier(0.4, 0, 0.2, 1); }
         /* 隱藏水平捲軸 */
         .scrollbar-hide::-webkit-scrollbar { display: none; }
@@ -57,7 +57,7 @@
         }
 
         /* 深色模式覆寫 - 柔和文字與低光度線條設定 */
-        body.dark-mode { background-color: #0f172a !important; color: #cbd5e1 !important; }
+        body.dark-mode { background-color: #0f172a !important; color: #cbd5e1 !important; color-scheme: dark; }
         .dark-mode .bg-\[\#fdfbf7\] { background-color: #1e293b !important; border-color: #334155 !important; }
         .dark-mode .bg-\[\#f0ebe1\] { background-color: #0f172a !important; }
         .dark-mode header.bg-\[\#fdfbf7\]\/95 { background-color: rgba(30, 41, 59, 0.95) !important; border-color: #334155 !important;}
@@ -82,11 +82,29 @@
         
         /* Timeline 與輸入框特定樣式 */
         .dark-mode #timelineStickyHeader { background: linear-gradient(to bottom, #1e293b, rgba(30,41,59,0.95), transparent) !important; }
+        .dark-mode #tlBigClock { background-color: rgba(30, 41, 59, 0.9) !important; color: #f8fafc !important; border-color: #334155 !important; }
+        .dark-mode #tlBigDate { color: #94a3b8 !important; }
         .dark-mode .timeline-card { background-color: #1e293b !important; border-color: #334155 !important; }
-        .dark-mode .active-task .timeline-card { background-color: rgba(30, 58, 138, 0.4) !important; border-color: #1e3a8a !important; }
-        .dark-mode .active-task .timeline-card .bg-slate-100\/50 { background-color: rgba(15, 23, 42, 0.5) !important; }
+        .dark-mode .active-task .timeline-card { background-color: #172554 !important; border-color: #1e3a8a !important; }
+        .dark-mode .active-task .timeline-card .bg-slate-100\/50 { background-color: #0f172a !important; }
         .dark-mode .timeline-card .bg-slate-100\/50 { background-color: #0f172a !important; border-color: #334155 !important; }
-        .dark-mode input[type="time"], .dark-mode input[type="text"] { background-color: #0f172a !important; color: #cbd5e1 !important; border-color: #334155 !important; }
+        .dark-mode input[type="time"], .dark-mode input[type="text"] { background-color: #334155 !important; color: #f8fafc !important; border-color: #475569 !important; }
+        
+        /* 專屬調整：連線狀態與時鐘選單明顯化 */
+        .dark-mode header .bg-white\/70 { background-color: #1e293b !important; border-color: #475569 !important; }
+        .dark-mode #connectionStatus { color: #60a5fa !important; }
+
+        /* 調整時間輸入框內的時鐘圖示大小 */
+        input[type="time"]::-webkit-calendar-picker-indicator {
+            cursor: pointer;
+            width: 22px;
+            height: 22px;
+            opacity: 0.85;
+            transition: transform 0.2s ease;
+        }
+        input[type="time"]::-webkit-calendar-picker-indicator:active {
+            transform: scale(0.9);
+        }
     </style>
 
     <script type="module">
@@ -1035,7 +1053,7 @@
             renderDailySchedule();
             if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
             
-            window.editTimelineTask(newId);
+            window.editTimelineTask(newId, true); // 傳入 true 標記為全新任務
         };
 
         window.updateConveyorBelt = () => {
@@ -1057,14 +1075,14 @@
                  const startTime = parseTime(startStr);
                  const endTime = parseTime(endStr);
                  const progress = Math.min(1, Math.max(0, (now - startTime) / (endTime - startTime)));
-                 const dashoffset = 25.12 * progress;
+                 const dashoffset = 251.2 * progress;
 
                  const timeTextEl = wrapper.querySelector('.time-text');
                  if (timeTextEl) {
                      timeTextEl.innerHTML = `<span class="text-green-600 font-bold flex items-center">
-                        <svg class="w-3.5 h-3.5 mr-1.5 shrink-0 transform -rotate-90" viewBox="0 0 10 10">
-                            <circle cx="5" cy="5" r="4" fill="none" stroke="#dcfce7" stroke-width="2"></circle>
-                            <circle cx="5" cy="5" r="4" fill="none" stroke="#16a34a" stroke-width="2" stroke-dasharray="25.12" stroke-dashoffset="${dashoffset}" stroke-linecap="round"></circle>
+                        <svg class="w-3.5 h-3.5 mr-1.5 shrink-0 transform -rotate-90 drop-shadow-sm" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="40" fill="none" stroke="#dcfce7" stroke-width="16"></circle>
+                            <circle cx="50" cy="50" r="40" fill="none" stroke="#16a34a" stroke-width="16" stroke-dasharray="251.2" stroke-dashoffset="${dashoffset}" stroke-linecap="round"></circle>
                         </svg>
                         當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})
                      </span>`;
@@ -1125,20 +1143,21 @@
             const header = document.getElementById('timelineStickyHeader');
             if (!page || !indicatorContainer || !countSpan) return;
 
-            // 動態取得頂部固定區塊的真實底部座標，避免因裝置不同產生誤差
-            const headerBottom = header ? header.getBoundingClientRect().bottom : 130;
+            // 修正：標題列有 pb-8 的透明漸層，不能算入遮擋範圍
+            // 改為 header 頂部往下約 60px (時鐘與按鈕的實體區域)，確保卡片完全躲到時鐘後方才算隱藏
+            const hideThreshold = header ? header.getBoundingClientRect().top + 60 : 60;
             let hiddenUncompletedCount = 0;
 
             const wrappers = page.querySelectorAll('.timeline-wrapper');
             wrappers.forEach(wrapper => {
                 const taskId = wrapper.dataset.taskId;
                 if (!taskCompletionState[taskId]) { 
-                    // 精準定位：直接找卡片本體 (.timeline-card)，避開 wrapper 的動態輸送帶間距
+                    // 精準定位：直接找卡片本體 (.timeline-card)
                     const card = wrapper.querySelector('.timeline-card');
                     if (card) {
                         const rect = card.getBoundingClientRect();
-                        // 判定線：當卡片主體頂部滑入標題列 20px (明確被遮擋) 時，視為已滑過
-                        if (rect.top + 20 < headerBottom) {
+                        // 修正精準度：判斷卡片底部是否已經高於實體遮擋區域
+                        if (rect.bottom < hideThreshold) {
                             hiddenUncompletedCount++;
                         }
                     }
@@ -1159,8 +1178,6 @@
         window.scrollToTopUncompleted = (event) => {
             if (event) event.stopPropagation();
             const page = document.getElementById('timelinePage');
-            const header = document.getElementById('timelineStickyHeader');
-            const headerHeight = header ? header.offsetHeight : 130;
             
             const wrappers = page.querySelectorAll('.timeline-wrapper');
             for (let wrapper of wrappers) {
@@ -1170,8 +1187,8 @@
                     if (card) {
                         const containerRect = page.getBoundingClientRect();
                         const elRect = card.getBoundingClientRect();
-                        // 以卡片本體計算滾動位置，精準扣除標題列並預留 15px 緩衝，不會被間距干擾
-                        const scrollTop = page.scrollTop + (elRect.top - containerRect.top) - headerHeight - 15; 
+                        // 修正對焦位置：只扣除實體遮擋的高度(約 75px) + 緩衝，讓卡片完美出現在透明漸層下方
+                        const scrollTop = page.scrollTop + (elRect.top - containerRect.top) - 75; 
                         page.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
                         break;
                     }
@@ -1222,10 +1239,10 @@
             // 修正白色遮擋：縮小底部 padding (原本為 pb-[40vh])
             let html = '<div class="relative pt-[2vh] pb-[20vh] w-full max-w-[500px] mx-auto flex flex-col">';
 
-            // 新增：浮動的未完成任務提示 UI (改為紅色，透過 sticky 固定於畫面上半部左側)
+            // 新增：浮動的未完成任務提示 UI (改為紅色，透過 sticky 固定於畫面上半部左側，加入白邊框)
             html += `
                 <div id="uncompleted-indicator-container" class="sticky top-[125px] z-[60] w-0 h-0 overflow-visible transition-all duration-300 opacity-0 pointer-events-none -translate-y-2">
-                    <button type="button" onclick="window.scrollToTopUncompleted(event)" class="absolute left-[13px] -translate-y-full pointer-events-auto bg-red-500 text-white rounded-full pl-1.5 pr-2 py-1 flex items-center shadow-lg shadow-red-500/40 text-[10px] font-bold hover:bg-red-600 active:scale-95 transition-all" style="white-space: nowrap;">
+                    <button type="button" onclick="window.scrollToTopUncompleted(event)" class="absolute left-[13px] -translate-y-full pointer-events-auto bg-red-500 text-white border-2 border-white rounded-full pl-1.5 pr-2 py-1 flex items-center shadow-lg shadow-red-500/40 text-[10px] font-bold hover:bg-red-600 active:scale-95 transition-all" style="white-space: nowrap;">
                         <i data-lucide="arrow-up" class="w-3.5 h-3.5 mr-0.5"></i>
                         <span id="uncompleted-count">0</span>
                     </button>
@@ -1293,12 +1310,12 @@
                     const startTime = parseTime(task.start);
                     const endTime = parseTime(task.end);
                     const progress = Math.min(1, Math.max(0, (now - startTime) / (endTime - startTime)));
-                    const dashoffset = 25.12 * progress;
+                    const dashoffset = 251.2 * progress;
                     
                     timeTextHtml = `<div class="${timeTextContainer}"><span class="text-green-600 font-bold flex items-center">
-                        <svg class="w-3.5 h-3.5 mr-1.5 shrink-0 transform -rotate-90" viewBox="0 0 10 10">
-                            <circle cx="5" cy="5" r="4" fill="none" stroke="#dcfce7" stroke-width="2"></circle>
-                            <circle cx="5" cy="5" r="4" fill="none" stroke="#16a34a" stroke-width="2" stroke-dasharray="25.12" stroke-dashoffset="${dashoffset}" stroke-linecap="round"></circle>
+                        <svg class="w-3.5 h-3.5 mr-1.5 shrink-0 transform -rotate-90 drop-shadow-sm" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="40" fill="none" stroke="#dcfce7" stroke-width="16"></circle>
+                            <circle cx="50" cy="50" r="40" fill="none" stroke="#16a34a" stroke-width="16" stroke-dasharray="251.2" stroke-dashoffset="${dashoffset}" stroke-linecap="round"></circle>
                         </svg>
                         當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})
                     </span></div>`;
@@ -1407,7 +1424,7 @@
                         <p class="text-[11px] text-slate-500 mb-4 leading-relaxed tracking-wide">設定穿越時間後，時間將從該點繼續自然流逝。</p>
                         <div class="space-y-4">
                             <div class="relative">
-                                <input type="time" id="dyJumpTime" class="w-full border border-slate-300 rounded-lg p-3 text-lg focus:border-blue-500 focus:outline-none font-mono font-black text-center shadow-inner cursor-text text-slate-700">
+                                <input type="time" id="dyJumpTime" class="w-full border border-slate-300 rounded-xl p-3 h-14 text-xl focus:border-blue-500 focus:outline-none font-mono font-black text-center shadow-inner cursor-text text-slate-700">
                             </div>
                         </div>
                         <div class="mt-5 flex justify-end space-x-2 border-t border-slate-100 pt-4">
@@ -1442,14 +1459,19 @@
             }
         };
 
-        window.editTimelineTask = (taskId) => {
+        window.editTimelineTask = (taskId, eventOrIsNew) => {
+            const isNew = eventOrIsNew === true; // 判斷是否為全新任務 (略過原生 event 點擊事件)
             const task = dailyScheduleData.find(t => t.id === taskId);
             if(!task) return;
 
+            // 如果是新任務，取消或點擊背景的動作改為徹底銷毀該卡片
+            const bgClickAction = isNew ? `window.cancelNewTimelineTask('${taskId}')` : `this.remove()`;
+            const cancelAction = isNew ? `window.cancelNewTimelineTask('${taskId}')` : `document.getElementById('dynamicEditModal').remove()`;
+
             const modalHtml = `
-                <div id="dynamicEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onmousedown="if(event.target === this) this.isBg = true;" onmouseup="if(event.target === this && this.isBg) { this.remove(); this.isBg = false; }">
+                <div id="dynamicEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onmousedown="if(event.target === this) this.isBg = true;" onmouseup="if(event.target === this && this.isBg) { ${bgClickAction}; this.isBg = false; }">
                     <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onmousedown="event.stopPropagation()">
-                        <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i>編輯任務</h3>
+                        <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i>${isNew ? '新增動態任務' : '編輯任務'}</h3>
                         <div class="space-y-4">
                             <div>
                                 <label class="text-[11px] font-bold text-slate-500 mb-1 block">任務標題</label>
@@ -1475,7 +1497,7 @@
                         <div class="mt-6 flex justify-between items-center border-t border-slate-100 pt-4">
                             <button onclick="window.deleteTimelineTask('${taskId}')" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-2.5 rounded-lg text-sm font-bold transition-colors flex items-center shadow-sm active:scale-95"><i data-lucide="trash-2" class="w-4 h-4 mr-1"></i>刪除</button>
                             <div class="space-x-2 flex">
-                                <button onclick="document.getElementById('dynamicEditModal').remove()" class="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-bold transition-colors active:scale-95">取消</button>
+                                <button onclick="${cancelAction}" class="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-bold transition-colors active:scale-95">取消</button>
                                 <button onclick="window.saveTimelineTask('${taskId}')" class="px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-bold shadow-sm transition-colors active:scale-95">儲存</button>
                             </div>
                         </div>
@@ -1484,6 +1506,25 @@
             `;
             document.body.insertAdjacentHTML('beforeend', modalHtml);
             lucide.createIcons();
+
+            // 若為全新任務，自動對焦並全選標題，方便直接打字覆寫
+            if (isNew) {
+                const titleInput = document.getElementById('dyEditTitle');
+                if (titleInput) {
+                    titleInput.focus();
+                    titleInput.select();
+                }
+            }
+        };
+
+        window.cancelNewTimelineTask = (taskId) => {
+            document.getElementById('dynamicEditModal')?.remove();
+            dailyScheduleData = dailyScheduleData.filter(t => t.id !== taskId);
+            if(currentUser) {
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData });
+            }
+            renderDailySchedule();
+            if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
         };
 
         window.saveTimelineTask = (taskId) => {
