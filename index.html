@@ -55,6 +55,38 @@
             box-shadow: 0 25px 30px -5px rgba(0, 0, 0, 0.25), 0 15px 15px -5px rgba(0, 0, 0, 0.1) !important;
             opacity: 1 !important;
         }
+
+        /* 深色模式覆寫 - 柔和文字與低光度線條設定 */
+        body.dark-mode { background-color: #0f172a !important; color: #cbd5e1 !important; }
+        .dark-mode .bg-\[\#fdfbf7\] { background-color: #1e293b !important; border-color: #334155 !important; }
+        .dark-mode .bg-\[\#f0ebe1\] { background-color: #0f172a !important; }
+        .dark-mode header.bg-\[\#fdfbf7\]\/95 { background-color: rgba(30, 41, 59, 0.95) !important; border-color: #334155 !important;}
+        .dark-mode .bg-white { background-color: #1e293b !important; border-color: #334155 !important; }
+        .dark-mode .bg-slate-50, .dark-mode .bg-slate-100 { background-color: #0f172a !important; border-color: #334155 !important; }
+        .dark-mode .text-slate-800 { color: #cbd5e1 !important; }
+        .dark-mode .text-slate-700 { color: #94a3b8 !important; }
+        .dark-mode .text-slate-600 { color: #64748b !important; }
+        .dark-mode .text-slate-500 { color: #475569 !important; }
+        .dark-mode .border-slate-200, .dark-mode .border-slate-300 { border-color: #334155 !important; }
+        .dark-mode .border-\[\#d6d0c4\] { border-color: #334155 !important; }
+        
+        /* 專屬調整：左側狀態線條與光暈壓暗 */
+        .dark-mode .daily-task-card .absolute.left-0 { opacity: 0.35 !important; mix-blend-mode: multiply; }
+        .dark-mode .active-task .absolute.bg-green-400 { opacity: 0.2 !important; box-shadow: none !important; }
+        .dark-mode .active-task .shadow-\[0_0_8px_rgba\(74\,222\,128\,1\)\] { box-shadow: none !important; background-color: #4ade80 !important; opacity: 0.5; }
+        
+        /* 其他螢光筆與裝飾壓暗 */
+        .dark-mode .marker-yellow, .dark-mode .marker-pink, .dark-mode .marker-blue, .dark-mode .marker-green { filter: brightness(0.6) opacity(0.7); }
+        .dark-mode .sticky-note-1, .dark-mode .sticky-note-2, .dark-mode .sticky-note-3 { background: #0f172a !important; border-color: #475569 !important; box-shadow: none !important; }
+        .dark-mode .tape-strip { background-color: rgba(255,255,255,0.1) !important; border-color: rgba(255,255,255,0.05) !important; }
+        
+        /* Timeline 與輸入框特定樣式 */
+        .dark-mode #timelineStickyHeader { background: linear-gradient(to bottom, #1e293b, rgba(30,41,59,0.95), transparent) !important; }
+        .dark-mode .timeline-card { background-color: #1e293b !important; border-color: #334155 !important; }
+        .dark-mode .active-task .timeline-card { background-color: rgba(30, 58, 138, 0.4) !important; border-color: #1e3a8a !important; }
+        .dark-mode .active-task .timeline-card .bg-slate-100\/50 { background-color: rgba(15, 23, 42, 0.5) !important; }
+        .dark-mode .timeline-card .bg-slate-100\/50 { background-color: #0f172a !important; border-color: #334155 !important; }
+        .dark-mode input[type="time"], .dark-mode input[type="text"] { background-color: #0f172a !important; color: #cbd5e1 !important; border-color: #334155 !important; }
     </style>
 
     <script type="module">
@@ -116,6 +148,18 @@
         let simInterval = null;
         window.getNow = () => new Date(Date.now() + timeOffset);
 
+        // 深色模式切換與初始化
+        window.toggleDarkMode = () => {
+            document.body.classList.toggle('dark-mode');
+            const isDark = document.body.classList.contains('dark-mode');
+            localStorage.setItem('work_cache_dark_mode', isDark);
+            const icon = document.getElementById('darkModeIcon');
+            if (icon) {
+                icon.setAttribute('data-lucide', isDark ? 'sun' : 'moon');
+                lucide.createIcons();
+            }
+        };
+
         window.showToast = (message, isError = false) => {
             const toast = document.createElement('div');
             toast.className = `fixed top-16 left-1/2 transform -translate-x-1/2 px-5 py-3 rounded-full shadow-lg text-sm font-bold z-[9999] transition-all duration-300 ${isError ? 'bg-red-500 text-white' : 'bg-slate-800 text-white'}`;
@@ -127,6 +171,35 @@
                 toast.style.transform = 'translate(-50%, -20px)';
                 setTimeout(() => toast.remove(), 300);
             }, 3000);
+        };
+
+        // 自訂確認對話框 (取代原生 confirm)
+        window.showConfirm = (title, message, onConfirmCallback) => {
+            const modal = document.getElementById('customConfirmModal');
+            document.getElementById('confirmModalTitle').innerHTML = `<i data-lucide="alert-triangle" class="w-5 h-5 mr-2 text-amber-500"></i> ${title}`;
+            document.getElementById('confirmModalMessage').innerHTML = message;
+            
+            const cancelBtn = document.getElementById('confirmBtnCancel');
+            const okBtn = document.getElementById('confirmBtnOk');
+            
+            const cleanup = () => {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+                okBtn.removeEventListener('click', okHandler);
+                cancelBtn.removeEventListener('click', cleanup);
+            };
+            
+            const okHandler = () => {
+                onConfirmCallback();
+                cleanup();
+            };
+            
+            okBtn.addEventListener('click', okHandler);
+            cancelBtn.addEventListener('click', cleanup);
+            
+            lucide.createIcons();
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
         };
 
         const getLocal = (key, defaultVal) => {
@@ -219,7 +292,7 @@
                         if(!document.getElementById('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
                     }
                 }
-            });
+            }, (err) => console.error(err));
             
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), (docSnap) => {
                 if(docSnap.exists()) { 
@@ -231,7 +304,7 @@
                         if(!document.getElementById('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
                     }
                 }
-            });
+            }, (err) => console.error(err));
             
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), (docSnap) => {
                 if(docSnap.exists()) { 
@@ -242,7 +315,7 @@
                         renderDailySchedule(); 
                     }
                 }
-            });
+            }, (err) => console.error(err));
 
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), (docSnap) => {
                 if(docSnap.exists()) { 
@@ -253,7 +326,7 @@
                         renderDailySchedule(); 
                     }
                 }
-            });
+            }, (err) => console.error(err));
 
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), (docSnap) => {
                 if(docSnap.exists()) { 
@@ -262,7 +335,7 @@
                     safeSetLocal('work_cache_gallery_categories', galleryCategories);
                     window.renderGallery(); 
                 }
-            });
+            }, (err) => console.error(err));
 
             onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snapshot) => {
                 let newItems = [];
@@ -279,7 +352,7 @@
                     if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) window.renderGallery();
                     if(document.getElementById('dailySchedulePage') && !document.getElementById('dailySchedulePage').classList.contains('hidden')) renderDailySchedule();
                 }
-            });
+            }, (err) => console.error(err));
 
             setTimeout(migrateOldMassivePhotos, 2000);
         }
@@ -880,7 +953,7 @@
         };
 
         window.deleteCategoryInModal = async (catName) => {
-            if (confirm(`確定要刪除「${catName}」？\n此分類下的圖片將移至「未分類」。`)) {
+            window.showConfirm('刪除分類', `確定要刪除「${catName}」？<br>此分類下的圖片將移至「未分類」。`, () => {
                 if(currentUser) {
                     galleryItems.forEach(item => {
                         if(item.category === catName) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), { category: '未分類' }, { merge: true });
@@ -891,7 +964,7 @@
                 if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
                 if(currentGalleryCategory === catName) currentGalleryCategory = '全部';
                 window.renderCategoryManager(); window.renderGallery();
-            }
+            });
         };
 
         window.viewStackedCard = (taskId, event) => {
@@ -1044,6 +1117,68 @@
             }
         };
 
+        // 新增：動態任務滾動監聽邏輯 (偵測上方被隱藏的未完成任務)
+        window.handleTimelineScroll = () => {
+            const page = document.getElementById('timelinePage');
+            const indicatorContainer = document.getElementById('uncompleted-indicator-container');
+            const countSpan = document.getElementById('uncompleted-count');
+            const header = document.getElementById('timelineStickyHeader');
+            if (!page || !indicatorContainer || !countSpan) return;
+
+            // 動態取得頂部固定區塊的真實底部座標，避免因裝置不同產生誤差
+            const headerBottom = header ? header.getBoundingClientRect().bottom : 130;
+            let hiddenUncompletedCount = 0;
+
+            const wrappers = page.querySelectorAll('.timeline-wrapper');
+            wrappers.forEach(wrapper => {
+                const taskId = wrapper.dataset.taskId;
+                if (!taskCompletionState[taskId]) { 
+                    // 精準定位：直接找卡片本體 (.timeline-card)，避開 wrapper 的動態輸送帶間距
+                    const card = wrapper.querySelector('.timeline-card');
+                    if (card) {
+                        const rect = card.getBoundingClientRect();
+                        // 判定線：當卡片主體頂部滑入標題列 20px (明確被遮擋) 時，視為已滑過
+                        if (rect.top + 20 < headerBottom) {
+                            hiddenUncompletedCount++;
+                        }
+                    }
+                }
+            });
+
+            if (hiddenUncompletedCount > 0) {
+                countSpan.textContent = hiddenUncompletedCount;
+                indicatorContainer.classList.remove('opacity-0', 'pointer-events-none', '-translate-y-2');
+                indicatorContainer.classList.add('opacity-100', 'translate-y-0');
+            } else {
+                indicatorContainer.classList.add('opacity-0', 'pointer-events-none', '-translate-y-2');
+                indicatorContainer.classList.remove('opacity-100', 'translate-y-0');
+            }
+        };
+
+        // 新增：點擊未完成任務提示時，自動滑動對焦到最上方的未完成任務
+        window.scrollToTopUncompleted = (event) => {
+            if (event) event.stopPropagation();
+            const page = document.getElementById('timelinePage');
+            const header = document.getElementById('timelineStickyHeader');
+            const headerHeight = header ? header.offsetHeight : 130;
+            
+            const wrappers = page.querySelectorAll('.timeline-wrapper');
+            for (let wrapper of wrappers) {
+                const taskId = wrapper.dataset.taskId;
+                if (!taskCompletionState[taskId]) {
+                    const card = wrapper.querySelector('.timeline-card');
+                    if (card) {
+                        const containerRect = page.getBoundingClientRect();
+                        const elRect = card.getBoundingClientRect();
+                        // 以卡片本體計算滾動位置，精準扣除標題列並預留 15px 緩衝，不會被間距干擾
+                        const scrollTop = page.scrollTop + (elRect.top - containerRect.top) - headerHeight - 15; 
+                        page.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
+                        break;
+                    }
+                }
+            }
+        };
+
         window.renderTimeline = (scrollToCenter = false) => {
             const container = document.getElementById('timelineContainer');
             if(!container) return;
@@ -1054,6 +1189,7 @@
             timelineTasks.sort((a, b) => parseTime(a.start) - parseTime(b.start));
 
             const now = window.getNow();
+            const nowTime = now.getTime();
 
             if (timelineTasks.length === 0) {
                 container.innerHTML = '<div class="flex flex-col items-center justify-center pt-24 pb-32 text-slate-400"><i data-lucide="party-popper" class="w-16 h-16 mb-4 text-green-500 opacity-80"></i><span class="text-base font-black tracking-widest text-slate-600">目前沒有任何任務</span></div>';
@@ -1061,10 +1197,41 @@
                 return;
             }
 
-            let html = '<div class="relative pt-[2vh] pb-[40vh] w-full max-w-[500px] mx-auto flex flex-col">';
-
-            let hasCurrent = false;
+            // 新增：精準尋找時間上與「當前時間」距離最近的任務卡片
             let targetScrollId = null;
+            let minDiff = Infinity;
+            
+            timelineTasks.forEach(task => {
+                const start = parseTime(task.start).getTime();
+                const end = parseTime(task.end).getTime();
+                
+                if (nowTime >= start && nowTime <= end) {
+                    targetScrollId = `tl-task-wrapper-${task.id}`;
+                    minDiff = -1; // 進行中的任務擁有絕對優先權
+                } else if (minDiff !== -1) {
+                    const diffToStart = Math.abs(start - nowTime);
+                    const diffToEnd = Math.abs(end - nowTime);
+                    const minTaskDiff = Math.min(diffToStart, diffToEnd);
+                    if (minTaskDiff < minDiff) {
+                        minDiff = minTaskDiff;
+                        targetScrollId = `tl-task-wrapper-${task.id}`;
+                    }
+                }
+            });
+
+            // 修正白色遮擋：縮小底部 padding (原本為 pb-[40vh])
+            let html = '<div class="relative pt-[2vh] pb-[20vh] w-full max-w-[500px] mx-auto flex flex-col">';
+
+            // 新增：浮動的未完成任務提示 UI (改為紅色，透過 sticky 固定於畫面上半部左側)
+            html += `
+                <div id="uncompleted-indicator-container" class="sticky top-[125px] z-[60] w-0 h-0 overflow-visible transition-all duration-300 opacity-0 pointer-events-none -translate-y-2">
+                    <button type="button" onclick="window.scrollToTopUncompleted(event)" class="absolute left-[13px] -translate-y-full pointer-events-auto bg-red-500 text-white rounded-full pl-1.5 pr-2 py-1 flex items-center shadow-lg shadow-red-500/40 text-[10px] font-bold hover:bg-red-600 active:scale-95 transition-all" style="white-space: nowrap;">
+                        <i data-lucide="arrow-up" class="w-3.5 h-3.5 mr-0.5"></i>
+                        <span id="uncompleted-count">0</span>
+                    </button>
+                </div>
+            `;
+
             let lastWasStacked = false;
             let previousTimeForGap = window.getNow();
 
@@ -1074,11 +1241,10 @@
                 
                 const isLast = index === timelineTasks.length - 1;
                 
-                // 1. 嚴格遞增的 Z-Index：保證下一張卡片永遠疊在上一張卡片的上方！
-                // 2. 向下延伸的防斷線：只往底層下方畫長線，會自動被下一張卡片與圓點蓋住，完美解決斷開與遮擋問題！
                 let wrapperStyle = `max-height: 250px; z-index: ${index + 1};`;
                 let wrapperClass = 'timeline-wrapper mb-1 relative transition-all duration-500 ease-out';
-                let verticalLineHtml = isLast ? '' : `<div class="absolute left-[24px] w-[4px] bg-[#d6d0c4] top-1/2 -bottom-[300px] z-0 rounded-full"></div>`;
+                // 修正白色遮擋：將延伸線條從過長的 -300px 改為剛好覆蓋最大動態間距的 -150px
+                let verticalLineHtml = isLast ? '' : `<div class="absolute left-[24px] w-[4px] bg-[#d6d0c4] top-1/2 -bottom-[150px] z-0 rounded-full"></div>`;
                 
                 let cardClass = '';
                 let dotClass = '';
@@ -1109,7 +1275,7 @@
                     cardClass = 'opacity-90 scale-[0.95] border-[#d6d0c4] bg-[#fdfbf7] shadow-sm hover:translate-y-[-10px] hover:shadow-xl transition-all duration-300';
                     dotClass = 'bg-red-400 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
                     timeTextHtml = `<div class="${timeTextContainer}"><span class="text-red-500 font-bold opacity-80">🔴 已逾時 (${status.text.replace('已結束 (超時 ', '').replace(')', '')})</span></div>`;
-                    if (!hasCurrent && !targetScrollId) targetScrollId = `tl-task-wrapper-${task.id}`;
+                    
                     checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
@@ -1137,8 +1303,6 @@
                         當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})
                     </span></div>`;
                     
-                    hasCurrent = true;
-                    targetScrollId = `tl-task-wrapper-${task.id}`;
                     previousTimeForGap = window.getNow();
                     
                     checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-blue-200 text-blue-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
@@ -1161,9 +1325,7 @@
                     cardClass = 'opacity-85 scale-[0.92] border-[#d6d0c4] bg-white';
                     dotClass = 'bg-amber-400 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
                     timeTextHtml = `<div class="${timeTextContainer}"><span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ${status.text.replace('未開始 (', '還有 ').replace('後)', '')} 到來</span></div>`;
-                    if (!hasCurrent && !targetScrollId) {
-                        targetScrollId = `tl-task-wrapper-${task.id}`; 
-                    }
+                    
                     previousTimeForGap = parseTime(task.start); 
                     
                     checkBtnHtml = `<button onclick="window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative">
@@ -1204,6 +1366,14 @@
             container.innerHTML = html;
             lucide.createIcons();
             
+            // 新增：綁定與觸發滾動事件
+            const page = document.getElementById('timelinePage');
+            if (page && !page.dataset.hasScrollListener) {
+                page.addEventListener('scroll', window.handleTimelineScroll);
+                page.dataset.hasScrollListener = "true";
+            }
+            window.handleTimelineScroll(); // 渲染後立即檢查一次顯示狀態
+
             if (scrollToCenter && targetScrollId) {
                 setTimeout(() => {
                     const el = document.getElementById(targetScrollId);
@@ -1237,7 +1407,7 @@
                         <p class="text-[11px] text-slate-500 mb-4 leading-relaxed tracking-wide">設定穿越時間後，時間將從該點繼續自然流逝。</p>
                         <div class="space-y-4">
                             <div class="relative">
-                                <input type="time" id="dyJumpTime" onclick="this.showPicker && this.showPicker()" class="w-full border border-slate-300 rounded-lg p-3 text-lg focus:border-blue-500 focus:outline-none font-mono font-black text-center shadow-inner cursor-pointer text-slate-700">
+                                <input type="time" id="dyJumpTime" class="w-full border border-slate-300 rounded-lg p-3 text-lg focus:border-blue-500 focus:outline-none font-mono font-black text-center shadow-inner cursor-text text-slate-700">
                             </div>
                         </div>
                         <div class="mt-5 flex justify-end space-x-2 border-t border-slate-100 pt-4">
@@ -1288,12 +1458,11 @@
                             <div class="flex gap-3">
                                 <div class="flex-1 relative">
                                     <label class="text-[11px] font-bold text-slate-500 mb-1 block">開始時間</label>
-                                    <!-- 點擊任意處皆可呼叫系統選單 -->
-                                    <input type="time" id="dyEditStart" value="${task.start}" onclick="this.showPicker && this.showPicker()" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner cursor-pointer">
+                                    <input type="time" id="dyEditStart" value="${task.start}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner cursor-text">
                                 </div>
                                 <div class="flex-1 relative">
                                     <label class="text-[11px] font-bold text-slate-500 mb-1 block">結束時間</label>
-                                    <input type="time" id="dyEditEnd" value="${task.end}" onclick="this.showPicker && this.showPicker()" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner cursor-pointer">
+                                    <input type="time" id="dyEditEnd" value="${task.end}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner cursor-text">
                                 </div>
                             </div>
                             <div class="mt-3">
@@ -1338,11 +1507,12 @@
             }
         };
 
+        // 修改 deleteTimelineTask 以使用自訂的 showConfirm
         window.deleteTimelineTask = (taskId) => {
-            if(confirm('確定要永久刪除這張任務卡片嗎？')) {
+            window.showConfirm('刪除確認', '確定要永久刪除這張任務卡片嗎？', () => {
                 document.getElementById('dynamicEditModal').remove();
                 window.deleteTaskCard(taskId); 
-            }
+            });
         };
 
         window.toggleSimulation = () => {
@@ -1809,6 +1979,18 @@
         loadLocalFastCache();
         initAuth();
         window.switchTab(localStorage.getItem('activeTab') || 'daily');
+
+        // 套用深色模式記憶
+        if (getLocal('work_cache_dark_mode', false)) {
+            document.body.classList.add('dark-mode');
+            window.addEventListener('DOMContentLoaded', () => {
+                const icon = document.getElementById('darkModeIcon');
+                if (icon) {
+                    icon.setAttribute('data-lucide', 'sun');
+                    lucide.createIcons();
+                }
+            });
+        }
     </script>
 </head>
 <body class="sm:px-4 sm:py-8 flex justify-center relative min-h-screen">
@@ -1831,6 +2013,9 @@
                 </div>
                 
                 <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                    <button type="button" onclick="window.toggleDarkMode()" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="切換深色模式">
+                        <i id="darkModeIcon" data-lucide="moon" class="w-4 h-4 pointer-events-none"></i>
+                    </button>
                     <input type="file" id="importInput" accept=".json" class="hidden" onchange="window.importData(event)">
                     <button type="button" onclick="document.getElementById('importInput').click()" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="導入舊資料 (自動轉檔)">
                         <i data-lucide="upload" class="w-4 h-4 pointer-events-none"></i>
@@ -1899,11 +2084,9 @@
             <div id="scheduleContainer" class="space-y-4 pb-8"></div>
         </main>
 
-        <!-- Main Content (動態時間軸任務流 - 新增功能) -->
-        <!-- 注意：這個容器被限制高度並設置 overflow-y-auto，確保只有卡片列表滾動，外框不跳動 -->
+        <!-- Main Content (動態時間軸任務流) -->
         <main id="timelinePage" class="hidden h-[calc(100vh-140px)] sm:h-[750px] overflow-y-auto relative z-10 bg-[#fdfbf7] scrollbar-hide scroll-smooth">
             
-            <!-- 將頂部控制列從動態渲染中獨立，解決按鈕頻繁重建導致點擊失效（無法暫停）的問題 -->
             <div id="timelineStickyHeader" class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-3 pb-8 px-4 flex flex-col items-center justify-center pointer-events-none transition-all">
                 <div class="flex items-center justify-center gap-2 sm:gap-3 w-full max-w-[500px]">
                     
@@ -1994,6 +2177,21 @@
                 <button onclick="window.closeCategoryManager()" class="text-slate-400 p-1.5 rounded-full hover:bg-slate-200 active:scale-95 transition-all"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div id="categoryManageList" class="p-3 overflow-y-auto max-h-[55vh] bg-[#fdfbf7] space-y-2 scrollbar-hide">
+            </div>
+        </div>
+    </div>
+
+    <!-- 自訂確認對話框 Modal (取代原生 confirm) -->
+    <div id="customConfirmModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10000] hidden flex-col items-center justify-center p-4">
+        <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-full max-w-[300px] flex flex-col overflow-hidden relative">
+            <header class="p-4 border-b border-slate-100 flex items-center bg-slate-50">
+                <h2 id="confirmModalTitle" class="text-slate-800 font-bold tracking-widest text-base flex items-center"><i data-lucide="alert-triangle" class="w-5 h-5 mr-2 text-amber-500"></i> 確認</h2>
+            </header>
+            <div class="p-5 text-sm text-slate-600 tracking-wide leading-relaxed" id="confirmModalMessage">
+            </div>
+            <div class="p-4 border-t border-slate-100 flex justify-end space-x-2 bg-slate-50/50">
+                <button id="confirmBtnCancel" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-lg text-sm font-bold transition-colors active:scale-95 shadow-sm">取消</button>
+                <button id="confirmBtnOk" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-bold transition-colors active:scale-95 shadow-sm">確定</button>
             </div>
         </div>
     </div>
