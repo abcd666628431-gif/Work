@@ -147,12 +147,12 @@
 
         let futureMemos = []; 
         const defaultMapPoints = {
-            'pt_1': { name: '客服室', x: 50, y: 15 },
-            'pt_2': { name: '一樓大清點', x: 25, y: 35 },
-            'pt_3': { name: '花園仔', x: 22, y: 70 },
-            'pt_4': { name: '魚檔', x: 78, y: 65 },
-            'pt_5': { name: '整體巡邏', x: 50, y: 75 },
-            'pt_6': { name: '地面層 大清點', x: 25, y: 92 }
+            'pt_1': { name: '客服室', x: 75, y: 12.5 },
+            'pt_2': { name: '一樓大清點', x: 27.5, y: 35.5 },
+            'pt_3': { name: '花園仔', x: 22.5, y: 64 },
+            'pt_4': { name: '魚檔', x: 72.5, y: 64 },
+            'pt_5': { name: '整體巡邏', x: 50, y: 50 },
+            'pt_6': { name: '地面層 大清點', x: 25, y: 84 }
         };
         let mapData = { points: JSON.parse(JSON.stringify(defaultMapPoints)) }; 
         let memberSchedules = []; 
@@ -253,12 +253,18 @@
             galleryItems = getLocal('work_cache_gallery_items', []);
             
             futureMemos = getLocal('work_cache_future_memos', []);
-            mapData = getLocal('work_cache_map_data', { points: JSON.parse(JSON.stringify(defaultMapPoints)) });
-            // 強制檢查：若快取中沒有點位，強制載入新的 6 個預設崗位點，確保直接顯示
-            if(!mapData.points || Object.keys(mapData.points).length === 0 || !mapData.points['pt_1']) {
-                mapData.points = JSON.parse(JSON.stringify(defaultMapPoints));
-                safeSetLocal('work_cache_map_data', mapData);
+            mapData = getLocal('work_cache_map_data', { points: {} });
+            
+            // 強制檢查並補齊 6 個預設點位，解決緩存空白或遺失問題
+            if(!mapData.points) mapData.points = {};
+            for (const [id, data] of Object.entries(defaultMapPoints)) {
+                let exists = false;
+                for (const key in mapData.points) {
+                    if (mapData.points[key].name === data.name) exists = true;
+                }
+                if (!exists) mapData.points[id] = data;
             }
+            
             memberSchedules = getLocal('work_cache_member_schedules', []);
 
             if (!galleryCategories.includes('任務附件')) galleryCategories.push('任務附件');
@@ -2049,12 +2055,26 @@
             const activeClass = "flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center truncate";
             const inactiveClass = "flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center truncate";
 
-            Object.values(pages).forEach(p => p && p.classList.add('hidden'));
+            // 1. 先將所有分頁隱藏，並強制拔除 flex 避免與 hidden 衝突
+            Object.values(pages).forEach(p => {
+                if (p) {
+                    p.classList.add('hidden');
+                    p.classList.remove('flex'); 
+                }
+            });
             Object.entries(btns).forEach(([k, b]) => { if(b) b.className = inactiveClass; });
 
-            if(pages[tab]) { pages[tab].classList.remove('hidden'); }
+            // 2. 顯示目標分頁
+            if(pages[tab]) { 
+                pages[tab].classList.remove('hidden'); 
+                // 關鍵修復：針對依賴 Flex 排版的分頁 (地圖與圖庫)，動態加入 flex 屬性撐開高度
+                if (tab === 'map' || tab === 'gallery') {
+                    pages[tab].classList.add('flex');
+                }
+            }
             if(btns[tab]) { btns[tab].className = activeClass; }
 
+            // 3. 觸發對應的渲染引擎
             if (tab === 'daily') renderDailySchedule(); 
             else if (tab === 'gallery') window.renderGallery();
             else if (tab === 'timeline') window.renderTimeline(true);
@@ -2571,51 +2591,58 @@
                 </div>
             </div>
             
-            <div class="flex-1 relative overflow-hidden p-3" id="mapScrollContainer">
-                <div id="mapWrapper" class="relative w-full h-full bg-slate-100 rounded-xl overflow-hidden shadow-inner border-[3px] border-[#d6d0c4] transition-colors" onclick="window.onMapClick(event)">
+            <div class="flex-1 relative overflow-hidden" id="mapScrollContainer">
+                <div id="mapWrapper" class="absolute inset-3 bg-[#fdfbf7] rounded-xl overflow-hidden shadow-inner border-2 border-slate-300 transition-colors" onclick="window.onMapClick(event)">
                     
-                    <!-- 1/F 一樓平面圖 (實體區塊) -->
-                    <div class="absolute top-2 left-2 right-2 bottom-[51%] border-[3px] border-slate-300 bg-white rounded-xl pointer-events-none shadow-sm overflow-hidden">
-                        <div class="absolute top-0 left-0 bg-blue-500 text-white px-3 py-1 rounded-br-xl font-black text-[11px] shadow-sm z-10 tracking-widest">1/F 一樓</div>
-                        
-                        <!-- 客服室 -->
-                        <div class="absolute top-[12%] left-[35%] w-[30%] h-[40%] border-[3px] border-slate-200 bg-slate-50 flex items-center justify-center rounded-lg">
-                            <span class="text-[10px] text-slate-400 font-bold tracking-widest rotate-[-5deg]">客服室</span>
-                        </div>
-                        
-                        <!-- 樓梯示意 -->
-                        <div class="absolute bottom-[10%] right-[5%] w-[15%] h-[40%] border-2 border-dashed border-slate-300 flex flex-col justify-evenly p-0.5">
-                            <div class="w-full border-t-[3px] border-slate-200"></div>
-                            <div class="w-full border-t-[3px] border-slate-200"></div>
-                            <div class="w-full border-t-[3px] border-slate-200"></div>
-                            <span class="text-[8px] text-slate-400 text-center font-bold mt-1 tracking-widest">樓梯</span>
-                        </div>
+                    <!-- 1/F Background Area -->
+                    <div class="absolute top-0 left-0 right-0 h-[50%] bg-blue-50/60 border-b-2 border-slate-300 pointer-events-none">
+                        <div class="absolute top-2 left-3 text-blue-300/80 font-black text-2xl tracking-widest select-none">1/F 一樓</div>
+                    </div>
+                    
+                    <!-- G/F Background Area -->
+                    <div class="absolute top-[50%] left-0 right-0 bottom-0 bg-emerald-50/60 border-t-2 border-slate-300 pointer-events-none">
+                        <div class="absolute bottom-2 right-3 text-emerald-300/80 font-black text-2xl tracking-widest select-none">G/F 地面層</div>
                     </div>
 
-                    <!-- G/F 地面層平面圖 (實體區塊) -->
-                    <div class="absolute top-[51%] left-2 right-2 bottom-2 border-[3px] border-slate-300 bg-white rounded-xl pointer-events-none shadow-sm overflow-hidden">
-                        <div class="absolute top-0 left-0 bg-emerald-500 text-white px-3 py-1 rounded-br-xl font-black text-[11px] shadow-sm z-10 tracking-widest">G/F 地面層</div>
-                        
-                        <!-- 花園仔 -->
-                        <div class="absolute top-[25%] left-[5%] w-[35%] h-[45%] border-2 border-emerald-300 bg-emerald-50/60 flex flex-col items-center justify-center rounded-xl border-dashed">
-                            <i data-lucide="flower-2" class="w-5 h-5 text-emerald-400 mb-1"></i>
-                            <span class="text-[10px] text-emerald-600 font-bold tracking-widest">花園區</span>
-                        </div>
-                        
-                        <!-- 魚檔 -->
-                        <div class="absolute top-[25%] right-[5%] w-[35%] h-[35%] border-2 border-blue-300 bg-blue-50/60 flex flex-col items-center justify-center rounded-xl border-dashed">
-                            <i data-lucide="fish" class="w-5 h-5 text-blue-400 mb-1"></i>
-                            <span class="text-[10px] text-blue-600 font-bold tracking-widest">魚檔區</span>
-                        </div>
-                        
-                        <!-- 大門出入口 -->
-                        <div class="absolute bottom-0 left-[40%] w-[20%] h-[15px] border-t-[3px] border-l-[3px] border-r-[3px] border-slate-300 bg-slate-100 rounded-t-lg flex items-center justify-center">
-                            <span class="text-[8px] font-bold text-slate-500 mb-2 tracking-widest">主出入口</span>
-                        </div>
+                    <!-- 客服室 (1/F) -->
+                    <div class="absolute top-[5%] right-[5%] w-[40%] h-[15%] bg-blue-100/80 border-2 border-blue-400 rounded-lg flex items-center justify-center shadow-inner pointer-events-none">
+                        <div class="text-blue-600 font-bold text-[10px] sm:text-xs tracking-wider flex items-center"><i data-lucide="headphones" class="w-3 h-3 mr-1"></i>客服室</div>
+                    </div>
+
+                    <!-- 一樓大清點 (1/F) -->
+                    <div class="absolute top-[28%] left-[5%] w-[45%] h-[15%] bg-amber-100/80 border-2 border-dashed border-amber-400 rounded-lg flex items-center justify-center shadow-inner pointer-events-none">
+                        <div class="text-amber-600 font-bold text-[10px] sm:text-xs tracking-wider flex items-center"><i data-lucide="clipboard-list" class="w-3 h-3 mr-1"></i>一樓大清點</div>
+                    </div>
+
+                    <!-- 花園仔 (G/F) -->
+                    <div class="absolute top-[55%] left-[5%] w-[35%] h-[18%] bg-green-100/80 border-2 border-green-500 rounded-lg overflow-hidden flex flex-col items-center justify-center shadow-inner pointer-events-none">
+                        <i data-lucide="flower-2" class="w-8 h-8 text-green-500/20 absolute"></i>
+                        <div class="text-green-700 font-bold text-[10px] sm:text-xs tracking-wider relative z-10 flex items-center"><i data-lucide="leaf" class="w-3 h-3 mr-1"></i>花園仔</div>
+                    </div>
+
+                    <!-- 魚檔 (G/F) -->
+                    <div class="absolute top-[55%] right-[5%] w-[45%] h-[18%] bg-cyan-100/80 border-2 border-cyan-500 rounded-lg overflow-hidden flex flex-col items-center justify-center shadow-inner pointer-events-none">
+                        <i data-lucide="fish" class="w-8 h-8 text-cyan-500/20 absolute"></i>
+                        <div class="text-cyan-700 font-bold text-[10px] sm:text-xs tracking-wider relative z-10 flex items-center"><i data-lucide="droplets" class="w-3 h-3 mr-1"></i>魚檔</div>
+                    </div>
+
+                    <!-- 地面層大清點 (G/F) -->
+                    <div class="absolute top-[78%] left-[5%] w-[40%] h-[12%] bg-amber-100/80 border-2 border-dashed border-amber-400 rounded-lg flex items-center justify-center shadow-inner pointer-events-none">
+                        <div class="text-amber-600 font-bold text-[10px] sm:text-xs tracking-wider flex items-center"><i data-lucide="clipboard-list" class="w-3 h-3 mr-1"></i>地面層大清點</div>
+                    </div>
+                    
+                    <!-- 整體巡邏 (G/F) -->
+                    <div class="absolute top-[78%] right-[5%] w-[35%] h-[12%] bg-purple-100/80 border-2 border-purple-400 rounded-lg flex items-center justify-center shadow-inner pointer-events-none">
+                        <div class="text-purple-600 font-bold text-[10px] sm:text-xs tracking-wider flex items-center"><i data-lucide="shield" class="w-3 h-3 mr-1"></i>整體巡邏</div>
+                    </div>
+
+                    <!-- 入口大門 (G/F) -->
+                    <div class="absolute bottom-0 left-[50%] -translate-x-1/2 w-[25%] h-[5%] border-t-2 border-l-2 border-r-2 border-slate-400 bg-white flex items-center justify-center rounded-t-lg pointer-events-none shadow-md">
+                        <div class="text-slate-500 font-bold text-[9px] tracking-wider flex items-center"><i data-lucide="door-open" class="w-2.5 h-2.5 mr-0.5"></i>入口</div>
                     </div>
                     
                     <!-- 動態標記與成員點位將生成於此 -->
-                    <div id="mapPointsContainer" class="absolute inset-0 pointer-events-none overflow-hidden z-20"></div>
+                    <div id="mapPointsContainer" class="absolute inset-0 pointer-events-none overflow-hidden"></div>
                 </div>
             </div>
         </main>
