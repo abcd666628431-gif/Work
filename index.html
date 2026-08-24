@@ -145,8 +145,18 @@
         let galleryCategories = ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他'];
         let galleryItems = [];
 
-        // 新增：備忘錄狀態
-        let memoData = [];
+        let futureMemos = []; 
+        const defaultMapPoints = {
+            'pt_1': { name: '客服室', x: 50, y: 15 },
+            'pt_2': { name: '一樓大清點', x: 25, y: 35 },
+            'pt_3': { name: '花園仔', x: 22, y: 70 },
+            'pt_4': { name: '魚檔', x: 78, y: 65 },
+            'pt_5': { name: '整體巡邏', x: 50, y: 75 },
+            'pt_6': { name: '地面層 大清點', x: 25, y: 92 }
+        };
+        let mapData = { points: JSON.parse(JSON.stringify(defaultMapPoints)) }; 
+        let memberSchedules = []; 
+        let isMapEditMode = false;
 
         // 新增：狀態時光機紀錄
         let actionHistory = [];
@@ -239,10 +249,18 @@
             taskExtrasState = getLocal('work_cache_daily_extras', {});
             taskArchiveState = getLocal('work_cache_daily_archive', {});
             subTaskCompletionState = getLocal('work_cache_subtask_states', {});
-            memoData = getLocal('work_cache_memo', []);
             galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
             galleryItems = getLocal('work_cache_gallery_items', []);
             
+            futureMemos = getLocal('work_cache_future_memos', []);
+            mapData = getLocal('work_cache_map_data', { points: JSON.parse(JSON.stringify(defaultMapPoints)) });
+            // 強制檢查：若快取中沒有點位，強制載入新的 6 個預設崗位點，確保直接顯示
+            if(!mapData.points || Object.keys(mapData.points).length === 0 || !mapData.points['pt_1']) {
+                mapData.points = JSON.parse(JSON.stringify(defaultMapPoints));
+                safeSetLocal('work_cache_map_data', mapData);
+            }
+            memberSchedules = getLocal('work_cache_member_schedules', []);
+
             if (!galleryCategories.includes('任務附件')) galleryCategories.push('任務附件');
 
             if(document.getElementById('dailySchedulePage') && !document.getElementById('dailySchedulePage').classList.contains('hidden')) {
@@ -253,9 +271,6 @@
             }
             if(document.getElementById('timelinePage') && !document.getElementById('timelinePage').classList.contains('hidden')) {
                 window.renderTimeline(false);
-            }
-            if(document.getElementById('memoPage') && !document.getElementById('memoPage').classList.contains('hidden')) {
-                window.renderMemoPage();
             }
         }
 
@@ -379,14 +394,28 @@
                 }
             }, (err) => console.error(err));
 
-            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'memo'), (docSnap) => {
-                if(docSnap.exists() && docSnap.data().memos) { 
-                    const newData = docSnap.data().memos;
-                    if (JSON.stringify(memoData) !== JSON.stringify(newData)) {
-                        memoData = newData;
-                        safeSetLocal('work_cache_memo', memoData);
-                        if(document.getElementById('memoPage') && !document.getElementById('memoPage').classList.contains('hidden')) window.renderMemoPage();
-                    }
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'future_memos'), (docSnap) => {
+                if(docSnap.exists()) { 
+                    futureMemos = docSnap.data().memos || [];
+                    safeSetLocal('work_cache_future_memos', futureMemos);
+                    if(!document.getElementById('memoPage')?.classList.contains('hidden')) window.renderMemos(); 
+                }
+            }, (err) => console.error(err));
+
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'map_data'), (docSnap) => {
+                if(docSnap.exists()) {
+                    mapData = docSnap.data().data || { points: {} };
+                    if(!mapData.points || Object.keys(mapData.points).length === 0) mapData.points = JSON.parse(JSON.stringify(defaultMapPoints));
+                    safeSetLocal('work_cache_map_data', mapData);
+                    if(!document.getElementById('mapPage')?.classList.contains('hidden')) window.renderMap();
+                }
+            }, (err) => console.error(err));
+
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'member_schedules'), (docSnap) => {
+                if(docSnap.exists()) {
+                    memberSchedules = docSnap.data().schedules || [];
+                    safeSetLocal('work_cache_member_schedules', memberSchedules);
+                    if(!document.getElementById('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
                 }
             }, (err) => console.error(err));
 
@@ -749,7 +778,7 @@
                 const exportPayload = {
                     version: "5.0", exportDate: new Date().toISOString(),
                     dailyScheduleData, taskCompletionState, taskExtrasState, subTaskCompletionState,
-                    galleryCategories, galleryItems, memoData
+                    galleryCategories, galleryItems
                 };
                 const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
                 const a = document.createElement('a');
@@ -774,7 +803,6 @@
                     let impTaskStates = importedData.taskCompletionState || taskCompletionState;
                     let impExtras = importedData.taskExtrasState || taskExtrasState;
                     let impSubStates = importedData.subTaskCompletionState || subTaskCompletionState;
-                    let impMemo = importedData.memoData || memoData;
                     let impGalCats = importedData.galleryCategories || galleryCategories;
                     let impGalItems = importedData.galleryItems || galleryItems;
 
@@ -811,7 +839,6 @@
                     taskCompletionState = impTaskStates;
                     taskExtrasState = impExtras;
                     subTaskCompletionState = impSubStates;
-                    memoData = impMemo;
                     galleryCategories = impGalCats;
                     galleryItems = impGalItems;
 
@@ -819,7 +846,6 @@
                     safeSetLocal('work_cache_task_states', taskCompletionState);
                     safeSetLocal('work_cache_daily_extras', taskExtrasState);
                     safeSetLocal('work_cache_subtask_states', subTaskCompletionState);
-                    safeSetLocal('work_cache_memo', memoData);
                     safeSetLocal('work_cache_gallery_categories', galleryCategories);
                     safeSetLocal('work_cache_gallery_items', galleryItems);
 
@@ -828,7 +854,6 @@
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData });
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState });
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState });
-                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'memo'), { memos: memoData });
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState });
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
                         
@@ -1699,10 +1724,9 @@
         }, 1000);
 
         setInterval(() => {
-            if(document.getElementById('memoPage') && !document.getElementById('memoPage').classList.contains('hidden')) {
-                window.renderMemoPage();
-            }
-        }, 60000); // 備忘錄每分鐘更新一次倒數時間
+            if(!document.getElementById('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+            if(!document.getElementById('memoPage')?.classList.contains('hidden')) window.updateMemoCountdowns();
+        }, 1000);
 
         function parseTime(timeStr) { const [h, m] = timeStr.split(':').map(Number); const d = window.getNow(); d.setHours(h, m, 0, 0); return d; }
         function calculateTaskStatus(startStr, endStr) {
@@ -2005,20 +2029,353 @@
         };
 
         window.switchTab = (tab) => {
-            const customPage = document.getElementById('customWorkflowPage'), dailyPage = document.getElementById('dailySchedulePage'), galleryPage = document.getElementById('galleryPage'), timelinePage = document.getElementById('timelinePage'), memoPage = document.getElementById('memoPage');
-            const btnCustom = document.getElementById('tabCustom'), btnDaily = document.getElementById('tabDaily'), btnGallery = document.getElementById('tabGallery'), btnTimeline = document.getElementById('tabTimeline'), btnMemo = document.getElementById('tabMemo');
-            const activeClass = "flex-1 py-1.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest";
-            const inactiveClass = "flex-1 py-1.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest";
+            const pages = {
+                'custom': document.getElementById('customWorkflowPage'),
+                'daily': document.getElementById('dailySchedulePage'),
+                'gallery': document.getElementById('galleryPage'),
+                'timeline': document.getElementById('timelinePage'),
+                'memo': document.getElementById('memoPage'),
+                'map': document.getElementById('mapPage')
+            };
+            const btns = {
+                'custom': document.getElementById('tabCustom'),
+                'daily': document.getElementById('tabDaily'),
+                'timeline': document.getElementById('tabTimeline'),
+                'memo': document.getElementById('tabMemo'),
+                'map': document.getElementById('tabMap'),
+                'gallery': document.getElementById('tabGallery')
+            };
+            
+            const activeClass = "flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center truncate";
+            const inactiveClass = "flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center truncate";
 
-            if(customPage) customPage.classList.add('hidden'); if(dailyPage) dailyPage.classList.add('hidden'); if(galleryPage) galleryPage.classList.add('hidden'); if(timelinePage) timelinePage.classList.add('hidden'); if(memoPage) memoPage.classList.add('hidden');
-            if(btnCustom) btnCustom.className = inactiveClass; if(btnDaily) btnDaily.className = inactiveClass; if(btnGallery) btnGallery.className = inactiveClass; if(btnTimeline) btnTimeline.className = inactiveClass; if(btnMemo) btnMemo.className = inactiveClass;
+            Object.values(pages).forEach(p => p && p.classList.add('hidden'));
+            Object.entries(btns).forEach(([k, b]) => { if(b) b.className = inactiveClass; });
 
-            if (tab === 'custom' && customPage) { customPage.classList.remove('hidden'); btnCustom.className = activeClass; } 
-            else if (tab === 'daily' && dailyPage) { dailyPage.classList.remove('hidden'); btnDaily.className = activeClass; renderDailySchedule(); } 
-            else if (tab === 'gallery' && galleryPage) { galleryPage.classList.remove('hidden'); btnGallery.className = activeClass; window.renderGallery(); }
-            else if (tab === 'timeline' && timelinePage) { timelinePage.classList.remove('hidden'); btnTimeline.className = activeClass; window.renderTimeline(true); }
-            else if (tab === 'memo' && memoPage) { memoPage.classList.remove('hidden'); btnMemo.className = activeClass; window.renderMemoPage(); }
+            if(pages[tab]) { pages[tab].classList.remove('hidden'); }
+            if(btns[tab]) { btns[tab].className = activeClass; }
+
+            if (tab === 'daily') renderDailySchedule(); 
+            else if (tab === 'gallery') window.renderGallery();
+            else if (tab === 'timeline') window.renderTimeline(true);
+            else if (tab === 'memo') window.renderMemos();
+            else if (tab === 'map') window.renderMap();
+            
             localStorage.setItem('activeTab', tab);
+        };
+
+        window.renderMemos = () => {
+            const container = document.getElementById('memoContainer');
+            if(!container) return;
+            
+            let sortedMemos = [...futureMemos].sort((a, b) => {
+                const dateA = new Date(`${a.date}T${a.time || '00:00'}`);
+                const dateB = new Date(`${b.date}T${b.time || '00:00'}`);
+                return dateA - dateB;
+            });
+
+            if(sortedMemos.length === 0) {
+                container.innerHTML = '<div class="flex flex-col items-center justify-center py-20 text-slate-400"><i data-lucide="inbox" class="w-12 h-12 mb-3 opacity-30"></i><span class="text-xs font-bold tracking-widest">目前沒有未來的備忘任務</span></div>';
+                lucide.createIcons();
+                return;
+            }
+
+            container.innerHTML = sortedMemos.map(memo => {
+                return `
+                <div class="memo-card bg-white rounded-xl p-4 border border-slate-200 shadow-sm relative overflow-hidden" data-datetime="${memo.date}T${memo.time || '00:00'}">
+                    <div class="absolute left-0 top-0 bottom-0 w-1.5 bg-indigo-400 opacity-80"></div>
+                    <div class="flex justify-between items-start pl-2">
+                        <div class="flex-1">
+                            <h3 class="text-sm font-bold text-slate-800 mb-1">${memo.title}</h3>
+                            <p class="text-xs text-slate-600 leading-relaxed mb-3 break-words whitespace-pre-wrap">${memo.content || ''}</p>
+                            <div class="inline-flex items-center bg-indigo-50 text-indigo-600 px-2 py-1 rounded text-[10px] font-bold border border-indigo-100">
+                                <i data-lucide="calendar" class="w-3 h-3 mr-1"></i> ${memo.date} ${memo.time || ''}
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-end shrink-0 ml-3">
+                            <button onclick="window.deleteMemo('${memo.id}')" class="text-slate-400 hover:text-red-500 p-1.5 rounded active:scale-95 transition-all bg-slate-50 hover:bg-red-50"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                            <div class="memo-countdown text-[11px] font-bold text-amber-600 mt-3 text-right whitespace-nowrap">計算中...</div>
+                        </div>
+                    </div>
+                </div>
+                `;
+            }).join('');
+            lucide.createIcons();
+            window.updateMemoCountdowns();
+        };
+
+        window.updateMemoCountdowns = () => {
+            const now = window.getNow();
+            document.querySelectorAll('.memo-card').forEach(card => {
+                const targetDate = new Date(card.dataset.datetime);
+                const diffMs = targetDate - now;
+                const cdEl = card.querySelector('.memo-countdown');
+                if(!cdEl) return;
+
+                if (diffMs <= 0) {
+                    cdEl.textContent = '已過期 / 進行中';
+                    cdEl.className = 'memo-countdown text-[11px] font-bold text-red-500 mt-3 text-right animate-pulse whitespace-nowrap';
+                } else {
+                    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                    const hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                    const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+                    cdEl.textContent = `⏳ ${days>0 ? days+'天 ' : ''}${hours}小時 ${mins}分`;
+                }
+            });
+        };
+
+        window.openMemoEditor = () => {
+            const modalHtml = `
+                <div id="memoEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4">
+                    <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative">
+                        <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="calendar-plus" class="w-5 h-5 mr-2 text-blue-500"></i>新增備忘錄</h3>
+                        <div class="space-y-3">
+                            <div><label class="text-[11px] font-bold text-slate-500 block mb-1">任務標題</label><input type="text" id="memoTitle" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none"></div>
+                            <div><label class="text-[11px] font-bold text-slate-500 block mb-1">詳細內容 (選填)</label><textarea id="memoContent" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none h-20 resize-none"></textarea></div>
+                            <div class="flex gap-2">
+                                <div class="flex-1"><label class="text-[11px] font-bold text-slate-500 block mb-1">日期</label><input type="date" id="memoDate" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none"></div>
+                                <div class="flex-1"><label class="text-[11px] font-bold text-slate-500 block mb-1">時間</label><input type="time" id="memoTime" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none"></div>
+                            </div>
+                        </div>
+                        <div class="mt-5 flex justify-end space-x-2 border-t border-slate-100 pt-4">
+                            <button onclick="document.getElementById('memoEditModal').remove()" class="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold active:scale-95 transition-colors">取消</button>
+                            <button onclick="window.saveMemo()" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-bold shadow-sm active:scale-95 transition-colors">儲存</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            lucide.createIcons();
+            const now = new Date();
+            // Default to tomorrow 09:00
+            now.setDate(now.getDate() + 1); 
+            document.getElementById('memoDate').value = now.toISOString().split('T')[0];
+            document.getElementById('memoTime').value = "09:00";
+        };
+
+        window.saveMemo = () => {
+            const title = document.getElementById('memoTitle').value.trim();
+            const content = document.getElementById('memoContent').value.trim();
+            const date = document.getElementById('memoDate').value;
+            const time = document.getElementById('memoTime').value;
+            if(!title || !date) return window.showToast('請填寫標題與日期', true);
+
+            futureMemos.push({ id: 'm_'+Date.now(), title, content, date, time });
+            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'future_memos'), { memos: futureMemos });
+            document.getElementById('memoEditModal').remove();
+            window.renderMemos();
+            window.showToast('已新增備忘錄');
+        };
+
+        window.deleteMemo = (id) => {
+            window.showConfirm('刪除備忘', '確定要刪除這筆未來備忘任務嗎？', () => {
+                futureMemos = futureMemos.filter(m => m.id !== id);
+                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'future_memos'), { memos: futureMemos });
+                window.renderMemos();
+            });
+        };
+
+        // ====== 可視地圖邏輯 ======
+        window.renderMap = () => {
+            const pointsContainer = document.getElementById('mapPointsContainer');
+            if(!pointsContainer) return;
+
+            pointsContainer.innerHTML = '';
+            Object.entries(mapData.points || {}).forEach(([id, pt]) => {
+                const marker = document.createElement('div');
+                marker.className = `absolute transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center ${isMapEditMode ? 'pointer-events-auto cursor-pointer z-40' : 'pointer-events-none z-10 opacity-60'}`;
+                marker.style.left = pt.x + '%';
+                marker.style.top = pt.y + '%';
+                
+                if (isMapEditMode) {
+                    marker.onclick = (e) => { e.stopPropagation(); window.deleteMapPoint(id); };
+                    marker.innerHTML = `
+                        <div class="bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow shadow-red-500/50 mb-1 hover:bg-red-600 transition-colors whitespace-nowrap">刪除: ${pt.name}</div>
+                        <i data-lucide="map-pin" class="w-5 h-5 text-red-500 drop-shadow-md"></i>
+                    `;
+                } else {
+                    marker.innerHTML = `
+                        <div class="bg-slate-800 text-white text-[9px] px-1 py-0.5 rounded shadow mb-0.5 opacity-80 whitespace-nowrap">${pt.name}</div>
+                        <div class="w-1.5 h-1.5 rounded-full bg-slate-800 shadow"></div>
+                    `;
+                }
+                pointsContainer.appendChild(marker);
+            });
+            lucide.createIcons();
+            
+            if(!isMapEditMode) window.updateMapSimulation(); 
+        };
+
+        window.toggleMapEditMode = () => {
+            isMapEditMode = !isMapEditMode;
+            const btn = document.getElementById('mapEditBtn');
+            const wrapper = document.getElementById('mapWrapper');
+            
+            if(isMapEditMode) {
+                btn.classList.replace('bg-slate-50', 'bg-amber-100');
+                btn.classList.replace('border-slate-200', 'border-amber-300');
+                document.getElementById('mapEditBtnText').textContent = '完成標記';
+                wrapper.classList.add('cursor-crosshair');
+                window.showToast('點擊地圖任意處新增崗位點標記');
+            } else {
+                btn.classList.replace('bg-amber-100', 'bg-slate-50');
+                btn.classList.replace('border-amber-300', 'border-slate-200');
+                document.getElementById('mapEditBtnText').textContent = '標記崗位';
+                wrapper.classList.remove('cursor-crosshair');
+            }
+            window.renderMap();
+        };
+
+        window.onMapClick = (e) => {
+            if(!isMapEditMode) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = ((e.clientX - rect.left) / rect.width) * 100;
+            const y = ((e.clientY - rect.top) / rect.height) * 100;
+
+            const name = prompt('請輸入此崗位的名稱 (例如: 收銀台, 門口):', '新崗位');
+            if(name && name.trim()) {
+                const id = 'loc_' + Date.now();
+                if(!mapData.points) mapData.points = {};
+                mapData.points[id] = { name: name.trim(), x: parseFloat(x.toFixed(2)), y: parseFloat(y.toFixed(2)) };
+                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'map_data'), { data: mapData });
+                window.renderMap();
+            }
+        };
+
+        window.deleteMapPoint = (id) => {
+            window.showConfirm('刪除崗位點', `確定要刪除「${mapData.points[id].name}」嗎？<br>注意：已綁定此崗位的時間表會變成未知狀態。`, () => {
+                delete mapData.points[id];
+                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'map_data'), { data: mapData });
+                window.renderMap();
+            });
+        };
+
+        window.updateMapSimulation = () => {
+            if(document.getElementById('mapPage')?.classList.contains('hidden') || isMapEditMode) return;
+            const container = document.getElementById('mapPointsContainer');
+            if(!container) return;
+
+            const now = window.getNow();
+            const nowTime = now.getTime();
+            
+            let activeMembers = {}; 
+            memberSchedules.forEach(sched => {
+                const start = parseTime(sched.start).getTime();
+                const end = parseTime(sched.end).getTime();
+                if(nowTime >= start && nowTime <= end) {
+                    activeMembers[sched.name] = sched.locationId;
+                }
+            });
+            
+            document.querySelectorAll('.member-dynamic-marker').forEach(el => el.dataset.active = "false");
+            
+            for(let [name, locId] of Object.entries(activeMembers)) {
+                const loc = mapData.points[locId];
+                if(!loc) continue; 
+                
+                let marker = document.getElementById(`dyn-marker-${name}`);
+                if(!marker) {
+                    marker = document.createElement('div');
+                    marker.id = `dyn-marker-${name}`;
+                    marker.className = 'member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 -translate-y-[110%] pointer-events-none transition-all duration-[1500ms] ease-in-out z-30 drop-shadow-xl';
+                    marker.innerHTML = `
+                        <div class="bg-blue-600 text-white text-[11px] font-black px-2 py-0.5 rounded-full shadow-lg shadow-blue-500/40 whitespace-nowrap mb-1 tracking-widest border-2 border-white">${name}</div>
+                        <div class="relative flex items-center justify-center">
+                            <div class="w-3.5 h-3.5 bg-blue-500 rounded-full border-[2.5px] border-white shadow-sm z-10 relative"></div>
+                            <div class="absolute w-8 h-8 bg-blue-400/40 rounded-full animate-ping z-0"></div>
+                        </div>
+                    `;
+                    container.appendChild(marker);
+                }
+                marker.style.left = `${loc.x}%`;
+                marker.style.top = `${loc.y}%`;
+                marker.dataset.active = "true";
+            }
+            
+            document.querySelectorAll('.member-dynamic-marker').forEach(el => {
+                if(el.dataset.active === "false") el.remove();
+            });
+        };
+
+        window.openScheduleManager = () => {
+            window.renderScheduleManager();
+            document.getElementById('scheduleManageModal').classList.remove('hidden');
+            document.getElementById('scheduleManageModal').classList.add('flex');
+        };
+        
+        window.closeScheduleManager = () => {
+            document.getElementById('scheduleManageModal').classList.add('hidden');
+            document.getElementById('scheduleManageModal').classList.remove('flex');
+            window.updateMapSimulation(); 
+        };
+
+        window.renderScheduleManager = () => {
+            const list = document.getElementById('scheduleManageList');
+            const locOptions = Object.entries(mapData.points).map(([id, pt]) => `<option value="${id}">${pt.name}</option>`).join('');
+            
+            let html = `
+                <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-4 shadow-inner">
+                    <h4 class="text-xs font-bold text-slate-600 mb-2 flex items-center"><i data-lucide="plus-circle" class="w-3.5 h-3.5 mr-1"></i>新增成員崗位時段</h4>
+                    <div class="grid grid-cols-2 gap-2 mb-2">
+                        <input type="text" id="newSchedName" placeholder="成員名字" class="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-400 font-bold">
+                        <select id="newSchedLoc" class="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-400 bg-white font-bold">
+                            <option value="">分配崗位...</option>
+                            ${locOptions}
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mb-3">
+                        <div class="flex items-center bg-white border border-slate-300 rounded-lg overflow-hidden pr-1"><span class="text-[10px] text-slate-500 bg-slate-100 px-2 py-2 border-r border-slate-200">從</span><input type="time" id="newSchedStart" class="w-full text-xs p-1 focus:outline-none font-mono"></div>
+                        <div class="flex items-center bg-white border border-slate-300 rounded-lg overflow-hidden pr-1"><span class="text-[10px] text-slate-500 bg-slate-100 px-2 py-2 border-r border-slate-200">到</span><input type="time" id="newSchedEnd" class="w-full text-xs p-1 focus:outline-none font-mono"></div>
+                    </div>
+                    <button onclick="window.addSchedule()" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs py-2.5 rounded-lg shadow-sm transition-colors active:scale-95"><i data-lucide="calendar-check" class="w-4 h-4 inline-block mr-1"></i>儲存並加入</button>
+                </div>
+                <h4 class="text-xs font-bold text-slate-600 mb-2 border-b border-slate-200 pb-1.5 flex items-center"><i data-lucide="list" class="w-3.5 h-3.5 mr-1"></i>今日時間表清單</h4>
+                <div class="space-y-2">
+            `;
+
+            if(memberSchedules.length === 0) {
+                html += `<div class="text-center text-xs text-slate-400 py-6 tracking-widest bg-white rounded-lg border border-dashed border-slate-300">尚未新增任何排班</div>`;
+            } else {
+                memberSchedules.sort((a,b) => a.start.localeCompare(b.start)).forEach((sched) => {
+                    const locName = mapData.points[sched.locationId]?.name || '🔴 崗位遺失';
+                    html += `
+                    <div class="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-2.5 shadow-sm">
+                        <div class="flex-1 min-w-0 pr-2">
+                            <div class="flex items-center mb-1 overflow-hidden">
+                                <span class="font-black text-[13px] text-slate-800 mr-2 shrink-0">${sched.name}</span>
+                                <span class="text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded flex items-center truncate border border-amber-200 font-bold"><i data-lucide="map-pin" class="w-3 h-3 mr-0.5 shrink-0"></i>${locName}</span>
+                            </div>
+                            <div class="text-[11px] text-slate-500 font-mono tracking-tighter flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-slate-400"></i> ${sched.start} - ${sched.end}</div>
+                        </div>
+                        <button onclick="window.deleteSchedule('${sched.id}')" class="text-slate-400 hover:text-red-500 bg-slate-50 border border-slate-200 hover:bg-red-50 p-2 rounded-lg transition-colors active:scale-95 shrink-0"><i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i></button>
+                    </div>
+                    `;
+                });
+            }
+            html += `</div>`;
+            list.innerHTML = html;
+            lucide.createIcons();
+        };
+
+        window.addSchedule = () => {
+            const name = document.getElementById('newSchedName').value.trim();
+            const locationId = document.getElementById('newSchedLoc').value;
+            const start = document.getElementById('newSchedStart').value;
+            const end = document.getElementById('newSchedEnd').value;
+            
+            if(!name || !locationId || !start || !end) return window.showToast('請完整填寫排班資訊', true);
+            if(start >= end) return window.showToast('結束時間必須晚於開始時間', true);
+            
+            memberSchedules.push({ id: 'sch_'+Date.now(), name, locationId, start, end });
+            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'member_schedules'), { schedules: memberSchedules });
+            window.renderScheduleManager();
+            window.showToast(`已為 ${name} 加入排班`);
+        };
+
+        window.deleteSchedule = (id) => {
+            memberSchedules = memberSchedules.filter(s => s.id !== id);
+            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'member_schedules'), { schedules: memberSchedules });
+            window.renderScheduleManager();
         };
 
         async function initAuth() {
@@ -2055,186 +2412,6 @@
                 }
             });
         }
-
-        // --- 備忘錄專屬邏輯 ---
-        window.getMemoCountdown = (targetDate, targetTime) => {
-            const now = window.getNow();
-            const target = new Date(`${targetDate}T${targetTime}`);
-            const diffMs = target - now;
-
-            if (diffMs <= 0) return { text: '已到期', color: 'text-red-500', isOverdue: true };
-
-            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-            const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-            const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-
-            let text = '剩餘 ';
-            if (diffDays > 0) text += `${diffDays}天 `;
-            if (diffHours > 0) text += `${diffHours}小時 `;
-            text += `${diffMins}分`;
-
-            let color = 'text-blue-500';
-            if (diffDays === 0 && diffHours < 12) color = 'text-amber-500';
-
-            return { text, color, isOverdue: false };
-        };
-
-        window.renderMemoPage = () => {
-            const container = document.getElementById('memoContainer');
-            if(!container) return;
-
-            // 排序：日期近的在上面，已過期的放最下面
-            let sorted = [...memoData].sort((a, b) => {
-                const now = window.getNow();
-                const aTime = new Date(`${a.date}T${a.time}`);
-                const bTime = new Date(`${b.date}T${b.time}`);
-                
-                const aOverdue = aTime < now;
-                const bOverdue = bTime < now;
-
-                if (aOverdue && !bOverdue) return 1;
-                if (!aOverdue && bOverdue) return -1;
-                
-                return aTime - bTime;
-            });
-
-            if(sorted.length === 0) {
-                container.innerHTML = '<div class="flex flex-col items-center justify-center pt-32 text-slate-400"><i data-lucide="calendar-plus" class="w-16 h-16 mb-4 text-blue-200"></i><span class="text-sm font-bold tracking-widest text-slate-500">尚無未來備忘錄</span></div>';
-                lucide.createIcons();
-                return;
-            }
-
-            let html = '';
-            sorted.forEach((memo) => {
-                const status = window.getMemoCountdown(memo.date, memo.time);
-                const borderClass = status.isOverdue ? 'border-red-200 bg-red-50' : (status.color.includes('amber') ? 'border-amber-300 bg-amber-50' : 'border-blue-200 bg-white hover:border-blue-400');
-                
-                html += `
-                    <div class="relative bg-white rounded-xl p-4 border-2 ${borderClass} shadow-sm flex flex-col group transition-all duration-300">
-                        <div class="flex justify-between items-start mb-2">
-                            <h3 class="font-bold text-slate-800 text-[15px] flex-1 pr-4 break-words ${status.isOverdue ? 'line-through text-slate-500' : ''}">${memo.title}</h3>
-                            <button onclick="window.promptEditMemo('${memo.id}')" class="text-slate-400 hover:text-blue-500 p-1 rounded-md hover:bg-slate-100 transition-colors active:scale-95 shrink-0">
-                                <i data-lucide="edit-3" class="w-4 h-4"></i>
-                            </button>
-                        </div>
-                        ${memo.content ? `<p class="text-[12px] text-slate-600 leading-relaxed mb-3 whitespace-pre-wrap">${memo.content}</p>` : ''}
-                        
-                        <div class="mt-auto pt-3 border-t border-slate-100 flex justify-between items-center">
-                            <div class="flex items-center text-slate-500 text-[11px] font-mono tracking-tighter bg-slate-50 px-2 py-1 rounded-md border border-slate-200">
-                                <i data-lucide="calendar" class="w-3 h-3 mr-1.5"></i>
-                                <span>${memo.date} ${memo.time}</span>
-                            </div>
-                            <div class="flex items-center text-[12px] font-bold ${status.color} tracking-wide">
-                                ${status.isOverdue ? '<i data-lucide="alert-circle" class="w-3.5 h-3.5 mr-1"></i>' : '<i data-lucide="timer" class="w-3.5 h-3.5 mr-1"></i>'}
-                                <span>${status.text}</span>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            });
-            
-            container.innerHTML = html;
-            lucide.createIcons();
-        };
-
-        window.promptEditMemo = (id = null) => {
-            const isNew = !id;
-            let memo = isNew ? { id: 'm_' + Date.now(), title: '', content: '', date: '', time: '' } : memoData.find(m => m.id === id);
-            
-            if (!memo) return;
-
-            // 如果是新增，預設時間為明天早上 9 點
-            if (isNew) {
-                const tomorrow = window.getNow();
-                tomorrow.setDate(tomorrow.getDate() + 1);
-                memo.date = tomorrow.toISOString().slice(0, 10);
-                memo.time = '09:00';
-            }
-
-            const modalHtml = `
-                <div id="memoEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onmousedown="if(event.target === this) this.isBg = true;" onmouseup="if(event.target === this && this.isBg) { this.remove(); this.isBg = false; }">
-                    <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onmousedown="event.stopPropagation()">
-                        <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="sticky-note" class="w-5 h-5 mr-2 text-blue-500"></i>${isNew ? '新增備忘錄' : '編輯備忘錄'}</h3>
-                        
-                        <div class="space-y-4">
-                            <div>
-                                <label class="text-[11px] font-bold text-slate-500 mb-1 block">備忘事項標題 <span class="text-red-400">*</span></label>
-                                <input type="text" id="memoEditTitle" value="${memo.title}" placeholder="請輸入標題" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 shadow-inner">
-                            </div>
-                            <div>
-                                <label class="text-[11px] font-bold text-slate-500 mb-1 block">詳細內容 (選填)</label>
-                                <textarea id="memoEditContent" rows="3" placeholder="添加更多細節..." class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none text-slate-700 shadow-inner resize-none">${memo.content}</textarea>
-                            </div>
-                            <div class="flex gap-3">
-                                <div class="flex-1 relative">
-                                    <label class="text-[11px] font-bold text-slate-500 mb-1 block">目標日期 <span class="text-red-400">*</span></label>
-                                    <input type="date" id="memoEditDate" value="${memo.date}" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none font-mono shadow-inner cursor-text text-slate-700">
-                                </div>
-                                <div class="flex-1 relative">
-                                    <label class="text-[11px] font-bold text-slate-500 mb-1 block">目標時間 <span class="text-red-400">*</span></label>
-                                    <input type="time" id="memoEditTime" value="${memo.time}" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none font-mono shadow-inner cursor-text text-slate-700">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="mt-6 flex justify-between items-center border-t border-slate-100 pt-4">
-                            ${!isNew ? `<button onclick="window.deleteMemo('${memo.id}')" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-2.5 rounded-lg text-sm font-bold transition-colors flex items-center shadow-sm active:scale-95"><i data-lucide="trash-2" class="w-4 h-4 mr-1"></i>刪除</button>` : '<div></div>'}
-                            <div class="space-x-2 flex">
-                                <button onclick="document.getElementById('memoEditModal').remove()" class="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-bold transition-colors active:scale-95">取消</button>
-                                <button onclick="window.saveMemo('${memo.id}')" class="px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-bold shadow-sm transition-colors active:scale-95">儲存</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-            document.body.insertAdjacentHTML('beforeend', modalHtml);
-            lucide.createIcons();
-
-            if (isNew) {
-                setTimeout(() => document.getElementById('memoEditTitle')?.focus(), 100);
-            }
-        };
-
-        window.saveMemo = (id) => {
-            const title = document.getElementById('memoEditTitle').value.trim();
-            const content = document.getElementById('memoEditContent').value.trim();
-            const date = document.getElementById('memoEditDate').value;
-            const time = document.getElementById('memoEditTime').value;
-
-            if (!title || !date || !time) {
-                window.showToast("標題、日期和時間為必填", true);
-                return;
-            }
-
-            const existingIdx = memoData.findIndex(m => m.id === id);
-            const memoObj = { id, title, content, date, time };
-
-            if (existingIdx !== -1) {
-                memoData[existingIdx] = memoObj;
-            } else {
-                memoData.push(memoObj);
-            }
-
-            safeSetLocal('work_cache_memo', memoData);
-            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'memo'), { memos: memoData }, { merge: true });
-            
-            document.getElementById('memoEditModal')?.remove();
-            window.showToast("備忘錄已儲存");
-            window.renderMemoPage();
-        };
-
-        window.deleteMemo = (id) => {
-            window.showConfirm('刪除備忘錄', '確定要刪除這個備忘事項嗎？', () => {
-                memoData = memoData.filter(m => m.id !== id);
-                safeSetLocal('work_cache_memo', memoData);
-                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'memo'), { memos: memoData });
-                
-                document.getElementById('memoEditModal')?.remove();
-                window.showToast("備忘錄已刪除");
-                window.renderMemoPage();
-            });
-        };
-
     </script>
 </head>
 <body class="sm:px-4 sm:py-8 flex justify-center relative min-h-screen">
@@ -2272,11 +2449,12 @@
 
             <!-- 分頁切換 (Tab Control) -->
             <div class="mt-4 flex bg-[#f0ebe1] rounded-lg p-1 shadow-inner border border-[#e5dfd3] relative z-20">
-                <button id="tabCustom" onclick="window.switchTab('custom')" class="flex-1 py-1.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest">自訂流程</button>
-                <button id="tabDaily" onclick="window.switchTab('daily')" class="flex-1 py-1.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest">每日排程</button>
-                <button id="tabTimeline" onclick="window.switchTab('timeline')" class="flex-1 py-1.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest">動態任務</button>
-                <button id="tabMemo" onclick="window.switchTab('memo')" class="flex-1 py-1.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest">備忘錄</button>
-                <button id="tabGallery" onclick="window.switchTab('gallery')" class="flex-1 py-1.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest">更多圖片</button>
+                <button id="tabCustom" onclick="window.switchTab('custom')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center truncate">自訂</button>
+                <button id="tabDaily" onclick="window.switchTab('daily')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center truncate">排程</button>
+                <button id="tabTimeline" onclick="window.switchTab('timeline')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center truncate">動態</button>
+                <button id="tabMemo" onclick="window.switchTab('memo')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center truncate">備忘</button>
+                <button id="tabMap" onclick="window.switchTab('map')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center truncate">地圖</button>
+                <button id="tabGallery" onclick="window.switchTab('gallery')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center truncate">圖庫</button>
             </div>
         </header>
 
@@ -2371,15 +2549,75 @@
             
         </main>
 
-        <!-- Main Content (備忘錄頁面) -->
-        <main id="memoPage" class="hidden h-[calc(100vh-140px)] sm:h-[750px] overflow-y-auto relative z-10 bg-[#fdfbf7] scrollbar-hide p-4 sm:p-5">
-            <div id="memoContainer" class="space-y-4 pb-24 min-h-full">
-                <!-- 備忘錄卡片生成區 -->
+        <!-- Main Content (備忘錄) -->
+        <main id="memoPage" class="hidden p-5 space-y-4 h-[calc(100vh-140px)] sm:h-[750px] overflow-y-auto relative z-10 bg-[#fdfbf7] scrollbar-hide">
+            <div class="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm sticky top-0 z-20">
+                <h2 class="text-sm font-bold text-slate-800 tracking-widest flex items-center"><i data-lucide="calendar-clock" class="w-4 h-4 mr-2 text-blue-500"></i>未來任務備忘</h2>
+                <button onclick="window.openMemoEditor()" class="bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm flex items-center active:scale-95"><i data-lucide="plus" class="w-3.5 h-3.5 mr-1"></i>新增</button>
+            </div>
+            <div id="memoContainer" class="space-y-3 pb-10"></div>
+        </main>
+
+        <!-- Main Content (可視地圖) -->
+        <main id="mapPage" class="hidden h-[calc(100vh-140px)] sm:h-[750px] flex-col relative z-10 bg-[#f0ebe1] overflow-hidden">
+            <div class="p-2 border-b border-[#e6e2d6] flex justify-between items-center bg-white shrink-0 shadow-sm z-20 relative">
+                <div class="flex gap-1.5 overflow-x-auto scrollbar-hide w-full">
+                    <button onclick="window.toggleMapEditMode()" id="mapEditBtn" class="bg-slate-50 text-slate-600 border border-slate-200 px-2.5 py-1.5 rounded-lg flex items-center hover:bg-amber-50 active:scale-95 text-[11px] font-bold tracking-wide transition-colors shrink-0 shadow-sm">
+                        <i data-lucide="map-pin" class="w-3.5 h-3.5 mr-1.5 text-amber-500"></i> <span id="mapEditBtnText">標記崗位</span>
+                    </button>
+                    <button onclick="window.openScheduleManager()" class="bg-slate-50 text-slate-600 border border-slate-200 px-2.5 py-1.5 rounded-lg flex items-center hover:bg-emerald-50 active:scale-95 text-[11px] font-bold tracking-wide transition-colors shrink-0 shadow-sm ml-auto">
+                        <i data-lucide="users" class="w-3.5 h-3.5 mr-1.5 text-emerald-500"></i> 成員排班
+                    </button>
+                </div>
             </div>
             
-            <button onclick="window.promptEditMemo()" class="fixed sm:absolute bottom-8 right-6 w-14 h-14 bg-blue-500 text-white rounded-full shadow-[0_4px_14px_rgba(59,130,246,0.4)] flex items-center justify-center hover:bg-blue-600 hover:scale-105 active:scale-95 transition-all z-50 group border-2 border-white">
-                <i data-lucide="plus" class="w-6 h-6 group-hover:rotate-90 transition-transform duration-300"></i>
-            </button>
+            <div class="flex-1 relative overflow-hidden p-3" id="mapScrollContainer">
+                <div id="mapWrapper" class="relative w-full h-full bg-slate-100 rounded-xl overflow-hidden shadow-inner border-[3px] border-[#d6d0c4] transition-colors" onclick="window.onMapClick(event)">
+                    
+                    <!-- 1/F 一樓平面圖 (實體區塊) -->
+                    <div class="absolute top-2 left-2 right-2 bottom-[51%] border-[3px] border-slate-300 bg-white rounded-xl pointer-events-none shadow-sm overflow-hidden">
+                        <div class="absolute top-0 left-0 bg-blue-500 text-white px-3 py-1 rounded-br-xl font-black text-[11px] shadow-sm z-10 tracking-widest">1/F 一樓</div>
+                        
+                        <!-- 客服室 -->
+                        <div class="absolute top-[12%] left-[35%] w-[30%] h-[40%] border-[3px] border-slate-200 bg-slate-50 flex items-center justify-center rounded-lg">
+                            <span class="text-[10px] text-slate-400 font-bold tracking-widest rotate-[-5deg]">客服室</span>
+                        </div>
+                        
+                        <!-- 樓梯示意 -->
+                        <div class="absolute bottom-[10%] right-[5%] w-[15%] h-[40%] border-2 border-dashed border-slate-300 flex flex-col justify-evenly p-0.5">
+                            <div class="w-full border-t-[3px] border-slate-200"></div>
+                            <div class="w-full border-t-[3px] border-slate-200"></div>
+                            <div class="w-full border-t-[3px] border-slate-200"></div>
+                            <span class="text-[8px] text-slate-400 text-center font-bold mt-1 tracking-widest">樓梯</span>
+                        </div>
+                    </div>
+
+                    <!-- G/F 地面層平面圖 (實體區塊) -->
+                    <div class="absolute top-[51%] left-2 right-2 bottom-2 border-[3px] border-slate-300 bg-white rounded-xl pointer-events-none shadow-sm overflow-hidden">
+                        <div class="absolute top-0 left-0 bg-emerald-500 text-white px-3 py-1 rounded-br-xl font-black text-[11px] shadow-sm z-10 tracking-widest">G/F 地面層</div>
+                        
+                        <!-- 花園仔 -->
+                        <div class="absolute top-[25%] left-[5%] w-[35%] h-[45%] border-2 border-emerald-300 bg-emerald-50/60 flex flex-col items-center justify-center rounded-xl border-dashed">
+                            <i data-lucide="flower-2" class="w-5 h-5 text-emerald-400 mb-1"></i>
+                            <span class="text-[10px] text-emerald-600 font-bold tracking-widest">花園區</span>
+                        </div>
+                        
+                        <!-- 魚檔 -->
+                        <div class="absolute top-[25%] right-[5%] w-[35%] h-[35%] border-2 border-blue-300 bg-blue-50/60 flex flex-col items-center justify-center rounded-xl border-dashed">
+                            <i data-lucide="fish" class="w-5 h-5 text-blue-400 mb-1"></i>
+                            <span class="text-[10px] text-blue-600 font-bold tracking-widest">魚檔區</span>
+                        </div>
+                        
+                        <!-- 大門出入口 -->
+                        <div class="absolute bottom-0 left-[40%] w-[20%] h-[15px] border-t-[3px] border-l-[3px] border-r-[3px] border-slate-300 bg-slate-100 rounded-t-lg flex items-center justify-center">
+                            <span class="text-[8px] font-bold text-slate-500 mb-2 tracking-widest">主出入口</span>
+                        </div>
+                    </div>
+                    
+                    <!-- 動態標記與成員點位將生成於此 -->
+                    <div id="mapPointsContainer" class="absolute inset-0 pointer-events-none overflow-hidden z-20"></div>
+                </div>
+            </div>
         </main>
 
         <!-- Main Content (獨立圖庫存檔) -->
@@ -2448,6 +2686,18 @@
             <div class="p-4 border-t border-slate-100 flex justify-end space-x-2 bg-slate-50/50">
                 <button id="confirmBtnCancel" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-lg text-sm font-bold transition-colors active:scale-95 shadow-sm">取消</button>
                 <button id="confirmBtnOk" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-bold transition-colors active:scale-95 shadow-sm">確定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 地圖排班管理 Modal -->
+    <div id="scheduleManageModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
+        <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-full max-w-[340px] flex flex-col overflow-hidden relative">
+            <header class="p-3.5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <h2 class="text-slate-800 font-bold tracking-widest text-sm flex items-center"><i data-lucide="users-round" class="w-4 h-4 mr-2 text-blue-500"></i> 管理成員排班時間表</h2>
+                <button onclick="window.closeScheduleManager()" class="text-slate-400 p-1.5 rounded-full hover:bg-slate-200 active:scale-95 transition-all"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </header>
+            <div id="scheduleManageList" class="p-3 overflow-y-auto max-h-[60vh] bg-[#fdfbf7] scrollbar-hide">
             </div>
         </div>
     </div>
