@@ -19,7 +19,7 @@
         .scrollbar-hide::-webkit-scrollbar { display: none; }
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
         
-        /* 新增：手繪與筆記本彩色元素 */
+        /* 手繪與筆記本彩色元素 */
         .marker-yellow { background: linear-gradient(104deg, transparent 0%, rgba(254, 240, 138, 0.8) 2%, rgba(253, 224, 71, 0.9) 98%, transparent 100%); background-size: 100% 38%; background-position: 0 85%; background-repeat: no-repeat; padding: 0 2px; }
         .marker-pink { background: linear-gradient(104deg, transparent 0%, rgba(254, 205, 211, 0.8) 2%, rgba(253, 164, 175, 0.9) 98%, transparent 100%); background-size: 100% 38%; background-position: 0 85%; background-repeat: no-repeat; padding: 0 2px; }
         .marker-blue { background: linear-gradient(104deg, transparent 0%, rgba(186, 230, 253, 0.8) 2%, rgba(125, 211, 252, 0.9) 98%, transparent 100%); background-size: 100% 38%; background-position: 0 85%; background-repeat: no-repeat; padding: 0 2px; }
@@ -33,6 +33,8 @@
         .tape-strip-1 { background-color: rgba(255, 255, 255, 0.6); }
         .tape-strip-2 { background-color: rgba(254, 240, 138, 0.5); }
         .tape-strip-3 { background-color: rgba(186, 230, 253, 0.5); }
+        .tape-strip-blue { background-color: rgba(186, 230, 253, 0.5); }
+        .tape-strip-red { background-color: rgba(254, 205, 211, 0.5); }
 
         /* 卡片滾動對焦特效 */
         .daily-task-card { transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), border-color 0.4s cubic-bezier(0.25, 0.8, 0.25, 1); }
@@ -54,6 +56,14 @@
             transform: translateY(-20px) scale(1.03) !important;
             box-shadow: 0 25px 30px -5px rgba(0, 0, 0, 0.25), 0 15px 15px -5px rgba(0, 0, 0, 0.1) !important;
             opacity: 1 !important;
+        }
+
+        /* 雪房超時動畫 */
+        .timer-pulse { animation: pulse-red 2s infinite; }
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
         }
 
         /* 深色模式覆寫 - 柔和文字與低光度線條設定 */
@@ -88,7 +98,7 @@
         .dark-mode .active-task .timeline-card { background-color: #172554 !important; border-color: #1e3a8a !important; }
         .dark-mode .active-task .timeline-card .bg-slate-100\/50 { background-color: #0f172a !important; }
         .dark-mode .timeline-card .bg-slate-100\/50 { background-color: #0f172a !important; border-color: #334155 !important; }
-        .dark-mode input[type="time"], .dark-mode input[type="text"] { background-color: #334155 !important; color: #f8fafc !important; border-color: #475569 !important; }
+        .dark-mode input[type="time"], .dark-mode input[type="text"], .dark-mode input[type="number"], .dark-mode textarea { background-color: #334155 !important; color: #f8fafc !important; border-color: #475569 !important; }
         
         /* 專屬調整：連線狀態與時鐘選單明顯化 */
         .dark-mode header .bg-white\/70 { background-color: #1e293b !important; border-color: #475569 !important; }
@@ -165,14 +175,21 @@
         let mapData = { points: JSON.parse(JSON.stringify(defaultMapPoints)) }; 
         let memberSchedules = []; 
 
-        // 新增：狀態時光機紀錄
+        // 雪房模組全域變數
+        let crRecords = [];
+        let crItemTypes = ['海鮮', '肉類', '蔬果', '其他'];
+        let crCurrentSelectedType = '';
+        let crCurrentTab = 'active'; 
+        let crTimerInterval;
+        const CR_TIME_LIMIT_MS = 24 * 60 * 60 * 1000; // 24 Hours
+
         let actionHistory = [];
         window.saveStateSnapshot = () => {
             actionHistory.push({
                 tasks: JSON.parse(JSON.stringify(taskCompletionState)),
                 subtasks: JSON.parse(JSON.stringify(subTaskCompletionState))
             });
-            if (actionHistory.length > 30) actionHistory.shift(); // 最多記憶 30 步
+            if (actionHistory.length > 30) actionHistory.shift(); 
         };
 
         let currentGalleryCategory = '全部';
@@ -186,7 +203,6 @@
         let simInterval = null;
         window.getNow = () => new Date(Date.now() + timeOffset);
 
-        // 深色模式切換與初始化
         window.toggleDarkMode = () => {
             document.body.classList.toggle('dark-mode');
             const isDark = document.body.classList.contains('dark-mode');
@@ -211,7 +227,6 @@
             }, 3000);
         };
 
-        // 自訂確認對話框 (取代原生 confirm)
         window.showConfirm = (title, message, onConfirmCallback) => {
             const modal = document.getElementById('customConfirmModal');
             document.getElementById('confirmModalTitle').innerHTML = `<i data-lucide="alert-triangle" class="w-5 h-5 mr-2 text-amber-500"></i> ${title}`;
@@ -262,7 +277,9 @@
             futureMemos = getLocal('work_cache_future_memos', []);
             mapData = getLocal('work_cache_map_data', { points: {} });
             
-            // 強制檢查並補齊預設點位
+            crRecords = getLocal('coldRoomRecords', []);
+            crItemTypes = getLocal('coldRoomTypes', ['海鮮', '肉類', '蔬果', '其他']);
+
             if(!mapData.points) mapData.points = {};
             for (const [id, data] of Object.entries(defaultMapPoints)) {
                 let exists = false;
@@ -276,62 +293,11 @@
 
             if (!galleryCategories.includes('任務附件')) galleryCategories.push('任務附件');
 
-            if(document.getElementById('dailySchedulePage') && !document.getElementById('dailySchedulePage').classList.contains('hidden')) {
-                renderDailySchedule();
-            }
-            if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) {
-                window.renderGallery();
-            }
-            if(document.getElementById('timelinePage') && !document.getElementById('timelinePage').classList.contains('hidden')) {
-                window.renderTimeline(false);
-            }
-            if(document.getElementById('mapPage') && !document.getElementById('mapPage').classList.contains('hidden')) {
-                window.renderMap();
-            }
-        }
-
-        async function migrateOldMassivePhotos() {
-            let hasMigrated = false;
-            for (const taskId of Object.keys(taskExtrasState)) {
-                let extra = taskExtrasState[taskId];
-                
-                if (extra.currentPhotos && extra.currentPhotos.length > 0) {
-                    for (let i = 0; i < extra.currentPhotos.length; i++) {
-                        const compressedUrl = await compressBase64ImageSafeAsync(extra.currentPhotos[i]);
-                        const photoId = `mig_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
-                        const newItem = { id: photoId, url: compressedUrl, title: '舊任務紀錄', category: '任務附件', taskId, timestamp: new Date().toLocaleString('zh-TW') };
-                        galleryItems.unshift(newItem);
-                        if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId), newItem).catch(()=>{});
-                    }
-                    extra.currentPhotos = []; 
-                    hasMigrated = true;
-                }
-                
-                if (extra.subTasks) {
-                    for (const subIdx of Object.keys(extra.subTasks)) {
-                        if (extra.subTasks[subIdx].photos && extra.subTasks[subIdx].photos.length > 0) {
-                            for (let i = 0; i < extra.subTasks[subIdx].photos.length; i++) {
-                                const compressedUrl = await compressBase64ImageSafeAsync(extra.subTasks[subIdx].photos[i]);
-                                const photoId = `migs_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
-                                const newItem = { id: photoId, url: compressedUrl, title: '舊子任務紀錄', category: '任務附件', taskId, subIdx: parseInt(subIdx), timestamp: new Date().toLocaleString('zh-TW') };
-                                galleryItems.unshift(newItem);
-                                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', photoId), newItem).catch(()=>{});
-                            }
-                            extra.subTasks[subIdx].photos = []; 
-                            hasMigrated = true;
-                        }
-                    }
-                }
-            }
-            
-            if (hasMigrated) {
-                safeSetLocal('work_cache_daily_extras', taskExtrasState);
-                safeSetLocal('work_cache_gallery_items', galleryItems);
-                if(currentUser) {
-                    setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState });
-                }
-                renderDailySchedule();
-            }
+            if(document.getElementById('dailySchedulePage') && !document.getElementById('dailySchedulePage').classList.contains('hidden')) renderDailySchedule();
+            if(document.getElementById('galleryPage') && !document.getElementById('galleryPage').classList.contains('hidden')) window.renderGallery();
+            if(document.getElementById('timelinePage') && !document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+            if(document.getElementById('mapPage') && !document.getElementById('mapPage').classList.contains('hidden')) window.renderMap();
+            if(document.getElementById('coldRoomPage') && !document.getElementById('coldRoomPage').classList.contains('hidden')) window.crRenderList();
         }
 
         function setupPureRealtimeSync() {
@@ -434,7 +400,26 @@
                 }
             }, (err) => console.error(err));
 
-            setTimeout(migrateOldMassivePhotos, 2000);
+            // Sync Cold Room Data
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'coldRoom'), (docSnap) => {
+                if(docSnap.exists()) {
+                    const data = docSnap.data();
+                    let needsRender = false;
+                    if(data.records && JSON.stringify(crRecords) !== JSON.stringify(data.records)) {
+                        crRecords = data.records;
+                        safeSetLocal('coldRoomRecords', crRecords);
+                        needsRender = true;
+                    }
+                    if(data.types && JSON.stringify(crItemTypes) !== JSON.stringify(data.types)) {
+                        crItemTypes = data.types;
+                        safeSetLocal('coldRoomTypes', crItemTypes);
+                        needsRender = true;
+                    }
+                    if(needsRender && !document.getElementById('coldRoomPage')?.classList.contains('hidden')) {
+                        window.crRenderList();
+                    }
+                }
+            }, (err) => console.error(err));
         }
 
         function compressImageSafeAsync(file) {
@@ -570,6 +555,70 @@
             }
         };
 
+        window.toggleTask = async (taskId) => {
+            window.saveStateSnapshot();
+            const isCompleted = !taskCompletionState[taskId];
+            taskCompletionState[taskId] = isCompleted;
+            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState }, { merge: true });
+            renderDailySchedule(); 
+        };
+
+        window.toggleSubTask = (taskId, idx, event) => {
+            if(event) event.stopPropagation();
+            window.saveStateSnapshot();
+            if (!subTaskCompletionState[taskId]) subTaskCompletionState[taskId] = {};
+            subTaskCompletionState[taskId][idx] = !subTaskCompletionState[taskId][idx];
+            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState }, { merge: true });
+            renderDailySchedule();
+        };
+
+        window.toggleTaskDetails = (taskId, event) => {
+            event.stopPropagation();
+            expandedTasksState[taskId] = !expandedTasksState[taskId];
+            renderDailySchedule();
+        };
+
+        window.deleteTaskCard = (taskId, event) => {
+            if(event) event.stopPropagation();
+            dailyScheduleData = dailyScheduleData.filter(t => t.id !== taskId);
+            delete taskCompletionState[taskId];
+            delete subTaskCompletionState[taskId];
+            delete taskExtrasState[taskId];
+            
+            if(currentUser) {
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData });
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState });
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState });
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState });
+            }
+            renderDailySchedule();
+            if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+            window.showToast("排程卡片已刪除");
+        };
+
+        window.changeTaskGroup = (taskId) => {
+            const grps = ['無', 'A', 'B', 'C'];
+            const task = dailyScheduleData.find(t => t.id === taskId);
+            if(!task) return;
+            let currentIdx = grps.indexOf(task.group || '無');
+            let nextIdx = (currentIdx + 1) % grps.length;
+            let nextGrp = grps[nextIdx] === '無' ? '' : grps[nextIdx];
+            task.group = nextGrp;
+            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }, { merge: true });
+            renderDailySchedule();
+            if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+        };
+
+        window.getGroupColor = (group) => {
+            if (!group) return '';
+            const map = {
+                'A': 'bg-pink-50 text-pink-600 border-pink-200',
+                'B': 'bg-blue-50 text-blue-600 border-blue-200',
+                'C': 'bg-emerald-50 text-emerald-600 border-emerald-200'
+            };
+            return map[group] || 'bg-slate-50 text-slate-600 border-slate-200';
+        };
+
         window.handleDailyPhotoUpload = async (taskId, inputElement) => {
             const files = inputElement.files;
             if (!files || files.length === 0 || !currentUser) return;
@@ -693,98 +742,360 @@
             }
         };
 
-        window.toggleTask = async (taskId) => {
-            window.saveStateSnapshot();
-            const isCompleted = !taskCompletionState[taskId];
-            taskCompletionState[taskId] = isCompleted;
-            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState }, { merge: true });
-            renderDailySchedule(); 
-        };
-
-        window.toggleSubTask = (taskId, idx, event) => {
-            if(event) event.stopPropagation();
-            window.saveStateSnapshot();
-            if (!subTaskCompletionState[taskId]) subTaskCompletionState[taskId] = {};
-            subTaskCompletionState[taskId][idx] = !subTaskCompletionState[taskId][idx];
-            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState }, { merge: true });
-            renderDailySchedule();
-        };
-
-        window.toggleTaskDetails = (taskId, event) => {
-            event.stopPropagation();
-            expandedTasksState[taskId] = !expandedTasksState[taskId];
-            renderDailySchedule();
-        };
-
-        window.deleteTaskCard = (taskId, event) => {
-            if(event) event.stopPropagation();
-            dailyScheduleData = dailyScheduleData.filter(t => t.id !== taskId);
-            delete taskCompletionState[taskId];
-            delete subTaskCompletionState[taskId];
-            delete taskExtrasState[taskId];
-            
+        window.crSaveData = () => {
+            safeSetLocal('coldRoomRecords', crRecords);
+            safeSetLocal('coldRoomTypes', crItemTypes);
             if(currentUser) {
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData });
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_states'), { states: taskCompletionState });
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState });
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState });
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'coldRoom'), { records: crRecords, types: crItemTypes }, { merge: true });
             }
-            renderDailySchedule();
-            if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
-            window.showToast("排程卡片已刪除");
         };
 
-        window.changeTaskGroup = (taskId) => {
-            const grps = ['無', 'A', 'B', 'C'];
-            const task = dailyScheduleData.find(t => t.id === taskId);
-            if(!task) return;
-            let currentIdx = grps.indexOf(task.group || '無');
-            let nextIdx = (currentIdx + 1) % grps.length;
-            let nextGrp = grps[nextIdx] === '無' ? '' : grps[nextIdx];
-            task.group = nextGrp;
-            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'schedule'), { tasks: dailyScheduleData }, { merge: true });
-            renderDailySchedule();
-            if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
-        };
+        window.crSwitchTab = (tab) => {
+            crCurrentTab = tab;
+            const btnActive = document.getElementById('crTabActive');
+            const btnHistory = document.getElementById('crTabHistory');
+            const controls = document.getElementById('crActiveControls');
 
-        window.getGroupColor = (group) => {
-            if (!group) return '';
-            const map = {
-                'A': 'bg-pink-50 text-pink-600 border-pink-200',
-                'B': 'bg-blue-50 text-blue-600 border-blue-200',
-                'C': 'bg-emerald-50 text-emerald-600 border-emerald-200'
-            };
-            return map[group] || 'bg-slate-50 text-slate-600 border-slate-200';
-        };
+            const activeClass = "flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all tracking-widest text-center";
+            const inactiveClass = "flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all tracking-widest text-center";
 
-        window.openArchive = (taskId) => {
-            const container = document.getElementById('archiveContent');
-            const modal = document.getElementById('archiveModal');
-            
-            const taskPhotos = galleryItems.filter(p => p.taskId === taskId);
-            
-            if(taskPhotos.length === 0) {
-                container.innerHTML = '<div class="flex flex-col items-center justify-center h-full py-10"><i data-lucide="image-off" class="w-12 h-12 text-slate-300 mb-3"></i><div class="text-slate-500 tracking-widest text-xs">目前沒有任何圖片紀錄</div></div>';
+            if (tab === 'active') {
+                btnActive.className = activeClass;
+                btnHistory.className = inactiveClass;
+                controls.classList.remove('hidden');
             } else {
-                let html = '<div class="grid grid-cols-2 gap-3 pb-8">';
-                taskPhotos.forEach(item => {
-                    const noteText = item.subIdx !== undefined ? `子任務 ${item.subIdx + 1}` : '主任務紀錄';
-                    html += `
-                    <div class="bg-white rounded-md overflow-hidden border border-slate-200 shadow-sm flex flex-col pb-1">
-                        <div class="aspect-square w-full relative p-1 pb-0">
-                            <img src="${item.url}" class="w-full h-full object-cover rounded-sm active:scale-95 transition-transform" onclick="window.openFullscreenImg('${item.url}')"/>
-                        </div>
-                        <div class="p-1.5 flex flex-col bg-white flex-1">
-                            <div class="text-[10px] text-slate-600 font-medium break-words whitespace-pre-wrap w-full text-center px-1">${noteText}<br><span class="text-[8px] text-slate-400">${item.timestamp}</span></div>
-                        </div>
-                    </div>`;
-                });
-                html += '</div>';
-                container.innerHTML = html;
+                btnHistory.className = activeClass;
+                btnActive.className = inactiveClass;
+                controls.classList.add('hidden');
             }
-            lucide.createIcons();
+            window.crRenderList();
+        };
+
+        window.crRenderTypesInModal = () => {
+            const container = document.getElementById('crTypeContainer');
+            if(!container) return;
+            if (crItemTypes.length === 0) {
+                container.innerHTML = '<span class="text-[11px] text-slate-400 py-1">尚無類型，請新增</span>';
+                return;
+            }
+
+            container.innerHTML = crItemTypes.map((type, index) => `
+                <div class="relative inline-flex items-center px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-bold border transition-colors cursor-pointer ${crCurrentSelectedType === type ? 'bg-blue-100 border-blue-400 text-blue-700 shadow-sm' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}" 
+                     onclick="window.crSelectType('${type}')">
+                    ${type}
+                    <button onclick="event.stopPropagation(); window.crDeleteType(${index})" class="ml-2 -mr-1 text-slate-400 hover:text-red-500 p-0.5 rounded-full hover:bg-red-50 transition-colors">
+                        <i data-lucide="x" class="w-3 h-3 pointer-events-none"></i>
+                    </button>
+                </div>
+            `).join('');
+            lucide.createIcons({root: container});
+        };
+
+        window.crSelectType = (type) => {
+            crCurrentSelectedType = (crCurrentSelectedType === type) ? '' : type;
+            window.crRenderTypesInModal();
+        };
+
+        window.crAddNewType = () => {
+            const input = document.getElementById('crInputNewType');
+            const newType = input.value.trim();
+            if (!newType) return;
+            if (crItemTypes.includes(newType)) {
+                return window.showToast('此類型已存在', true);
+            }
+            crItemTypes.push(newType);
+            window.crSaveData();
+            input.value = '';
+            crCurrentSelectedType = newType;
+            window.crRenderTypesInModal();
+        };
+
+        window.crDeleteType = (index) => {
+            const deletedType = crItemTypes[index];
+            crItemTypes.splice(index, 1);
+            if (crCurrentSelectedType === deletedType) crCurrentSelectedType = ''; 
+            window.crSaveData();
+            window.crRenderTypesInModal();
+        };
+
+        window.crOpenAddModal = () => {
+            document.getElementById('crInputTenant').value = '';
+            document.getElementById('crInputQuantity').value = '';
+            document.getElementById('crInputNewType').value = '';
+            crCurrentSelectedType = '';
+            window.crRenderTypesInModal();
+
+            const modal = document.getElementById('crAddModal');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
+            setTimeout(() => document.getElementById('crInputTenant').focus(), 100);
+        };
+
+        window.crCloseAddModal = () => {
+            const modal = document.getElementById('crAddModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        };
+
+        window.crSubmitAddRecord = () => {
+            const tenant = document.getElementById('crInputTenant').value.trim();
+            const qty = parseInt(document.getElementById('crInputQuantity').value, 10);
+
+            if (!tenant) return window.showToast('請輸入檔主編號', true);
+            if (!qty || qty <= 0) return window.showToast('請輸入有效的數量', true);
+
+            const newRecord = {
+                id: 'cr_' + Date.now(),
+                tenant: tenant,
+                type: crCurrentSelectedType || '未指定',
+                depositQuantity: qty,
+                remainingQuantity: qty,
+                depositTime: Date.now(),
+                withdrawHistory: [], 
+                status: 'active'
+            };
+
+            crRecords.unshift(newRecord); 
+            window.crSaveData();
+            window.crCloseAddModal();
+            window.crRenderList();
+            window.showToast('已成功新增存放紀錄');
+        };
+
+        window.crOpenWithdrawModal = (id) => {
+            const record = crRecords.find(r => r.id === id);
+            if (!record) return;
+
+            document.getElementById('crCurrentActionId').value = id;
+            document.getElementById('crWithdrawTenantDisplay').textContent = record.tenant;
+            document.getElementById('crWithdrawRemainDisplay').textContent = record.remainingQuantity;
+            document.getElementById('crInputWithdrawQty').value = record.remainingQuantity; 
+
+            const modal = document.getElementById('crWithdrawModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        };
+
+        window.crCloseWithdrawModal = () => {
+            const modal = document.getElementById('crWithdrawModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        };
+
+        window.crSubmitWithdraw = () => {
+            const id = document.getElementById('crCurrentActionId').value;
+            const withdrawQty = parseInt(document.getElementById('crInputWithdrawQty').value, 10);
+
+            const recordIndex = crRecords.findIndex(r => r.id === id);
+            if (recordIndex === -1) return;
+            const record = crRecords[recordIndex];
+
+            if (!withdrawQty || withdrawQty <= 0) return window.showToast('請輸入有效的取出數量', true);
+            if (withdrawQty > record.remainingQuantity) return window.showToast(`數量錯誤！目前僅剩 ${record.remainingQuantity} 件`, true);
+
+            record.remainingQuantity -= withdrawQty;
+            record.withdrawHistory.push({ time: Date.now(), qty: withdrawQty });
+
+            if (record.remainingQuantity === 0) {
+                record.status = 'history';
+                window.showToast(`已全部取出，紀錄移至歷史`);
+            } else {
+                window.showToast(`已取出 ${withdrawQty} 件，剩餘 ${record.remainingQuantity} 件`);
+            }
+
+            window.crSaveData();
+            window.crCloseWithdrawModal();
+            window.crRenderList();
+        };
+
+        window.crExportToCSV = () => {
+            if (crRecords.length === 0) {
+                return window.showToast('目前沒有資料可以導出', true);
+            }
+
+            const headers = ['紀錄ID', '狀態', '檔主', '類型', '初始數量', '剩餘數量', '存入時間'];
+            let csvContent = "\uFEFF" + headers.join(',') + "\n"; // UTF-8 BOM for Excel
+
+            crRecords.forEach(r => {
+                const statusStr = r.status === 'active' ? '存放中' : '歷史記錄';
+                const typeStr = r.type || '未指定';
+                const dateStr = new Date(r.depositTime).toLocaleString('zh-TW', { hour12: false });
+                
+                const row = [r.id, statusStr, r.tenant, typeStr, r.depositQuantity, r.remainingQuantity, dateStr]
+                            .map(field => `"${field}"`);
+                
+                csvContent += row.join(',') + "\n";
+            });
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            
+            const dateStr = new Date().toISOString().slice(0,10).replace(/-/g,"");
+            link.setAttribute("href", url);
+            link.setAttribute("download", `雪房存貨紀錄_${dateStr}.csv`);
+            link.style.visibility = 'hidden';
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            window.showToast('已導出Excel (CSV) 檔案');
+        };
+
+        window.crFormatTime = (ms) => {
+            const d = new Date(ms);
+            return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+        };
+
+        window.crRenderList = () => {
+            const container = document.getElementById('crRecordsContainer');
+            if(!container) return;
+            container.innerHTML = '';
+
+            const filteredRecords = crRecords.filter(r => {
+                const effectiveStatus = (r.status === 'completed') ? 'history' : r.status;
+                return effectiveStatus === crCurrentTab;
+            });
+
+            if (crCurrentTab === 'active') {
+                const countEl = document.getElementById('crActiveCount');
+                if(countEl) countEl.textContent = filteredRecords.length;
+            }
+
+            if (filteredRecords.length === 0) {
+                container.innerHTML = `
+                    <div class="flex flex-col items-center justify-center py-20 text-slate-400">
+                        <i data-lucide="${crCurrentTab === 'active' ? 'inbox' : 'history'}" class="w-12 h-12 mb-3 opacity-30"></i>
+                        <span class="text-[11px] sm:text-xs font-bold tracking-widest">${crCurrentTab === 'active' ? '目前雪房沒有存放物品' : '尚無歷史紀錄'}</span>
+                    </div>`;
+                lucide.createIcons({ root: container });
+                return;
+            }
+
+            const now = Date.now();
+
+            filteredRecords.forEach((record, index) => {
+                const isHistory = (record.status === 'history' || record.status === 'completed');
+                const depositTimeStr = window.crFormatTime(record.depositTime);
+
+                const tapeStyleClass = index % 2 === 0 ? 'tape-strip-blue' : 'tape-strip-red';
+                const bgColor = isHistory ? 'bg-slate-50 opacity-80' : 'bg-white';
+                const borderColor = isHistory ? 'border-slate-200' : 'border-[#d6d0c4]';
+                
+                const typeDisplay = record.type ? record.type : '未指定';
+
+                let timeInfoHtml = '';
+                let actionHtml = '';
+
+                if (!isHistory) {
+                    const deadline = record.depositTime + CR_TIME_LIMIT_MS;
+                    const timeLeft = deadline - now;
+                    let timeStatusHtml = '';
+
+                    if (timeLeft > 0) {
+                        const hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60));
+                        const minsLeft = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+                        const isWarning = timeLeft < (4 * 60 * 60 * 1000);
+
+                        timeStatusHtml = `
+                            <div class="flex items-center ${isWarning ? 'text-amber-600' : 'text-emerald-600'} text-[10px] sm:text-[11px] font-bold tracking-wide cr-timer-display" data-deadline="${deadline}">
+                                <i data-lucide="clock" class="w-3.5 h-3.5 mr-1"></i>剩餘: ${hoursLeft}小時 ${minsLeft}分
+                            </div>`;
+                    } else {
+                        const overdueMs = Math.abs(timeLeft);
+                        const hoursOver = Math.floor(overdueMs / (1000 * 60 * 60));
+                        timeStatusHtml = `
+                            <div class="flex items-center text-red-600 text-[10px] sm:text-[11px] font-bold tracking-wide timer-pulse">
+                                <i data-lucide="alert-circle" class="w-3.5 h-3.5 mr-1"></i>已超時 ${hoursOver} 小時！
+                            </div>`;
+                    }
+
+                    timeInfoHtml = `
+                        <div class="flex justify-between items-center mb-3 pb-2 border-b border-slate-100">
+                            <div class="text-[9px] sm:text-[10px] text-slate-500 font-medium tracking-wide">存入: ${depositTimeStr}</div>
+                            ${timeStatusHtml}
+                        </div>
+                    `;
+
+                    actionHtml = `
+                        <div class="mt-3 pt-3 border-t border-slate-100 flex justify-end">
+                            <button onclick="window.crOpenWithdrawModal('${record.id}')" class="bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-[11px] sm:text-xs font-bold transition-colors border border-blue-200 active:scale-95 flex items-center shadow-sm">
+                                取出更新 <i data-lucide="arrow-right-circle" class="w-3 h-3 sm:w-3.5 sm:h-3.5 ml-1 pointer-events-none"></i>
+                            </button>
+                        </div>
+                    `;
+                } else {
+                    const lastWithdraw = record.withdrawHistory.length > 0 ? record.withdrawHistory[record.withdrawHistory.length - 1].time : record.depositTime;
+                    const durationMs = lastWithdraw - record.depositTime;
+                    const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(1);
+
+                    timeInfoHtml = `
+                        <div class="flex justify-between items-center mb-3 pb-2 border-b border-slate-100">
+                            <div class="text-[9px] sm:text-[10px] text-slate-500 font-medium">存入: ${depositTimeStr}</div>
+                            <div class="text-[9px] sm:text-[10px] text-slate-500 font-medium">總時長: ${durationHours} 小時</div>
+                        </div>
+                    `;
+
+                    actionHtml = `
+                        <div class="mt-2 text-[9px] sm:text-[10px] text-slate-400 font-medium flex items-center justify-end">
+                            <i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-500"></i> 已完全清空
+                        </div>
+                    `;
+                }
+
+                let partialHtml = '';
+                if (record.withdrawHistory.length > 0 && !isHistory) {
+                    partialHtml = `
+                        <div class="mt-2 space-y-1">
+                            ${record.withdrawHistory.map(w => `
+                                <div class="text-[9px] sm:text-[10px] text-slate-400 flex justify-between bg-slate-50 px-2 py-1 rounded border border-slate-100">
+                                    <span>${window.crFormatTime(w.time)}</span>
+                                    <span>取出 -${w.qty}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                }
+
+                const cardHtml = `
+                    <div class="daily-task-card ${bgColor} rounded-xl p-3 sm:p-4 border ${borderColor} relative shadow-sm transition-all flex flex-col group">
+                        <div class="tape-strip ${tapeStyleClass} hidden sm:block"></div>
+                        
+                        <button onclick="window.showConfirm('刪除紀錄', '確定要刪除這筆雪房紀錄嗎？', () => { crRecords = crRecords.filter(r => r.id !== '${record.id}'); window.crSaveData(); window.crRenderList(); window.showToast('已刪除紀錄'); })" class="absolute top-2 right-2 p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors z-10 sm:opacity-0 sm:group-hover:opacity-100 active:scale-95">
+                            <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
+                        </button>
+
+                        ${timeInfoHtml}
+
+                        <div class="flex items-center justify-between mt-1">
+                            <div class="flex items-center min-w-0 pr-2">
+                                <div class="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center mr-2 shrink-0">
+                                    <i data-lucide="user" class="w-3 h-3 sm:w-4 sm:h-4 text-slate-500"></i>
+                                </div>
+                                <div class="min-w-0">
+                                    <div class="flex items-center space-x-1.5 mb-0.5">
+                                        <h3 class="text-[13px] sm:text-sm font-black text-slate-800 tracking-wide truncate">${record.tenant}</h3>
+                                        <span class="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] sm:text-[10px] font-bold border border-slate-200 shrink-0 shadow-sm">${typeDisplay}</span>
+                                    </div>
+                                    <div class="text-[10px] sm:text-[11px] text-slate-500 font-medium">初始存入: ${record.depositQuantity}</div>
+                                </div>
+                            </div>
+
+                            <div class="text-right shrink-0">
+                                <div class="text-[9px] sm:text-[10px] text-slate-500 font-bold mb-0.5">目前剩餘</div>
+                                <div class="text-xl sm:text-2xl font-black ${record.remainingQuantity > 0 ? 'text-blue-600' : 'text-slate-400'} leading-none">${record.remainingQuantity}</div>
+                            </div>
+                        </div>
+
+                        ${partialHtml}
+                        ${actionHtml}
+                    </div>
+                `;
+                container.insertAdjacentHTML('beforeend', cardHtml);
+            });
+
+            lucide.createIcons({ root: container });
         };
 
         window.exportData = async () => {
@@ -793,7 +1104,8 @@
                 const exportPayload = {
                     version: "5.0", exportDate: new Date().toISOString(),
                     dailyScheduleData, taskCompletionState, taskExtrasState, subTaskCompletionState,
-                    galleryCategories, galleryItems
+                    galleryCategories, galleryItems,
+                    crRecords, crItemTypes // Backup cold room
                 };
                 const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
                 const a = document.createElement('a');
@@ -820,6 +1132,8 @@
                     let impSubStates = importedData.subTaskCompletionState || subTaskCompletionState;
                     let impGalCats = importedData.galleryCategories || galleryCategories;
                     let impGalItems = importedData.galleryItems || galleryItems;
+                    let impCrRecords = importedData.crRecords || crRecords;
+                    let impCrItemTypes = importedData.crItemTypes || crItemTypes;
 
                     if(!impGalCats.includes('任務附件')) impGalCats.push('任務附件');
 
@@ -856,6 +1170,8 @@
                     subTaskCompletionState = impSubStates;
                     galleryCategories = impGalCats;
                     galleryItems = impGalItems;
+                    crRecords = impCrRecords;
+                    crItemTypes = impCrItemTypes;
 
                     safeSetLocal('work_cache_schedule', dailyScheduleData);
                     safeSetLocal('work_cache_task_states', taskCompletionState);
@@ -863,6 +1179,8 @@
                     safeSetLocal('work_cache_subtask_states', subTaskCompletionState);
                     safeSetLocal('work_cache_gallery_categories', galleryCategories);
                     safeSetLocal('work_cache_gallery_items', galleryItems);
+                    safeSetLocal('coldRoomRecords', crRecords);
+                    safeSetLocal('coldRoomTypes', crItemTypes);
 
                     if (currentUser) {
                         window.showToast("資料轉檔完畢，正在同步至雲端...");
@@ -871,6 +1189,7 @@
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subtask_states'), { states: subTaskCompletionState });
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'task_extras'), { extras: taskExtrasState });
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
+                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'coldRoom'), { records: crRecords, types: crItemTypes });
                         
                         const batchLimit = 200;
                         for (let i = 0; i < galleryItems.length; i += batchLimit) {
@@ -886,6 +1205,7 @@
                     renderDailySchedule();
                     if(!document.getElementById('galleryPage').classList.contains('hidden')) window.renderGallery();
                     if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+                    if(!document.getElementById('coldRoomPage').classList.contains('hidden')) window.crRenderList();
                     
                     window.showToast("導入與轉檔全部成功！");
                     
@@ -896,155 +1216,6 @@
                 event.target.value = ''; 
             };
             reader.readAsText(file);
-        };
-
-        window.renderGallery = () => {
-            const sidebar = document.getElementById('gallerySidebar');
-            const grid = document.getElementById('galleryGrid');
-            if(!sidebar || !grid) return;
-
-            sidebar.innerHTML = `
-                <div class="w-full flex justify-center pt-2 pb-2 border-b border-slate-200 shrink-0 sticky top-0 bg-[#f4f1eb] z-20">
-                    <button type="button" onclick="window.openCategoryManager()" class="p-1.5 bg-white text-slate-500 hover:text-slate-800 rounded shadow-sm border border-slate-200 active:scale-95 transition-all">
-                        <i data-lucide="settings" class="w-4 h-4"></i>
-                    </button>
-                </div>
-                <div class="flex flex-col space-y-2 w-full items-center pt-2 pb-6">
-                    ${galleryCategories.map((cat) => {
-                        return `
-                        <div class="relative w-[60px] group shrink-0">
-                            <div onclick="window.switchGalleryCategory('${cat}')" class="w-full py-2 text-[10px] tracking-widest rounded-md transition-colors ${currentGalleryCategory === cat ? 'bg-white text-blue-600 border border-slate-200 shadow-sm font-semibold' : 'text-slate-600 hover:bg-slate-200/50 border border-transparent'} px-1 cursor-pointer flex items-center justify-center break-words min-h-[30px] select-none text-center">
-                                ${cat}
-                            </div>
-                        </div>
-                        `;
-                    }).join('')}
-                    <button type="button" onclick="window.addCategory()" class="w-[60px] py-1.5 mt-1 mb-4 flex justify-center text-slate-400 hover:text-blue-500 hover:bg-slate-200/50 rounded border border-dashed border-slate-300 transition-colors shrink-0 active:scale-95"><i data-lucide="plus" class="w-4 h-4"></i></button>
-                </div>
-            `;
-
-            const query = document.getElementById('gallerySearchInput').value.toLowerCase();
-            let filtered = galleryItems.filter(item => {
-                const matchCat = currentGalleryCategory === '全部' ? item.category !== '任務附件' : item.category === currentGalleryCategory;
-                const matchQuery = (item.title||'').toLowerCase().includes(query) || (item.timestamp && item.timestamp.includes(query));
-                return matchCat && matchQuery;
-            });
-
-            if(filtered.length === 0) {
-                grid.innerHTML = '<div class="absolute inset-0 flex flex-col items-center justify-center text-slate-400 text-xs tracking-widest"><i data-lucide="image-off" class="w-8 h-8 mb-2 opacity-50"></i>尚無對應圖片</div>';
-            } else {
-                grid.innerHTML = '<div class="grid grid-cols-2 gap-3 pb-6">' + filtered.map(item => `
-                    <div class="bg-white rounded-md overflow-hidden border border-slate-200 shadow-sm flex flex-col group relative pb-1">
-                        <div class="aspect-square w-full relative p-1 pb-0">
-                            <img src="${item.url}" class="w-full h-full object-cover rounded-sm active:scale-95 transition-transform cursor-pointer" onclick="window.openFullscreenImg('${item.url}')"/>
-                            <button onclick="window.removeTaskPhoto('${item.id}', event)" class="absolute top-2 right-2 p-1.5 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-sm active:bg-red-600 z-10"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
-                        </div>
-                        <div class="p-1.5 flex flex-col bg-white flex-1">
-                            <div class="text-[11px] text-slate-700 font-medium break-words whitespace-pre-wrap w-full text-center focus:outline-none focus:bg-slate-50 rounded px-1 py-0.5 min-h-[24px] flex items-center justify-center leading-tight" contenteditable="true" onblur="window.updateGalleryTitle('${item.id}', this.innerText)">${item.title}</div>
-                        </div>
-                    </div>
-                `).join('') + '</div>';
-            }
-            lucide.createIcons();
-        };
-
-        window.handleGalleryUpload = async (input) => {
-            const files = input.files;
-            if(!files || files.length===0 || !currentUser) return;
-            window.showToast("處理與雲端上傳中...");
-            for(let i=0; i<files.length; i++) {
-               try {
-                   const b64 = await compressImageSafeAsync(files[i]);
-                   const newItem = {
-                       id: 'g_m_'+Date.now()+'_'+Math.random().toString(36).substr(2,4),
-                       url: b64,
-                       title: currentGalleryCategory === '全部' ? '未命名相片' : currentGalleryCategory + '紀錄',
-                       category: currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory,
-                       timestamp: new Date().toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-                   };
-                   galleryItems.unshift(newItem);
-                   await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', newItem.id), newItem);
-               } catch(e) {}
-            }
-            safeSetLocal('work_cache_gallery_items', galleryItems);
-            window.renderGallery();
-            window.showToast("圖庫雲端上傳完成");
-            input.value = '';
-        };
-
-        window.updateGalleryTitle = (id, text) => {
-            const item = galleryItems.find(i => i.id === id);
-            if(item && currentUser) {
-                item.title = text.trim() || '未命名相片';
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), { title: item.title }, { merge: true });
-            }
-        };
-        
-        window.switchGalleryCategory = (cat) => { currentGalleryCategory = cat; window.renderGallery(); };
-        window.openCategoryManager = () => { window.renderCategoryManager(); document.getElementById('categoryManageModal').classList.remove('hidden'); document.getElementById('categoryManageModal').classList.add('flex'); };
-        window.closeCategoryManager = () => { document.getElementById('categoryManageModal').classList.add('hidden'); document.getElementById('categoryManageModal').classList.remove('flex'); };
-
-        window.renderCategoryManager = () => {
-            const list = document.getElementById('categoryManageList');
-            if(!list) return;
-            list.innerHTML = galleryCategories.map((cat) => {
-                const isProtected = cat === '全部' || cat === '未分類' || cat === '任務附件';
-                return `
-                <div class="flex items-center justify-between bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-                    ${isProtected ? `
-                        <span class="text-sm font-bold text-slate-500 ml-1 tracking-widest">${cat} <span class="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded ml-1 font-normal border border-slate-200">系統保留</span></span>
-                        <div class="flex gap-1 opacity-30 pointer-events-none"><button class="p-1.5"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div>
-                    ` : `
-                        <input type="text" value="${cat}" onblur="window.renameCategoryInModal('${cat}', this.value)" class="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700 font-bold focus:outline-none focus:border-blue-400 focus:bg-white transition-colors mr-2 w-full min-w-0 tracking-widest shadow-inner">
-                        <div class="flex gap-1 shrink-0"><button onclick="window.deleteCategoryInModal('${cat}')" class="p-1.5 text-red-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors active:scale-95"><i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i></button></div>
-                    `}
-                </div>
-                `;
-            }).join('');
-            lucide.createIcons();
-        };
-
-        window.addCategory = () => {
-            const newName = prompt("請輸入新分類名稱：", "新分類");
-            if(newName && newName.trim() !== '') {
-                galleryCategories.push(newName.trim());
-                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
-                window.renderGallery();
-            }
-        };
-
-        window.renameCategoryInModal = async (oldName, newName) => {
-            newName = newName.trim();
-            if(!newName || newName === oldName) { window.renderCategoryManager(); return; }
-            if(galleryCategories.includes(newName)) { window.showToast("名稱已存在", true); window.renderCategoryManager(); return; }
-
-            const idx = galleryCategories.indexOf(oldName);
-            if(idx !== -1) {
-                galleryCategories[idx] = newName;
-                if(currentUser) {
-                    setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
-                    galleryItems.forEach(item => {
-                        if(item.category === oldName) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), { category: newName }, { merge: true });
-                    });
-                }
-                if(currentGalleryCategory === oldName) currentGalleryCategory = newName;
-                window.renderCategoryManager(); window.renderGallery();
-            }
-        };
-
-        window.deleteCategoryInModal = async (catName) => {
-            window.showConfirm('刪除分類', `確定要刪除「${catName}」？<br>此分類下的圖片將移至「未分類」。`, () => {
-                if(currentUser) {
-                    galleryItems.forEach(item => {
-                        if(item.category === catName) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), { category: '未分類' }, { merge: true });
-                    });
-                }
-                const idx = galleryCategories.indexOf(catName);
-                if(idx !== -1) galleryCategories.splice(idx, 1);
-                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
-                if(currentGalleryCategory === catName) currentGalleryCategory = '全部';
-                window.renderCategoryManager(); window.renderGallery();
-            });
         };
 
         window.viewStackedCard = (taskId, event) => {
@@ -1065,16 +1236,14 @@
                 const card = btn.closest('.timeline-card');
                 const isCompleting = !taskCompletionState[taskId]; 
 
-                // 點擊動畫：按鈕高亮與圖示旋轉
                 btn.classList.remove('text-slate-400', 'text-blue-400', 'hover:bg-green-500', 'hover:border-green-500', 'bg-white');
                 if (isCompleting) {
                     btn.classList.add('scale-110', 'bg-green-500', 'text-white', 'border-green-500', 'shadow-[0_0_15px_rgba(34,197,94,0.6)]');
                     const icon = btn.querySelector('i');
                     if (icon) icon.classList.add('scale-150', 'rotate-12');
                     
-                    // 新增：整個卡片的慶祝閃爍與彈跳動畫
                     if (card) {
-                        card.style.transition = 'all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)'; // 物理彈性特效
+                        card.style.transition = 'all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)'; 
                         card.classList.add('bg-green-50', 'border-green-400', 'scale-[1.03]', 'shadow-lg');
                         card.classList.remove('bg-white', 'bg-blue-50', 'border-[#d6d0c4]', 'border-blue-500');
                     }
@@ -1087,7 +1256,6 @@
                     }
                 }
                 
-                // 延遲 0.4 秒讓動畫跑完，再執行狀態切換與重新渲染
                 setTimeout(() => {
                     window.toggleTask(taskId); 
                     if(!document.getElementById('timelinePage').classList.contains('hidden')) {
@@ -1115,7 +1283,7 @@
             renderDailySchedule();
             if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
             
-            window.editTimelineTask(newId, true); // 傳入 true 標記為全新任務
+            window.editTimelineTask(newId, true); 
         };
 
         window.updateConveyorBelt = () => {
@@ -1123,17 +1291,15 @@
             const now = window.getNow();
             let previousTime = now;
             
-            // 更新當前進行中任務的時間文字
             document.querySelectorAll('.active-task').forEach(wrapper => {
                  const startStr = wrapper.dataset.start;
                  const endStr = wrapper.dataset.end;
                  const status = calculateTaskStatus(startStr, endStr);
                  if (status.state !== 'active') {
-                     window.renderTimeline(false); // 狀態改變時觸發全面重新渲染
+                     window.renderTimeline(false); 
                      return;
                  }
                  
-                 // 重新計算當下的時間圓環進度，確保它每秒都在倒數且不會消失
                  const startTime = parseTime(startStr);
                  const endTime = parseTime(endStr);
                  const progress = Math.min(1, Math.max(0, (now - startTime) / (endTime - startTime)));
@@ -1149,10 +1315,9 @@
                         當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})
                      </span>`;
                  }
-                 previousTime = now; // 未來任務的基準點重置為當前時間
+                 previousTime = now; 
             });
 
-            // 更新未來任務的「輸送帶」間距與倒數時間
             const wrappers = document.querySelectorAll('.conveyor-task');
             wrappers.forEach(wrapper => {
                 const startStr = wrapper.dataset.start;
@@ -1161,11 +1326,10 @@
                 
                 const status = calculateTaskStatus(startStr, endStr);
                 if (status.state !== 'waiting') {
-                    window.renderTimeline(true); // 時間到了，觸發重新渲染並自動對焦當前任務
+                    window.renderTimeline(true); 
                     return;
                 }
                 
-                // 動態時間差轉換為像素高度 (平滑向上推移)，並設定合理的上限值
                 const startTime = parseTime(startStr);
                 let gapMins = Math.max(0, (startTime - previousTime) / 60000);
                 let extraGap = Math.min(gapMins * 1.5, 120); 
@@ -1175,7 +1339,7 @@
                 if (timeTextEl) {
                     timeTextEl.innerHTML = '<span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ' + status.text.replace('未開始 (', '還有 ').replace('後)', '') + ' 到來</span>';
                 }
-                previousTime = startTime; // 下一個任務的基準點設為這個任務的開始時間
+                previousTime = startTime; 
             });
             lucide.createIcons();
         };
@@ -1188,7 +1352,6 @@
                 clockEl.textContent = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
                 dateEl.textContent = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
                 
-                // 動態同步還原按鈕的顯示狀態
                 const restoreBtn = document.getElementById('simRestoreBtn');
                 if (restoreBtn) {
                     if (timeOffset !== 0 || isFastForwarding) restoreBtn.classList.remove('hidden');
@@ -1197,7 +1360,6 @@
             }
         };
 
-        // 新增：動態任務滾動監聽邏輯 (偵測上方被隱藏的未完成任務)
         window.handleTimelineScroll = () => {
             const page = document.getElementById('timelinePage');
             const indicatorContainer = document.getElementById('uncompleted-indicator-container');
@@ -1205,8 +1367,6 @@
             const header = document.getElementById('timelineStickyHeader');
             if (!page || !indicatorContainer || !countSpan) return;
 
-            // 修正：標題列有 pb-8 的透明漸層，不能算入遮擋範圍
-            // 改為 header 頂部往下約 60px (時鐘與按鈕的實體區域)，確保卡片完全躲到時鐘後方才算隱藏
             const hideThreshold = header ? header.getBoundingClientRect().top + 60 : 60;
             let hiddenUncompletedCount = 0;
 
@@ -1214,11 +1374,9 @@
             wrappers.forEach(wrapper => {
                 const taskId = wrapper.dataset.taskId;
                 if (!taskCompletionState[taskId]) { 
-                    // 精準定位：直接找卡片本體 (.timeline-card)
                     const card = wrapper.querySelector('.timeline-card');
                     if (card) {
                         const rect = card.getBoundingClientRect();
-                        // 修正精準度：判斷卡片底部是否已經高於實體遮擋區域
                         if (rect.bottom < hideThreshold) {
                             hiddenUncompletedCount++;
                         }
@@ -1236,7 +1394,6 @@
             }
         };
 
-        // 新增：點擊未完成任務提示時，自動滑動對焦到最上方的未完成任務
         window.scrollToTopUncompleted = (event) => {
             if (event) event.stopPropagation();
             const page = document.getElementById('timelinePage');
@@ -1249,7 +1406,6 @@
                     if (card) {
                         const containerRect = page.getBoundingClientRect();
                         const elRect = card.getBoundingClientRect();
-                        // 修正對焦位置：只扣除實體遮擋的高度(約 75px) + 緩衝，讓卡片完美出現在透明漸層下方
                         const scrollTop = page.scrollTop + (elRect.top - containerRect.top) - 75; 
                         page.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
                         break;
@@ -1276,7 +1432,6 @@
                 return;
             }
 
-            // 新增：精準尋找時間上與「當前時間」距離最近的任務卡片
             let targetScrollId = null;
             let minDiff = Infinity;
             
@@ -1286,7 +1441,7 @@
                 
                 if (nowTime >= start && nowTime <= end) {
                     targetScrollId = `tl-task-wrapper-${task.id}`;
-                    minDiff = -1; // 進行中的任務擁有絕對優先權
+                    minDiff = -1; 
                 } else if (minDiff !== -1) {
                     const diffToStart = Math.abs(start - nowTime);
                     const diffToEnd = Math.abs(end - nowTime);
@@ -1298,10 +1453,8 @@
                 }
             });
 
-            // 修正白色遮擋：縮小底部 padding (原本為 pb-[40vh])
             let html = '<div class="relative pt-[2vh] pb-[20vh] w-full max-w-[500px] mx-auto flex flex-col">';
 
-            // 新增：浮動的未完成任務提示 UI (改為紅色，透過 sticky 固定於畫面上半部左側，加入白邊框)
             html += `
                 <div id="uncompleted-indicator-container" class="sticky top-[125px] z-[60] w-0 h-0 overflow-visible transition-all duration-300 opacity-0 pointer-events-none -translate-y-2">
                     <button type="button" onclick="window.scrollToTopUncompleted(event)" class="absolute left-[13px] -translate-y-full pointer-events-auto bg-red-500 text-white border-2 border-white rounded-full pl-1.5 pr-2 py-1 flex items-center shadow-lg shadow-red-500/40 text-[10px] font-bold hover:bg-red-600 active:scale-95 transition-all" style="white-space: nowrap;">
@@ -1322,7 +1475,6 @@
                 
                 let wrapperStyle = `max-height: 250px; z-index: ${index + 1};`;
                 let wrapperClass = 'timeline-wrapper mb-1 relative transition-all duration-500 ease-out';
-                // 修正白色遮擋：將延伸線條從過長的 -300px 改為剛好覆蓋最大動態間距的 -150px
                 let verticalLineHtml = isLast ? '' : `<div class="absolute left-[24px] w-[4px] bg-[#d6d0c4] top-1/2 -bottom-[150px] z-0 rounded-full"></div>`;
                 
                 let cardClass = '';
@@ -1364,11 +1516,9 @@
                     
                     wrapperClass += ' active-task';
 
-                    // 恢復實心乾淨的邊框設計
                     cardClass = 'border-blue-400 border-[2px] shadow-xl bg-blue-50 z-20 opacity-100';
                     dotClass = 'bg-green-500 w-6 h-6 left-[14px] border-[4px] border-[#fdfbf7] shadow-md';
                     
-                    // 計算初始的 SVG 微型圓環倒數進度
                     const startTime = parseTime(task.start);
                     const endTime = parseTime(task.end);
                     const progress = Math.min(1, Math.max(0, (now - startTime) / (endTime - startTime)));
@@ -1388,7 +1538,6 @@
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
                     
-                    // 中間定位雷射橫線 (保留科技感與時間對位)
                     activeLineHtml = `<div class="absolute left-[-15px] right-[-15px] top-1/2 -translate-y-1/2 h-[2px] bg-green-400 shadow-[0_0_12px_rgba(74,222,128,0.8)] z-0 pointer-events-none rounded-full flex justify-between items-center px-1">
                                         <div class="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(74,222,128,1)]"></div>
                                         <div class="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(74,222,128,1)]"></div>
@@ -1445,13 +1594,12 @@
             container.innerHTML = html;
             lucide.createIcons();
             
-            // 新增：綁定與觸發滾動事件
             const page = document.getElementById('timelinePage');
             if (page && !page.dataset.hasScrollListener) {
                 page.addEventListener('scroll', window.handleTimelineScroll);
                 page.dataset.hasScrollListener = "true";
             }
-            window.handleTimelineScroll(); // 渲染後立即檢查一次顯示狀態
+            window.handleTimelineScroll();
 
             if (scrollToCenter && targetScrollId) {
                 setTimeout(() => {
@@ -1460,18 +1608,14 @@
                     if (el && page) {
                         const containerRect = page.getBoundingClientRect();
                         const elRect = el.getBoundingClientRect();
-                        // 加入些微偏移，讓焦點對得更順
                         const scrollTop = page.scrollTop + (elRect.top - containerRect.top) - (containerRect.height / 2) + (elRect.height / 2) - 40;
                         page.scrollTo({ top: scrollTop, behavior: 'smooth' });
                     }
                 }, 150); 
             }
 
-            // 優化畫面渲染：移除原本每分鐘暴力全畫面重繪的區塊
-            // 改由底層 updateConveyorBelt 精準局部修改文字與間距DOM，大幅節省手機效能
             if(timelineUpdateInterval) clearInterval(timelineUpdateInterval);
 
-            // 啟動實時「輸送帶」推進器 (每 1 秒更新卡片高度)
             if(window.conveyorInterval) clearInterval(window.conveyorInterval);
             window.conveyorInterval = setInterval(() => {
                 if(!isFastForwarding) window.updateConveyorBelt();
@@ -1522,11 +1666,10 @@
         };
 
         window.editTimelineTask = (taskId, eventOrIsNew) => {
-            const isNew = eventOrIsNew === true; // 判斷是否為全新任務 (略過原生 event 點擊事件)
+            const isNew = eventOrIsNew === true; 
             const task = dailyScheduleData.find(t => t.id === taskId);
             if(!task) return;
 
-            // 如果是新任務，取消或點擊背景的動作改為徹底銷毀該卡片
             const bgClickAction = isNew ? `window.cancelNewTimelineTask('${taskId}')` : `this.remove()`;
             const cancelAction = isNew ? `window.cancelNewTimelineTask('${taskId}')` : `document.getElementById('dynamicEditModal').remove()`;
 
@@ -1569,7 +1712,6 @@
             document.body.insertAdjacentHTML('beforeend', modalHtml);
             lucide.createIcons();
 
-            // 若為全新任務，自動對焦並全選標題，方便直接打字覆寫
             if (isNew) {
                 const titleInput = document.getElementById('dyEditTitle');
                 if (titleInput) {
@@ -1610,7 +1752,6 @@
             }
         };
 
-        // 修改 deleteTimelineTask 以使用自訂的 showConfirm
         window.deleteTimelineTask = (taskId) => {
             window.showConfirm('刪除確認', '確定要永久刪除這張任務卡片嗎？', () => {
                 document.getElementById('dynamicEditModal').remove();
@@ -1633,9 +1774,9 @@
                 
                 simInterval = setInterval(() => {
                     timeOffset += 60000; 
-                    window.updateClockUI(); // 加速時只需單獨更新時鐘
+                    window.updateClockUI(); 
                     if(!document.getElementById('timelinePage').classList.contains('hidden')) {
-                        window.renderTimeline(false); // 渲染卡片 (因為儀表板已獨立，不會干擾按鈕點擊)
+                        window.renderTimeline(false); 
                     }
                 }, 200); 
             } else {
@@ -1741,7 +1882,8 @@
         setInterval(() => {
             if(!document.getElementById('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
             if(!document.getElementById('memoPage')?.classList.contains('hidden')) window.updateMemoCountdowns();
-        }, 1000);
+            if(!document.getElementById('coldRoomPage')?.classList.contains('hidden')) window.crRenderList(); // update snow room timers
+        }, 60000);
 
         function parseTime(timeStr) { const [h, m] = timeStr.split(':').map(Number); const d = window.getNow(); d.setHours(h, m, 0, 0); return d; }
         function calculateTaskStatus(startStr, endStr) {
@@ -2050,7 +2192,8 @@
                 'gallery': document.getElementById('galleryPage'),
                 'timeline': document.getElementById('timelinePage'),
                 'memo': document.getElementById('memoPage'),
-                'map': document.getElementById('mapPage')
+                'map': document.getElementById('mapPage'),
+                'coldRoom': document.getElementById('coldRoomPage')
             };
             const btns = {
                 'custom': document.getElementById('tabCustom'),
@@ -2058,37 +2201,37 @@
                 'timeline': document.getElementById('tabTimeline'),
                 'memo': document.getElementById('tabMemo'),
                 'map': document.getElementById('tabMap'),
-                'gallery': document.getElementById('tabGallery')
+                'gallery': document.getElementById('tabGallery'),
+                'coldRoom': document.getElementById('tabColdRoom')
             };
             
-            const activeClass = "flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center truncate";
-            const inactiveClass = "flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center truncate";
+            const activeClass = "flex-1 py-1.5 px-2 sm:px-0.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
+            const inactiveClass = "flex-1 py-1.5 px-2 sm:px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap";
 
-            // 1. 先將所有分頁隱藏，並強制拔除 flex 避免與 hidden 衝突
             Object.values(pages).forEach(p => {
                 if (p) {
                     p.classList.add('hidden');
-                    p.classList.remove('flex'); 
+                    p.classList.remove('flex', 'block'); 
                 }
             });
             Object.entries(btns).forEach(([k, b]) => { if(b) b.className = inactiveClass; });
 
-            // 2. 顯示目標分頁
             if(pages[tab]) { 
                 pages[tab].classList.remove('hidden'); 
-                // 關鍵修復：針對依賴 Flex 排版的分頁 (地圖與圖庫)，動態加入 flex 屬性撐開高度
-                if (tab === 'map' || tab === 'gallery') {
+                if (tab === 'map' || tab === 'gallery' || tab === 'coldRoom') {
                     pages[tab].classList.add('flex');
+                } else {
+                    pages[tab].classList.add('block');
                 }
             }
             if(btns[tab]) { btns[tab].className = activeClass; }
 
-            // 3. 觸發對應的渲染引擎
             if (tab === 'daily') renderDailySchedule(); 
             else if (tab === 'gallery') window.renderGallery();
             else if (tab === 'timeline') window.renderTimeline(true);
             else if (tab === 'memo') window.renderMemos();
             else if (tab === 'map') window.renderMap();
+            else if (tab === 'coldRoom') window.crRenderList();
             
             localStorage.setItem('activeTab', tab);
         };
@@ -2176,7 +2319,6 @@
             document.body.insertAdjacentHTML('beforeend', modalHtml);
             lucide.createIcons();
             const now = new Date();
-            // Default to tomorrow 09:00
             now.setDate(now.getDate() + 1); 
             document.getElementById('memoDate').value = now.toISOString().split('T')[0];
             document.getElementById('memoTime').value = "09:00";
@@ -2204,7 +2346,6 @@
             });
         };
 
-        // ====== 可視地圖邏輯 ======
         window.handleScheduleImageUpload = async (event) => {
             const file = event.target.files[0];
             if (!file) return;
@@ -2218,7 +2359,6 @@
             lucide.createIcons();
 
             try {
-                // 將圖片轉換為 Base64 以供 API 使用
                 const base64Data = await new Promise((resolve, reject) => {
                     const reader = new FileReader();
                     reader.onload = () => resolve(reader.result.split(',')[1]);
@@ -2227,8 +2367,6 @@
                 });
 
                 const mimeType = file.type;
-
-                // 構建提示詞，要求嚴格的 JSON 輸出
                 const prompt = `你是一個專業的排班表解析助手。這是一張表格形式的排班表。
 X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如 花園仔, 魚檔, 整體巡邏, 機動）。
 表格內的文字是負責人的名字。如果有兩個人同時在一個儲存格，請將他們視為兩人分別排班。
@@ -2263,7 +2401,7 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
                     }
                 };
 
-                const apiKey = ""; // 使用內建或預設權限
+                const apiKey = ""; 
                 const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiKey}`;
 
                 const response = await fetch(apiUrl, {
@@ -2287,15 +2425,12 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
                     for (const item of parsedData) {
                         if (!item.name || !item.locationName || !item.start || !item.end) continue;
                         
-                        // 清理姓名 (去除括號內的休假或頂替備註)
                         let cleanName = item.name.replace(/\(.*?\)/g, '').trim();
-                        // 特殊處理：如果有包含「休」字但沒用括號包住的，可能是雜訊，盡量過濾
                         if (cleanName.includes('休')) continue;
                         if (cleanName.includes('頂')) cleanName = cleanName.replace('頂', '').trim();
 
                         if (!cleanName) continue;
 
-                        // 智慧匹配崗位 ID
                         let matchedLocationId = null;
                         for (const [id, pt] of locationEntries) {
                             if (item.locationName.includes(pt.name) || pt.name.includes(item.locationName)) {
@@ -2304,13 +2439,11 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
                             }
                         }
 
-                        // 如果真的配不到，預設放到第一個崗位
                         if (!matchedLocationId && locationEntries.length > 0) {
                              matchedLocationId = locationEntries[0][0]; 
                         }
 
                         if (matchedLocationId) {
-                            // 格式化時間，確保是 HH:mm
                             const formatTime = (timeStr) => {
                                 const parts = timeStr.split(':');
                                 if (parts.length >= 2) {
@@ -2348,7 +2481,7 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
             } finally {
                 btn.innerHTML = originalBtnHtml;
                 btn.disabled = false;
-                event.target.value = ''; // Reset input
+                event.target.value = ''; 
                 lucide.createIcons();
             }
         };
@@ -2395,10 +2528,8 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
                     `;
                 }
 
-                // 判斷是否為外圍小站點 (pt_2, pt_6)
                 const extContainer = document.getElementById(`ext-${locId}`);
                 if (extContainer) {
-                    // 如果是外圍點，將標記放入對應的小容器中，不使用絕對座標
                     if (marker.parentNode !== extContainer) extContainer.appendChild(marker);
                     marker.className = 'member-dynamic-marker flex flex-col items-center justify-center pointer-events-none transition-all duration-[1000ms] ease-in-out z-30 drop-shadow-xl mt-1 scale-90';
                     marker.style.left = 'auto';
@@ -2406,7 +2537,6 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
                     marker.style.position = 'relative';
                     marker.style.transform = 'none';
                 } else {
-                    // 如果是一般地圖點，放在主地圖並使用 X Y 百分比定位
                     if (marker.parentNode !== container) container.appendChild(marker);
                     marker.className = 'member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 -translate-y-[110%] pointer-events-none transition-all duration-[1500ms] ease-in-out z-30 drop-shadow-xl';
                     marker.style.left = `${loc.x}%`;
@@ -2441,8 +2571,6 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
                 <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-4 shadow-inner">
                     <div class="flex justify-between items-center mb-2">
                         <h4 class="text-xs font-bold text-slate-600 flex items-center"><i data-lucide="plus-circle" class="w-3.5 h-3.5 mr-1"></i>新增成員崗位時段</h4>
-                        
-                        <!-- 加入 AI 圖片解析按鈕 -->
                         <div class="relative">
                             <input type="file" id="scheduleImageInput" accept="image/*" class="hidden" onchange="window.handleScheduleImageUpload(event)">
                             <button id="aiParseBtn" onclick="document.getElementById('scheduleImageInput').click()" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border border-indigo-200 px-2 py-1 rounded text-[10px] font-bold transition-colors active:scale-95 flex items-center shadow-sm">
@@ -2508,9 +2636,160 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
         };
 
         window.deleteSchedule = (id) => {
-            memberSchedules = memberSchedules.filter(s => s.id !== id);
-            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'member_schedules'), { schedules: memberSchedules });
-            window.renderScheduleManager();
+            window.showConfirm('刪除排班', '確定要刪除這筆排班資料嗎？', () => {
+                memberSchedules = memberSchedules.filter(s => s.id !== id);
+                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'member_schedules'), { schedules: memberSchedules });
+                window.renderScheduleManager();
+            });
+        };
+
+        window.renderGallery = () => {
+            const sidebar = document.getElementById('gallerySidebar');
+            const grid = document.getElementById('galleryGrid');
+            if(!sidebar || !grid) return;
+
+            sidebar.innerHTML = `
+                <div class="w-full flex justify-center pt-2 pb-2 border-b border-slate-200 shrink-0 sticky top-0 bg-[#f4f1eb] z-20">
+                    <button type="button" onclick="window.openCategoryManager()" class="p-1.5 bg-white text-slate-500 hover:text-slate-800 rounded shadow-sm border border-slate-200 active:scale-95 transition-all">
+                        <i data-lucide="settings" class="w-4 h-4"></i>
+                    </button>
+                </div>
+                <div class="flex flex-col space-y-2 w-full items-center pt-2 pb-6">
+                    ${galleryCategories.map((cat) => {
+                        return `
+                        <div class="relative w-[60px] group shrink-0">
+                            <div onclick="window.switchGalleryCategory('${cat}')" class="w-full py-2 text-[10px] tracking-widest rounded-md transition-colors ${currentGalleryCategory === cat ? 'bg-white text-blue-600 border border-slate-200 shadow-sm font-semibold' : 'text-slate-600 hover:bg-slate-200/50 border border-transparent'} px-1 cursor-pointer flex items-center justify-center break-words min-h-[30px] select-none text-center">
+                                ${cat}
+                            </div>
+                        </div>
+                        `;
+                    }).join('')}
+                    <button type="button" onclick="window.addCategory()" class="w-[60px] py-1.5 mt-1 mb-4 flex justify-center text-slate-400 hover:text-blue-500 hover:bg-slate-200/50 rounded border border-dashed border-slate-300 transition-colors shrink-0 active:scale-95"><i data-lucide="plus" class="w-4 h-4"></i></button>
+                </div>
+            `;
+
+            const query = document.getElementById('gallerySearchInput').value.toLowerCase();
+            let filtered = galleryItems.filter(item => {
+                const matchCat = currentGalleryCategory === '全部' ? item.category !== '任務附件' : item.category === currentGalleryCategory;
+                const matchQuery = (item.title||'').toLowerCase().includes(query) || (item.timestamp && item.timestamp.includes(query));
+                return matchCat && matchQuery;
+            });
+
+            if(filtered.length === 0) {
+                grid.innerHTML = '<div class="absolute inset-0 flex flex-col items-center justify-center text-slate-400 text-xs tracking-widest"><i data-lucide="image-off" class="w-8 h-8 mb-2 opacity-50"></i>尚無對應圖片</div>';
+            } else {
+                grid.innerHTML = '<div class="grid grid-cols-2 gap-3 pb-6">' + filtered.map(item => `
+                    <div class="bg-white rounded-md overflow-hidden border border-slate-200 shadow-sm flex flex-col group relative pb-1">
+                        <div class="aspect-square w-full relative p-1 pb-0">
+                            <img src="${item.url}" class="w-full h-full object-cover rounded-sm active:scale-95 transition-transform cursor-pointer" onclick="window.openFullscreenImg('${item.url}')"/>
+                            <button onclick="window.removeTaskPhoto('${item.id}', event)" class="absolute top-2 right-2 p-1.5 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-sm active:bg-red-600 z-10"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
+                        </div>
+                        <div class="p-1.5 flex flex-col bg-white flex-1">
+                            <div class="text-[11px] text-slate-700 font-medium break-words whitespace-pre-wrap w-full text-center focus:outline-none focus:bg-slate-50 rounded px-1 py-0.5 min-h-[24px] flex items-center justify-center leading-tight" contenteditable="true" onblur="window.updateGalleryTitle('${item.id}', this.innerText)">${item.title}</div>
+                        </div>
+                    </div>
+                `).join('') + '</div>';
+            }
+            lucide.createIcons();
+        };
+
+        window.handleGalleryUpload = async (input) => {
+            const files = input.files;
+            if(!files || files.length===0 || !currentUser) return;
+            window.showToast("處理與雲端上傳中...");
+            for(let i=0; i<files.length; i++) {
+               try {
+                   const b64 = await compressImageSafeAsync(files[i]);
+                   const newItem = {
+                       id: 'g_m_'+Date.now()+'_'+Math.random().toString(36).substr(2,4),
+                       url: b64,
+                       title: currentGalleryCategory === '全部' ? '未命名相片' : currentGalleryCategory + '紀錄',
+                       category: currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory,
+                       timestamp: new Date().toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                   };
+                   galleryItems.unshift(newItem);
+                   await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', newItem.id), newItem);
+               } catch(e) {}
+            }
+            safeSetLocal('work_cache_gallery_items', galleryItems);
+            window.renderGallery();
+            window.showToast("圖庫雲端上傳完成");
+            input.value = '';
+        };
+
+        window.updateGalleryTitle = (id, text) => {
+            const item = galleryItems.find(i => i.id === id);
+            if(item && currentUser) {
+                item.title = text.trim() || '未命名相片';
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), { title: item.title }, { merge: true });
+            }
+        };
+        
+        window.switchGalleryCategory = (cat) => { currentGalleryCategory = cat; window.renderGallery(); };
+        window.openCategoryManager = () => { window.renderCategoryManager(); document.getElementById('categoryManageModal').classList.remove('hidden'); document.getElementById('categoryManageModal').classList.add('flex'); };
+        window.closeCategoryManager = () => { document.getElementById('categoryManageModal').classList.add('hidden'); document.getElementById('categoryManageModal').classList.remove('flex'); };
+
+        window.renderCategoryManager = () => {
+            const list = document.getElementById('categoryManageList');
+            if(!list) return;
+            list.innerHTML = galleryCategories.map((cat) => {
+                const isProtected = cat === '全部' || cat === '未分類' || cat === '任務附件';
+                return `
+                <div class="flex items-center justify-between bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
+                    ${isProtected ? `
+                        <span class="text-sm font-bold text-slate-500 ml-1 tracking-widest">${cat} <span class="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded ml-1 font-normal border border-slate-200">系統保留</span></span>
+                        <div class="flex gap-1 opacity-30 pointer-events-none"><button class="p-1.5"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div>
+                    ` : `
+                        <input type="text" value="${cat}" onblur="window.renameCategoryInModal('${cat}', this.value)" class="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700 font-bold focus:outline-none focus:border-blue-400 focus:bg-white transition-colors mr-2 w-full min-w-0 tracking-widest shadow-inner">
+                        <div class="flex gap-1 shrink-0"><button onclick="window.deleteCategoryInModal('${cat}')" class="p-1.5 text-red-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors active:scale-95"><i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i></button></div>
+                    `}
+                </div>
+                `;
+            }).join('');
+            lucide.createIcons();
+        };
+
+        window.addCategory = () => {
+            const newName = prompt("請輸入新分類名稱：", "新分類");
+            if(newName && newName.trim() !== '') {
+                galleryCategories.push(newName.trim());
+                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
+                window.renderGallery();
+            }
+        };
+
+        window.renameCategoryInModal = async (oldName, newName) => {
+            newName = newName.trim();
+            if(!newName || newName === oldName) { window.renderCategoryManager(); return; }
+            if(galleryCategories.includes(newName)) { window.showToast("名稱已存在", true); window.renderCategoryManager(); return; }
+
+            const idx = galleryCategories.indexOf(oldName);
+            if(idx !== -1) {
+                galleryCategories[idx] = newName;
+                if(currentUser) {
+                    setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
+                    galleryItems.forEach(item => {
+                        if(item.category === oldName) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), { category: newName }, { merge: true });
+                    });
+                }
+                if(currentGalleryCategory === oldName) currentGalleryCategory = newName;
+                window.renderCategoryManager(); window.renderGallery();
+            }
+        };
+
+        window.deleteCategoryInModal = async (catName) => {
+            window.showConfirm('刪除分類', `確定要刪除「${catName}」？<br>此分類下的圖片將移至「未分類」。`, () => {
+                if(currentUser) {
+                    galleryItems.forEach(item => {
+                        if(item.category === catName) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), { category: '未分類' }, { merge: true });
+                    });
+                }
+                const idx = galleryCategories.indexOf(catName);
+                if(idx !== -1) galleryCategories.splice(idx, 1);
+                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
+                if(currentGalleryCategory === catName) currentGalleryCategory = '全部';
+                window.renderCategoryManager(); window.renderGallery();
+            });
         };
 
         async function initAuth() {
@@ -2536,7 +2815,6 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
         initAuth();
         window.switchTab(localStorage.getItem('activeTab') || 'daily');
 
-        // 套用深色模式記憶
         if (getLocal('work_cache_dark_mode', false)) {
             document.body.classList.add('dark-mode');
             window.addEventListener('DOMContentLoaded', () => {
@@ -2549,8 +2827,8 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
         }
     </script>
 </head>
-<body class="sm:px-4 sm:py-8 flex justify-center relative min-h-screen">
 
+<body class="sm:px-4 sm:py-8 flex justify-center relative min-h-screen">
     <!-- Phone Container -->
     <div class="w-full max-w-[430px] bg-[#fdfbf7] sm:rounded-[2.5rem] sm:shadow-2xl sm:border-[6px] border-[#d6d0c4] overflow-hidden relative min-h-screen sm:min-h-[932px] pb-10 flex flex-col">
         
@@ -2583,13 +2861,14 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
             </div>
 
             <!-- 分頁切換 (Tab Control) -->
-            <div class="mt-4 flex bg-[#f0ebe1] rounded-lg p-1 shadow-inner border border-[#e5dfd3] relative z-20">
-                <button id="tabCustom" onclick="window.switchTab('custom')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center truncate">自訂</button>
-                <button id="tabDaily" onclick="window.switchTab('daily')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center truncate">排程</button>
-                <button id="tabTimeline" onclick="window.switchTab('timeline')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center truncate">動態</button>
-                <button id="tabMemo" onclick="window.switchTab('memo')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center truncate">備忘</button>
-                <button id="tabMap" onclick="window.switchTab('map')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center truncate">地圖</button>
-                <button id="tabGallery" onclick="window.switchTab('gallery')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center truncate">圖庫</button>
+            <div class="mt-4 flex bg-[#f0ebe1] rounded-lg p-1 shadow-inner border border-[#e5dfd3] relative z-20 overflow-x-auto scrollbar-hide">
+                <button id="tabCustom" onclick="window.switchTab('custom')" class="flex-1 py-1.5 px-2 sm:px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">自訂</button>
+                <button id="tabDaily" onclick="window.switchTab('daily')" class="flex-1 py-1.5 px-2 sm:px-0.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap">排程</button>
+                <button id="tabTimeline" onclick="window.switchTab('timeline')" class="flex-1 py-1.5 px-2 sm:px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">動態</button>
+                <button id="tabMemo" onclick="window.switchTab('memo')" class="flex-1 py-1.5 px-2 sm:px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">備忘</button>
+                <button id="tabMap" onclick="window.switchTab('map')" class="flex-1 py-1.5 px-2 sm:px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">地圖</button>
+                <button id="tabGallery" onclick="window.switchTab('gallery')" class="flex-1 py-1.5 px-2 sm:px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">圖庫</button>
+                <button id="tabColdRoom" onclick="window.switchTab('coldRoom')" class="flex-1 py-1.5 px-2 sm:px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">雪房</button>
             </div>
         </header>
 
@@ -2648,7 +2927,6 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
             <div id="timelineStickyHeader" class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-3 pb-8 px-4 flex flex-col items-center justify-center pointer-events-none transition-all">
                 <div class="flex items-center justify-center gap-2 sm:gap-3 w-full max-w-[500px]">
                     
-                    <!-- 左側控制區：重設與還原與加速 -->
                     <div class="flex items-center gap-1.5 sm:gap-2 justify-end flex-1">
                         <button type="button" onclick="window.promptResetOptions()" class="bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="狀態還原選項">
                             <i data-lucide="list-restart" class="w-4 h-4 pointer-events-none"></i>
@@ -2661,10 +2939,8 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
                         </button>
                     </div>
 
-                    <!-- 中央時間：大時鐘 -->
                     <div id="tlBigClock" ondblclick="window.promptChangeTime()" title="雙擊設定指定時間" class="cursor-pointer hover:scale-105 font-mono text-2xl sm:text-3xl font-black text-slate-800 tracking-tighter bg-white/90 backdrop-blur-md px-4 sm:px-5 py-1.5 rounded-[1.25rem] border border-slate-200 shadow-sm pointer-events-auto transition-all shrink-0">--:--:--</div>
 
-                    <!-- 右側控制區：對焦與新增 -->
                     <div class="flex items-center gap-1.5 sm:gap-2 justify-start flex-1">
                         <button type="button" onclick="window.renderTimeline(true)" class="bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="對焦當前任務">
                             <i data-lucide="crosshair" class="w-4 h-4 pointer-events-none"></i>
@@ -2679,7 +2955,6 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
             </div>
 
             <div id="timelineContainer" class="min-h-full">
-                <!-- 動態內容生成區 -->
             </div>
             
         </main>
@@ -2702,64 +2977,51 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
             </div>
             
             <div class="flex-1 flex overflow-hidden relative">
-                <!-- 左側：主平面圖 -->
                 <div class="flex-1 relative overflow-hidden" id="mapScrollContainer">
                     <div id="mapWrapper" class="absolute inset-2 sm:inset-3 bg-[#fdfbf7] rounded-xl overflow-hidden shadow-inner border-2 border-slate-300 transition-colors">
                         
-                        <!-- 1/F Background Area (35%) -->
                         <div class="absolute top-0 left-0 right-0 h-[35%] bg-blue-50/60 border-b-2 border-slate-300 pointer-events-none transition-colors">
                             <div class="absolute top-2 left-3 text-blue-300/80 font-black text-xl tracking-widest select-none transition-colors">1/F</div>
                         </div>
                         
-                        <!-- G/F Background Area (65%) -->
                         <div class="absolute top-[35%] left-0 right-0 bottom-0 bg-emerald-50/60 border-t-2 border-slate-300 pointer-events-none transition-colors">
                             <div class="absolute bottom-2 right-3 text-emerald-300/80 font-black text-xl tracking-widest select-none transition-colors">G/F</div>
                         </div>
 
-                        <!-- 客服室 (1/F) -->
                         <div class="absolute top-[10%] right-[10%] w-[35%] h-[15%] bg-blue-100/80 border-2 border-blue-400 rounded-lg flex items-center justify-center shadow-inner pointer-events-none">
                             <div class="text-blue-600 font-bold text-[10px] sm:text-xs tracking-wider flex items-center"><i data-lucide="headphones" class="w-3 h-3 mr-1"></i>客服室</div>
                         </div>
 
-                        <!-- 花園仔 (G/F) -->
                         <div class="absolute top-[45%] left-[10%] w-[35%] h-[20%] bg-green-100/80 border-2 border-green-500 rounded-lg overflow-hidden flex flex-col items-center justify-center shadow-inner pointer-events-none">
                             <i data-lucide="flower-2" class="w-8 h-8 text-green-500/20 absolute"></i>
                             <div class="text-green-700 font-bold text-[10px] sm:text-xs tracking-wider relative z-10 flex items-center"><i data-lucide="leaf" class="w-3 h-3 mr-1"></i>花園仔</div>
                         </div>
 
-                        <!-- 魚檔 (G/F) -->
                         <div class="absolute top-[45%] right-[10%] w-[35%] h-[20%] bg-cyan-100/80 border-2 border-cyan-500 rounded-lg overflow-hidden flex flex-col items-center justify-center shadow-inner pointer-events-none">
                             <i data-lucide="fish" class="w-8 h-8 text-cyan-500/20 absolute"></i>
                             <div class="text-cyan-700 font-bold text-[10px] sm:text-xs tracking-wider relative z-10 flex items-center"><i data-lucide="droplets" class="w-3 h-3 mr-1"></i>魚檔</div>
                         </div>
                         
-                        <!-- 整體巡邏 (G/F) - 改為橫向置中跨越 -->
                         <div class="absolute top-[75%] left-[50%] -translate-x-1/2 w-[70%] h-[15%] bg-purple-100/80 border-2 border-purple-400 rounded-lg flex items-center justify-center shadow-inner pointer-events-none">
                             <div class="text-purple-600 font-bold text-[10px] sm:text-xs tracking-wider flex items-center"><i data-lucide="shield" class="w-3 h-3 mr-1"></i>整體巡邏</div>
                         </div>
 
-                        <!-- 主地圖動態標記點 -->
                         <div id="mapPointsContainer" class="absolute inset-0 pointer-events-none overflow-hidden z-30"></div>
                     </div>
                 </div>
 
-                <!-- 右側：外圍站點 (大清點專區) -->
                 <div class="w-20 sm:w-24 shrink-0 border-l border-[#e6e2d6] bg-[#f4f1eb] p-2 flex flex-col space-y-4 overflow-y-auto scrollbar-hide z-10 shadow-[-4px_0_15px_-5px_rgba(0,0,0,0.05)] pt-4">
                     <div class="text-[9px] sm:text-[10px] font-black tracking-widest text-slate-400 text-center mb-1">外圍站點</div>
                     
-                    <!-- 一樓大清點 (對應 pt_2) -->
                     <div class="relative w-full aspect-square bg-amber-50/80 border-2 border-dashed border-amber-300 rounded-lg flex flex-col items-center justify-center shadow-sm">
                         <i data-lucide="clipboard-list" class="w-4 h-4 text-amber-400 mb-0.5"></i>
                         <span class="text-amber-600 font-bold text-[8px] text-center leading-tight tracking-wider">一樓<br>大清點</span>
-                        <!-- 專屬的動態標記容器 -->
                         <div id="ext-pt_2" class="absolute inset-x-0 -bottom-2 flex flex-col items-center justify-center pointer-events-none z-30 translate-y-full"></div>
                     </div>
 
-                    <!-- 地面層大清點 (對應 pt_6) -->
                     <div class="relative w-full aspect-square bg-amber-50/80 border-2 border-dashed border-amber-300 rounded-lg flex flex-col items-center justify-center shadow-sm mt-8">
                         <i data-lucide="clipboard-list" class="w-4 h-4 text-amber-400 mb-0.5"></i>
                         <span class="text-amber-600 font-bold text-[8px] text-center leading-tight tracking-wider">地面層<br>大清點</span>
-                        <!-- 專屬的動態標記容器 -->
                         <div id="ext-pt_6" class="absolute inset-x-0 -bottom-2 flex flex-col items-center justify-center pointer-events-none z-30 translate-y-full"></div>
                     </div>
                 </div>
@@ -2784,6 +3046,35 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
                 </div>
                 <div class="flex-1 p-3 overflow-y-auto bg-[#fdfbf7] relative scrollbar-hide" id="galleryGrid">
                 </div>
+            </div>
+        </main>
+
+        <!-- Main Content (雪房紀錄) -->
+        <main id="coldRoomPage" class="hidden h-[calc(100vh-140px)] sm:h-[750px] flex-col relative z-10 bg-[#fdfbf7] overflow-hidden">
+            <!-- Sub Header -->
+            <div class="p-3 sm:p-4 border-b border-[#e6e2d6] bg-white shrink-0 shadow-sm z-20 relative flex flex-col space-y-3">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-sm font-bold text-slate-800 tracking-widest flex items-center"><i data-lucide="snowflake" class="w-4 h-4 mr-2 text-blue-500"></i>雪房存貨</h2>
+                    <button onclick="window.crExportToCSV()" class="text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 p-1.5 rounded-full active:scale-95 transition-all shadow-sm border border-transparent hover:border-emerald-200"><i data-lucide="file-spreadsheet" class="w-4 h-4 pointer-events-none"></i></button>
+                </div>
+                
+                <div class="flex bg-[#f0ebe1] rounded-lg p-1 shadow-inner border border-[#e5dfd3]">
+                    <button id="crTabActive" onclick="window.crSwitchTab('active')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all tracking-widest text-center">存放中</button>
+                    <button id="crTabHistory" onclick="window.crSwitchTab('history')" class="flex-1 py-1.5 px-0.5 text-[11px] sm:text-sm text-slate-500 hover:text-slate-700 transition-all tracking-widest text-center">已清空/歷史</button>
+                </div>
+            </div>
+
+            <!-- List Area -->
+            <div class="flex-1 overflow-y-auto p-4 scrollbar-hide relative" id="crMainContent">
+                <div id="crActiveControls" class="mb-4 flex justify-between items-center">
+                    <div class="text-[11px] text-slate-500 font-bold tracking-widest">
+                        目前存放: <span id="crActiveCount" class="text-blue-600 text-sm">0</span> 筆
+                    </div>
+                    <button onclick="window.crOpenAddModal()" class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-colors shadow-sm flex items-center active:scale-95">
+                        <i data-lucide="plus" class="w-3.5 h-3.5 mr-1"></i> 新增存放
+                    </button>
+                </div>
+                <div id="crRecordsContainer" class="space-y-4 pb-20"></div>
             </div>
         </main>
 
@@ -2844,6 +3135,63 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
                 <button onclick="window.closeScheduleManager()" class="text-slate-400 p-1.5 rounded-full hover:bg-slate-200 active:scale-95 transition-all"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div id="scheduleManageList" class="p-3 overflow-y-auto max-h-[60vh] bg-[#fdfbf7] scrollbar-hide">
+            </div>
+        </div>
+    </div>
+
+    <!-- 雪房 新增 Modal -->
+    <div id="crAddModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
+        <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative max-h-[90vh] overflow-y-auto">
+            <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center border-b pb-2">
+                <i data-lucide="package-plus" class="w-5 h-5 mr-2 text-blue-500"></i> 新增存放
+            </h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-[11px] font-bold text-slate-500 block mb-1">檔主編號 / 名稱</label>
+                    <input type="text" id="crInputTenant" placeholder="例如: A01, 陳記海鮮" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 shadow-inner">
+                </div>
+                <div>
+                    <label class="text-[11px] font-bold text-slate-500 block mb-1">貨物類型</label>
+                    <div id="crTypeContainer" class="flex flex-wrap gap-2 mb-2"></div>
+                    <div class="flex items-center mt-1">
+                        <input type="text" id="crInputNewType" placeholder="新增類型..." class="flex-1 border border-slate-300 rounded-l-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 shadow-inner">
+                        <button onclick="window.crAddNewType()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-r-lg border-y border-r border-slate-300 transition-colors shadow-sm">
+                            <i data-lucide="plus" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+                <div>
+                    <label class="text-[11px] font-bold text-slate-500 block mb-1">存放數量 (件/箱)</label>
+                    <input type="number" id="crInputQuantity" placeholder="請輸入數量" min="1" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 shadow-inner">
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end space-x-2 border-t border-slate-100 pt-4">
+                <button onclick="window.crCloseAddModal()" class="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold active:scale-95 transition-colors shadow-sm border border-slate-200">取消</button>
+                <button onclick="window.crSubmitAddRecord()" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-bold shadow-sm active:scale-95 transition-colors">確認存入</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 雪房 取出 Modal -->
+    <div id="crWithdrawModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
+        <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative">
+            <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center border-b pb-2">
+                <i data-lucide="package-minus" class="w-5 h-5 mr-2 text-amber-500"></i> 取出貨物
+            </h3>
+            <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 mb-4 shadow-inner">
+                <div class="text-[11px] text-slate-500 mb-1">檔主: <span id="crWithdrawTenantDisplay" class="font-bold text-slate-700 text-xs"></span></div>
+                <div class="text-[11px] text-slate-500">目前剩餘數量: <span id="crWithdrawRemainDisplay" class="font-bold text-blue-600 text-sm"></span></div>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-[11px] font-bold text-slate-500 block mb-1">本次取出數量</label>
+                    <input type="number" id="crInputWithdrawQty" min="1" class="w-full border border-slate-300 rounded-lg p-2.5 text-xl focus:border-amber-500 focus:outline-none font-bold text-slate-700 text-center bg-white shadow-inner">
+                </div>
+            </div>
+            <input type="hidden" id="crCurrentActionId">
+            <div class="mt-6 flex justify-end space-x-2 border-t border-slate-100 pt-4">
+                <button onclick="window.crCloseWithdrawModal()" class="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold active:scale-95 transition-colors shadow-sm border border-slate-200">取消</button>
+                <button onclick="window.crSubmitWithdraw()" class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-bold shadow-sm active:scale-95 transition-colors">確認取出</button>
             </div>
         </div>
     </div>
