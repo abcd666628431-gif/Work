@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>工作順序流程</title>
+    <title>工作記錄本</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
@@ -66,6 +66,31 @@
             100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
         }
 
+        /* 棋子進場與退場動畫 */
+        @keyframes flag-fade-in {
+            0% { opacity: 0; transform: scale(0.5) translateY(10px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        @keyframes flag-fade-out {
+            0% { opacity: 1; transform: scale(1) translateY(0); }
+            100% { opacity: 0; transform: scale(0.5) translateY(10px); }
+        }
+        .animate-flag-in {
+            animation: flag-fade-in 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+        .animate-flag-out {
+            animation: flag-fade-out 0.3s ease-in forwards;
+        }
+
+        /* 換班提示呼吸燈閃爍動畫 */
+        @keyframes shift-pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(0.98); }
+        }
+        .animate-shift-pulse {
+            animation: shift-pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
         /* 深色模式覆寫 - 柔和文字與低光度線條設定 */
         body.dark-mode { background-color: #0f172a !important; color: #cbd5e1 !important; color-scheme: dark; }
         .dark-mode .bg-\[\#fdfbf7\] { background-color: #1e293b !important; border-color: #334155 !important; }
@@ -112,17 +137,29 @@
         .dark-mode .text-emerald-300\/80 { color: rgba(52, 211, 153, 0.4) !important; }
         .dark-mode .bg-\[\#f4f1eb\] { background-color: #1e293b !important; border-color: #334155 !important; }
 
-        /* 調整時間輸入框內的時鐘圖示大小 */
-        input[type="time"]::-webkit-calendar-picker-indicator {
-            cursor: pointer;
-            width: 22px;
-            height: 22px;
-            opacity: 0.85;
-            transition: transform 0.2s ease;
+        /* 全程等速、緩慢在房間內走動的動畫 */
+        @keyframes room-walk-a {
+             0% { transform: translate(0px, 0px); }
+             33% { transform: translate(-25px, 12px); }
+             66% { transform: translate(20px, 18px); }
+             100% { transform: translate(0px, 0px); }
         }
-        input[type="time"]::-webkit-calendar-picker-indicator:active {
-            transform: scale(0.9);
+        @keyframes room-walk-b {
+             0% { transform: translate(0px, 0px); }
+             25% { transform: translate(22px, 8px); }
+             50% { transform: translate(-15px, 20px); }
+             75% { transform: translate(-22px, 5px); }
+             100% { transform: translate(0px, 0px); }
         }
+        @keyframes room-walk-c {
+             0% { transform: translate(0px, 0px); }
+             33% { transform: translate(12px, 15px); }
+             66% { transform: translate(-18px, 8px); }
+             100% { transform: translate(0px, 0px); }
+        }
+        .animate-float-a { animation: room-walk-a 14s linear infinite; }
+        .animate-float-b { animation: room-walk-b 16s linear infinite; }
+        .animate-float-c { animation: room-walk-c 12s linear infinite; }
     </style>
 
     <script type="module">
@@ -164,23 +201,33 @@
         let galleryItems = [];
 
         let futureMemos = []; 
+        
+        // 整合地圖站點
         const defaultMapPoints = {
-            'pt_1': { name: '客服室', x: 75, y: 12.5 },
-            'pt_2': { name: '一樓大清點', x: 27.5, y: 35.5 },
-            'pt_3': { name: '花園仔', x: 22.5, y: 64 },
-            'pt_4': { name: '魚檔', x: 72.5, y: 64 },
-            'pt_5': { name: '整體巡邏', x: 50, y: 50 },
-            'pt_6': { name: '地面層 大清點', x: 25, y: 84 }
+            'pt_1': { name: '客服室', x: 50, y: 18 },
+            'pt_2': { name: '一樓大清點', x: 0, y: 0 },
+            'pt_3': { name: '花園仔', x: 27.5, y: 62 },
+            'pt_4': { name: '魚檔', x: 72.5, y: 62 },
+            'pt_5': { name: '整體巡邏', x: 50, y: 88 },
+            'pt_6': { name: '地面層 大清點', x: 0, y: 0 },
+            'pt_7': { name: '休息中', x: 0, y: 0 }
         };
         let mapData = { points: JSON.parse(JSON.stringify(defaultMapPoints)) }; 
         let memberSchedules = []; 
+        let teamMembers = [];
+        
+        // 排班表全域變數
+        let activeGridMember = null;
+        let isEditingMembers = false;
+        let isGridDragging = false;
+        let gridDragAction = null; 
+        window.lastTouchedEl = null;
 
         // 雪房模組全域變數
         let crRecords = [];
         let crItemTypes = ['海鮮', '肉類', '蔬果', '其他'];
         let crCurrentSelectedType = '';
         let crCurrentTab = 'active'; 
-        let crTimerInterval;
         const CR_TIME_LIMIT_MS = 24 * 60 * 60 * 1000; // 24 Hours
 
         let actionHistory = [];
@@ -243,8 +290,8 @@
             };
             
             const okHandler = () => {
-                onConfirmCallback();
                 cleanup();
+                if (typeof onConfirmCallback === 'function') onConfirmCallback();
             };
             
             okBtn.addEventListener('click', okHandler);
@@ -276,17 +323,20 @@
             
             futureMemos = getLocal('work_cache_future_memos', []);
             mapData = getLocal('work_cache_map_data', { points: {} });
+            teamMembers = getLocal('work_cache_team_members', ['周靜儀', '蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲']);
             
             crRecords = getLocal('coldRoomRecords', []);
             crItemTypes = getLocal('coldRoomTypes', ['海鮮', '肉類', '蔬果', '其他']);
 
-            if(!mapData.points) mapData.points = {};
-            for (const [id, data] of Object.entries(defaultMapPoints)) {
-                let exists = false;
-                for (const key in mapData.points) {
-                    if (mapData.points[key].name === data.name) exists = true;
-                }
-                if (!exists) mapData.points[id] = data;
+            if(!mapData.points || Object.keys(mapData.points).length === 0) {
+                mapData.points = JSON.parse(JSON.stringify(defaultMapPoints));
+            } else {
+                Object.keys(defaultMapPoints).forEach(k => {
+                    if (mapData.points[k]) {
+                        mapData.points[k].x = defaultMapPoints[k].x;
+                        mapData.points[k].y = defaultMapPoints[k].y;
+                    }
+                });
             }
             
             memberSchedules = getLocal('work_cache_member_schedules', []);
@@ -383,12 +433,13 @@
                 }
             }, (err) => console.error(err));
 
-            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'map_data'), (docSnap) => {
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'team_members'), (docSnap) => {
                 if(docSnap.exists()) {
-                    mapData = docSnap.data().data || { points: {} };
-                    if(!mapData.points || Object.keys(mapData.points).length === 0) mapData.points = JSON.parse(JSON.stringify(defaultMapPoints));
-                    safeSetLocal('work_cache_map_data', mapData);
-                    if(!document.getElementById('mapPage')?.classList.contains('hidden')) window.renderMap();
+                    teamMembers = docSnap.data().members || [];
+                    safeSetLocal('work_cache_team_members', teamMembers);
+                    if(document.getElementById('scheduleManageModal')?.classList.contains('flex')) {
+                        window.renderScheduleManager();
+                    }
                 }
             }, (err) => console.error(err));
 
@@ -400,7 +451,6 @@
                 }
             }, (err) => console.error(err));
 
-            // Sync Cold Room Data
             onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'coldRoom'), (docSnap) => {
                 if(docSnap.exists()) {
                     const data = docSnap.data();
@@ -422,6 +472,605 @@
             }, (err) => console.error(err));
         }
 
+        // --- 地圖與排班管理核心邏輯 ---
+
+        window.renderMap = () => {
+            const pointsContainer = document.getElementById('mapPointsContainer');
+            if(pointsContainer) pointsContainer.innerHTML = '';
+            window.updateMapSimulation(); 
+        };
+
+        window.updateMapSimulation = () => {
+            if(document.getElementById('mapPage')?.classList.contains('hidden')) return;
+            const container = document.getElementById('mapPointsContainer');
+            if(!container) return;
+
+            const now = window.getNow();
+            const nowTime = now.getTime();
+            const currentTimeMinutes = now.getHours() * 60 + now.getMinutes();
+            
+            let activeMembers = {}; 
+            let incomingMembers = {}; // 記錄即將在 10 分鐘內接班的人
+
+            memberSchedules.forEach(sched => {
+                const start = parseTime(sched.start).getTime();
+                const end = parseTime(sched.end).getTime();
+                
+                if(nowTime >= start && nowTime <= end) {
+                    activeMembers[sched.name] = sched.locationId;
+
+                    const [endH, endM] = sched.end.split(':').map(Number);
+                    const endTotalMins = endH * 60 + endM;
+                    const minsBeforeEnd = endTotalMins - currentTimeMinutes;
+                    
+                    if (minsBeforeEnd > 0 && minsBeforeEnd <= 10) {
+                        const nextSched = memberSchedules.find(ns => 
+                            ns.locationId === sched.locationId && 
+                            ns.name !== sched.name && 
+                            ns.start === sched.end
+                        );
+                        if (nextSched) {
+                            incomingMembers[sched.locationId] = incomingMembers[sched.locationId] || [];
+                            if (!incomingMembers[sched.locationId].includes(nextSched.name)) {
+                                incomingMembers[sched.locationId].push(nextSched.name);
+                            }
+                        }
+                    }
+                }
+            });
+
+            let locGroups = {};
+            for (let [name, locId] of Object.entries(activeMembers)) {
+                locGroups[locId] = locGroups[locId] || [];
+                locGroups[locId].push(name);
+            }
+            
+            // 2️⃣ 右側外圍站點渲染
+            ['pt_2', 'pt_6', 'pt_7'].forEach(locId => {
+                const names = locGroups[locId] || [];
+                const incomingNames = incomingMembers[locId] || [];
+                const stationCard = document.getElementById(`station-${locId}`);
+                
+                if (stationCard) {
+                    const personEl = stationCard.querySelector('.station-person');
+                    const statusEl = stationCard.querySelector('.station-status');
+                    if (personEl) { personEl.textContent = ''; personEl.classList.add('hidden'); }
+                    if (statusEl) { statusEl.textContent = ''; statusEl.classList.add('hidden'); }
+
+                    let membersBox = stationCard.querySelector('.ext-members-box');
+                    if (!membersBox) {
+                        membersBox = document.createElement('div');
+                        membersBox.className = 'ext-members-box flex flex-wrap items-center justify-center gap-1.5 -mt-1.5 pt-0';
+                        stationCard.appendChild(membersBox);
+                    } else {
+                        membersBox.innerHTML = ''; 
+                    }
+
+                    // 渲染當前值班人員
+                    names.forEach((name) => {
+                        const memberDiv = document.createElement('div');
+                        memberDiv.className = 'flex flex-col items-center justify-center m-0.5 scale-90';
+                        memberDiv.innerHTML = `
+                            <div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center">
+                                <i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${name}
+                            </div>
+                            <div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center">
+                                <i data-lucide="user" class="w-3 h-3 text-white"></i>
+                            </div>
+                        `;
+                        membersBox.appendChild(memberDiv);
+                    });
+
+                    // 渲染準備接班人員（加入 animate-flag-in 進場動畫）
+                    incomingNames.forEach((nextName) => {
+                        const incomingDiv = document.createElement('div');
+                        incomingDiv.className = 'flex flex-col items-center justify-center m-0.5 scale-90 animate-flag-in';
+                        incomingDiv.innerHTML = `
+                            <div class="bg-amber-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center">
+                                <i data-lucide="user-plus" class="w-3 h-3 mr-1 text-white"></i>待:${nextName}
+                            </div>
+                            <div class="w-5 h-5 bg-amber-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center">
+                                <i data-lucide="user" class="w-3 h-3 text-white"></i>
+                            </div>
+                        `;
+                        membersBox.appendChild(incomingDiv);
+                    });
+                }
+            });
+
+            document.querySelectorAll('.member-dynamic-marker').forEach(el => el.dataset.active = "false");
+            
+            // 1️⃣ 第一部分：左側主地圖站點渲染
+            for (let [locId, names] of Object.entries(locGroups)) {
+                if (locId === 'pt_2' || locId === 'pt_6' || locId === 'pt_7') continue; 
+                
+                const loc = mapData.points[locId];
+                if(!loc) continue;
+
+                const incomingNames = incomingMembers[locId] || [];
+
+                // 🔹 A. 渲染當前值班人員（在房間內部走動）
+                names.forEach((name, idx) => {
+                    let markerId = `dyn-marker-${name}-${locId}-current`;
+                    let marker = document.getElementById(markerId);
+                    
+                    if(!marker) {
+                        marker = document.createElement('div');
+                        marker.id = markerId;
+                    }
+                    
+                    marker.innerHTML = `
+                        <div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-lg whitespace-nowrap mb-1 tracking-wider border border-white/80 antialiased flex items-center">
+                            <i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${name}
+                        </div>
+                        <div class="relative flex items-center justify-center">
+                            <div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md z-10 relative flex items-center justify-center">
+                                <i data-lucide="user" class="w-3 h-3 text-white"></i>
+                            </div>
+                            <div class="absolute w-8 h-8 bg-blue-400/40 rounded-full radar-slow z-0"></div>
+                        </div>
+                    `;
+
+                    if (marker.parentNode !== container) container.appendChild(marker);
+                    
+                    const offset = names.length > 1 ? (idx - (names.length - 1) / 2) * 75 : 0;
+                    marker.style.left = `calc(${loc.x}% + ${offset}px - 20px)`;
+                    marker.style.top = `calc(${loc.y}% - 55px)`; 
+                    
+                    let seed = 0;
+                    for (let i = 0; i < name.length; i++) seed += name.charCodeAt(i);
+
+                    const animClasses = ['animate-float-a', 'animate-float-b', 'animate-float-c'];
+                    const chosenAnim = animClasses[seed % animClasses.length];
+                    const randomDelay = (seed % 5) * -3;
+
+                    marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 pointer-events-none z-30 drop-shadow-xl ${chosenAnim}`;
+                    marker.style.animationDelay = `${randomDelay}s`;
+                    marker.dataset.active = "true";
+                });
+
+                // 🔸 B. 渲染準備接班人員
+                incomingNames.forEach((name, idx) => {
+                    let markerId = `dyn-marker-${name}-${locId}-incoming`;
+                    let marker = document.getElementById(markerId);
+                    
+                    if(!marker) {
+                        marker = document.createElement('div');
+                        marker.id = markerId;
+                    }
+                    
+                    marker.innerHTML = `
+                        <div class="bg-amber-600 text-white text-[11px] font-bold px-2 py-0.5 rounded-md shadow-lg whitespace-nowrap mb-1 tracking-wider border border-white/90 antialiased flex items-center shadow-amber-500/30">
+                            <i data-lucide="user-plus" class="w-3 h-3 mr-1 text-white"></i>待: ${name}
+                        </div>
+                        <div class="relative flex items-center justify-center">
+                            <div class="w-5 h-5 bg-amber-500 rounded-full border-[2px] border-white shadow-md z-10 relative flex items-center justify-center">
+                                <i data-lucide="user" class="w-3 h-3 text-white"></i>
+                            </div>
+                            <div class="absolute w-8 h-8 bg-amber-400/40 rounded-full radar-slow z-0"></div>
+                        </div>
+                    `;
+
+                    if (marker.parentNode !== container) container.appendChild(marker);
+                    
+                    const offset = incomingNames.length > 1 ? (idx - (incomingNames.length - 1) / 2) * 60 : 0;
+                    marker.style.left = `calc(${loc.x}% + ${offset}px - 45px)`;
+
+                    let topOffset = '-120px';
+                    if (locId === 'pt_3' || locId === 'pt_4') {
+                        topOffset = '-135px'; // 花園仔、魚檔
+                    } else if (locId === 'pt_5') {
+                        topOffset = '-115px'; // 整體巡邏
+                    }
+                    marker.style.top = `calc(${loc.y}% + ${topOffset})`; 
+
+                    marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 pointer-events-none z-[60] drop-shadow-xl animate-flag-in`;
+                    marker.dataset.active = "true";
+                });
+            }
+
+            lucide.createIcons();
+            
+            document.querySelectorAll('.member-dynamic-marker').forEach(el => {
+                if(el.dataset.active === "false") el.remove();
+            });
+        };
+
+        window.openScheduleManager = () => {
+            window.renderScheduleManager();
+            document.getElementById('scheduleManageModal').classList.remove('hidden');
+            document.getElementById('scheduleManageModal').classList.add('flex');
+        };
+        
+        window.closeScheduleManager = () => {
+            document.getElementById('scheduleManageModal').classList.add('hidden');
+            document.getElementById('scheduleManageModal').classList.remove('flex');
+            window.updateMapSimulation(); 
+        };
+
+        window.toggleEditMembers = () => { isEditingMembers = !isEditingMembers; activeGridMember = null; window.renderScheduleManager(); };
+        window.addTeamMember = () => {
+            const name = prompt("請輸入新成員名字：");
+            if (name && name.trim()) {
+                teamMembers.push(name.trim());
+                safeSetLocal('work_cache_team_members', teamMembers);
+                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'team_members'), { members: teamMembers });
+                window.renderScheduleManager();
+            }
+        };
+        window.removeTeamMember = (idx) => {
+            teamMembers.splice(idx, 1);
+            safeSetLocal('work_cache_team_members', teamMembers);
+            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'team_members'), { members: teamMembers });
+            window.renderScheduleManager();
+        };
+
+        window.selectGridMember = (name) => {
+            if(activeGridMember === name) activeGridMember = null;
+            else activeGridMember = name;
+            
+            document.querySelectorAll('.member-btn-container').forEach(container => {
+                const isSelected = container.dataset.name === activeGridMember;
+                const isEraser = container.dataset.name === 'ERASER';
+                const innerDiv = container.querySelector('div');
+                if(!innerDiv) return;
+                
+                if (isEraser) {
+                    innerDiv.className = isSelected 
+                        ? 'px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center bg-pink-500 text-white border-pink-600 shadow-md scale-105' 
+                        : 'px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm';
+                } else {
+                    innerDiv.className = isSelected 
+                        ? 'px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all bg-blue-500 text-white border-blue-600 shadow-md scale-105' 
+                        : 'px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all bg-white text-slate-700 border-slate-200 hover:border-blue-400 hover:text-blue-600 shadow-sm';
+                }
+            });
+
+            const hint = document.getElementById('grid-hint-text');
+            if (hint) {
+                if (activeGridMember === 'ERASER') {
+                    hint.className = 'mt-2.5 text-[10px] text-pink-600 font-bold animate-pulse px-1 block';
+                    hint.innerHTML = '👉 橡皮擦模式：點擊或拖曳表格以清除整格內容。';
+                } else if (activeGridMember) {
+                    hint.className = 'mt-2.5 text-[10px] text-blue-600 font-bold animate-pulse px-1 block';
+                    hint.innerHTML = `👉 已選取「${activeGridMember}」，請點擊或拖曳下方表格填入。`;
+                } else {
+                    hint.className = 'hidden';
+                    hint.innerHTML = '';
+                }
+            }
+            
+            document.querySelectorAll('.grid-input').forEach(ta => {
+                if (activeGridMember) ta.classList.add('cursor-pointer', 'select-none');
+                else ta.classList.remove('cursor-pointer', 'select-none');
+            });
+        };
+
+        window.startGridDrag = (el, event) => {
+            if (!activeGridMember) return;
+            el.blur(); 
+            isGridDragging = true;
+            
+            if (activeGridMember === 'ERASER') {
+                gridDragAction = 'erase';
+                el.value = '';
+            } else {
+                let names = (el.value || '').split(/[\n\s]+/).filter(n => n);
+                if (names.includes(activeGridMember)) {
+                    gridDragAction = 'remove';
+                    names = names.filter(n => n !== activeGridMember);
+                } else {
+                    gridDragAction = 'add';
+                    names.push(activeGridMember);
+                }
+                el.value = names.join('\n');
+            }
+        };
+
+        window.onGridDragEnter = (el, event) => {
+            if (!isGridDragging || !activeGridMember) return;
+            el.blur();
+            if (gridDragAction === 'erase') {
+                el.value = '';
+            } else {
+                let names = (el.value || '').split(/[\n\s]+/).filter(n => n);
+                if (gridDragAction === 'add' && !names.includes(activeGridMember)) {
+                    names.push(activeGridMember);
+                } else if (gridDragAction === 'remove' && names.includes(activeGridMember)) {
+                    names = names.filter(n => n !== activeGridMember);
+                }
+                el.value = names.join('\n');
+            }
+        };
+
+        window.onGridTouchMove = (event) => {
+            if (!isGridDragging || !activeGridMember) return;
+            event.preventDefault(); 
+            const touch = event.touches[0];
+            const el = document.elementFromPoint(touch.clientX, touch.clientY);
+            if (el && el.classList.contains('grid-input')) {
+                if (el !== window.lastTouchedEl) {
+                    window.lastTouchedEl = el;
+                    window.onGridDragEnter(el, event);
+                }
+            }
+        };
+
+        window.stopGridDrag = () => {
+            isGridDragging = false;
+            gridDragAction = null;
+            window.lastTouchedEl = null;
+        };
+
+        document.addEventListener('mouseup', window.stopGridDrag);
+        document.addEventListener('touchend', window.stopGridDrag);
+
+        window.saveGridSchedule = () => {
+            const timeSlots = ['07:00-08:00', '08:00-09:00', '09:00-10:00', '10:00-11:00', '11:00-12:00', '12:00-13:00', '13:00-14:00', '14:00-15:00', '15:00-16:00', '16:00-17:00', '17:00-18:00', '18:00-19:00', '19:00-19:30', '19:30-20:00', '20:00-21:00', '21:00-22:00'];
+            let newSchedules = [];
+            let locKeys = Object.keys(mapData.points);
+
+            locKeys.forEach(locId => {
+                let activeBlocks = {};
+
+                timeSlots.forEach((ts, index) => {
+                    const [tStart, tEnd] = ts.split('-');
+                    const inputEl = document.querySelector(`.grid-input[data-loc="${locId}"][data-time="${ts}"]`);
+                    if (!inputEl) return;
+                    
+                    const text = inputEl.value.trim();
+                    let currentNames = [];
+                    
+                    if (text) {
+                        const rawNames = text.split(/[\n\s]+/);
+                        rawNames.forEach(rawName => {
+                            let cleanName = rawName.replace(/\(.*?\)/g, '').trim();
+                            if (cleanName.includes('休')) return;
+                            if (cleanName.includes('頂')) cleanName = cleanName.replace('頂', '').trim();
+                            if (cleanName) currentNames.push(cleanName);
+                        });
+                    }
+
+                    for (const name in activeBlocks) {
+                        if (!currentNames.includes(name)) {
+                            newSchedules.push({ id: 'sch_grid_'+Date.now()+Math.random().toString(36).substr(2,5), name: name, locationId: locId, start: activeBlocks[name].start, end: activeBlocks[name].end });
+                            delete activeBlocks[name];
+                        }
+                    }
+
+                    currentNames.forEach(name => {
+                        if (activeBlocks[name]) activeBlocks[name].end = tEnd; 
+                        else activeBlocks[name] = { start: tStart, end: tEnd };
+                    });
+                    
+                    if (index === timeSlots.length - 1) {
+                        for (const name in activeBlocks) {
+                            newSchedules.push({ id: 'sch_grid_'+Date.now()+Math.random().toString(36).substr(2,5), name: name, locationId: locId, start: activeBlocks[name].start, end: activeBlocks[name].end });
+                            delete activeBlocks[name];
+                        }
+                    }
+                });
+            });
+
+            memberSchedules = memberSchedules.filter(s => !s.id.startsWith('sch_grid_'));
+            memberSchedules = [...memberSchedules, ...newSchedules];
+            
+            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'member_schedules'), { schedules: memberSchedules });
+            window.renderScheduleManager();
+            window.showToast(`成功儲存表格排班！共生效 ${newSchedules.length} 筆時段。`);
+        };
+
+        window.clearAllSchedules = () => {
+            window.showConfirm('清空排班', '確定要清空當前所有的排班資料嗎？', () => {
+                memberSchedules = [];
+                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'member_schedules'), { schedules: memberSchedules });
+                window.renderScheduleManager();
+                window.showToast('已清空所有排班');
+            });
+        };
+
+        // 崗位顏色對照表 (用於排班總表)
+        const getLocColorClass = (locId) => {
+            switch(locId) {
+                case 'pt_1': return 'bg-blue-50 text-blue-700 border-r border-blue-200'; // 客服室
+                case 'pt_3': return 'bg-emerald-50 text-emerald-700 border-r border-emerald-200'; // 花園仔
+                case 'pt_4': return 'bg-cyan-50 text-cyan-700 border-r border-cyan-200'; // 魚檔
+                case 'pt_5': return 'bg-purple-50 text-purple-700 border-r border-purple-200'; // 整體巡邏
+                case 'pt_2': return 'bg-amber-50 text-amber-800 border-r border-amber-200'; // 一樓大清點
+                case 'pt_6': return 'bg-amber-100 text-amber-900 border-r border-amber-300'; // 地面層大清點
+                case 'pt_7': return 'bg-slate-100 text-slate-700 border-r border-slate-200'; // 休息中
+                default: return 'bg-white text-slate-700';
+            }
+        };
+
+        window.renderScheduleManager = () => {
+            const list = document.getElementById('scheduleManageList');
+            
+            let currentDOMGridValues = {};
+            document.querySelectorAll('.grid-input').forEach(input => {
+                const key = `${input.dataset.loc}_${input.dataset.time}`;
+                currentDOMGridValues[key] = input.value;
+            });
+
+            const timeSlots = ['07:00-08:00', '08:00-09:00', '09:00-10:00', '10:00-11:00', '11:00-12:00', '12:00-13:00', '13:00-14:00', '14:00-15:00', '15:00-16:00', '16:00-17:00', '17:00-18:00', '18:00-19:00', '19:00-19:30', '19:30-20:00', '20:00-21:00', '21:00-22:00'];
+            const validCountingSlots = ['13:00-14:00', '14:00-15:00', '19:30-20:00', '20:00-21:00', '21:00-22:00'];
+            
+            let tableHeader = `<th class="sticky left-0 bg-slate-100 p-2 z-10 w-[70px] min-w-[70px] max-w-[70px] border border-slate-200 text-slate-600 font-black text-[10px]">崗位 \\ 時間</th>`;
+            timeSlots.forEach(ts => { tableHeader += `<th class="p-1 border border-slate-200 w-[65px] min-w-[65px] max-w-[65px] text-[9px] font-bold text-slate-500 whitespace-nowrap bg-slate-50 text-center">${ts}</th>`; });
+
+            const customOrder = ['pt_3', 'pt_4', 'pt_5', 'pt_1', 'pt_2', 'pt_6', 'pt_7'];
+            let sortedLocs = Object.entries(mapData.points).sort(([idA], [idB]) => {
+                let idxA = customOrder.indexOf(idA);
+                let idxB = customOrder.indexOf(idB);
+                if (idxA === -1) idxA = 999;
+                if (idxB === -1) idxB = 999;
+                return idxA - idxB;
+            });
+
+            let tableRows = '';
+            sortedLocs.forEach(([locId, pt]) => {
+                let displayName = pt.name.replace(/\s*大清點/, '<br>大清點');
+                const locColorClass = getLocColorClass(locId);
+                
+                tableRows += `<tr>`;
+                tableRows += `<td class="sticky left-0 ${locColorClass} font-black text-[11px] p-2 z-10 border border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center break-words leading-tight w-[70px] min-w-[70px] max-w-[70px]">${displayName}</td>`;
+                
+                timeSlots.forEach(ts => {
+                    let isDisabled = (locId === 'pt_2' || locId === 'pt_6') && !validCountingSlots.includes(ts);
+                    
+                    if (isDisabled) {
+                        tableRows += `<td class="p-0 border border-slate-200 bg-slate-200/60 pointer-events-none"><div class="w-full h-full min-h-[50px]"></div></td>`;
+                    } else {
+                        const cellKey = `${locId}_${ts}`;
+                        let cellContent = '';
+
+                        if (currentDOMGridValues.hasOwnProperty(cellKey)) {
+                            cellContent = currentDOMGridValues[cellKey];
+                        } else {
+                            let cellNames = [];
+                            memberSchedules.forEach(s => {
+                                if (s.locationId === locId && s.id.startsWith('sch_grid_')) {
+                                    const sStart = parseInt(s.start.replace(':',''));
+                                    const sEnd = parseInt(s.end.replace(':',''));
+                                    const tStart = parseInt(ts.split('-')[0].replace(':',''));
+                                    const tEnd = parseInt(ts.split('-')[1].replace(':',''));
+                                    if (sStart <= tStart && sEnd >= tEnd) cellNames.push(s.name);
+                                }
+                            });
+                            cellContent = cellNames.join('\n');
+                        }
+
+                        tableRows += `<td class="p-0 border border-slate-200 bg-white hover:bg-blue-50/50 transition-colors"><textarea class="grid-input w-full h-full min-h-[50px] p-1 text-[10px] resize-none focus:outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400 border-none font-medium leading-relaxed placeholder-slate-200 ${activeGridMember ? 'cursor-pointer select-none' : ''}" data-loc="${locId}" data-time="${ts}" placeholder="..." onmousedown="window.startGridDrag(this, event)" onmouseenter="window.onGridDragEnter(this, event)" ontouchstart="window.startGridDrag(this, event)">${cellContent}</textarea></td>`;
+                    }
+                });
+                tableRows += `</tr>`;
+            });
+
+            const locOptions = Object.entries(mapData.points).map(([id, pt]) => `<option value="${id}">${pt.name}</option>`).join('');
+
+            let html = `
+                <div class="mb-3 p-2 bg-slate-50 border border-slate-200 rounded-xl shadow-inner">
+                    <div class="flex justify-between items-center mb-2 px-1">
+                        <span class="text-xs font-bold text-slate-700 flex items-center"><i data-lucide="palette" class="w-3.5 h-3.5 mr-1.5 text-blue-500"></i>快捷填表 (點擊選取人員)</span>
+                        <button onclick="window.toggleEditMembers()" class="text-[10px] font-bold text-slate-500 hover:text-blue-500 transition-colors bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">${isEditingMembers ? '完成編輯' : '編輯名單'}</button>
+                    </div>
+                    <div class="flex flex-wrap gap-1.5 px-1">
+                        ${!isEditingMembers ? `
+                        <div class="relative group cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')">
+                            <div class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}">
+                                <i data-lucide="eraser" class="w-3 h-3 mr-1"></i>橡皮擦
+                            </div>
+                        </div>` : ''}
+                        
+                        ${teamMembers.map((name, idx) => `
+                            <div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? '' : `window.selectGridMember('${name}')`}">
+                                <div class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all ${activeGridMember === name ? 'bg-blue-500 text-white border-blue-600 shadow-md scale-105' : 'bg-white text-slate-700 border-slate-200 hover:border-blue-400 hover:text-blue-600 shadow-sm'}">
+                                    ${name}
+                                </div>
+                                ${isEditingMembers ? `<button onclick="window.removeTeamMember(${idx}); event.stopPropagation();" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold z-10 hover:bg-red-600 transition-colors"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}
+                            </div>
+                        `).join('')}
+                        ${isEditingMembers ? `<button onclick="window.addTeamMember()" class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-dashed border-slate-400 text-slate-500 hover:bg-slate-200 flex items-center transition-colors"><i data-lucide="plus" class="w-3 h-3 mr-1"></i>新增</button>` : ''}
+                    </div>
+                    <div id="grid-hint-text" class="${activeGridMember && activeGridMember !== 'ERASER' ? 'mt-2.5 text-[10px] text-blue-600 font-bold animate-pulse px-1 block' : activeGridMember === 'ERASER' ? 'mt-2.5 text-[10px] text-pink-600 font-bold animate-pulse px-1 block' : 'hidden'}">
+                        ${activeGridMember && activeGridMember !== 'ERASER' ? `👉 已選取「${activeGridMember}」，請點擊或拖曳下方表格填入。` : activeGridMember === 'ERASER' ? `👉 橡皮擦模式：點擊或拖曳表格以清除整格內容。` : ``}
+                    </div>
+                </div>
+
+                <div class="bg-white border border-slate-200 rounded-xl mb-3 shadow-sm overflow-hidden flex flex-col relative">
+                    <div class="p-2 sm:p-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
+                        <h4 class="text-xs font-bold text-slate-700 flex items-center"><i data-lucide="grid" class="w-4 h-4 mr-1.5 text-indigo-500"></i>排班總表</h4>
+                        <div class="flex items-center gap-2">
+                            <input type="file" id="scheduleImageInput" accept="image/*" class="hidden" onchange="window.handleScheduleImageUpload(event)">
+                            <button id="aiParseBtn" onclick="document.getElementById('scheduleImageInput').click()" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border border-indigo-200 px-2 py-1.5 rounded-lg text-[10px] font-bold transition-colors active:scale-95 flex items-center shadow-sm">
+                                <i data-lucide="scan-line" class="w-3 h-3 mr-1"></i> 圖片匯入
+                            </button>
+                            <button onclick="window.saveGridSchedule()" class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg shadow-sm transition-colors active:scale-95 flex items-center"><i data-lucide="save" class="w-3 h-3 mr-1"></i>儲存表格</button>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto scrollbar-hide max-w-full" ontouchmove="window.onGridTouchMove(event)">
+                        <table class="w-max text-left border-collapse">
+                            <thead><tr>${tableHeader}</tr></thead>
+                            <tbody>${tableRows}</tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <details class="bg-slate-50 border border-slate-200 rounded-xl mb-4 shadow-sm group">
+                    <summary class="p-3 text-xs font-bold text-slate-600 cursor-pointer flex items-center justify-between outline-none">
+                        <span class="flex items-center"><i data-lucide="plus-circle" class="w-3.5 h-3.5 mr-1.5 text-slate-400"></i>單筆時段新增 (手動)</span>
+                        <i data-lucide="chevron-down" class="w-4 h-4 group-open:rotate-180 transition-transform"></i>
+                    </summary>
+                    <div class="p-3 pt-0 border-t border-slate-200 mt-2">
+                        <div class="grid grid-cols-2 gap-2 mb-2 mt-2">
+                            <input type="text" id="newSchedName" placeholder="成員名字" class="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-400 font-bold bg-white">
+                            <select id="newSchedLoc" class="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-400 bg-white font-bold">
+                                <option value="">分配崗位...</option>
+                                ${locOptions}
+                            </select>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 mb-3">
+                            <div class="flex items-center bg-white border border-slate-300 rounded-lg overflow-hidden pr-1"><span class="text-[10px] text-slate-500 bg-slate-100 px-2 py-2 border-r border-slate-200">從</span><input type="time" id="newSchedStart" class="w-full text-xs p-1 focus:outline-none font-mono"></div>
+                            <div class="flex items-center bg-white border border-slate-300 rounded-lg overflow-hidden pr-1"><span class="text-[10px] text-slate-500 bg-slate-100 px-2 py-2 border-r border-slate-200">到</span><input type="time" id="newSchedEnd" class="w-full text-xs p-1 focus:outline-none font-mono"></div>
+                        </div>
+                        <button onclick="window.addSchedule()" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs py-2 rounded-lg shadow-sm transition-colors active:scale-95"><i data-lucide="calendar-check" class="w-3.5 h-3.5 inline-block mr-1"></i>新增單筆</button>
+                    </div>
+                </details>
+
+                <div class="flex justify-between items-center mb-2 border-b border-slate-200 pb-1.5 mt-4">
+                    <h4 class="text-xs font-bold text-slate-600 flex items-center"><i data-lucide="list" class="w-3.5 h-3.5 mr-1 text-emerald-500"></i>當前已生效清單</h4>
+                    <button onclick="window.clearAllSchedules()" class="text-[9px] font-bold text-red-500 bg-red-50 px-2 py-1 rounded hover:bg-red-100 active:scale-95 transition-all">清空全部</button>
+                </div>
+                <div class="space-y-2">
+            `;
+
+            if(memberSchedules.length === 0) {
+                html += `<div class="text-center text-xs text-slate-400 py-6 tracking-widest bg-white rounded-lg border border-dashed border-slate-300">尚未生效任何排班</div>`;
+            } else {
+                memberSchedules.sort((a,b) => a.start.localeCompare(b.start)).forEach((sched) => {
+                    const locName = mapData.points[sched.locationId]?.name || '🔴 崗位遺失';
+                    html += `
+                    <div class="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-2.5 shadow-sm">
+                        <div class="flex-1 min-w-0 pr-2">
+                            <div class="flex items-center mb-1 overflow-hidden">
+                                <span class="font-black text-[13px] text-slate-800 mr-2 shrink-0">${sched.name}</span>
+                                <span class="text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded flex items-center truncate border border-amber-200 font-bold"><i data-lucide="map-pin" class="w-3 h-3 mr-0.5 shrink-0"></i>${locName}</span>
+                            </div>
+                            <div class="text-[11px] text-slate-500 font-mono tracking-tighter flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-slate-400"></i> ${sched.start} - ${sched.end}</div>
+                        </div>
+                        <button onclick="window.deleteSchedule('${sched.id}')" class="text-slate-400 hover:text-red-500 bg-slate-50 border border-slate-200 hover:bg-red-50 p-2 rounded-lg transition-colors active:scale-95 shrink-0"><i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i></button>
+                    </div>
+                    `;
+                });
+            }
+            html += `</div>`;
+            list.innerHTML = html;
+            lucide.createIcons();
+        };
+
+        window.addSchedule = () => {
+            const name = document.getElementById('newSchedName').value.trim();
+            const locationId = document.getElementById('newSchedLoc').value;
+            const start = document.getElementById('newSchedStart').value;
+            const end = document.getElementById('newSchedEnd').value;
+            
+            if(!name || !locationId || !start || !end) return window.showToast('請完整填寫排班資訊', true);
+            if(start >= end) return window.showToast('結束時間必須晚於開始時間', true);
+            
+            memberSchedules.push({ id: 'sch_'+Date.now(), name, locationId, start, end });
+            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'member_schedules'), { schedules: memberSchedules });
+            window.renderScheduleManager();
+            window.showToast(`已為 ${name} 加入排班`);
+        };
+
+        window.deleteSchedule = (id) => {
+            memberSchedules = memberSchedules.filter(s => s.id !== id);
+            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'member_schedules'), { schedules: memberSchedules });
+            window.renderScheduleManager();
+        };
+
+        // --- 圖片壓縮與日常功能模組 ---
+        
         function compressImageSafeAsync(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -742,6 +1391,7 @@
             }
         };
 
+        // --- 雪房模組功能 ---
         window.crSaveData = () => {
             safeSetLocal('coldRoomRecords', crRecords);
             safeSetLocal('coldRoomTypes', crItemTypes);
@@ -845,12 +1495,12 @@
             if (!qty || qty <= 0) return window.showToast('請輸入有效的數量', true);
 
             const newRecord = {
-                id: 'cr_' + Date.now(),
+                id: 'cr_' + window.getNow().getTime(),
                 tenant: tenant,
                 type: crCurrentSelectedType || '未指定',
                 depositQuantity: qty,
                 remainingQuantity: qty,
-                depositTime: Date.now(),
+                depositTime: window.getNow().getTime(),
                 withdrawHistory: [], 
                 status: 'active'
             };
@@ -894,7 +1544,7 @@
             if (withdrawQty > record.remainingQuantity) return window.showToast(`數量錯誤！目前僅剩 ${record.remainingQuantity} 件`, true);
 
             record.remainingQuantity -= withdrawQty;
-            record.withdrawHistory.push({ time: Date.now(), qty: withdrawQty });
+            record.withdrawHistory.push({ time: window.getNow().getTime(), qty: withdrawQty });
 
             if (record.remainingQuantity === 0) {
                 record.status = 'history';
@@ -908,13 +1558,88 @@
             window.crRenderList();
         };
 
+        // 雪房刪除紀錄專用函數
+        window.crDeleteRecord = (id, event) => {
+            if (event) event.stopPropagation();
+            window.showConfirm('刪除紀錄', '確定要刪除這筆雪房紀錄嗎？', () => {
+                crRecords = crRecords.filter(r => r.id !== id);
+                window.crSaveData();
+                window.crRenderList();
+                window.showToast('已刪除雪房紀錄');
+            });
+        };
+
+        // 雪房雙擊編輯卡片
+        window.crOpenEditModal = (id) => {
+            const record = crRecords.find(r => r.id === id);
+            if (!record) return;
+
+            const modalHtml = `
+                <div id="crEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] flex flex-col items-center justify-center p-4">
+                    <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onclick="event.stopPropagation()">
+                        <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center border-b pb-2">
+                            <i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i> 修改存放內容
+                        </h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="text-[11px] font-bold text-slate-500 block mb-1">檔主編號 / 名稱</label>
+                                <input type="text" id="crEditTenant" value="${record.tenant}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50">
+                            </div>
+                            <div>
+                                <label class="text-[11px] font-bold text-slate-500 block mb-1">貨物類型</label>
+                                <select id="crEditType" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50">
+                                    ${crItemTypes.map(t => `<option value="${t}" ${record.type === t ? 'selected' : ''}>${t}</option>`).join('')}
+                                    <option value="未指定" ${!record.type || record.type === '未指定' ? 'selected' : ''}>未指定</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-[11px] font-bold text-slate-500 block mb-1">剩餘數量</label>
+                                <input type="number" id="crEditRemain" value="${record.remainingQuantity}" min="0" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50">
+                            </div>
+                        </div>
+                        <div class="mt-5 flex justify-between items-center border-t border-slate-100 pt-4">
+                            <button onclick="window.crDeleteRecord('${record.id}'); document.getElementById('crEditModal').remove();" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-2 rounded-lg text-xs font-bold transition-colors">刪除紀錄</button>
+                            <div class="space-x-2 flex">
+                                <button onclick="document.getElementById('crEditModal').remove()" class="px-3 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">取消</button>
+                                <button onclick="window.crSaveEditRecord('${record.id}')" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-bold shadow-sm">儲存</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            lucide.createIcons();
+        };
+
+        window.crSaveEditRecord = (id) => {
+            const record = crRecords.find(r => r.id === id);
+            if (!record) return;
+
+            const tenant = document.getElementById('crEditTenant').value.trim();
+            const type = document.getElementById('crEditType').value;
+            const remain = parseInt(document.getElementById('crEditRemain').value, 10);
+
+            if (!tenant) return window.showToast('檔主名稱不能為空', true);
+            if (isNaN(remain) || remain < 0) return window.showToast('請輸入有效數量', true);
+
+            record.tenant = tenant;
+            record.type = type;
+            record.remainingQuantity = remain;
+            if (remain === 0) record.status = 'history';
+
+            window.crSaveData();
+            document.getElementById('crEditModal')?.remove();
+            window.crRenderList();
+            window.showToast('已更新存放紀錄');
+        };
+
         window.crExportToCSV = () => {
             if (crRecords.length === 0) {
                 return window.showToast('目前沒有資料可以導出', true);
             }
 
             const headers = ['紀錄ID', '狀態', '檔主', '類型', '初始數量', '剩餘數量', '存入時間'];
-            let csvContent = "\uFEFF" + headers.join(',') + "\n"; // UTF-8 BOM for Excel
+            let csvContent = "\uFEFF" + headers.join(',') + "\n";
 
             crRecords.forEach(r => {
                 const statusStr = r.status === 'active' ? '存放中' : '歷史記錄';
@@ -973,7 +1698,7 @@
                 return;
             }
 
-            const now = Date.now();
+            const now = window.getNow().getTime();
 
             filteredRecords.forEach((record, index) => {
                 const isHistory = (record.status === 'history' || record.status === 'completed');
@@ -1020,7 +1745,7 @@
 
                     actionHtml = `
                         <div class="mt-3 pt-3 border-t border-slate-100 flex justify-end">
-                            <button onclick="window.crOpenWithdrawModal('${record.id}')" class="bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-[11px] sm:text-xs font-bold transition-colors border border-blue-200 active:scale-95 flex items-center shadow-sm">
+                            <button onclick="event.stopPropagation(); window.crOpenWithdrawModal('${record.id}')" class="bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-[11px] sm:text-xs font-bold transition-colors border border-blue-200 active:scale-95 flex items-center shadow-sm">
                                 取出更新 <i data-lucide="arrow-right-circle" class="w-3 h-3 sm:w-3.5 sm:h-3.5 ml-1 pointer-events-none"></i>
                             </button>
                         </div>
@@ -1059,10 +1784,10 @@
                 }
 
                 const cardHtml = `
-                    <div class="daily-task-card ${bgColor} rounded-xl p-3 sm:p-4 border ${borderColor} relative shadow-sm transition-all flex flex-col group">
+                    <div ondblclick="window.crOpenEditModal('${record.id}')" title="雙擊可修改內容" class="daily-task-card ${bgColor} rounded-xl p-3 sm:p-4 border ${borderColor} relative shadow-sm transition-all flex flex-col group cursor-pointer hover:border-blue-300">
                         <div class="tape-strip ${tapeStyleClass} hidden sm:block"></div>
                         
-                        <button onclick="window.showConfirm('刪除紀錄', '確定要刪除這筆雪房紀錄嗎？', () => { crRecords = crRecords.filter(r => r.id !== '${record.id}'); window.crSaveData(); window.crRenderList(); window.showToast('已刪除紀錄'); })" class="absolute top-2 right-2 p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors z-10 sm:opacity-0 sm:group-hover:opacity-100 active:scale-95">
+                        <button onclick="window.crDeleteRecord('${record.id}', event)" class="absolute top-2 right-2 p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors z-20 active:scale-95">
                             <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
                         </button>
 
@@ -1105,7 +1830,7 @@
                     version: "5.0", exportDate: new Date().toISOString(),
                     dailyScheduleData, taskCompletionState, taskExtrasState, subTaskCompletionState,
                     galleryCategories, galleryItems,
-                    crRecords, crItemTypes // Backup cold room
+                    crRecords, crItemTypes 
                 };
                 const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
                 const a = document.createElement('a');
@@ -1219,7 +1944,7 @@
         };
 
         window.viewStackedCard = (taskId, event) => {
-            if (event && event.target.closest('button')) return; // ignore check button clicks
+            if (event && event.target.closest('button')) return; 
             const el = document.getElementById(`tl-task-wrapper-${taskId}`);
             if (el) {
                 el.classList.add('bring-to-front');
@@ -1337,7 +2062,7 @@
                 
                 const timeTextEl = wrapper.querySelector('.time-text');
                 if (timeTextEl) {
-                    timeTextEl.innerHTML = '<span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ' + status.text.replace('未開始 (', '還有 ').replace('後)', '') + ' 到來</span>';
+                    timeTextEl.innerHTML = '<span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ${status.text.replace(\'未開始 (\', \'還有 \').replace(\'後)\', \'\')} 到來</span>';
                 }
                 previousTime = startTime; 
             });
@@ -1345,19 +2070,26 @@
         };
 
         window.updateClockUI = () => {
+            const now = window.getNow();
+            
+            const hh = String(now.getHours()).padStart(2, '0');
+            const mm = String(now.getMinutes()).padStart(2, '0');
+            const ss = String(now.getSeconds()).padStart(2, '0');
+            const timeStr = `${hh}:${mm}:${ss}`;
+            
+            const dateStr = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
+            
             const clockEl = document.getElementById('tlBigClock');
             const dateEl = document.getElementById('tlBigDate');
-            if (clockEl && dateEl && !document.getElementById('timelinePage').classList.contains('hidden')) {
-                const now = window.getNow();
-                clockEl.textContent = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-                dateEl.textContent = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
-                
-                const restoreBtn = document.getElementById('simRestoreBtn');
-                if (restoreBtn) {
-                    if (timeOffset !== 0 || isFastForwarding) restoreBtn.classList.remove('hidden');
-                    else restoreBtn.classList.add('hidden');
-                }
-            }
+            if (clockEl) clockEl.textContent = timeStr;
+            if (dateEl) dateEl.textContent = dateStr;
+
+            document.querySelectorAll('.sync-clock-display').forEach(el => el.textContent = timeStr);
+            
+            document.querySelectorAll('.sim-restore-btn').forEach(btn => {
+                if (timeOffset !== 0 || isFastForwarding) btn.classList.remove('hidden');
+                else btn.classList.add('hidden');
+            });
         };
 
         window.handleTimelineScroll = () => {
@@ -1541,7 +2273,7 @@
                     activeLineHtml = `<div class="absolute left-[-15px] right-[-15px] top-1/2 -translate-y-1/2 h-[2px] bg-green-400 shadow-[0_0_12px_rgba(74,222,128,0.8)] z-0 pointer-events-none rounded-full flex justify-between items-center px-1">
                                         <div class="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(74,222,128,1)]"></div>
                                         <div class="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(74,222,128,1)]"></div>
-                                      </div>`;
+                                     </div>`;
                 } else { 
                     let gapMins = Math.max(0, (parseTime(task.start) - previousTimeForGap) / 60000);
                     let extraGap = Math.min(gapMins * 1.5, 120); 
@@ -1660,7 +2392,11 @@
                     
                     document.getElementById('dynamicTimeModal').remove();
                     window.showToast(`🕒 時間已跳躍至 ${input}，並持續流逝`);
+                    
+                    window.updateClockUI();
                     if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
+                    if(!document.getElementById('mapPage').classList.contains('hidden')) window.updateMapSimulation();
+                    if(!document.getElementById('coldRoomPage').classList.contains('hidden')) window.crRenderList();
                 }
             }
         };
@@ -1761,35 +2497,32 @@
 
         window.toggleSimulation = () => {
             isFastForwarding = !isFastForwarding;
-            const btn = document.getElementById('simToggleBtn');
-            const restoreBtn = document.getElementById('simRestoreBtn');
             
             if (isFastForwarding) {
-                if (btn) {
-                    btn.className = 'bg-amber-500 border border-transparent text-white hover:bg-amber-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0 animate-pulse';
-                }
+                document.querySelectorAll('.sim-toggle-btn').forEach(btn => {
+                    btn.classList.remove('bg-white', 'text-slate-600', 'border-slate-200');
+                    btn.classList.add('bg-amber-500', 'text-white', 'border-transparent', 'animate-pulse');
+                });
                 window.showToast("🚀 模擬模式：時間推進中");
                 
-                if (restoreBtn) restoreBtn.classList.remove('hidden'); 
+                document.querySelectorAll('.sim-restore-btn').forEach(btn => btn.classList.remove('hidden'));
                 
                 simInterval = setInterval(() => {
                     timeOffset += 60000; 
                     window.updateClockUI(); 
-                    if(!document.getElementById('timelinePage').classList.contains('hidden')) {
-                        window.renderTimeline(false); 
-                    }
+                    if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false); 
+                    if(!document.getElementById('mapPage').classList.contains('hidden')) window.updateMapSimulation();
+                    if(!document.getElementById('coldRoomPage').classList.contains('hidden')) window.crRenderList();
                 }, 200); 
             } else {
                 clearInterval(simInterval);
-                if (btn) {
-                    btn.className = 'bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0';
-                }
+                document.querySelectorAll('.sim-toggle-btn').forEach(btn => {
+                    btn.classList.remove('bg-amber-500', 'text-white', 'border-transparent', 'animate-pulse');
+                    btn.classList.add('bg-white', 'text-slate-600', 'border-slate-200');
+                });
                 window.showToast("⏸️ 暫停加速，時間恢復平穩流逝");
             }
-            
-            if(!document.getElementById('timelinePage').classList.contains('hidden')) {
-                window.renderTimeline(false);
-            }
+            if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
         };
 
         window.restoreRealTime = () => {
@@ -1797,20 +2530,18 @@
             clearInterval(simInterval);
             timeOffset = 0; 
             
-            const btn = document.getElementById('simToggleBtn');
-            const restoreBtn = document.getElementById('simRestoreBtn');
-            
-            if (btn) {
-                btn.className = 'bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0';
-            }
-            if (restoreBtn) restoreBtn.classList.add('hidden'); 
+            document.querySelectorAll('.sim-toggle-btn').forEach(btn => {
+                btn.classList.remove('bg-amber-500', 'text-white', 'border-transparent', 'animate-pulse');
+                btn.classList.add('bg-white', 'text-slate-600', 'border-slate-200');
+            });
+            document.querySelectorAll('.sim-restore-btn').forEach(btn => btn.classList.add('hidden')); 
             
             window.showToast("🌍 已回到現實時間");
             window.updateClockUI();
             
-            if(!document.getElementById('timelinePage').classList.contains('hidden')) {
-                window.renderTimeline(true);
-            }
+            if(!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
+            if(!document.getElementById('mapPage').classList.contains('hidden')) window.updateMapSimulation();
+            if(!document.getElementById('coldRoomPage').classList.contains('hidden')) window.crRenderList();
         };
 
         window.promptResetOptions = () => {
@@ -1882,7 +2613,7 @@
         setInterval(() => {
             if(!document.getElementById('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
             if(!document.getElementById('memoPage')?.classList.contains('hidden')) window.updateMemoCountdowns();
-            if(!document.getElementById('coldRoomPage')?.classList.contains('hidden')) window.crRenderList(); // update snow room timers
+            if(!document.getElementById('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
         }, 60000);
 
         function parseTime(timeStr) { const [h, m] = timeStr.split(':').map(Number); const d = window.getNow(); d.setHours(h, m, 0, 0); return d; }
@@ -1898,279 +2629,6 @@
                 const diffMins = Math.floor((now - end) / 60000);
                 return { state: 'overdue', text: `已結束 (超時 ${Math.floor(diffMins/60)>0?Math.floor(diffMins/60)+'小時':''}${diffMins%60}分)` };
             }
-        }
-
-        function renderDailySchedule() {
-            const container = document.getElementById('scheduleContainer');
-            if(!container) return;
-            container.innerHTML = '';
-
-            const totalTasks = dailyScheduleData.length;
-            const completedTasks = dailyScheduleData.filter(t => taskCompletionState[t.id]).length;
-            const percentage = totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
-            
-            const ring = document.getElementById('hudProgressRing');
-            const percentText = document.getElementById('hudPercentage');
-            const countText = document.getElementById('hudTaskCount');
-            
-            if(ring && percentText && countText) {
-                const offset = (2 * Math.PI * 40) - (percentage / 100) * (2 * Math.PI * 40);
-                ring.style.strokeDashoffset = offset;
-                percentText.textContent = `${percentage}%`;
-                countText.textContent = `${completedTasks}/${totalTasks}`;
-                if (percentage === 100) ring.classList.replace('text-blue-500', 'text-green-500');
-                else ring.classList.replace('text-green-500', 'text-blue-500');
-            }
-
-            dailyScheduleData.forEach((task, index) => {
-                const isCompleted = taskCompletionState[task.id];
-                const extrasText = taskExtrasState[task.id] || { currentNotes: [], subTasks: {} };
-                const taskMainPhotos = galleryItems.filter(p => p.taskId === task.id && typeof p.subIdx === 'undefined');
-                
-                const status = calculateTaskStatus(task.start, task.end);
-                const markerColors = ['yellow', 'pink', 'blue', 'green'];
-                const stickyStyles = [1, 2, 3];
-                const markerColorClass = `marker-${markerColors[index % markerColors.length]}`;
-                const stickyStyleClass = `sticky-note-${stickyStyles[index % stickyStyles.length]}`;
-                const tapeStyleClass = `tape-strip-${stickyStyles[index % stickyStyles.length]}`;
-
-                let timeColor = 'text-slate-400', borderColor = 'border-slate-200', glowEffect = 'shadow-sm', activeScale = '', statusLineColor = 'bg-slate-200';
-                
-                if (!isCompleted) {
-                    if (status.state === 'active') { timeColor = 'text-blue-600 font-bold'; borderColor = 'border-blue-300'; glowEffect = 'shadow-md ring-2 ring-blue-50 z-10'; activeScale = 'scale-[1.01] transform transition-all duration-300'; statusLineColor = 'bg-blue-400'; }
-                    if (status.state === 'overdue') { timeColor = 'text-red-500 font-bold'; borderColor = 'border-red-200'; statusLineColor = 'bg-red-400'; }
-                } else { statusLineColor = 'bg-slate-300'; }
-
-                const isEdit = window.isEditMode && !isCompleted;
-                const editClass = isEdit ? 'border-b border-dashed border-blue-400/60 focus:outline-none focus:bg-slate-50 px-1 -mx-1 rounded cursor-text transition-colors' : '';
-                const editAttrText = (field) => isEdit ? `contenteditable="true" onblur="window.updateTaskData('${task.id}', '${field}', this.innerText)" onclick="event.stopPropagation()"` : '';
-                const editAttrHtml = (field) => isEdit ? `contenteditable="true" onblur="window.updateTaskData('${task.id}', '${field}', this.innerHTML)" onclick="event.stopPropagation()"` : '';
-                const editSubAttr = (idx) => isEdit ? `contenteditable="true" onblur="window.updateTaskData('${task.id}', 'subSteps', this.innerText, ${idx})" onclick="event.stopPropagation()"` : '';
-
-                let groupBadge = task.group 
-                    ? `<span class="text-[10px] px-1.5 py-0.5 rounded border font-bold mr-2 shadow-sm ${window.getGroupColor(task.group)} ${isEdit ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-transform' : ''}" onclick="if(window.isEditMode){ event.stopPropagation(); window.changeTaskGroup('${task.id}'); } else { event.stopPropagation(); }">${task.group}組</span>` 
-                    : `<span class="text-[10px] px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-400 mr-2 shadow-sm ${isEdit ? 'cursor-pointer hover:bg-slate-50 hover:text-blue-500 transition-colors' : 'hidden'}" onclick="if(window.isEditMode){ event.stopPropagation(); window.changeTaskGroup('${task.id}'); } else { event.stopPropagation(); }">+ 分組</span>`;
-
-                const taskHTML = `
-                    <div class="daily-task-card bg-white rounded-xl p-4 border ${isCompleted ? 'border-slate-200 opacity-60 bg-slate-50' : borderColor} ${glowEffect} ${activeScale} relative transition-all duration-300 flex flex-col group mt-4">
-                        <div class="tape-strip ${tapeStyleClass} hidden sm:block"></div>
-                        <div class="absolute -left-2 -top-2 w-7 h-7 bg-[#334155] text-[#fdfbf7] text-[11px] font-black rounded-full flex items-center justify-center shadow-md z-30 font-mono tracking-tighter">${String(index + 1).padStart(2, '0')}</div>
-                        <div class="absolute left-0 top-0 bottom-0 w-1.5 ${statusLineColor} opacity-80 rounded-l-xl"></div>
-                        
-                        <div class="flex space-x-3 pl-1">
-                            <div class="flex-shrink-0 pt-1 cursor-pointer" onclick="window.toggleTask('${task.id}')">
-                                <div class="w-6 h-6 border-2 ${isCompleted ? 'border-blue-500 bg-blue-500 text-white shadow-sm' : 'border-slate-300 text-transparent group-hover:border-blue-400 bg-white'} flex items-center justify-center transition-all duration-200 active:scale-90 rounded">
-                                    <i data-lucide="check" class="w-4 h-4"></i>
-                                </div>
-                            </div>
-                            <div class="flex-1 space-y-2 min-w-0">
-                                <div class="flex justify-between items-center">
-                                    <div class="flex items-center">
-                                        ${groupBadge}
-                                        <span class="text-[11px] px-2 py-0.5 bg-slate-100 rounded border border-slate-200 text-slate-600 tracking-wider flex-shrink-0 font-medium shadow-sm">
-                                            <span ${editAttrText('start')} class="${isEdit ? 'border-b border-dashed border-blue-400 text-blue-600 cursor-text focus:outline-none focus:bg-white px-0.5 rounded transition-colors' : ''}">${task.start}</span>
-                                            <span class="mx-0.5 text-slate-400">-</span>
-                                            <span ${editAttrText('end')} class="${isEdit ? 'border-b border-dashed border-blue-400 text-blue-600 cursor-text focus:outline-none focus:bg-white px-0.5 rounded transition-colors' : ''}">${task.end}</span>
-                                        </span>
-                                    </div>
-                                    <span id="status-text-${task.id}" class="text-[11px] ${timeColor} tracking-wide font-bold ml-2 text-right">${isCompleted ? '✔ 任務完成' : status.text}</span>
-                                </div>
-                                <h3 ${editAttrText('title')} class="text-[15px] tracking-wide font-bold ${isCompleted ? 'text-slate-400 line-through' : 'text-slate-800'} ${editClass} pl-1"><span class="${!isCompleted ? markerColorClass : ''}">${task.title}</span></h3>
-                                <p ${editAttrHtml('content')} class="text-[12px] leading-relaxed tracking-wide ${isCompleted ? 'text-slate-400' : 'text-slate-600'} ${editClass} pl-1">${task.content}</p>
-                                ${(task.note || isEdit) ? `<div ${editAttrHtml('note')} class="mt-2 p-2.5 rounded-md text-[10.5px] text-slate-700 leading-relaxed tracking-wide ${stickyStyleClass} ${isEdit ? 'border border-dashed border-blue-300 focus:outline-none focus:bg-white cursor-text' : ''}">${task.note || (isEdit ? '點擊此處新增備註...' : '')}</div>` : ''}
-
-                                ${(task.subSteps && task.subSteps.length > 0) || isEdit ? `
-                                    <div class="mt-3 flex justify-center relative z-20">
-                                        <button type="button" onclick="window.toggleTaskDetails('${task.id}', event)" class="inline-flex items-center space-x-1 px-4 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-slate-600 text-[10px] hover:bg-slate-100 hover:text-slate-800 transition-colors cursor-pointer active:scale-95 shadow-sm">
-                                            <i data-lucide="${expandedTasksState[task.id] ? 'chevron-up' : 'list-tree'}" class="w-3.5 h-3.5"></i><span class="tracking-widest font-bold">${expandedTasksState[task.id] ? '收起清單' : '展開清單'}</span>
-                                        </button>
-                                    </div>
-                                    
-                                    <div class="transition-all duration-300 overflow-hidden ${expandedTasksState[task.id] ? 'max-h-[1500px] opacity-100 mt-3 mb-1' : 'max-h-0 opacity-0'}">
-                                        <div class="ml-2 relative py-1">
-                                            ${(task.subSteps || []).map((step, idx) => {
-                                                const subTextNotes = extrasText.subTasks?.[idx]?.notes || [];
-                                                const subPhotos = galleryItems.filter(p => p.taskId === task.id && p.subIdx === idx);
-                                                
-                                                const isLastSubStep = idx === (task.subSteps || []).length - 1;
-                                                const drawLine = !isLastSubStep || isEdit;
-                                                const isSubCompleted = subTaskCompletionState[task.id] && subTaskCompletionState[task.id][idx];
-                                                const subStepTextClass = isSubCompleted && !isEdit ? 'line-through text-slate-400 decoration-slate-400' : 'text-slate-700';
-                                                
-                                                return `
-                                                <div class="relative flex flex-col group/step pl-5 ${isLastSubStep && !isEdit ? 'mb-1' : 'mb-6'}">
-                                                    ${drawLine ? `<div class="absolute left-[3px] top-[14px] bottom-[-30px] w-[1px] border-l border-dashed border-slate-300 z-0 pointer-events-none"></div>` : ''}
-                                                    <div class="absolute left-[-2px] top-1.5 w-2.5 h-2.5 rounded-full ${isSubCompleted && !isEdit ? 'bg-slate-300 border-none' : 'bg-white border-2 border-slate-300 group-hover/step:border-blue-400 shadow-sm'} transition-all duration-300 z-10"></div>
-                                                    
-                                                    <div class="flex justify-between items-start relative z-10 w-full group/text">
-                                                        <div class="relative flex items-start flex-1 min-w-0" onclick="${!isEdit && !isCompleted ? `window.toggleSubTask('${task.id}', ${idx}, event)` : ''}">
-                                                            <p ${editSubAttr(idx)} class="text-[12px] ${subStepTextClass} tracking-wide leading-relaxed pr-2 transition-colors flex-1 ${editClass} ${!isEdit && !isCompleted ? 'cursor-pointer' : ''} select-none">${step}</p>
-                                                        </div>
-                                                        <div class="flex items-center space-x-2 shrink-0 ml-1 opacity-0 group-hover/step:opacity-100 transition-opacity">
-                                                            ${isEdit ? `
-                                                            <button type="button" onclick="window.deleteSubTask('${task.id}', ${idx}, event); event.stopPropagation();" class="text-red-400 hover:text-red-500 active:scale-95 transition-transform p-0.5 cursor-pointer">
-                                                                <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
-                                                            </button>
-                                                            ` : `
-                                                            ${!isCompleted ? `
-                                                            <label class="cursor-pointer text-blue-500 hover:text-blue-600 active:scale-95 transition-transform p-0.5" onclick="event.stopPropagation();">
-                                                                <i data-lucide="camera" class="w-3.5 h-3.5"></i>
-                                                                <input type="file" accept="image/*" multiple class="hidden" onchange="window.handleSubTaskPhotoUpload('${task.id}', ${idx}, this)" />
-                                                            </label>
-                                                            <button type="button" onclick="window.toggleSubNoteInput('${task.id}', ${idx}); event.stopPropagation();" class="text-blue-500 hover:text-blue-600 active:scale-95 transition-transform p-0.5">
-                                                                <i data-lucide="message-square" class="w-3.5 h-3.5"></i>
-                                                            </button>
-                                                            ` : ''}
-                                                            `}
-                                                        </div>
-                                                    </div>
-
-                                                    ${!isCompleted ? `
-                                                    <div id="subnote-input-container-${task.id}-${idx}" class="hidden mt-1.5 flex h-7 shadow-inner rounded-md opacity-90 w-[85%] ml-1" onclick="event.stopPropagation();">
-                                                        <input type="text" id="subnote-input-${task.id}-${idx}" placeholder="輸入筆記..." class="flex-1 bg-white border border-slate-300 border-r-0 rounded-l-md px-2 text-[10px] text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-400 tracking-wide w-full min-w-0">
-                                                        <button type="button" onclick="window.submitSubTaskNote('${task.id}', ${idx})" class="px-2.5 bg-slate-100 text-slate-600 border border-slate-300 rounded-r-md active:bg-slate-200 transition-colors flex items-center justify-center"><i data-lucide="check" class="w-3.5 h-3.5"></i></button>
-                                                    </div>
-                                                    ` : ''}
-
-                                                    ${(subPhotos.length > 0 || subTextNotes.length > 0) ? `
-                                                    <div class="mt-1.5 ml-1 space-y-1.5">
-                                                        ${subPhotos.length > 0 ? `
-                                                            <div class="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
-                                                                ${subPhotos.map((p) => `
-                                                                    <div class="relative w-10 h-10 shrink-0 rounded border border-slate-200 overflow-hidden shadow-sm">
-                                                                        <img src="${p.url}" class="w-full h-full object-cover cursor-pointer" onclick="window.openFullscreenImg('${p.url}'); event.stopPropagation();"/>
-                                                                        ${!isCompleted ? `<button type="button" onclick="window.removeTaskPhoto('${p.id}', event);" class="absolute top-0 right-0 bg-red-500/90 text-white p-0.5 rounded-bl active:bg-red-600"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}
-                                                                    </div>
-                                                                `).join('')}
-                                                            </div>
-                                                        ` : ''}
-                                                        ${subTextNotes.length > 0 ? `
-                                                            <div class="space-y-1 w-[90%]">
-                                                                ${subTextNotes.map((n, nIdx) => `
-                                                                    <div class="flex justify-between items-start p-1.5 rounded text-[10px] text-slate-700 tracking-wide sticky-note mt-1">
-                                                                        <span class="break-words flex-1 pr-2 font-medium">📌 ${n}</span>
-                                                                        ${!isCompleted ? `<button type="button" onclick="window.removeSubTaskNote('${task.id}', ${idx}, ${nIdx}); event.stopPropagation();" class="text-red-400 hover:text-red-500 mt-0.5 shrink-0 active:scale-95"><i data-lucide="x" class="w-3 h-3"></i></button>` : ''}
-                                                                    </div>
-                                                                `).join('')}
-                                                            </div>
-                                                        ` : ''}
-                                                    </div>
-                                                    ` : ''}
-                                                </div>
-                                                `;
-                                            }).join('')}
-                                            ${isEdit ? `
-                                                <div class="relative flex flex-col pl-5 mt-4">
-                                                    <div class="absolute left-[-1.5px] top-1.5 w-2 h-2 rounded-full border border-blue-400 z-10 bg-blue-50"></div>
-                                                    <button type="button" onclick="window.addSubTask('${task.id}', event)" class="flex items-center justify-center space-x-1 py-1 px-3 rounded border border-dashed border-blue-300 text-blue-500 hover:bg-blue-50 transition-colors cursor-pointer active:scale-95 text-[10px] tracking-wide relative z-10 max-w-max ml-0.5">
-                                                        <i data-lucide="plus" class="w-3 h-3"></i><span>新增一筆子任務</span>
-                                                    </button>
-                                                </div>
-                                            ` : ''}
-                                        </div>
-                                    </div>
-                                ` : ''}
-                            </div>
-                        </div>
-
-                        ${isEdit ? `
-                            <button type="button" onclick="window.deleteTaskCard('${task.id}', event)" class="absolute top-3 right-3 text-slate-400 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50 transition-colors active:scale-95 z-20 cursor-pointer">
-                                <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
-                            </button>
-                        ` : ''}
-
-                        ${(taskMainPhotos.length > 0 || extrasText.currentNotes?.length > 0) ? `
-                        <div class="mt-4 pt-3 border-t border-slate-100 flex flex-col relative z-10 pl-1">
-                            ${taskMainPhotos.length > 0 ? `
-                                <div class="flex gap-2 overflow-x-auto pb-2 mb-1 scrollbar-hide">
-                                    ${taskMainPhotos.map((p) => `
-                                        <div class="relative w-16 h-16 shrink-0 rounded-md border border-slate-200 overflow-hidden shadow-sm">
-                                            <img src="${p.url}" class="w-full h-full object-cover" onclick="window.openFullscreenImg('${p.url}')"/>
-                                            ${!isCompleted ? `<button type="button" onclick="window.removeTaskPhoto('${p.id}', event);" class="absolute top-0 right-0 bg-red-500/90 text-white p-1 rounded-bl-md active:bg-red-600"><i data-lucide="x" class="w-3 h-3"></i></button>` : ''}
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            ` : ''}
-                            ${extrasText.currentNotes?.length > 0 ? `
-                                <div class="space-y-1.5 mb-2">
-                                    ${extrasText.currentNotes.map((n, i) => `
-                                        <div class="flex justify-between items-start bg-yellow-50 p-2 rounded-lg border border-yellow-200/50 text-[11px] text-slate-700 tracking-wide ${isCompleted ? 'opacity-60' : ''}">
-                                            <span class="break-words flex-1 pr-2 font-medium">📝 ${n}</span>
-                                            ${!isCompleted ? `<button type="button" onclick="window.removeCurrentNote('${task.id}', ${i})" class="text-red-400 hover:text-red-500 mt-0.5 shrink-0 active:scale-95"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>` : ''}
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            ` : ''}
-                        </div>
-                        ` : ''}
-
-                        ${!isCompleted ? `
-                        <div class="flex space-x-3 items-stretch mt-1 pl-1 relative z-10 ${!(taskMainPhotos.length > 0 || extrasText.currentNotes?.length > 0) ? 'pt-3 border-t border-slate-100' : ''}">
-                            <div class="flex-1 flex flex-col space-y-2 justify-center">
-                                <label class="flex items-center justify-center space-x-1 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-600 hover:text-blue-600 hover:border-blue-300 transition-colors cursor-pointer active:bg-slate-100 text-[11px] tracking-wide w-full shadow-sm">
-                                    <i data-lucide="camera" class="w-3.5 h-3.5"></i><span>附加存證相片</span>
-                                    <input type="file" accept="image/*" multiple class="hidden" onchange="window.handleDailyPhotoUpload('${task.id}', this)" />
-                                </label>
-                                <div class="flex h-8 shadow-sm rounded-lg">
-                                    <input type="text" id="note-input-${task.id}" placeholder="輸入補充筆記..." class="flex-1 bg-white border border-slate-200 border-r-0 rounded-l-lg px-2.5 text-[11px] text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-400 tracking-wide w-full min-w-0">
-                                    <button type="button" onclick="window.addDailyNote('${task.id}')" class="px-3 bg-slate-100 text-slate-600 border border-slate-200 rounded-r-lg hover:text-blue-600 transition-colors flex items-center justify-center"><i data-lucide="plus" class="w-4 h-4"></i></button>
-                                </div>
-                            </div>
-                            <button type="button" onclick="window.openArchive('${task.id}')" class="w-[60px] shrink-0 flex flex-col items-center justify-center rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 transition-colors relative active:scale-95 shadow-sm">
-                                <i data-lucide="images" class="w-4 h-4 mb-1"></i><span class="text-[9px] tracking-wide text-center leading-tight">任務<br>圖庫</span>
-                            </button>
-                        </div>
-                        ` : `
-                        <div class="mt-3 pt-3 border-t border-slate-100 flex justify-end">
-                            <button type="button" onclick="window.openArchive('${task.id}')" class="flex items-center space-x-1 px-3 py-1.5 rounded-md bg-slate-50 border border-slate-200 text-slate-500 active:scale-95 transition-colors hover:text-blue-600 shadow-sm">
-                                <i data-lucide="images" class="w-3.5 h-3.5"></i><span class="text-[10px] tracking-wide font-medium">查看任務圖庫</span>
-                            </button>
-                        </div>
-                        `}
-                    </div>
-                `;
-                container.insertAdjacentHTML('beforeend', taskHTML);
-            });
-            
-            if (window.isEditMode) {
-                container.insertAdjacentHTML('beforeend', `
-                    <div class="mt-6 flex justify-center pb-4">
-                        <button type="button" onclick="window.addNewTaskCard()" class="w-full bg-white rounded-2xl p-5 border-2 border-dashed border-blue-300 text-blue-500 hover:bg-blue-50 transition-all duration-300 flex flex-col items-center justify-center active:scale-[0.98] group shadow-sm cursor-pointer">
-                            <i data-lucide="plus-circle" class="w-7 h-7 mb-2 group-hover:scale-110 transition-transform"></i><span class="text-xs tracking-widest font-bold">新增排程卡片</span>
-                        </button>
-                    </div>
-                `);
-            }
-
-            lucide.createIcons();
-            if(timeUpdateInterval) clearInterval(timeUpdateInterval);
-            timeUpdateInterval = setInterval(() => {
-                if(!document.getElementById('dailySchedulePage').classList.contains('hidden') && !window.isEditMode) {
-                    dailyScheduleData.forEach(task => {
-                        if (!taskCompletionState[task.id]) {
-                            const status = calculateTaskStatus(task.start, task.end);
-                            const statusEl = document.getElementById(`status-text-${task.id}`);
-                            if (statusEl) {
-                                statusEl.textContent = status.text;
-                                if (status.state === 'active') statusEl.className = 'text-[11px] text-blue-600 font-bold ml-2 text-right tracking-wide';
-                                else if (status.state === 'overdue') statusEl.className = 'text-[11px] text-red-500 font-bold ml-2 text-right tracking-wide';
-                                else statusEl.className = 'text-[11px] text-slate-400 font-bold ml-2 text-right tracking-wide';
-                            }
-                        }
-                    });
-                }
-            }, 60000); 
-
-            setTimeout(() => {
-                const cards = document.querySelectorAll('.daily-task-card');
-                const observer = new IntersectionObserver((entries) => {
-                    entries.forEach(entry => {
-                        if (entry.isIntersecting && !window.isEditMode && !entry.target.innerHTML.includes('任務完成')) entry.target.classList.add('card-focused');
-                        else entry.target.classList.remove('card-focused');
-                    });
-                }, { rootMargin: "-35% 0px -35% 0px" });
-                cards.forEach(card => observer.observe(card));
-            }, 100);
         }
 
         window.closeArchive = () => {
@@ -2486,163 +2944,6 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
             }
         };
 
-        window.renderMap = () => {
-            const pointsContainer = document.getElementById('mapPointsContainer');
-            if(pointsContainer) pointsContainer.innerHTML = '';
-            window.updateMapSimulation(); 
-        };
-
-        window.updateMapSimulation = () => {
-            if(document.getElementById('mapPage')?.classList.contains('hidden')) return;
-            const container = document.getElementById('mapPointsContainer');
-            if(!container) return;
-
-            const now = window.getNow();
-            const nowTime = now.getTime();
-            
-            let activeMembers = {}; 
-            memberSchedules.forEach(sched => {
-                const start = parseTime(sched.start).getTime();
-                const end = parseTime(sched.end).getTime();
-                if(nowTime >= start && nowTime <= end) {
-                    activeMembers[sched.name] = sched.locationId;
-                }
-            });
-            
-            document.querySelectorAll('.member-dynamic-marker').forEach(el => el.dataset.active = "false");
-            
-            for(let [name, locId] of Object.entries(activeMembers)) {
-                const loc = mapData.points[locId];
-                if(!loc) continue; 
-                
-                let marker = document.getElementById(`dyn-marker-${name}`);
-                if(!marker) {
-                    marker = document.createElement('div');
-                    marker.id = `dyn-marker-${name}`;
-                    marker.innerHTML = `
-                        <div class="bg-blue-600 text-white text-[10px] font-black px-1.5 py-0.5 rounded shadow-md whitespace-nowrap mb-1 tracking-widest border border-white">${name}</div>
-                        <div class="relative flex items-center justify-center">
-                            <div class="w-3 h-3 bg-blue-500 rounded-full border-[2px] border-white shadow-sm z-10 relative"></div>
-                            <div class="absolute w-6 h-6 bg-blue-400/40 rounded-full animate-ping z-0"></div>
-                        </div>
-                    `;
-                }
-
-                const extContainer = document.getElementById(`ext-${locId}`);
-                if (extContainer) {
-                    if (marker.parentNode !== extContainer) extContainer.appendChild(marker);
-                    marker.className = 'member-dynamic-marker flex flex-col items-center justify-center pointer-events-none transition-all duration-[1000ms] ease-in-out z-30 drop-shadow-xl mt-1 scale-90';
-                    marker.style.left = 'auto';
-                    marker.style.top = 'auto';
-                    marker.style.position = 'relative';
-                    marker.style.transform = 'none';
-                } else {
-                    if (marker.parentNode !== container) container.appendChild(marker);
-                    marker.className = 'member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 -translate-y-[110%] pointer-events-none transition-all duration-[1500ms] ease-in-out z-30 drop-shadow-xl';
-                    marker.style.left = `${loc.x}%`;
-                    marker.style.top = `${loc.y}%`;
-                }
-                
-                marker.dataset.active = "true";
-            }
-            
-            document.querySelectorAll('.member-dynamic-marker').forEach(el => {
-                if(el.dataset.active === "false") el.remove();
-            });
-        };
-
-        window.openScheduleManager = () => {
-            window.renderScheduleManager();
-            document.getElementById('scheduleManageModal').classList.remove('hidden');
-            document.getElementById('scheduleManageModal').classList.add('flex');
-        };
-        
-        window.closeScheduleManager = () => {
-            document.getElementById('scheduleManageModal').classList.add('hidden');
-            document.getElementById('scheduleManageModal').classList.remove('flex');
-            window.updateMapSimulation(); 
-        };
-
-        window.renderScheduleManager = () => {
-            const list = document.getElementById('scheduleManageList');
-            const locOptions = Object.entries(mapData.points).map(([id, pt]) => `<option value="${id}">${pt.name}</option>`).join('');
-            
-            let html = `
-                <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-4 shadow-inner">
-                    <div class="flex justify-between items-center mb-2">
-                        <h4 class="text-xs font-bold text-slate-600 flex items-center"><i data-lucide="plus-circle" class="w-3.5 h-3.5 mr-1"></i>新增成員崗位時段</h4>
-                        <div class="relative">
-                            <input type="file" id="scheduleImageInput" accept="image/*" class="hidden" onchange="window.handleScheduleImageUpload(event)">
-                            <button id="aiParseBtn" onclick="document.getElementById('scheduleImageInput').click()" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border border-indigo-200 px-2 py-1 rounded text-[10px] font-bold transition-colors active:scale-95 flex items-center shadow-sm">
-                                <i data-lucide="scan-line" class="w-3 h-3 mr-1"></i> 圖片匯入
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-2 mb-2">
-                        <input type="text" id="newSchedName" placeholder="成員名字" class="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-400 font-bold bg-white">
-                        <select id="newSchedLoc" class="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-400 bg-white font-bold">
-                            <option value="">分配崗位...</option>
-                            ${locOptions}
-                        </select>
-                    </div>
-                    <div class="grid grid-cols-2 gap-2 mb-3">
-                        <div class="flex items-center bg-white border border-slate-300 rounded-lg overflow-hidden pr-1"><span class="text-[10px] text-slate-500 bg-slate-100 px-2 py-2 border-r border-slate-200">從</span><input type="time" id="newSchedStart" class="w-full text-xs p-1 focus:outline-none font-mono"></div>
-                        <div class="flex items-center bg-white border border-slate-300 rounded-lg overflow-hidden pr-1"><span class="text-[10px] text-slate-500 bg-slate-100 px-2 py-2 border-r border-slate-200">到</span><input type="time" id="newSchedEnd" class="w-full text-xs p-1 focus:outline-none font-mono"></div>
-                    </div>
-                    <button onclick="window.addSchedule()" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs py-2.5 rounded-lg shadow-sm transition-colors active:scale-95"><i data-lucide="calendar-check" class="w-4 h-4 inline-block mr-1"></i>儲存並加入</button>
-                </div>
-                <h4 class="text-xs font-bold text-slate-600 mb-2 border-b border-slate-200 pb-1.5 flex items-center"><i data-lucide="list" class="w-3.5 h-3.5 mr-1"></i>今日時間表清單</h4>
-                <div class="space-y-2">
-            `;
-
-            if(memberSchedules.length === 0) {
-                html += `<div class="text-center text-xs text-slate-400 py-6 tracking-widest bg-white rounded-lg border border-dashed border-slate-300">尚未新增任何排班</div>`;
-            } else {
-                memberSchedules.sort((a,b) => a.start.localeCompare(b.start)).forEach((sched) => {
-                    const locName = mapData.points[sched.locationId]?.name || '🔴 崗位遺失';
-                    html += `
-                    <div class="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-2.5 shadow-sm">
-                        <div class="flex-1 min-w-0 pr-2">
-                            <div class="flex items-center mb-1 overflow-hidden">
-                                <span class="font-black text-[13px] text-slate-800 mr-2 shrink-0">${sched.name}</span>
-                                <span class="text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded flex items-center truncate border border-amber-200 font-bold"><i data-lucide="map-pin" class="w-3 h-3 mr-0.5 shrink-0"></i>${locName}</span>
-                            </div>
-                            <div class="text-[11px] text-slate-500 font-mono tracking-tighter flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-slate-400"></i> ${sched.start} - ${sched.end}</div>
-                        </div>
-                        <button onclick="window.deleteSchedule('${sched.id}')" class="text-slate-400 hover:text-red-500 bg-slate-50 border border-slate-200 hover:bg-red-50 p-2 rounded-lg transition-colors active:scale-95 shrink-0"><i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i></button>
-                    </div>
-                    `;
-                });
-            }
-            html += `</div>`;
-            list.innerHTML = html;
-            lucide.createIcons();
-        };
-
-        window.addSchedule = () => {
-            const name = document.getElementById('newSchedName').value.trim();
-            const locationId = document.getElementById('newSchedLoc').value;
-            const start = document.getElementById('newSchedStart').value;
-            const end = document.getElementById('newSchedEnd').value;
-            
-            if(!name || !locationId || !start || !end) return window.showToast('請完整填寫排班資訊', true);
-            if(start >= end) return window.showToast('結束時間必須晚於開始時間', true);
-            
-            memberSchedules.push({ id: 'sch_'+Date.now(), name, locationId, start, end });
-            if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'member_schedules'), { schedules: memberSchedules });
-            window.renderScheduleManager();
-            window.showToast(`已為 ${name} 加入排班`);
-        };
-
-        window.deleteSchedule = (id) => {
-            window.showConfirm('刪除排班', '確定要刪除這筆排班資料嗎？', () => {
-                memberSchedules = memberSchedules.filter(s => s.id !== id);
-                if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'member_schedules'), { schedules: memberSchedules });
-                window.renderScheduleManager();
-            });
-        };
-
         window.renderGallery = () => {
             const sidebar = document.getElementById('gallerySidebar');
             const grid = document.getElementById('galleryGrid');
@@ -2931,15 +3232,15 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
                         <button type="button" onclick="window.promptResetOptions()" class="bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="狀態還原選項">
                             <i data-lucide="list-restart" class="w-4 h-4 pointer-events-none"></i>
                         </button>
-                        <button type="button" id="simRestoreBtn" onclick="window.restoreRealTime()" class="hidden bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="還原真實時間">
+                        <button type="button" onclick="window.restoreRealTime()" class="sim-restore-btn hidden bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="還原真實時間">
                             <i data-lucide="rotate-ccw" class="w-4 h-4 pointer-events-none"></i>
                         </button>
-                        <button type="button" id="simToggleBtn" onclick="window.toggleSimulation()" class="bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="開啟時間加速模擬">
+                        <button type="button" onclick="window.toggleSimulation()" class="sim-toggle-btn bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="開啟時間加速模擬">
                             <i data-lucide="fast-forward" class="w-4 h-4 pointer-events-none"></i>
                         </button>
                     </div>
 
-                    <div id="tlBigClock" ondblclick="window.promptChangeTime()" title="雙擊設定指定時間" class="cursor-pointer hover:scale-105 font-mono text-2xl sm:text-3xl font-black text-slate-800 tracking-tighter bg-white/90 backdrop-blur-md px-4 sm:px-5 py-1.5 rounded-[1.25rem] border border-slate-200 shadow-sm pointer-events-auto transition-all shrink-0">--:--:--</div>
+                    <div id="tlBigClock" ondblclick="window.promptChangeTime()" title="雙擊設定指定時間" class="text-center min-w-[140px] cursor-pointer hover:scale-105 font-mono text-2xl sm:text-3xl font-black text-slate-800 tracking-tighter bg-white/90 backdrop-blur-md px-4 sm:px-5 py-1.5 rounded-[1.25rem] border border-slate-200 shadow-sm pointer-events-auto transition-all shrink-0">--:--:--</div>
 
                     <div class="flex items-center gap-1.5 sm:gap-2 justify-start flex-1">
                         <button type="button" onclick="window.renderTimeline(true)" class="bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 sm:w-9 sm:h-9 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="對焦當前任務">
@@ -2969,60 +3270,88 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
         </main>
 
         <!-- Main Content (可視地圖 - 右側外圍站點版) -->
-        <main id="mapPage" class="hidden flex-1 flex-col relative z-10 bg-[#f0ebe1] overflow-hidden">
-            <div class="p-2 border-b border-[#e6e2d6] flex justify-end items-center bg-white shrink-0 shadow-sm z-20 relative">
-                <button onclick="window.openScheduleManager()" class="bg-slate-50 text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg flex items-center hover:bg-emerald-50 active:scale-95 text-[11px] font-bold tracking-wide transition-colors shrink-0 shadow-sm">
+        <main id="mapPage" class="hidden h-[calc(100vh-140px)] sm:h-[750px] flex-col relative z-10 bg-[#f0ebe1] overflow-hidden">
+            <div class="p-2 border-b border-[#e6e2d6] flex justify-between items-center bg-white shrink-0 shadow-sm z-20 relative">
+                <!-- 左側佔位，用來平衡排版 -->
+                <div class="w-24"></div>
+
+                <!-- 絕對置中的時鐘區塊 -->
+                <div class="absolute left-1/2 -translate-x-1/2 flex items-center gap-1.5 z-10">
+                    <div class="sync-clock-display flex items-center justify-center tabular-nums px-3 font-mono text-[13px] sm:text-sm font-black text-slate-800 bg-slate-100 py-1.5 rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-200 transition-colors" onclick="window.promptChangeTime()" title="點擊修改時間">--:--:--</div>
+                    <button type="button" class="sim-restore-btn hidden bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-md w-7 h-7 shadow-sm active:scale-95 transition-all flex items-center justify-center" onclick="window.restoreRealTime()"><i data-lucide="rotate-ccw" class="w-3.5 h-3.5 pointer-events-none"></i></button>
+                    <button type="button" class="sim-toggle-btn bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-md w-7 h-7 shadow-sm active:scale-95 transition-all flex items-center justify-center" onclick="window.toggleSimulation()"><i data-lucide="fast-forward" class="w-3.5 h-3.5 pointer-events-none"></i></button>
+                </div>
+
+                <button onclick="window.openScheduleManager()" class="bg-slate-50 text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg flex items-center hover:bg-emerald-50 active:scale-95 text-[11px] font-bold tracking-wide transition-colors shrink-0 shadow-sm z-10">
                     <i data-lucide="users" class="w-3.5 h-3.5 mr-1.5 text-emerald-500"></i> 成員排班
                 </button>
             </div>
             
             <div class="flex-1 flex overflow-hidden relative">
+                <!-- 左側：主平面圖 -->
                 <div class="flex-1 relative overflow-hidden" id="mapScrollContainer">
-                    <div id="mapWrapper" class="absolute inset-2 sm:inset-3 bg-[#fdfbf7] rounded-xl overflow-hidden shadow-inner border-2 border-slate-300 transition-colors">
+                    <div id="mapWrapper" class="absolute top-2 left-2 right-2 bottom-auto h-[380px] sm:top-3 sm:left-3 sm:right-3 sm:h-[500px] bg-[#fdfbf7] rounded-xl overflow-hidden shadow-inner border-2 border-slate-300 transition-colors">
                         
-                        <div class="absolute top-0 left-0 right-0 h-[35%] bg-blue-50/60 border-b-2 border-slate-300 pointer-events-none transition-colors">
+                        <!-- 1/F Background Area (25%) -->
+                        <div class="absolute top-0 left-0 right-0 h-[25%] bg-blue-50/60 border-b-2 border-slate-300 pointer-events-none transition-colors">
                             <div class="absolute top-2 left-3 text-blue-300/80 font-black text-xl tracking-widest select-none transition-colors">1/F</div>
                         </div>
                         
-                        <div class="absolute top-[35%] left-0 right-0 bottom-0 bg-emerald-50/60 border-t-2 border-slate-300 pointer-events-none transition-colors">
-                            <div class="absolute bottom-2 right-3 text-emerald-300/80 font-black text-xl tracking-widest select-none transition-colors">G/F</div>
+                        <!-- G/F Background Area (75%) -->
+                        <div class="absolute top-[25%] left-0 right-0 bottom-0 bg-emerald-50/60 border-t-2 border-slate-300 pointer-events-none transition-colors">
+                            <div class="absolute top-2 left-3 text-emerald-300/80 font-black text-xl tracking-widest select-none transition-colors">地面層</div>
                         </div>
 
-                        <div class="absolute top-[10%] right-[10%] w-[35%] h-[15%] bg-blue-100/80 border-2 border-blue-400 rounded-lg flex items-center justify-center shadow-inner pointer-events-none">
-                            <div class="text-blue-600 font-bold text-[10px] sm:text-xs tracking-wider flex items-center"><i data-lucide="headphones" class="w-3 h-3 mr-1"></i>客服室</div>
+                        <!-- 客服室 (1/F 居中) -->
+                        <div class="absolute top-[5%] left-[50%] -translate-x-1/2 w-[35%] h-[15%] bg-blue-100/80 border-2 border-blue-400 rounded-lg flex flex-col justify-end pb-2 items-center shadow-inner pointer-events-none">
+                            <div class="text-blue-600 font-bold text-[13px] sm:text-base tracking-wider flex items-center"><i data-lucide="headphones" class="w-4 h-4 mr-1"></i>客服室</div>
                         </div>
 
-                        <div class="absolute top-[45%] left-[10%] w-[35%] h-[20%] bg-green-100/80 border-2 border-green-500 rounded-lg overflow-hidden flex flex-col items-center justify-center shadow-inner pointer-events-none">
-                            <i data-lucide="flower-2" class="w-8 h-8 text-green-500/20 absolute"></i>
-                            <div class="text-green-700 font-bold text-[10px] sm:text-xs tracking-wider relative z-10 flex items-center"><i data-lucide="leaf" class="w-3 h-3 mr-1"></i>花園仔</div>
+                        <!-- 花園仔 (G/F) -->
+                        <div class="absolute top-[45%] left-[10%] w-[35%] h-[20%] bg-green-100/80 border-2 border-green-500 rounded-lg overflow-hidden flex flex-col justify-end pb-2.5 items-center shadow-inner pointer-events-none">
+                            <i data-lucide="flower-2" class="w-10 h-10 text-green-500/20 absolute top-2"></i>
+                            <div class="text-green-700 font-bold text-[13px] sm:text-base tracking-wider relative z-10 flex items-center"><i data-lucide="leaf" class="w-4 h-4 mr-1"></i>花園仔</div>
                         </div>
 
-                        <div class="absolute top-[45%] right-[10%] w-[35%] h-[20%] bg-cyan-100/80 border-2 border-cyan-500 rounded-lg overflow-hidden flex flex-col items-center justify-center shadow-inner pointer-events-none">
-                            <i data-lucide="fish" class="w-8 h-8 text-cyan-500/20 absolute"></i>
-                            <div class="text-cyan-700 font-bold text-[10px] sm:text-xs tracking-wider relative z-10 flex items-center"><i data-lucide="droplets" class="w-3 h-3 mr-1"></i>魚檔</div>
+                        <!-- 魚檔 (G/F) -->
+                        <div class="absolute top-[45%] right-[10%] w-[35%] h-[20%] bg-cyan-100/80 border-2 border-cyan-500 rounded-lg overflow-hidden flex flex-col justify-end pb-2.5 items-center shadow-inner pointer-events-none">
+                            <i data-lucide="fish" class="w-10 h-10 text-cyan-500/20 absolute top-2"></i>
+                            <div class="text-cyan-700 font-bold text-[13px] sm:text-base tracking-wider relative z-10 flex items-center"><i data-lucide="droplets" class="w-4 h-4 mr-1"></i>魚檔</div>
                         </div>
                         
-                        <div class="absolute top-[75%] left-[50%] -translate-x-1/2 w-[70%] h-[15%] bg-purple-100/80 border-2 border-purple-400 rounded-lg flex items-center justify-center shadow-inner pointer-events-none">
-                            <div class="text-purple-600 font-bold text-[10px] sm:text-xs tracking-wider flex items-center"><i data-lucide="shield" class="w-3 h-3 mr-1"></i>整體巡邏</div>
+                        <!-- 整體巡邏 (G/F) - 橫向置中跨越 -->
+                        <div class="absolute top-[75%] left-[50%] -translate-x-1/2 w-[70%] h-[15%] bg-purple-100/80 border-2 border-purple-400 rounded-lg flex flex-col justify-end pb-2 items-center shadow-inner pointer-events-none">
+                            <div class="text-purple-600 font-bold text-[13px] sm:text-base tracking-wider flex items-center"><i data-lucide="shield" class="w-4 h-4 mr-1"></i>整體巡邏</div>
                         </div>
 
+                        <!-- 主地圖動態標記點 -->
                         <div id="mapPointsContainer" class="absolute inset-0 pointer-events-none overflow-hidden z-30"></div>
                     </div>
                 </div>
 
-                <div class="w-20 sm:w-24 shrink-0 border-l border-[#e6e2d6] bg-[#f4f1eb] p-2 flex flex-col space-y-4 overflow-y-auto scrollbar-hide z-10 shadow-[-4px_0_15px_-5px_rgba(0,0,0,0.05)] pt-4">
-                    <div class="text-[9px] sm:text-[10px] font-black tracking-widest text-slate-400 text-center mb-1">外圍站點</div>
+                <!-- 右側：外圍站點 (卡片已拉長為 min-h-[105px]，乾淨不重複) -->
+                <div class="w-24 sm:w-28 shrink-0 border-l border-[#e6e2d6] bg-[#f4f1eb] p-2 flex flex-col space-y-3 overflow-y-auto scrollbar-hide z-10 shadow-inner pt-3">
+                    <div class="text-[11px] sm:text-xs font-black tracking-widest text-slate-400 text-center mb-1">外圍站點</div>
                     
-                    <div class="relative w-full aspect-square bg-amber-50/80 border-2 border-dashed border-amber-300 rounded-lg flex flex-col items-center justify-center shadow-sm">
-                        <i data-lucide="clipboard-list" class="w-4 h-4 text-amber-400 mb-0.5"></i>
-                        <span class="text-amber-600 font-bold text-[8px] text-center leading-tight tracking-wider">一樓<br>大清點</span>
-                        <div id="ext-pt_2" class="absolute inset-x-0 -bottom-2 flex flex-col items-center justify-center pointer-events-none z-30 translate-y-full"></div>
+                    <!-- 一樓大清點 -->
+                    <div id="station-pt_2" class="relative w-full min-h-[105px] bg-amber-50/80 border-2 border-amber-400/60 rounded-lg p-2 flex flex-col items-center justify-start shadow-sm">
+                        <i data-lucide="clipboard-list" class="w-5 h-5 text-amber-500 mb-1"></i>
+                        <span class="text-amber-700 font-bold text-[10px] sm:text-[11px] text-center leading-tight tracking-wider">一樓<br>大清點</span>
+                        <div class="ext-members-box w-full flex flex-wrap items-center justify-center gap-1.5 -mt-1.5 pt-0"></div>
                     </div>
 
-                    <div class="relative w-full aspect-square bg-amber-50/80 border-2 border-dashed border-amber-300 rounded-lg flex flex-col items-center justify-center shadow-sm mt-8">
-                        <i data-lucide="clipboard-list" class="w-4 h-4 text-amber-400 mb-0.5"></i>
-                        <span class="text-amber-600 font-bold text-[8px] text-center leading-tight tracking-wider">地面層<br>大清點</span>
-                        <div id="ext-pt_6" class="absolute inset-x-0 -bottom-2 flex flex-col items-center justify-center pointer-events-none z-30 translate-y-full"></div>
+                    <!-- 地面層大清點 -->
+                    <div id="station-pt_6" class="relative w-full min-h-[105px] bg-amber-50/80 border-2 border-amber-400/60 rounded-lg p-2 flex flex-col items-center justify-start shadow-sm">
+                        <i data-lucide="clipboard-list" class="w-5 h-5 text-amber-500 mb-1"></i>
+                        <span class="text-amber-700 font-bold text-[10px] sm:text-[11px] text-center leading-tight tracking-wider">地面層<br>大清點</span>
+                        <div class="ext-members-box w-full flex flex-wrap items-center justify-center gap-1.5 -mt-1.5 pt-0"></div>
+                    </div>
+
+                    <!-- 休息中 -->
+                    <div id="station-pt_7" class="relative w-full min-h-[105px] bg-slate-50/80 border-2 border-slate-300 rounded-lg p-2 flex flex-col items-center justify-start shadow-sm">
+                        <i data-lucide="coffee" class="w-5 h-5 text-slate-400 mb-1"></i>
+                        <span class="text-slate-600 font-bold text-[10px] sm:text-[11px] text-center leading-tight tracking-wider">人員<br>休息中</span>
+                        <div class="ext-members-box w-full flex flex-wrap items-center justify-center gap-1.5 -mt-1.5 pt-0"></div>
                     </div>
                 </div>
             </div>
@@ -3053,9 +3382,17 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
         <main id="coldRoomPage" class="hidden h-[calc(100vh-140px)] sm:h-[750px] flex-col relative z-10 bg-[#fdfbf7] overflow-hidden">
             <!-- Sub Header -->
             <div class="p-3 sm:p-4 border-b border-[#e6e2d6] bg-white shrink-0 shadow-sm z-20 relative flex flex-col space-y-3">
-                <div class="flex justify-between items-center">
-                    <h2 class="text-sm font-bold text-slate-800 tracking-widest flex items-center"><i data-lucide="snowflake" class="w-4 h-4 mr-2 text-blue-500"></i>雪房存貨</h2>
-                    <button onclick="window.crExportToCSV()" class="text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 p-1.5 rounded-full active:scale-95 transition-all shadow-sm border border-transparent hover:border-emerald-200"><i data-lucide="file-spreadsheet" class="w-4 h-4 pointer-events-none"></i></button>
+                <div class="flex justify-between items-center relative">
+                    <h2 class="text-sm font-bold text-slate-800 tracking-widest flex items-center z-10"><i data-lucide="snowflake" class="w-4 h-4 mr-2 text-blue-500"></i>雪房存貨</h2>
+                    
+                    <!-- 絕對置中的時鐘區塊 -->
+                    <div class="absolute left-1/2 -translate-x-1/2 flex items-center gap-1.5 z-10">
+                        <div class="sync-clock-display flex items-center justify-center tabular-nums px-3 font-mono text-[13px] sm:text-sm font-black text-slate-800 bg-slate-100 py-1.5 rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-200 transition-colors" onclick="window.promptChangeTime()" title="點擊修改時間">--:--:--</div>
+                        <button type="button" class="sim-restore-btn hidden bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-md w-7 h-7 shadow-sm active:scale-95 transition-all flex items-center justify-center" onclick="window.restoreRealTime()"><i data-lucide="rotate-ccw" class="w-3.5 h-3.5 pointer-events-none"></i></button>
+                        <button type="button" class="sim-toggle-btn bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-md w-7 h-7 shadow-sm active:scale-95 transition-all flex items-center justify-center" onclick="window.toggleSimulation()"><i data-lucide="fast-forward" class="w-3.5 h-3.5 pointer-events-none"></i></button>
+                    </div>
+
+                    <button onclick="window.crExportToCSV()" class="text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 p-1.5 rounded-full active:scale-95 transition-all shadow-sm border border-transparent hover:border-emerald-200 z-10"><i data-lucide="file-spreadsheet" class="w-4 h-4 pointer-events-none"></i></button>
                 </div>
                 
                 <div class="flex bg-[#f0ebe1] rounded-lg p-1 shadow-inner border border-[#e5dfd3]">
@@ -3127,14 +3464,14 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
         </div>
     </div>
 
-    <!-- 地圖排班管理 Modal -->
-    <div id="scheduleManageModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
-        <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-full max-w-[340px] flex flex-col overflow-hidden relative">
+    <!-- 地圖排班管理 Modal (加寬版以容納表格) -->
+    <div id="scheduleManageModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-2 sm:p-4">
+        <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-full max-w-[98vw] sm:max-w-[1200px] flex flex-col overflow-hidden relative">
             <header class="p-3.5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                <h2 class="text-slate-800 font-bold tracking-widest text-sm flex items-center"><i data-lucide="users-round" class="w-4 h-4 mr-2 text-blue-500"></i> 管理成員排班時間表</h2>
+                <h2 class="text-slate-800 font-bold tracking-widest text-sm flex items-center"><i data-lucide="users-round" class="w-4 h-4 mr-2 text-blue-500"></i> 成員排班表 (點擊儲存格輸入)</h2>
                 <button onclick="window.closeScheduleManager()" class="text-slate-400 p-1.5 rounded-full hover:bg-slate-200 active:scale-95 transition-all"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
-            <div id="scheduleManageList" class="p-3 overflow-y-auto max-h-[60vh] bg-[#fdfbf7] scrollbar-hide">
+            <div id="scheduleManageList" class="p-2 sm:p-3 overflow-y-auto max-h-[85vh] bg-[#fdfbf7] scrollbar-hide">
             </div>
         </div>
     </div>
