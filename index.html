@@ -849,7 +849,6 @@
 
         // 切割半格與復原整格功能
         window.toggleSplitHour = (locId, hourStr) => {
-            // 抓取當前所有 textarea 的數值以防跑版
             document.querySelectorAll('.grid-input').forEach(input => {
                 const key = `${input.dataset.loc}_${input.dataset.start}_${input.dataset.end}`;
                 window._tempGridValues = window._tempGridValues || {};
@@ -892,7 +891,6 @@
                 }
             });
 
-            // 合併同一個人、同地點、連續的時間區間
             let mergedSchedules = [];
             locKeys.forEach(locId => {
                 teamMembers.forEach(name => {
@@ -918,7 +916,7 @@
             memberSchedules = [...memberSchedules, ...mergedSchedules];
             
             if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'member_schedules'), { schedules: memberSchedules });
-            window._tempGridValues = null; // 清除暫存
+            window._tempGridValues = null; 
             window.renderScheduleManager();
             window.showToast(`成功儲存表格排班！共生效 ${mergedSchedules.length} 筆時段。`);
         };
@@ -932,16 +930,15 @@
             });
         };
 
-        // 崗位顏色對照表 (用於排班總表)
         const getLocColorClass = (locId) => {
             switch(locId) {
-                case 'pt_1': return 'bg-blue-50 text-blue-700 border-r border-blue-200'; // 客服室
-                case 'pt_3': return 'bg-emerald-50 text-emerald-700 border-r border-emerald-200'; // 花園仔
-                case 'pt_4': return 'bg-cyan-50 text-cyan-700 border-r border-cyan-200'; // 魚檔
-                case 'pt_5': return 'bg-purple-50 text-purple-700 border-r border-purple-200'; // 整體巡邏
-                case 'pt_2': return 'bg-amber-50 text-amber-800 border-r border-amber-200'; // 一樓大清點
-                case 'pt_6': return 'bg-amber-100 text-amber-900 border-r border-amber-300'; // 地面層大清點
-                case 'pt_7': return 'bg-slate-100 text-slate-700 border-r border-slate-200'; // 休息中
+                case 'pt_1': return 'bg-blue-50 text-blue-700 border-r border-blue-200';
+                case 'pt_3': return 'bg-emerald-50 text-emerald-700 border-r border-emerald-200';
+                case 'pt_4': return 'bg-cyan-50 text-cyan-700 border-r border-cyan-200';
+                case 'pt_5': return 'bg-purple-50 text-purple-700 border-r border-purple-200';
+                case 'pt_2': return 'bg-amber-50 text-amber-800 border-r border-amber-200';
+                case 'pt_6': return 'bg-amber-100 text-amber-900 border-r border-amber-300';
+                case 'pt_7': return 'bg-slate-100 text-slate-700 border-r border-slate-200';
                 default: return 'bg-white text-slate-700';
             }
         };
@@ -957,7 +954,6 @@
                 });
             }
 
-            // 標準 1 小時時間段
             const timeSlots = [
                 '07:00-08:00', '08:00-09:00', '09:00-10:00', '10:00-11:00', 
                 '11:00-12:00', '12:00-13:00', '13:00-14:00', '14:00-15:00', 
@@ -1002,7 +998,6 @@
                         const isSplit = isRestRow || splitHoursState[stateKey];
 
                         if (isSplit) {
-                            // 半小時格式
                             const halfStartA = `${startH}:00`;
                             const halfEndA = `${startH}:30`;
                             const halfStartB = `${startH}:30`;
@@ -1065,7 +1060,6 @@
                                 </div>
                             </td>`;
                         } else {
-                            // 整格格式
                             const cellKey = `${locId}_${tStart}_${tEnd}`;
                             let cellContent = '';
 
@@ -1561,16 +1555,16 @@
             const container = document.getElementById('crTypeContainer');
             if(!container) return;
             if (crItemTypes.length === 0) {
-                container.innerHTML = '<span class="text-[11px] text-slate-400 py-1">尚無類型，請新增</span>';
+                container.innerHTML = '<span class="text-[10px] text-slate-400 py-1">尚無類型，請新增</span>';
                 return;
             }
 
             container.innerHTML = crItemTypes.map((type, index) => `
-                <div class="relative inline-flex items-center px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-bold border transition-colors cursor-pointer ${crCurrentSelectedType === type ? 'bg-blue-100 border-blue-400 text-blue-700 shadow-sm' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}" 
+                <div class="relative inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors cursor-pointer ${crCurrentSelectedType === type ? 'bg-blue-100 border-blue-400 text-blue-700 shadow-sm' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}" 
                      onclick="window.crSelectType('${type}')">
                     ${type}
-                    <button onclick="event.stopPropagation(); window.crDeleteType(${index})" class="ml-2 -mr-1 text-slate-400 hover:text-red-500 p-0.5 rounded-full hover:bg-red-50 transition-colors">
-                        <i data-lucide="x" class="w-3 h-3 pointer-events-none"></i>
+                    <button onclick="event.stopPropagation(); window.crDeleteType(${index})" class="ml-1 -mr-0.5 text-slate-400 hover:text-red-500 p-0.5 rounded-full hover:bg-red-50 transition-colors">
+                        <i data-lucide="x" class="w-2.5 h-2.5 pointer-events-none"></i>
                     </button>
                 </div>
             `).join('');
@@ -1611,7 +1605,15 @@
             crCurrentSelectedType = '';
             window.crRenderTypesInModal();
 
-            // 渲染客服人員下拉選單選項
+            // 預設填入當前時間 (YYYY-MM-DDTHH:mm格式以符合datetime-local)
+            const now = window.getNow();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const mins = String(now.getMinutes()).padStart(2, '0');
+            document.getElementById('crInputTime').value = `${year}-${month}-${day}T${hours}:${mins}`;
+
             const staffSelect = document.getElementById('crInputStaff');
             if (staffSelect) {
                 staffSelect.innerHTML = '<option value="">請選擇經手客服人員...</option>' + 
@@ -1634,9 +1636,12 @@
             const tenant = document.getElementById('crInputTenant').value.trim();
             const qty = parseInt(document.getElementById('crInputQuantity').value, 10);
             const staff = document.getElementById('crInputStaff')?.value || '';
+            const timeStr = document.getElementById('crInputTime').value;
 
             if (!tenant) return window.showToast('請輸入檔主編號', true);
             if (!qty || qty <= 0) return window.showToast('請輸入有效的數量', true);
+
+            const depositTimestamp = timeStr ? new Date(timeStr).getTime() : window.getNow().getTime();
 
             const newRecord = {
                 id: 'cr_' + window.getNow().getTime(),
@@ -1645,7 +1650,7 @@
                 staff: staff || '未指定',
                 depositQuantity: qty,
                 remainingQuantity: qty,
-                depositTime: window.getNow().getTime(),
+                depositTime: depositTimestamp,
                 withdrawHistory: [], 
                 status: 'active'
             };
@@ -1703,7 +1708,6 @@
             window.crRenderList();
         };
 
-        // 雪房刪除紀錄專用函數
         window.crDeleteRecord = (id, event) => {
             if (event) event.stopPropagation();
             window.showConfirm('刪除紀錄', '確定要刪除這筆雪房紀錄嗎？', () => {
@@ -1714,46 +1718,58 @@
             });
         };
 
-        // 雪房雙擊編輯卡片
         window.crOpenEditModal = (id) => {
             const record = crRecords.find(r => r.id === id);
             if (!record) return;
 
+            // 將時間戳轉換為 datetime-local 格式 (YYYY-MM-DDTHH:mm)
+            const d = new Date(record.depositTime);
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            const hours = String(d.getHours()).padStart(2, '0');
+            const mins = String(d.getMinutes()).padStart(2, '0');
+            const formattedDate = `${year}-${month}-${day}T${hours}:${mins}`;
+
             const modalHtml = `
                 <div id="crEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] flex flex-col items-center justify-center p-4">
-                    <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onclick="event.stopPropagation()">
-                        <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center border-b pb-2">
-                            <i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i> 修改存放內容
+                    <div class="bg-white rounded-2xl p-4 w-full max-w-[300px] shadow-2xl relative scrollbar-hide" onclick="event.stopPropagation()">
+                        <h3 class="font-bold text-base mb-3 text-slate-800 flex items-center border-b pb-2">
+                            <i data-lucide="edit" class="w-4 h-4 mr-2 text-blue-500"></i> 修改存放內容
                         </h3>
                         <div class="space-y-3">
                             <div>
-                                <label class="text-[11px] font-bold text-slate-500 block mb-1">檔主編號 / 名稱</label>
-                                <input type="text" id="crEditTenant" value="${record.tenant}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">
+                                <label class="text-[10px] font-bold text-slate-500 block mb-1">檔主編號 / 名稱</label>
+                                <input type="text" id="crEditTenant" value="${record.tenant}" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">
                             </div>
                             <div>
-                                <label class="text-[11px] font-bold text-slate-500 block mb-1">經手客服人員</label>
-                                <select id="crEditStaff" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">
+                                <label class="text-[10px] font-bold text-slate-500 block mb-1">存入時間</label>
+                                <input type="datetime-local" id="crEditTime" value="${formattedDate}" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs focus:border-blue-500 focus:outline-none font-mono font-bold text-slate-700 bg-slate-50 text-center">
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 block mb-1">經手客服人員</label>
+                                <select id="crEditStaff" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">
                                     <option value="">未指定</option>
                                     ${teamMembers.map(m => `<option value="${m}" ${record.staff === m ? 'selected' : ''}>${m}</option>`).join('')}
                                 </select>
                             </div>
                             <div>
-                                <label class="text-[11px] font-bold text-slate-500 block mb-1">貨物類型</label>
-                                <select id="crEditType" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">
+                                <label class="text-[10px] font-bold text-slate-500 block mb-1">貨物類型</label>
+                                <select id="crEditType" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">
                                     ${crItemTypes.map(t => `<option value="${t}" ${record.type === t ? 'selected' : ''}>${t}</option>`).join('')}
                                     <option value="未指定" ${!record.type || record.type === '未指定' ? 'selected' : ''}>未指定</option>
                                 </select>
                             </div>
                             <div>
-                                <label class="text-[11px] font-bold text-slate-500 block mb-1">剩餘數量</label>
-                                <input type="number" id="crEditRemain" value="${record.remainingQuantity}" min="0" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">
+                                <label class="text-[10px] font-bold text-slate-500 block mb-1">剩餘數量</label>
+                                <input type="number" id="crEditRemain" value="${record.remainingQuantity}" min="0" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">
                             </div>
                         </div>
-                        <div class="mt-5 flex justify-between items-center border-t border-slate-100 pt-4">
-                            <button onclick="window.crDeleteRecord('${record.id}'); document.getElementById('crEditModal').remove();" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-2 rounded-lg text-xs font-bold transition-colors">刪除紀錄</button>
+                        <div class="mt-4 flex justify-between items-center border-t border-slate-100 pt-3">
+                            <button onclick="window.crDeleteRecord('${record.id}'); document.getElementById('crEditModal').remove();" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors">刪除紀錄</button>
                             <div class="space-x-2 flex">
-                                <button onclick="document.getElementById('crEditModal').remove()" class="px-3 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">取消</button>
-                                <button onclick="window.crSaveEditRecord('${record.id}')" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-bold shadow-sm">儲存</button>
+                                <button onclick="document.getElementById('crEditModal').remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">取消</button>
+                                <button onclick="window.crSaveEditRecord('${record.id}')" class="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-bold shadow-sm">儲存</button>
                             </div>
                         </div>
                     </div>
@@ -1768,6 +1784,7 @@
             if (!record) return;
 
             const tenant = document.getElementById('crEditTenant').value.trim();
+            const timeStr = document.getElementById('crEditTime').value;
             const staff = document.getElementById('crEditStaff').value;
             const type = document.getElementById('crEditType').value;
             const remain = parseInt(document.getElementById('crEditRemain').value, 10);
@@ -1776,6 +1793,7 @@
             if (isNaN(remain) || remain < 0) return window.showToast('請輸入有效數量', true);
 
             record.tenant = tenant;
+            if (timeStr) record.depositTime = new Date(timeStr).getTime();
             record.staff = staff || '未指定';
             record.type = type;
             record.remainingQuantity = remain;
@@ -1825,7 +1843,7 @@
 
         window.crFormatTime = (ms) => {
             const d = new Date(ms);
-            return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+            return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
         };
 
         window.crRenderList = () => {
@@ -1894,7 +1912,9 @@
 
                     timeInfoHtml = `
                         <div class="flex justify-between items-center mb-3 pb-2 border-b border-slate-100">
-                            <div class="text-[9px] sm:text-[10px] text-slate-500 font-medium tracking-wide">存入: ${depositTimeStr}</div>
+                            <div class="text-[10px] sm:text-[11px] text-slate-500 font-bold tracking-wide flex items-center">
+                                <i data-lucide="calendar" class="w-3.5 h-3.5 mr-1 text-slate-400"></i>存貨時間: ${depositTimeStr}
+                            </div>
                             ${timeStatusHtml}
                         </div>
                     `;
@@ -1913,8 +1933,10 @@
 
                     timeInfoHtml = `
                         <div class="flex justify-between items-center mb-3 pb-2 border-b border-slate-100">
-                            <div class="text-[9px] sm:text-[10px] text-slate-500 font-medium">存入: ${depositTimeStr}</div>
-                            <div class="text-[9px] sm:text-[10px] text-slate-500 font-medium">總時長: ${durationHours} 小時</div>
+                            <div class="text-[10px] sm:text-[11px] text-slate-500 font-bold flex items-center">
+                                <i data-lucide="calendar" class="w-3.5 h-3.5 mr-1 text-slate-400"></i>存貨時間: ${depositTimeStr}
+                            </div>
+                            <div class="text-[10px] sm:text-[11px] text-slate-500 font-bold">總時長: ${durationHours} 小時</div>
                         </div>
                     `;
 
@@ -2426,7 +2448,6 @@
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
                     
-                    // 醒目的藍色右箭頭 ➤ 指標（無動畫）
                     activeLineHtml = `<div class="absolute left-[3px] top-1/2 -translate-y-1/2 z-30 pointer-events-none flex items-center">
                                         <span class="text-blue-600 text-sm font-black drop-shadow-sm select-none">➤</span>
                                      </div>
@@ -3308,7 +3329,6 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
                 </div>
                 
                 <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                    <!-- 彈出獨立視窗按鈕 -->
                     <button type="button" onclick="window.openAsPopout()" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="以獨立視窗開啟">
                         <i data-lucide="external-link" class="w-4 h-4 pointer-events-none"></i>
                     </button>
@@ -3625,63 +3645,67 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
 
     <!-- 雪房 新增 Modal -->
     <div id="crAddModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
-        <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative max-h-[90vh] overflow-y-auto">
-            <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center border-b pb-2">
-                <i data-lucide="package-plus" class="w-5 h-5 mr-2 text-blue-500"></i> 新增存放
+        <div class="bg-white rounded-2xl p-4 w-full max-w-[300px] shadow-2xl relative max-h-[85vh] overflow-y-auto scrollbar-hide">
+            <h3 class="font-bold text-base mb-3 text-slate-800 flex items-center border-b pb-2">
+                <i data-lucide="package-plus" class="w-4 h-4 mr-2 text-blue-500"></i> 新增存放
             </h3>
-            <div class="space-y-4">
+            <div class="space-y-3">
                 <div>
-                    <label class="text-[11px] font-bold text-slate-500 block mb-1">檔主編號 / 名稱</label>
-                    <input type="text" id="crInputTenant" placeholder="例如: A01, 陳記海鮮" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 shadow-inner text-center">
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1">檔主編號 / 名稱</label>
+                    <input type="text" id="crInputTenant" placeholder="例如: R-099" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 shadow-inner text-center">
                 </div>
                 <div>
-                    <label class="text-[11px] font-bold text-slate-500 block mb-1">經手客服人員</label>
-                    <select id="crInputStaff" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 shadow-inner text-center">
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1">存入時間</label>
+                    <input type="datetime-local" id="crInputTime" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs focus:border-blue-500 focus:outline-none font-mono font-bold text-slate-700 bg-slate-50 text-center">
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1">經手客服人員</label>
+                    <select id="crInputStaff" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 shadow-inner text-center">
                         <option value="">請選擇經手客服人員...</option>
                     </select>
                 </div>
                 <div>
-                    <label class="text-[11px] font-bold text-slate-500 block mb-1">貨物類型</label>
-                    <div id="crTypeContainer" class="flex flex-wrap gap-2 mb-2 justify-center"></div>
-                    <div class="flex items-center mt-1">
-                        <input type="text" id="crInputNewType" placeholder="新增類型..." class="flex-1 border border-slate-300 rounded-l-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 shadow-inner text-center">
-                        <button onclick="window.crAddNewType()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-r-lg border-y border-r border-slate-300 transition-colors shadow-sm">
-                            <i data-lucide="plus" class="w-4 h-4"></i>
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1">貨物類型</label>
+                    <div id="crTypeContainer" class="flex flex-wrap gap-1.5 mb-2 justify-center"></div>
+                    <div class="flex items-center mt-1 max-w-[180px] mx-auto">
+                        <input type="text" id="crInputNewType" placeholder="新類型..." class="w-24 border border-slate-300 rounded-l-lg px-2 py-1 text-[11px] focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 shadow-inner text-center">
+                        <button onclick="window.crAddNewType()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-2.5 py-1 rounded-r-lg border-y border-r border-slate-300 transition-colors shadow-sm text-[11px] font-bold shrink-0">
+                            新增
                         </button>
                     </div>
                 </div>
                 <div>
-                    <label class="text-[11px] font-bold text-slate-500 block mb-1">存放數量 (件/箱)</label>
-                    <input type="number" id="crInputQuantity" placeholder="請輸入數量" min="1" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 shadow-inner text-center">
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1">存放數量 (件/箱)</label>
+                    <input type="number" id="crInputQuantity" placeholder="請輸入數量" min="1" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 shadow-inner text-center">
                 </div>
             </div>
-            <div class="mt-6 flex justify-end space-x-2 border-t border-slate-100 pt-4">
-                <button onclick="window.crCloseAddModal()" class="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold active:scale-95 transition-colors shadow-sm border border-slate-200">取消</button>
-                <button onclick="window.crSubmitAddRecord()" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-bold shadow-sm active:scale-95 transition-colors">確認存入</button>
+            <div class="mt-5 flex justify-end space-x-2 border-t border-slate-100 pt-3">
+                <button onclick="window.crCloseAddModal()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold active:scale-95 transition-colors shadow-sm border border-slate-200">取消</button>
+                <button onclick="window.crSubmitAddRecord()" class="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-bold shadow-sm active:scale-95 transition-colors">確認存入</button>
             </div>
         </div>
     </div>
 
     <!-- 雪房 取出 Modal -->
     <div id="crWithdrawModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
-        <div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative">
-            <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center border-b pb-2">
-                <i data-lucide="package-minus" class="w-5 h-5 mr-2 text-amber-500"></i> 取出貨物
+        <div class="bg-white rounded-2xl p-4 w-full max-w-[300px] shadow-2xl relative scrollbar-hide">
+            <h3 class="font-bold text-base mb-3 text-slate-800 flex items-center border-b pb-2">
+                <i data-lucide="package-minus" class="w-4 h-4 mr-2 text-amber-500"></i> 取出貨物
             </h3>
-            <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 mb-4 shadow-inner">
-                <div class="text-[11px] text-slate-500 mb-1">檔主: <span id="crWithdrawTenantDisplay" class="font-bold text-slate-700 text-xs"></span></div>
-                <div class="text-[11px] text-slate-500">目前剩餘數量: <span id="crWithdrawRemainDisplay" class="font-bold text-blue-600 text-sm"></span></div>
+            <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200 mb-3 shadow-inner">
+                <div class="text-[10px] text-slate-500 mb-0.5">檔主: <span id="crWithdrawTenantDisplay" class="font-bold text-slate-700 text-xs"></span></div>
+                <div class="text-[10px] text-slate-500">目前剩餘數量: <span id="crWithdrawRemainDisplay" class="font-bold text-blue-600 text-xs"></span></div>
             </div>
-            <div class="space-y-4">
+            <div class="space-y-3">
                 <div>
-                    <label class="text-[11px] font-bold text-slate-500 block mb-1">本次取出數量</label>
-                    <input type="number" id="crInputWithdrawQty" min="1" class="w-full border border-slate-300 rounded-lg p-2.5 text-xl focus:border-amber-500 focus:outline-none font-bold text-slate-700 text-center bg-white shadow-inner">
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1">本次取出數量</label>
+                    <input type="number" id="crInputWithdrawQty" min="1" class="w-full border border-slate-300 rounded-lg p-2 text-lg focus:border-amber-500 focus:outline-none font-bold text-slate-700 text-center bg-white shadow-inner">
                 </div>
             </div>
             <input type="hidden" id="crCurrentActionId">
-            <div class="mt-6 flex justify-end space-x-2 border-t border-slate-100 pt-4">
-                <button onclick="window.crCloseWithdrawModal()" class="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold active:scale-95 transition-colors shadow-sm border border-slate-200">取消</button>
-                <button onclick="window.crSubmitWithdraw()" class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-bold shadow-sm active:scale-95 transition-colors">確認取出</button>
+            <div class="mt-5 flex justify-end space-x-2 border-t border-slate-100 pt-3">
+                <button onclick="window.crCloseWithdrawModal()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold active:scale-95 transition-colors shadow-sm border border-slate-200">取消</button>
+                <button onclick="window.crSubmitWithdraw()" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold shadow-sm active:scale-95 transition-colors">確認取出</button>
             </div>
         </div>
     </div>
