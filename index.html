@@ -677,13 +677,12 @@
                     const offset = incomingNames.length > 1 ? (idx - (incomingNames.length - 1) / 2) * 55 : 0;
                     marker.style.left = `calc(${loc.x}% + ${offset}px - 35px)`;
 
-                    // ⭐ 根據手機螢幕 (isMobile) 與各站點微調 Y 軸高度，徹底解決手機版偏上/頂出問題
                     let topOffset = isMobile ? '-75px' : '-110px';
-                    if (locId === 'pt_1') { // 客服室
+                    if (locId === 'pt_1') { 
                         topOffset = isMobile ? '-45px' : '-65px';
-                    } else if (locId === 'pt_3' || locId === 'pt_4') { // 花園仔、魚檔
+                    } else if (locId === 'pt_3' || locId === 'pt_4') { 
                         topOffset = isMobile ? '-85px' : '-115px';
-                    } else if (locId === 'pt_5') { // 整體巡邏
+                    } else if (locId === 'pt_5') { 
                         topOffset = isMobile ? '-70px' : '-95px';
                     }
                     marker.style.top = `calc(${loc.y}% + ${topOffset})`; 
@@ -923,7 +922,7 @@
                 currentDOMGridValues[key] = input.value;
             });
 
-            // 合併後的標準時間段 (19:00-20:00 合併為一欄)
+            // 標準 1 小時時間段 (19:00-20:00 維持 1 小時大格)
             const timeSlots = [
                 '07:00-08:00', '08:00-09:00', '09:00-10:00', '10:00-11:00', 
                 '11:00-12:00', '12:00-13:00', '13:00-14:00', '14:00-15:00', 
@@ -934,8 +933,7 @@
             
             let tableHeader = `<th class="sticky left-0 bg-slate-100 p-2 z-10 w-[70px] min-w-[70px] max-w-[70px] border border-slate-200 text-slate-600 font-black text-[10px]">崗位 \\ 時間</th>`;
             timeSlots.forEach(ts => { 
-                const isSplitHour = ts === '19:00-20:00';
-                tableHeader += `<th class="p-1 border border-slate-200 ${isSplitHour ? 'w-[85px] min-w-[85px]' : 'w-[65px] min-w-[65px]'} text-[9px] font-bold text-slate-500 whitespace-nowrap bg-slate-50 text-center">${ts}</th>`; 
+                tableHeader += `<th class="p-1 border border-slate-200 w-[90px] min-w-[90px] text-[9px] font-bold text-slate-500 whitespace-nowrap bg-slate-50 text-center">${ts}</th>`; 
             });
 
             const customOrder = ['pt_3', 'pt_4', 'pt_5', 'pt_1', 'pt_2', 'pt_6', 'pt_7'];
@@ -951,6 +949,7 @@
             sortedLocs.forEach(([locId, pt]) => {
                 let displayName = pt.name.replace(/\s*大清點/, '<br>大清點');
                 const locColorClass = getLocColorClass(locId);
+                const isRestRow = locId === 'pt_7'; // ⭐ 判斷是否為「休息中」整列
                 
                 tableRows += `<tr>`;
                 tableRows += `<td class="sticky left-0 ${locColorClass} font-black text-[11px] p-2 z-10 border border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center break-words leading-tight w-[70px] min-w-[70px] max-w-[70px]">${displayName}</td>`;
@@ -961,13 +960,25 @@
                     
                     if (isDisabled) {
                         tableRows += `<td class="p-0 border border-slate-200 bg-slate-200/60 pointer-events-none"><div class="w-full h-full min-h-[50px]"></div></td>`;
-                    } else if (locId === 'pt_7' && ts === '19:00-20:00') {
-                        // 休息中 19:00-20:00 特殊切分為兩個半小時的「半格」
-                        const keyA = `${locId}_19:00_19:30`;
-                        const keyB = `${locId}_19:30_20:00`;
+                    } else if (isRestRow) {
+                        // ⭐「休息中」整行全部切分為 2 個半小時小格（:00-:30 與 :30-:00）
+                        const [startH] = tStart.split(':');
+                        const [endH] = tEnd.split(':');
+                        const halfStartA = `${startH}:00`;
+                        const halfEndA = `${startH}:30`;
+                        const halfStartB = `${startH}:30`;
+                        const halfEndB = `${endH}:00`;
+
+                        const keyA = `${locId}_${halfStartA}_${halfEndA}`;
+                        const keyB = `${locId}_${halfStartB}_${halfEndB}`;
                         
                         let contentA = currentDOMGridValues[keyA];
                         let contentB = currentDOMGridValues[keyB];
+
+                        const slotStartIntA = parseInt(halfStartA.replace(':',''));
+                        const slotEndIntA = parseInt(halfEndA.replace(':',''));
+                        const slotStartIntB = parseInt(halfStartB.replace(':',''));
+                        const slotEndIntB = parseInt(halfEndB.replace(':',''));
 
                         if (contentA === undefined) {
                             let namesA = [];
@@ -975,7 +986,7 @@
                                 if (s.locationId === locId && s.id.startsWith('sch_grid_')) {
                                     const sStart = parseInt(s.start.replace(':',''));
                                     const sEnd = parseInt(s.end.replace(':',''));
-                                    if (sStart <= 1900 && sEnd >= 1930) namesA.push(s.name);
+                                    if (sStart <= slotStartIntA && sEnd >= slotEndIntA) namesA.push(s.name);
                                 }
                             });
                             contentA = namesA.join('\n');
@@ -987,7 +998,7 @@
                                 if (s.locationId === locId && s.id.startsWith('sch_grid_')) {
                                     const sStart = parseInt(s.start.replace(':',''));
                                     const sEnd = parseInt(s.end.replace(':',''));
-                                    if (sStart <= 1930 && sEnd >= 2000) namesB.push(s.name);
+                                    if (sStart <= slotStartIntB && sEnd >= slotEndIntB) namesB.push(s.name);
                                 }
                             });
                             contentB = namesB.join('\n');
@@ -1003,12 +1014,12 @@
                         <td class="p-0 border border-slate-200 bg-white">
                             <div class="flex w-full h-full min-h-[50px]">
                                 <div class="flex-1 border-r border-slate-200 flex flex-col ${colorA}">
-                                    <div class="text-[8px] font-bold text-slate-400 bg-slate-50 text-center py-0.5 border-b border-slate-100">19:00</div>
-                                    <textarea class="grid-input flex-1 w-full p-0.5 text-[9px] resize-none focus:outline-none focus:bg-blue-50 border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent ${activeGridMember ? 'cursor-pointer select-none' : ''}" data-loc="${locId}" data-start="19:00" data-end="19:30" placeholder="..." onmousedown="window.startGridDrag(this, event)" onmouseenter="window.onGridDragEnter(this, event)" ontouchstart="window.startGridDrag(this, event)">${contentA}</textarea>
+                                    <div class="text-[8px] font-bold text-slate-400 bg-slate-50 text-center py-0.5 border-b border-slate-100">${startH}:00</div>
+                                    <textarea class="grid-input flex-1 w-full p-0.5 text-[9px] resize-none focus:outline-none focus:bg-blue-50 border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent ${activeGridMember ? 'cursor-pointer select-none' : ''}" data-loc="${locId}" data-start="${halfStartA}" data-end="${halfEndA}" placeholder="..." onmousedown="window.startGridDrag(this, event)" onmouseenter="window.onGridDragEnter(this, event)" ontouchstart="window.startGridDrag(this, event)">${contentA}</textarea>
                                 </div>
                                 <div class="flex-1 flex flex-col ${colorB}">
-                                    <div class="text-[8px] font-bold text-slate-400 bg-slate-50 text-center py-0.5 border-b border-slate-100">19:30</div>
-                                    <textarea class="grid-input flex-1 w-full p-0.5 text-[9px] resize-none focus:outline-none focus:bg-blue-50 border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent ${activeGridMember ? 'cursor-pointer select-none' : ''}" data-loc="${locId}" data-start="19:30" data-end="20:00" placeholder="..." onmousedown="window.startGridDrag(this, event)" onmouseenter="window.onGridDragEnter(this, event)" ontouchstart="window.startGridDrag(this, event)">${contentB}</textarea>
+                                    <div class="text-[8px] font-bold text-slate-400 bg-slate-50 text-center py-0.5 border-b border-slate-100">${startH}:30</div>
+                                    <textarea class="grid-input flex-1 w-full p-0.5 text-[9px] resize-none focus:outline-none focus:bg-blue-50 border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent ${activeGridMember ? 'cursor-pointer select-none' : ''}" data-loc="${locId}" data-start="${halfStartB}" data-end="${halfEndB}" placeholder="..." onmousedown="window.startGridDrag(this, event)" onmouseenter="window.onGridDragEnter(this, event)" ontouchstart="window.startGridDrag(this, event)">${contentB}</textarea>
                                 </div>
                             </div>
                         </td>`;
