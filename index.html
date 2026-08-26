@@ -982,7 +982,6 @@
                 const locColorClass = getLocColorClass(locId);
                 const isRestRow = locId === 'pt_7'; 
                 
-                // 將所有崗位（包含客服室、花園仔、魚檔、整體巡邏等）高度統一收縮為精簡的單行高度 (~32px)
                 let minHeightClass = "min-h-[32px]";
                 
                 tableRows += `<tr>`;
@@ -1673,6 +1672,16 @@
             document.getElementById('crWithdrawRemainDisplay').textContent = record.remainingQuantity;
             document.getElementById('crInputWithdrawQty').value = record.remainingQuantity; 
 
+            // 預設填入當前時間作為提取時間
+            const now = window.getNow();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const mins = String(now.getMinutes()).padStart(2, '0');
+            const timeInput = document.getElementById('crInputWithdrawTime');
+            if (timeInput) timeInput.value = `${year}-${month}-${day}T${hours}:${mins}`;
+
             const modal = document.getElementById('crWithdrawModal');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
@@ -1687,6 +1696,7 @@
         window.crSubmitWithdraw = () => {
             const id = document.getElementById('crCurrentActionId').value;
             const withdrawQty = parseInt(document.getElementById('crInputWithdrawQty').value, 10);
+            const timeStr = document.getElementById('crInputWithdrawTime')?.value;
 
             const recordIndex = crRecords.findIndex(r => r.id === id);
             if (recordIndex === -1) return;
@@ -1695,8 +1705,10 @@
             if (!withdrawQty || withdrawQty <= 0) return window.showToast('請輸入有效的取出數量', true);
             if (withdrawQty > record.remainingQuantity) return window.showToast(`數量錯誤！目前僅剩 ${record.remainingQuantity} 件`, true);
 
+            const withdrawTimestamp = timeStr ? new Date(timeStr).getTime() : window.getNow().getTime();
+
             record.remainingQuantity -= withdrawQty;
-            record.withdrawHistory.push({ time: window.getNow().getTime(), qty: withdrawQty });
+            record.withdrawHistory.push({ time: withdrawTimestamp, qty: withdrawQty });
 
             if (record.remainingQuantity === 0) {
                 record.status = 'history';
@@ -1949,12 +1961,12 @@
                 }
 
                 let partialHtml = '';
-                if (record.withdrawHistory.length > 0 && !isHistory) {
+                if (record.withdrawHistory.length > 0) {
                     partialHtml = `
                         <div class="mt-1.5 space-y-0.5">
                             ${record.withdrawHistory.map(w => `
                                 <div class="text-[9px] sm:text-[10px] text-slate-400 flex justify-between bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
-                                    <span>${window.crFormatTime(w.time)}</span>
+                                    <span>提取: ${window.crFormatTime(w.time)}</span>
                                     <span>取出 -${w.qty}</span>
                                 </div>
                             `).join('')}
@@ -3749,6 +3761,10 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
                 <div class="text-[10px] text-slate-500">目前剩餘數量: <span id="crWithdrawRemainDisplay" class="font-bold text-blue-600 text-xs"></span></div>
             </div>
             <div class="space-y-3">
+                <div>
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1">提取時間</label>
+                    <input type="datetime-local" id="crInputWithdrawTime" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs focus:border-amber-500 focus:outline-none font-mono font-bold text-slate-700 bg-slate-50 text-center">
+                </div>
                 <div>
                     <label class="text-[10px] font-bold text-slate-500 block mb-1">本次取出數量</label>
                     <input type="number" id="crInputWithdrawQty" min="1" class="w-full border border-slate-300 rounded-lg p-2 text-lg focus:border-amber-500 focus:outline-none font-bold text-slate-700 text-center bg-white shadow-inner">
