@@ -264,7 +264,7 @@
 
         // 雪房模組全域變數
         let crRecords = [];
-        let crItemTypes = ['海鮮', '肉類', '蔬果', '其他'];
+        let crItemTypes = ['海鮮', '肉類', '蔬果', '包裝冰', '其他'];
         let crCurrentSelectedType = '';
         let crCurrentTab = 'active'; 
         const CR_TIME_LIMIT_MS = 24 * 60 * 60 * 1000; // 24 Hours
@@ -366,7 +366,8 @@
             teamMembers = getLocal('work_cache_team_members', ['周靜儀', '蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲']);
             
             crRecords = getLocal('coldRoomRecords', []);
-            crItemTypes = getLocal('coldRoomTypes', ['海鮮', '肉類', '蔬果', '其他']);
+            crItemTypes = getLocal('coldRoomTypes', ['海鮮', '肉類', '蔬果', '包裝冰', 'Other']);
+            if(!crItemTypes.includes('包裝冰')) crItemTypes.push('包裝冰');
 
             if(!mapData.points || Object.keys(mapData.points).length === 0) {
                 mapData.points = JSON.parse(JSON.stringify(defaultMapPoints));
@@ -1672,7 +1673,6 @@
             document.getElementById('crWithdrawRemainDisplay').textContent = record.remainingQuantity;
             document.getElementById('crInputWithdrawQty').value = record.remainingQuantity; 
 
-            // 預設填入當前時間作為提取時間
             const now = window.getNow();
             const year = now.getFullYear();
             const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -1896,31 +1896,40 @@
                 
                 const typeDisplay = record.type ? record.type : '未指定';
                 const staffDisplay = record.staff ? record.staff : '未指定';
+                const isIce = typeDisplay === '包裝冰';
 
                 let timeInfoHtml = '';
                 let actionHtml = '';
 
                 if (!isHistory) {
-                    const deadline = record.depositTime + CR_TIME_LIMIT_MS;
-                    const timeLeft = deadline - now;
                     let timeStatusHtml = '';
 
-                    if (timeLeft > 0) {
-                        const hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60));
-                        const minsLeft = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
-                        const isWarning = timeLeft < (4 * 60 * 60 * 1000);
-
+                    if (isIce) {
                         timeStatusHtml = `
-                            <div class="flex items-center ${isWarning ? 'text-amber-600' : 'text-emerald-600'} text-[10px] sm:text-[11px] font-bold tracking-wide cr-timer-display pr-6" data-deadline="${deadline}">
-                                <i data-lucide="clock" class="w-3.5 h-3.5 mr-1"></i>剩餘: ${hoursLeft}小時 ${minsLeft}分
+                            <div class="flex items-center text-blue-600 text-[10px] sm:text-[11px] font-bold tracking-wide pr-6">
+                                <i data-lucide="infinity" class="w-3.5 h-3.5 mr-1"></i>不限時間存放
                             </div>`;
                     } else {
-                        const overdueMs = Math.abs(timeLeft);
-                        const hoursOver = Math.floor(overdueMs / (1000 * 60 * 60));
-                        timeStatusHtml = `
-                            <div class="flex items-center text-red-600 text-[10px] sm:text-[11px] font-bold tracking-wide timer-pulse pr-6">
-                                <i data-lucide="alert-circle" class="w-3.5 h-3.5 mr-1"></i>已超時 ${hoursOver} 小時！
-                            </div>`;
+                        const deadline = record.depositTime + CR_TIME_LIMIT_MS;
+                        const timeLeft = deadline - now;
+
+                        if (timeLeft > 0) {
+                            const hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60));
+                            const minsLeft = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+                            const isWarning = timeLeft < (4 * 60 * 60 * 1000);
+
+                            timeStatusHtml = `
+                                <div class="flex items-center ${isWarning ? 'text-amber-600' : 'text-emerald-600'} text-[10px] sm:text-[11px] font-bold tracking-wide cr-timer-display pr-6" data-deadline="${deadline}">
+                                    <i data-lucide="clock" class="w-3.5 h-3.5 mr-1"></i>剩餘: ${hoursLeft}小時 ${minsLeft}分
+                                </div>`;
+                        } else {
+                            const overdueMs = Math.abs(timeLeft);
+                            const hoursOver = Math.floor(overdueMs / (1000 * 60 * 60));
+                            timeStatusHtml = `
+                                <div class="flex items-center text-red-600 text-[10px] sm:text-[11px] font-bold tracking-wide timer-pulse pr-6">
+                                    <i data-lucide="alert-circle" class="w-3.5 h-3.5 mr-1"></i>已超時 ${hoursOver} 小時！
+                                </div>`;
+                        }
                     }
 
                     timeInfoHtml = `
