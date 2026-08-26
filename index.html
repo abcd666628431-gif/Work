@@ -123,7 +123,7 @@
         .dark-mode .active-task .timeline-card { background-color: #172554 !important; border-color: #1e3a8a !important; }
         .dark-mode .active-task .timeline-card .bg-slate-100\/50 { background-color: #0f172a !important; }
         .dark-mode .timeline-card .bg-slate-100\/50 { background-color: #0f172a !important; border-color: #334155 !important; }
-        .dark-mode input[type="time"], .dark-mode input[type="text"], .dark-mode input[type="number"], .dark-mode textarea { background-color: #334155 !important; color: #f8fafc !important; border-color: #475569 !important; }
+        .dark-mode input[type="time"], .dark-mode input[type="text"], .dark-mode input[type="number"], .dark-mode textarea, .dark-mode select { background-color: #334155 !important; color: #f8fafc !important; border-color: #475569 !important; }
         
         /* 專屬調整：連線狀態與時鐘選單明顯化 */
         .dark-mode header .bg-white\/70 { background-color: #1e293b !important; border-color: #475569 !important; }
@@ -222,6 +222,29 @@
         let isGridDragging = false;
         let gridDragAction = null; 
         window.lastTouchedEl = null;
+
+        // 成員同名色彩映射庫 (排班表同名同顏色)
+        const memberColorPalettes = [
+            { bg: 'bg-rose-100', text: 'text-rose-700', border: 'border-rose-300', activeBg: 'bg-rose-500' },
+            { bg: 'bg-sky-100', text: 'text-sky-700', border: 'border-sky-300', activeBg: 'bg-sky-500' },
+            { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-300', activeBg: 'bg-emerald-500' },
+            { bg: 'bg-amber-100', text: 'text-amber-800', border: 'border-amber-300', activeBg: 'bg-amber-500' },
+            { bg: 'bg-violet-100', text: 'text-violet-700', border: 'border-violet-300', activeBg: 'bg-violet-500' },
+            { bg: 'bg-teal-100', text: 'text-teal-700', border: 'border-teal-300', activeBg: 'bg-teal-500' },
+            { bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-300', activeBg: 'bg-orange-500' },
+            { bg: 'bg-indigo-100', text: 'text-indigo-700', border: 'border-indigo-300', activeBg: 'bg-indigo-500' },
+            { bg: 'bg-pink-100', text: 'text-pink-700', border: 'border-pink-300', activeBg: 'bg-pink-500' },
+            { bg: 'bg-lime-100', text: 'text-lime-800', border: 'border-lime-300', activeBg: 'bg-lime-500' },
+            { bg: 'bg-cyan-100', text: 'text-cyan-800', border: 'border-cyan-300', activeBg: 'bg-cyan-500' },
+            { bg: 'bg-fuchsia-100', text: 'text-fuchsia-700', border: 'border-fuchsia-300', activeBg: 'bg-fuchsia-500' }
+        ];
+
+        window.getMemberColorClass = (name) => {
+            if (!name) return { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', activeBg: 'bg-blue-500' };
+            let seed = 0;
+            for (let i = 0; i < name.length; i++) seed += name.charCodeAt(i);
+            return memberColorPalettes[Math.abs(seed) % memberColorPalettes.length];
+        };
 
         // 雪房模組全域變數
         let crRecords = [];
@@ -488,9 +511,10 @@
             const now = window.getNow();
             const nowTime = now.getTime();
             const currentTimeMinutes = now.getHours() * 60 + now.getMinutes();
+            const isMobile = window.innerWidth < 640;
             
             let activeMembers = {}; 
-            let incomingMembers = {}; // 記錄即將在 10 分鐘內接班的人
+            let incomingMembers = {}; 
 
             memberSchedules.forEach(sched => {
                 const start = parseTime(sched.start).getTime();
@@ -546,7 +570,6 @@
                         membersBox.innerHTML = ''; 
                     }
 
-                    // 渲染當前值班人員
                     names.forEach((name) => {
                         const memberDiv = document.createElement('div');
                         memberDiv.className = 'flex flex-col items-center justify-center m-0.5 scale-90';
@@ -561,7 +584,6 @@
                         membersBox.appendChild(memberDiv);
                     });
 
-                    // 渲染準備接班人員（加入 animate-flag-in 進場動畫）
                     incomingNames.forEach((nextName) => {
                         const incomingDiv = document.createElement('div');
                         incomingDiv.className = 'flex flex-col items-center justify-center m-0.5 scale-90 animate-flag-in';
@@ -589,7 +611,6 @@
 
                 const incomingNames = incomingMembers[locId] || [];
 
-                // 🔹 A. 渲染當前值班人員（在房間內部走動）
                 names.forEach((name, idx) => {
                     let markerId = `dyn-marker-${name}-${locId}-current`;
                     let marker = document.getElementById(markerId);
@@ -629,7 +650,7 @@
                     marker.dataset.active = "true";
                 });
 
-                // 🔸 B. 渲染準備接班人員
+                // 🔸 B. 渲染準備接班人員 (自適應手機與桌面版位置)
                 incomingNames.forEach((name, idx) => {
                     let markerId = `dyn-marker-${name}-${locId}-incoming`;
                     let marker = document.getElementById(markerId);
@@ -653,14 +674,17 @@
 
                     if (marker.parentNode !== container) container.appendChild(marker);
                     
-                    const offset = incomingNames.length > 1 ? (idx - (incomingNames.length - 1) / 2) * 60 : 0;
-                    marker.style.left = `calc(${loc.x}% + ${offset}px - 45px)`;
+                    const offset = incomingNames.length > 1 ? (idx - (incomingNames.length - 1) / 2) * 55 : 0;
+                    marker.style.left = `calc(${loc.x}% + ${offset}px - 35px)`;
 
-                    let topOffset = '-120px';
-                    if (locId === 'pt_3' || locId === 'pt_4') {
-                        topOffset = '-135px'; // 花園仔、魚檔
-                    } else if (locId === 'pt_5') {
-                        topOffset = '-115px'; // 整體巡邏
+                    // ⭐ 根據手機螢幕 (isMobile) 與各站點微調 Y 軸高度，徹底解決手機版偏上/頂出問題
+                    let topOffset = isMobile ? '-75px' : '-110px';
+                    if (locId === 'pt_1') { // 客服室
+                        topOffset = isMobile ? '-45px' : '-65px';
+                    } else if (locId === 'pt_3' || locId === 'pt_4') { // 花園仔、魚檔
+                        topOffset = isMobile ? '-85px' : '-115px';
+                    } else if (locId === 'pt_5') { // 整體巡邏
+                        topOffset = isMobile ? '-70px' : '-95px';
                     }
                     marker.style.top = `calc(${loc.y}% + ${topOffset})`; 
 
@@ -710,8 +734,9 @@
             else activeGridMember = name;
             
             document.querySelectorAll('.member-btn-container').forEach(container => {
-                const isSelected = container.dataset.name === activeGridMember;
-                const isEraser = container.dataset.name === 'ERASER';
+                const cName = container.dataset.name;
+                const isSelected = cName === activeGridMember;
+                const isEraser = cName === 'ERASER';
                 const innerDiv = container.querySelector('div');
                 if(!innerDiv) return;
                 
@@ -720,9 +745,10 @@
                         ? 'px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center bg-pink-500 text-white border-pink-600 shadow-md scale-105' 
                         : 'px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm';
                 } else {
+                    const color = window.getMemberColorClass(cName);
                     innerDiv.className = isSelected 
-                        ? 'px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all bg-blue-500 text-white border-blue-600 shadow-md scale-105' 
-                        : 'px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all bg-white text-slate-700 border-slate-200 hover:border-blue-400 hover:text-blue-600 shadow-sm';
+                        ? `px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all ${color.activeBg} text-white border-transparent shadow-md scale-105` 
+                        : `px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all ${color.bg} ${color.text} ${color.border} hover:opacity-80 shadow-sm`;
                 }
             });
 
@@ -805,59 +831,64 @@
         document.addEventListener('mouseup', window.stopGridDrag);
         document.addEventListener('touchend', window.stopGridDrag);
 
+        // 排班儲存邏輯 (支援半小時輸入與標準輸入)
         window.saveGridSchedule = () => {
-            const timeSlots = ['07:00-08:00', '08:00-09:00', '09:00-10:00', '10:00-11:00', '11:00-12:00', '12:00-13:00', '13:00-14:00', '14:00-15:00', '15:00-16:00', '16:00-17:00', '17:00-18:00', '18:00-19:00', '19:00-19:30', '19:30-20:00', '20:00-21:00', '21:00-22:00'];
             let newSchedules = [];
             let locKeys = Object.keys(mapData.points);
 
-            locKeys.forEach(locId => {
-                let activeBlocks = {};
+            document.querySelectorAll('.grid-input').forEach(inputEl => {
+                const locId = inputEl.dataset.loc;
+                const tStart = inputEl.dataset.start;
+                const tEnd = inputEl.dataset.end;
+                const text = inputEl.value.trim();
 
-                timeSlots.forEach((ts, index) => {
-                    const [tStart, tEnd] = ts.split('-');
-                    const inputEl = document.querySelector(`.grid-input[data-loc="${locId}"][data-time="${ts}"]`);
-                    if (!inputEl) return;
-                    
-                    const text = inputEl.value.trim();
-                    let currentNames = [];
-                    
-                    if (text) {
-                        const rawNames = text.split(/[\n\s]+/);
-                        rawNames.forEach(rawName => {
-                            let cleanName = rawName.replace(/\(.*?\)/g, '').trim();
-                            if (cleanName.includes('休')) return;
-                            if (cleanName.includes('頂')) cleanName = cleanName.replace('頂', '').trim();
-                            if (cleanName) currentNames.push(cleanName);
-                        });
-                    }
-
-                    for (const name in activeBlocks) {
-                        if (!currentNames.includes(name)) {
-                            newSchedules.push({ id: 'sch_grid_'+Date.now()+Math.random().toString(36).substr(2,5), name: name, locationId: locId, start: activeBlocks[name].start, end: activeBlocks[name].end });
-                            delete activeBlocks[name];
+                if (text && tStart && tEnd) {
+                    const rawNames = text.split(/[\n\s]+/);
+                    rawNames.forEach(rawName => {
+                        let cleanName = rawName.replace(/\(.*?\)/g, '').trim();
+                        if (cleanName.includes('休')) return;
+                        if (cleanName.includes('頂')) cleanName = cleanName.replace('頂', '').trim();
+                        if (cleanName) {
+                            newSchedules.push({
+                                id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5),
+                                name: cleanName,
+                                locationId: locId,
+                                start: tStart,
+                                end: tEnd
+                            });
                         }
-                    }
-
-                    currentNames.forEach(name => {
-                        if (activeBlocks[name]) activeBlocks[name].end = tEnd; 
-                        else activeBlocks[name] = { start: tStart, end: tEnd };
                     });
-                    
-                    if (index === timeSlots.length - 1) {
-                        for (const name in activeBlocks) {
-                            newSchedules.push({ id: 'sch_grid_'+Date.now()+Math.random().toString(36).substr(2,5), name: name, locationId: locId, start: activeBlocks[name].start, end: activeBlocks[name].end });
-                            delete activeBlocks[name];
+                }
+            });
+
+            // 合併同一個人、同地點、連續的時間區間
+            let mergedSchedules = [];
+            locKeys.forEach(locId => {
+                teamMembers.forEach(name => {
+                    let userSlots = newSchedules.filter(s => s.locationId === locId && s.name === name);
+                    userSlots.sort((a, b) => a.start.localeCompare(b.start));
+
+                    let currentSlot = null;
+                    userSlots.forEach(s => {
+                        if (!currentSlot) {
+                            currentSlot = { ...s };
+                        } else if (currentSlot.end === s.start) {
+                            currentSlot.end = s.end;
+                        } else {
+                            mergedSchedules.push(currentSlot);
+                            currentSlot = { ...s };
                         }
-                    }
+                    });
+                    if (currentSlot) mergedSchedules.push(currentSlot);
                 });
             });
 
             memberSchedules = memberSchedules.filter(s => !s.id.startsWith('sch_grid_'));
-            memberSchedules = [...memberSchedules, ...newSchedules];
+            memberSchedules = [...memberSchedules, ...mergedSchedules];
             
             if(currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'member_schedules'), { schedules: memberSchedules });
             window.renderScheduleManager();
-            window.showToast(`成功儲存表格排班！共生效 ${newSchedules.length} 筆時段。`);
+            window.showToast(`成功儲存表格排班！共生效 ${mergedSchedules.length} 筆時段。`);
         };
 
         window.clearAllSchedules = () => {
@@ -888,15 +919,24 @@
             
             let currentDOMGridValues = {};
             document.querySelectorAll('.grid-input').forEach(input => {
-                const key = `${input.dataset.loc}_${input.dataset.time}`;
+                const key = `${input.dataset.loc}_${input.dataset.start}_${input.dataset.end}`;
                 currentDOMGridValues[key] = input.value;
             });
 
-            const timeSlots = ['07:00-08:00', '08:00-09:00', '09:00-10:00', '10:00-11:00', '11:00-12:00', '12:00-13:00', '13:00-14:00', '14:00-15:00', '15:00-16:00', '16:00-17:00', '17:00-18:00', '18:00-19:00', '19:00-19:30', '19:30-20:00', '20:00-21:00', '21:00-22:00'];
-            const validCountingSlots = ['13:00-14:00', '14:00-15:00', '19:30-20:00', '20:00-21:00', '21:00-22:00'];
+            // 合併後的標準時間段 (19:00-20:00 合併為一欄)
+            const timeSlots = [
+                '07:00-08:00', '08:00-09:00', '09:00-10:00', '10:00-11:00', 
+                '11:00-12:00', '12:00-13:00', '13:00-14:00', '14:00-15:00', 
+                '15:00-16:00', '16:00-17:00', '17:00-18:00', '18:00-19:00', 
+                '19:00-20:00', '20:00-21:00', '21:00-22:00'
+            ];
+            const validCountingSlots = ['13:00-14:00', '14:00-15:00', '19:00-20:00', '20:00-21:00', '21:00-22:00'];
             
             let tableHeader = `<th class="sticky left-0 bg-slate-100 p-2 z-10 w-[70px] min-w-[70px] max-w-[70px] border border-slate-200 text-slate-600 font-black text-[10px]">崗位 \\ 時間</th>`;
-            timeSlots.forEach(ts => { tableHeader += `<th class="p-1 border border-slate-200 w-[65px] min-w-[65px] max-w-[65px] text-[9px] font-bold text-slate-500 whitespace-nowrap bg-slate-50 text-center">${ts}</th>`; });
+            timeSlots.forEach(ts => { 
+                const isSplitHour = ts === '19:00-20:00';
+                tableHeader += `<th class="p-1 border border-slate-200 ${isSplitHour ? 'w-[85px] min-w-[85px]' : 'w-[65px] min-w-[65px]'} text-[9px] font-bold text-slate-500 whitespace-nowrap bg-slate-50 text-center">${ts}</th>`; 
+            });
 
             const customOrder = ['pt_3', 'pt_4', 'pt_5', 'pt_1', 'pt_2', 'pt_6', 'pt_7'];
             let sortedLocs = Object.entries(mapData.points).sort(([idA], [idB]) => {
@@ -916,12 +956,64 @@
                 tableRows += `<td class="sticky left-0 ${locColorClass} font-black text-[11px] p-2 z-10 border border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center break-words leading-tight w-[70px] min-w-[70px] max-w-[70px]">${displayName}</td>`;
                 
                 timeSlots.forEach(ts => {
+                    const [tStart, tEnd] = ts.split('-');
                     let isDisabled = (locId === 'pt_2' || locId === 'pt_6') && !validCountingSlots.includes(ts);
                     
                     if (isDisabled) {
                         tableRows += `<td class="p-0 border border-slate-200 bg-slate-200/60 pointer-events-none"><div class="w-full h-full min-h-[50px]"></div></td>`;
+                    } else if (locId === 'pt_7' && ts === '19:00-20:00') {
+                        // 休息中 19:00-20:00 特殊切分為兩個半小時的「半格」
+                        const keyA = `${locId}_19:00_19:30`;
+                        const keyB = `${locId}_19:30_20:00`;
+                        
+                        let contentA = currentDOMGridValues[keyA];
+                        let contentB = currentDOMGridValues[keyB];
+
+                        if (contentA === undefined) {
+                            let namesA = [];
+                            memberSchedules.forEach(s => {
+                                if (s.locationId === locId && s.id.startsWith('sch_grid_')) {
+                                    const sStart = parseInt(s.start.replace(':',''));
+                                    const sEnd = parseInt(s.end.replace(':',''));
+                                    if (sStart <= 1900 && sEnd >= 1930) namesA.push(s.name);
+                                }
+                            });
+                            contentA = namesA.join('\n');
+                        }
+
+                        if (contentB === undefined) {
+                            let namesB = [];
+                            memberSchedules.forEach(s => {
+                                if (s.locationId === locId && s.id.startsWith('sch_grid_')) {
+                                    const sStart = parseInt(s.start.replace(':',''));
+                                    const sEnd = parseInt(s.end.replace(':',''));
+                                    if (sStart <= 1930 && sEnd >= 2000) namesB.push(s.name);
+                                }
+                            });
+                            contentB = namesB.join('\n');
+                        }
+
+                        // 同名色彩樣式
+                        const firstLineA = contentA.split('\n')[0] || '';
+                        const colorA = firstLineA ? window.getMemberColorClass(firstLineA).bg : 'bg-white';
+                        const firstLineB = contentB.split('\n')[0] || '';
+                        const colorB = firstLineB ? window.getMemberColorClass(firstLineB).bg : 'bg-white';
+
+                        tableRows += `
+                        <td class="p-0 border border-slate-200 bg-white">
+                            <div class="flex w-full h-full min-h-[50px]">
+                                <div class="flex-1 border-r border-slate-200 flex flex-col ${colorA}">
+                                    <div class="text-[8px] font-bold text-slate-400 bg-slate-50 text-center py-0.5 border-b border-slate-100">19:00</div>
+                                    <textarea class="grid-input flex-1 w-full p-0.5 text-[9px] resize-none focus:outline-none focus:bg-blue-50 border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent ${activeGridMember ? 'cursor-pointer select-none' : ''}" data-loc="${locId}" data-start="19:00" data-end="19:30" placeholder="..." onmousedown="window.startGridDrag(this, event)" onmouseenter="window.onGridDragEnter(this, event)" ontouchstart="window.startGridDrag(this, event)">${contentA}</textarea>
+                                </div>
+                                <div class="flex-1 flex flex-col ${colorB}">
+                                    <div class="text-[8px] font-bold text-slate-400 bg-slate-50 text-center py-0.5 border-b border-slate-100">19:30</div>
+                                    <textarea class="grid-input flex-1 w-full p-0.5 text-[9px] resize-none focus:outline-none focus:bg-blue-50 border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent ${activeGridMember ? 'cursor-pointer select-none' : ''}" data-loc="${locId}" data-start="19:30" data-end="20:00" placeholder="..." onmousedown="window.startGridDrag(this, event)" onmouseenter="window.onGridDragEnter(this, event)" ontouchstart="window.startGridDrag(this, event)">${contentB}</textarea>
+                                </div>
+                            </div>
+                        </td>`;
                     } else {
-                        const cellKey = `${locId}_${ts}`;
+                        const cellKey = `${locId}_${tStart}_${tEnd}`;
                         let cellContent = '';
 
                         if (currentDOMGridValues.hasOwnProperty(cellKey)) {
@@ -932,15 +1024,19 @@
                                 if (s.locationId === locId && s.id.startsWith('sch_grid_')) {
                                     const sStart = parseInt(s.start.replace(':',''));
                                     const sEnd = parseInt(s.end.replace(':',''));
-                                    const tStart = parseInt(ts.split('-')[0].replace(':',''));
-                                    const tEnd = parseInt(ts.split('-')[1].replace(':',''));
-                                    if (sStart <= tStart && sEnd >= tEnd) cellNames.push(s.name);
+                                    const slotStart = parseInt(tStart.replace(':',''));
+                                    const slotEnd = parseInt(tEnd.replace(':',''));
+                                    if (sStart <= slotStart && sEnd >= slotEnd) cellNames.push(s.name);
                                 }
                             });
                             cellContent = cellNames.join('\n');
                         }
 
-                        tableRows += `<td class="p-0 border border-slate-200 bg-white hover:bg-blue-50/50 transition-colors"><textarea class="grid-input w-full h-full min-h-[50px] p-1 text-[10px] resize-none focus:outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400 border-none font-medium leading-relaxed placeholder-slate-200 ${activeGridMember ? 'cursor-pointer select-none' : ''}" data-loc="${locId}" data-time="${ts}" placeholder="..." onmousedown="window.startGridDrag(this, event)" onmouseenter="window.onGridDragEnter(this, event)" ontouchstart="window.startGridDrag(this, event)">${cellContent}</textarea></td>`;
+                        // 同名同顏色背景計算
+                        const firstLine = cellContent.split('\n')[0] || '';
+                        const cellColor = firstLine ? window.getMemberColorClass(firstLine).bg : 'bg-white';
+
+                        tableRows += `<td class="p-0 border border-slate-200 ${cellColor} hover:opacity-90 transition-colors"><textarea class="grid-input w-full h-full min-h-[50px] p-1 text-[10px] resize-none focus:outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400 border-none font-bold text-slate-800 leading-relaxed placeholder-slate-200 bg-transparent ${activeGridMember ? 'cursor-pointer select-none' : ''}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}" placeholder="..." onmousedown="window.startGridDrag(this, event)" onmouseenter="window.onGridDragEnter(this, event)" ontouchstart="window.startGridDrag(this, event)">${cellContent}</textarea></td>`;
                     }
                 });
                 tableRows += `</tr>`;
@@ -951,7 +1047,7 @@
             let html = `
                 <div class="mb-3 p-2 bg-slate-50 border border-slate-200 rounded-xl shadow-inner">
                     <div class="flex justify-between items-center mb-2 px-1">
-                        <span class="text-xs font-bold text-slate-700 flex items-center"><i data-lucide="palette" class="w-3.5 h-3.5 mr-1.5 text-blue-500"></i>快捷填表 (點擊選取人員)</span>
+                        <span class="text-xs font-bold text-slate-700 flex items-center"><i data-lucide="palette" class="w-3.5 h-3.5 mr-1.5 text-blue-500"></i>快捷填表 (同名同色標記)</span>
                         <button onclick="window.toggleEditMembers()" class="text-[10px] font-bold text-slate-500 hover:text-blue-500 transition-colors bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">${isEditingMembers ? '完成編輯' : '編輯名單'}</button>
                     </div>
                     <div class="flex flex-wrap gap-1.5 px-1">
@@ -962,14 +1058,18 @@
                             </div>
                         </div>` : ''}
                         
-                        ${teamMembers.map((name, idx) => `
+                        ${teamMembers.map((name, idx) => {
+                            const color = window.getMemberColorClass(name);
+                            const isSelected = activeGridMember === name;
+                            return `
                             <div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? '' : `window.selectGridMember('${name}')`}">
-                                <div class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all ${activeGridMember === name ? 'bg-blue-500 text-white border-blue-600 shadow-md scale-105' : 'bg-white text-slate-700 border-slate-200 hover:border-blue-400 hover:text-blue-600 shadow-sm'}">
+                                <div class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all ${isSelected ? `${color.activeBg} text-white border-transparent shadow-md scale-105` : `${color.bg} ${color.text} ${color.border} hover:opacity-80 shadow-sm`}">
                                     ${name}
                                 </div>
                                 ${isEditingMembers ? `<button onclick="window.removeTeamMember(${idx}); event.stopPropagation();" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold z-10 hover:bg-red-600 transition-colors"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}
                             </div>
-                        `).join('')}
+                            `;
+                        }).join('')}
                         ${isEditingMembers ? `<button onclick="window.addTeamMember()" class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-dashed border-slate-400 text-slate-500 hover:bg-slate-200 flex items-center transition-colors"><i data-lucide="plus" class="w-3 h-3 mr-1"></i>新增</button>` : ''}
                     </div>
                     <div id="grid-hint-text" class="${activeGridMember && activeGridMember !== 'ERASER' ? 'mt-2.5 text-[10px] text-blue-600 font-bold animate-pulse px-1 block' : activeGridMember === 'ERASER' ? 'mt-2.5 text-[10px] text-pink-600 font-bold animate-pulse px-1 block' : 'hidden'}">
@@ -1475,6 +1575,13 @@
             crCurrentSelectedType = '';
             window.crRenderTypesInModal();
 
+            // 渲染客服人員下拉選單選項
+            const staffSelect = document.getElementById('crInputStaff');
+            if (staffSelect) {
+                staffSelect.innerHTML = '<option value="">請選擇經手客服人員...</option>' + 
+                    teamMembers.map(m => `<option value="${m}">${m}</option>`).join('');
+            }
+
             const modal = document.getElementById('crAddModal');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
@@ -1490,6 +1597,7 @@
         window.crSubmitAddRecord = () => {
             const tenant = document.getElementById('crInputTenant').value.trim();
             const qty = parseInt(document.getElementById('crInputQuantity').value, 10);
+            const staff = document.getElementById('crInputStaff')?.value || '';
 
             if (!tenant) return window.showToast('請輸入檔主編號', true);
             if (!qty || qty <= 0) return window.showToast('請輸入有效的數量', true);
@@ -1498,6 +1606,7 @@
                 id: 'cr_' + window.getNow().getTime(),
                 tenant: tenant,
                 type: crCurrentSelectedType || '未指定',
+                staff: staff || '未指定',
                 depositQuantity: qty,
                 remainingQuantity: qty,
                 depositTime: window.getNow().getTime(),
@@ -1586,6 +1695,13 @@
                                 <input type="text" id="crEditTenant" value="${record.tenant}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50">
                             </div>
                             <div>
+                                <label class="text-[11px] font-bold text-slate-500 block mb-1">經手客服人員</label>
+                                <select id="crEditStaff" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50">
+                                    <option value="">未指定</option>
+                                    ${teamMembers.map(m => `<option value="${m}" ${record.staff === m ? 'selected' : ''}>${m}</option>`).join('')}
+                                </select>
+                            </div>
+                            <div>
                                 <label class="text-[11px] font-bold text-slate-500 block mb-1">貨物類型</label>
                                 <select id="crEditType" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50">
                                     ${crItemTypes.map(t => `<option value="${t}" ${record.type === t ? 'selected' : ''}>${t}</option>`).join('')}
@@ -1616,6 +1732,7 @@
             if (!record) return;
 
             const tenant = document.getElementById('crEditTenant').value.trim();
+            const staff = document.getElementById('crEditStaff').value;
             const type = document.getElementById('crEditType').value;
             const remain = parseInt(document.getElementById('crEditRemain').value, 10);
 
@@ -1623,6 +1740,7 @@
             if (isNaN(remain) || remain < 0) return window.showToast('請輸入有效數量', true);
 
             record.tenant = tenant;
+            record.staff = staff || '未指定';
             record.type = type;
             record.remainingQuantity = remain;
             if (remain === 0) record.status = 'history';
@@ -1638,15 +1756,16 @@
                 return window.showToast('目前沒有資料可以導出', true);
             }
 
-            const headers = ['紀錄ID', '狀態', '檔主', '類型', '初始數量', '剩餘數量', '存入時間'];
+            const headers = ['紀錄ID', '狀態', '檔主', '經手客服', '類型', '初始數量', '剩餘數量', '存入時間'];
             let csvContent = "\uFEFF" + headers.join(',') + "\n";
 
             crRecords.forEach(r => {
                 const statusStr = r.status === 'active' ? '存放中' : '歷史記錄';
                 const typeStr = r.type || '未指定';
+                const staffStr = r.staff || '未指定';
                 const dateStr = new Date(r.depositTime).toLocaleString('zh-TW', { hour12: false });
                 
-                const row = [r.id, statusStr, r.tenant, typeStr, r.depositQuantity, r.remainingQuantity, dateStr]
+                const row = [r.id, statusStr, r.tenant, staffStr, typeStr, r.depositQuantity, r.remainingQuantity, dateStr]
                             .map(field => `"${field}"`);
                 
                 csvContent += row.join(',') + "\n";
@@ -1709,6 +1828,7 @@
                 const borderColor = isHistory ? 'border-slate-200' : 'border-[#d6d0c4]';
                 
                 const typeDisplay = record.type ? record.type : '未指定';
+                const staffDisplay = record.staff ? record.staff : '未指定';
 
                 let timeInfoHtml = '';
                 let actionHtml = '';
@@ -1803,7 +1923,7 @@
                                         <h3 class="text-[13px] sm:text-sm font-black text-slate-800 tracking-wide truncate">${record.tenant}</h3>
                                         <span class="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] sm:text-[10px] font-bold border border-slate-200 shrink-0 shadow-sm">${typeDisplay}</span>
                                     </div>
-                                    <div class="text-[10px] sm:text-[11px] text-slate-500 font-medium">初始存入: ${record.depositQuantity}</div>
+                                    <div class="text-[10px] sm:text-[11px] text-slate-500 font-medium">初始存入: ${record.depositQuantity} | 客服: <span class="text-blue-600 font-bold">${staffDisplay}</span></div>
                                 </div>
                             </div>
 
@@ -2062,7 +2182,7 @@
                 
                 const timeTextEl = wrapper.querySelector('.time-text');
                 if (timeTextEl) {
-                    timeTextEl.innerHTML = '<span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ${status.text.replace(\'未開始 (\', \'還有 \').replace(\'後)\', \'\')} 到來</span>';
+                    timeTextEl.innerHTML = `<span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ${status.text.replace('未開始 (', '還有 ').replace('後)', '')} 到來</span>`;
                 }
                 previousTime = startTime; 
             });
@@ -2270,7 +2390,11 @@
                                         <i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i>
                                     </button>`;
                     
-                    activeLineHtml = `<div class="absolute left-[-15px] right-[-15px] top-1/2 -translate-y-1/2 h-[2px] bg-green-400 shadow-[0_0_12px_rgba(74,222,128,0.8)] z-0 pointer-events-none rounded-full flex justify-between items-center px-1">
+                    // 醒目的藍色右箭頭 ➤ 指標（無動畫）
+                    activeLineHtml = `<div class="absolute left-[3px] top-1/2 -translate-y-1/2 z-30 pointer-events-none flex items-center">
+                                        <span class="text-blue-600 text-sm font-black drop-shadow-sm select-none">➤</span>
+                                     </div>
+                                     <div class="absolute left-[-15px] right-[-15px] top-1/2 -translate-y-1/2 h-[2px] bg-green-400 shadow-[0_0_12px_rgba(74,222,128,0.8)] z-0 pointer-events-none rounded-full flex justify-between items-center px-1">
                                         <div class="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(74,222,128,1)]"></div>
                                         <div class="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(74,222,128,1)]"></div>
                                      </div>`;
@@ -3486,6 +3610,12 @@ X軸是時間段（例如 7:00-8:00, 8:00-9:00），Y軸是崗位地點（例如
                 <div>
                     <label class="text-[11px] font-bold text-slate-500 block mb-1">檔主編號 / 名稱</label>
                     <input type="text" id="crInputTenant" placeholder="例如: A01, 陳記海鮮" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 shadow-inner">
+                </div>
+                <div>
+                    <label class="text-[11px] font-bold text-slate-500 block mb-1">經手客服人員</label>
+                    <select id="crInputStaff" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 shadow-inner">
+                        <option value="">請選擇經手客服人員...</option>
+                    </select>
                 </div>
                 <div>
                     <label class="text-[11px] font-bold text-slate-500 block mb-1">貨物類型</label>
