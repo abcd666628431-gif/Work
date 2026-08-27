@@ -9,7 +9,7 @@
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://gs.jurieo.com/gemini/fonts-googleapis/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
     
     <style>
         *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
@@ -89,9 +89,9 @@
     </style>
 
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { initializeApp } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://gs.jurieo.com/gemini/gstatic/firebasejs/11.6.1/firebase-firestore.js";
 
         const userFirebaseConfig = {
             apiKey: "AIzaSyBsdBYBeJYqgeDDxF39lZ0pr785SMnwvJs",
@@ -358,6 +358,7 @@
                         subTaskCompletionState = newData;
                         safeSetLocal('work_cache_subtask_states', subTaskCompletionState);
                         window.renderDailySchedule(); 
+                        if(!document.getElementById('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
                     }
                 }
             }, console.error);
@@ -369,6 +370,7 @@
                         taskExtrasState = newData;
                         safeSetLocal('work_cache_daily_extras', taskExtrasState);
                         window.renderDailySchedule(); 
+                        if(!document.getElementById('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
                     }
                 }
             }, console.error);
@@ -418,6 +420,7 @@
                     memberSchedules = docSnap.data().schedules || [];
                     safeSetLocal('work_cache_member_schedules', memberSchedules);
                     if(!document.getElementById('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+                    if(!document.getElementById('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
                 }
             }, console.error);
 
@@ -743,14 +746,39 @@
         document.addEventListener('touchend', window.stopGridDrag);
 
         window.toggleSplitHour = (locId, hourStr) => {
+            const [startH] = hourStr.split(':');
+            const endH = String(parseInt(startH, 10) + 1).padStart(2, '0');
+            const hourEndStr = `${endH}:00`;
+            const stateKey = `${locId}_${hourStr}`;
+            const willBeSplit = !splitHoursState[stateKey];
+
+            window._tempGridValues = window._tempGridValues || {};
             document.querySelectorAll('.grid-input').forEach(input => {
                 const key = `${input.dataset.loc}_${input.dataset.start}_${input.dataset.end}`;
-                window._tempGridValues = window._tempGridValues || {};
                 window._tempGridValues[key] = input.value;
             });
 
-            const stateKey = `${locId}_${hourStr}`;
-            splitHoursState[stateKey] = !splitHoursState[stateKey];
+            const fullKey = `${locId}_${hourStr}_${hourEndStr}`;
+            const halfKeyA = `${locId}_${startH}:00_${startH}:30`;
+            const halfKeyB = `${locId}_${startH}:30_${hourEndStr}`;
+
+            if (willBeSplit) {
+                const fullValue = window._tempGridValues[fullKey] || '';
+                window._tempGridValues[halfKeyA] = fullValue;
+                window._tempGridValues[halfKeyB] = fullValue;
+                delete window._tempGridValues[fullKey];
+            } else {
+                const valA = window._tempGridValues[halfKeyA] || '';
+                const valB = window._tempGridValues[halfKeyB] || '';
+                const combinedNames = Array.from(new Set([...valA.split(/[\n\s]+/), ...valB.split(/[\n\s]+/)]))
+                    .map(n => n.trim())
+                    .filter(Boolean);
+                window._tempGridValues[fullKey] = combinedNames.join('\n');
+                delete window._tempGridValues[halfKeyA];
+                delete window._tempGridValues[halfKeyB];
+            }
+
+            splitHoursState[stateKey] = willBeSplit;
             safeSetLocal('work_cache_split_hours', splitHoursState);
             window.renderScheduleManager();
         };
@@ -883,7 +911,7 @@
                             if (contentA === undefined) {
                                 let namesA = [];
                                 memberSchedules.forEach(s => {
-                                    if (s.locationId === locId && s.id.startsWith('sch_grid_')) {
+                                    if (s.locationId === locId) {
                                         if (parseInt(s.start.replace(':','')) <= sStartA && parseInt(s.end.replace(':','')) >= sEndA) namesA.push(s.name);
                                     }
                                 });
@@ -893,7 +921,7 @@
                             if (contentB === undefined) {
                                 let namesB = [];
                                 memberSchedules.forEach(s => {
-                                    if (s.locationId === locId && s.id.startsWith('sch_grid_')) {
+                                    if (s.locationId === locId) {
                                         if (parseInt(s.start.replace(':','')) <= sStartB && parseInt(s.end.replace(':','')) >= sEndB) namesB.push(s.name);
                                     }
                                 });
@@ -925,7 +953,7 @@
                             if (cellContent === undefined) {
                                 let cellNames = [];
                                 memberSchedules.forEach(s => {
-                                    if (s.locationId === locId && s.id.startsWith('sch_grid_')) {
+                                    if (s.locationId === locId) {
                                         if (parseInt(s.start.replace(':','')) <= parseInt(tStart.replace(':','')) && parseInt(s.end.replace(':','')) >= parseInt(tEnd.replace(':',''))) cellNames.push(s.name);
                                     }
                                 });
@@ -1828,7 +1856,7 @@
                             <circle cx="50" cy="50" r="40" fill="none" stroke="#16a34a" stroke-width="16" stroke-dasharray="251.2" stroke-dashoffset="${251.2 * progress}" stroke-linecap="round"></circle>
                         </svg>
                         當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})
-                     </span>`;
+                     </span></div>`;
                     previousTimeForGap = window.getNow();
                     checkBtnHtml = `<button onclick="event.stopPropagation(); window.completeTimelineTask('${task.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-blue-200 text-blue-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative"><i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i></button>`;
                     activeLineHtml = `<div class="absolute left-[3px] top-1/2 -translate-y-1/2 z-30 pointer-events-none flex items-center"><span class="text-blue-600 text-sm font-black drop-shadow-sm select-none">➤</span></div>
