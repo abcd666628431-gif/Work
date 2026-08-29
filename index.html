@@ -172,6 +172,182 @@
         window.isEditMode = false;
         window.getNow = () => new Date(Date.now() + timeOffset);
 
+        // 雪房超時通知系統 (雙頻率提示音效放慢鳴響 10 秒 + 10 秒倒數彈窗 + 桌面原生推播)
+        window.crNotifiedSet = new Set();
+        let crAudioCtx = null, crSoundIntervalId = null, crBannerTimeoutId = null;
+
+        // 雙音節提示音（880Hz -> 1174.66Hz），節奏放慢，持續 10 秒
+        window.playAlertSound = () => {
+            try {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (!AudioCtx) return;
+                
+                if (crSoundIntervalId) { clearInterval(crSoundIntervalId); crSoundIntervalId = null; }
+                
+                const ctx = new AudioCtx();
+                crAudioCtx = ctx;
+
+                const playDualBeep = () => {
+                    if (!ctx || ctx.state === 'closed') return;
+                    const now = ctx.currentTime;
+                    // 第一音階: 880Hz (舒適正弦波)
+                    const osc1 = ctx.createOscillator();
+                    const gain1 = ctx.createGain();
+                    osc1.type = 'sine';
+                    osc1.frequency.setValueAtTime(880, now);
+                    gain1.gain.setValueAtTime(0.3, now);
+                    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+                    osc1.connect(gain1);
+                    gain1.connect(ctx.destination);
+                    osc1.start(now);
+                    osc1.stop(now + 0.18);
+
+                    // 第二音階: 1174.66Hz (舒適正弦波)
+                    const osc2 = ctx.createOscillator();
+                    const gain2 = ctx.createGain();
+                    osc2.type = 'sine';
+                    osc2.frequency.setValueAtTime(1174.66, now + 0.22);
+                    gain2.gain.setValueAtTime(0.3, now + 0.22);
+                    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.48);
+                    osc2.connect(gain2);
+                    gain2.connect(ctx.destination);
+                    osc2.start(now + 0.22);
+                    osc2.stop(now + 0.48);
+                };
+
+                playDualBeep();
+                // 節奏放慢：每 1.2 秒鳴響一組雙音階
+                crSoundIntervalId = setInterval(playDualBeep, 1200);
+
+                // 持續 10 秒後自動停止
+                setTimeout(() => {
+                    if (crSoundIntervalId) { clearInterval(crSoundIntervalId); crSoundIntervalId = null; }
+                }, 10000);
+            } catch (e) {}
+        };
+
+        window.stopOverdueAlarm = () => {
+            if (crSoundIntervalId) { clearInterval(crSoundIntervalId); crSoundIntervalId = null; }
+            if (crBannerTimeoutId) { clearTimeout(crBannerTimeoutId); crBannerTimeoutId = null; }
+            if (crAudioCtx && crAudioCtx.state !== 'closed') {
+                try { crAudioCtx.close(); } catch(e){}
+            }
+            const banner = document.getElementById('crOverdueAlertBanner');
+            if (banner) {
+                banner.style.opacity = '0';
+                banner.style.transform = 'translate(-50%, -20px)';
+                setTimeout(() => banner.classList.add('hidden'), 300);
+            }
+        };
+
+        window.showOverdueAlertBanner = (itemsText) => {
+            let banner = document.getElementById('crOverdueAlertBanner');
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'crOverdueAlertBanner';
+                banner.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[10000] w-[92%] max-w-[390px] bg-red-600 text-white p-3.5 rounded-2xl shadow-2xl flex items-center justify-between border-2 border-white/90 backdrop-blur-md transition-all duration-300 animate-bounce cursor-pointer';
+                banner.onclick = window.stopOverdueAlarm;
+                document.body.appendChild(banner);
+            }
+            banner.innerHTML = `
+                <div class="flex items-center space-x-2.5 min-w-0 flex-1">
+                    <div class="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shrink-0 animate-pulse"><i data-lucide="bell-ring" class="w-4 h-4 text-white"></i></div>
+                    <div class="min-w-0 flex-1">
+                        <div class="text-xs font-black tracking-wide flex items-center space-x-1.5"><span>⚠️ 雪房存貨超時警報！</span><span class="bg-white text-red-600 text-[9px] px-1.5 py-0.2 rounded font-bold">10秒</span></div>
+                        <div class="text-[10px] text-red-100 font-bold truncate mt-0.5">${itemsText}</div>
+                    </div>
+                </div>
+                <button onclick="event.stopPropagation(); window.stopOverdueAlarm();" class="ml-2 bg-white/20 hover:bg-white/30 text-white px-2.5 py-1 rounded-lg text-[10px] font-black shrink-0 border border-white/40 active:scale-95 transition-all">關閉/靜音</button>
+            `;
+            banner.style.opacity = '1';
+            banner.style.transform = 'translate(-50%, 0)';
+            banner.classList.remove('hidden');
+            lucide.createIcons({ root: banner });
+
+            if (crBannerTimeoutId) clearTimeout(crBannerTimeoutId);
+            crBannerTimeoutId = setTimeout(window.stopOverdueAlarm, 10000);
+        };
+
+        window.toggleNotificationState = async () => {
+            let isEnabled = getLocal('work_cache_cr_notify', false);
+            if (!isEnabled) {
+                if ("Notification" in window) {
+                    const perm = await Notification.requestPermission();
+                    if (perm === "granted") {
+                        safeSetLocal('work_cache_cr_notify', true);
+                        window.showToast("✅ 已開啟雪房超時推播提醒（響10秒）！");
+                        window.playAlertSound();
+                    } else {
+                        safeSetLocal('work_cache_cr_notify', false);
+                        window.showToast("❌ 瀏覽器通知未授權，無法開啟", true);
+                    }
+                } else {
+                    safeSetLocal('work_cache_cr_notify', true);
+                    window.showToast("✅ 已開啟站內雙頻提示音（響10秒）！");
+                    window.playAlertSound();
+                }
+            } else {
+                safeSetLocal('work_cache_cr_notify', false);
+                window.stopOverdueAlarm();
+                window.showToast("🔕 已關閉提醒");
+            }
+            window.crUpdateNotificationBtn();
+        };
+
+        window.crUpdateNotificationBtn = () => {
+            const btn = document.getElementById('crNotifyToggleBtn');
+            if (!btn) return;
+            const isEnabled = getLocal('work_cache_cr_notify', false);
+            if (isEnabled) {
+                btn.className = "flex items-center space-x-1 px-2 py-1 rounded-lg bg-emerald-100 border border-emerald-300 text-emerald-700 shadow-xs hover:bg-emerald-200 transition-all active:scale-95 cursor-pointer";
+                btn.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span><i data-lucide="bell" class="w-3.5 h-3.5 text-emerald-600 pointer-events-none"></i><span class="text-[9.5px] font-black">提醒中</span>`;
+                btn.title = "推播提醒已開啟（超時自動響雙頻提示音10秒與發送桌面推播）點擊可關閉";
+            } else {
+                btn.className = "flex items-center space-x-1 px-2 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-400 shadow-xs hover:bg-slate-200 transition-all active:scale-95 cursor-pointer";
+                btn.innerHTML = `<i data-lucide="bell-off" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i><span class="text-[9.5px] font-bold">靜音</span>`;
+                btn.title = "點擊開啟瀏覽器桌面推播通知與10秒雙頻提示音";
+            }
+            lucide.createIcons();
+        };
+
+        window.checkColdRoomOverdueAlerts = () => {
+            const isEnabled = getLocal('work_cache_cr_notify', false);
+            if (!isEnabled) return;
+            const now = window.getNow().getTime();
+            let newOverdueList = [];
+
+            crRecords.forEach(r => {
+                if (r.status === 'active' && r.type !== '包裝冰') {
+                    const isOverdue = now > (r.depositTime + CR_TIME_LIMIT_MS);
+                    if (isOverdue) {
+                        if (!window.crNotifiedSet.has(r.id)) {
+                            window.crNotifiedSet.add(r.id);
+                            newOverdueList.push(r);
+                            // 桌面原生推播
+                            if ("Notification" in window && Notification.permission === "granted") {
+                                const overdueMs = now - (r.depositTime + CR_TIME_LIMIT_MS);
+                                const h = Math.floor(overdueMs / 3600000);
+                                const m = Math.floor((overdueMs % 3600000) / 60000);
+                                const timeStr = h > 0 ? `${h}小時 ${m}分` : `${m}分`;
+                                try {
+                                    new Notification("⚠️ 雪房存貨超時警報！", {
+                                        body: `檔主【${r.tenant}】(${r.type}) 存放已超過 24 小時（已超時 ${timeStr}）！`,
+                                        icon: "https://cdn-icons-png.flaticon.com/512/564/564619.png"
+                                    });
+                                } catch(e) {}
+                            }
+                        }
+                    }
+                }
+            });
+
+            if (newOverdueList.length > 0) {
+                const summary = newOverdueList.map(x => `${x.tenant}(${x.type})`).join('、');
+                window.playAlertSound();
+                window.showOverdueAlertBanner(summary);
+            }
+        };
+
         const getNowInputStrs = (targetMs) => {
             const d = targetMs ? new Date(targetMs) : window.getNow();
             return {
@@ -314,6 +490,7 @@
                 if (d.records) { crRecords = d.records; safeSetLocal('coldRoomRecords', crRecords); }
                 if (d.types) { crItemTypes = d.types; safeSetLocal('coldRoomTypes', crItemTypes); }
                 if (!document.getElementById('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
+                window.checkColdRoomOverdueAlerts();
             });
 
             onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snap) => {
@@ -354,7 +531,6 @@
                     }
                 }
 
-                // 準備休息前 15 分鐘判定 (統一歸入休息中站點的待接班清單)
                 if (sched.locationId === 'pt_7') {
                     const [sH, sM] = sched.start.split(':').map(Number);
                     const diffToRest = (sH * 60 + sM) - curMins;
@@ -380,13 +556,14 @@
                         card.appendChild(box);
                     } else box.innerHTML = '';
 
-                    // 右邊的人點 UI 尺寸與左邊完全一致（text-xs, w-5 h-5, icon w-3 h-3）
+                    // 當前在崗人員
                     names.forEach(n => box.insertAdjacentHTML('beforeend', `
                         <div class="flex flex-col items-center justify-center m-0.5">
                             <div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${n}</div>
                             <div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div>
                         </div>`));
                     
+                    // 待接班人員
                     incoming.forEach(n => box.insertAdjacentHTML('beforeend', `
                         <div class="flex flex-col items-center justify-center m-0.5 animate-flag-in">
                             <div class="bg-amber-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center"><i data-lucide="user-plus" class="w-3 h-3 mr-1 text-white"></i>待:${n}</div>
@@ -949,7 +1126,7 @@
             window.isEditMode = checked;
             const bg = document.getElementById('editToggleBg'), dot = document.getElementById('editToggleDot'), lbl = document.getElementById('editModeLabel');
             bg.className = `block w-9 h-5 rounded-full border border-slate-300 transition-colors duration-300 shadow-inner ${checked ? 'bg-blue-200' : 'bg-slate-300'}`;
-            dot.className = `dot absolute left-1 w-3 h-3 rounded-full transition-transform duration-300 shadow-sm ${checked ? 'translate-x-4 bg-blue-500' : 'bg-white'}`;
+            dot.className = `dot absolute left-1 bg-white w-3 h-3 rounded-full transition-transform duration-300 shadow-sm ${checked ? 'translate-x-4 bg-blue-500' : 'bg-white'}`;
             lbl.textContent = checked ? '文字編輯中' : '一般檢視模式';
             lbl.className = `text-[10px] font-bold uppercase tracking-widest transition-colors duration-300 ${checked ? 'text-blue-600' : 'text-slate-500'}`;
             window.renderDailySchedule();
@@ -1071,6 +1248,7 @@
                 withdrawHistory: [], status: 'active'
             });
             window.crSaveData(); window.crCloseAddModal(); window.crRenderList(); window.showToast('已成功新增存放紀錄');
+            window.checkColdRoomOverdueAlerts();
         };
 
         window.crOpenWithdrawModal = (id) => {
@@ -1172,6 +1350,7 @@
             document.getElementById('crEditModal')?.remove();
             window.crRenderList();
             window.showToast('已更新存放紀錄');
+            window.checkColdRoomOverdueAlerts();
         };
 
         window.crExportToCSV = () => {
@@ -1194,6 +1373,7 @@
             const container = document.getElementById('crRecordsContainer');
             if (!container) return;
             container.innerHTML = '';
+            window.crUpdateNotificationBtn();
             const filtered = crRecords.filter(r => (r.status === 'completed' ? 'history' : r.status) === crCurrentTab);
             if (crCurrentTab === 'active') { const el = document.getElementById('crActiveCount'); if (el) el.textContent = filtered.length; }
 
@@ -1212,9 +1392,15 @@
                     if (isIce) timeStatus = `<div class="flex items-center text-blue-600 text-[11px] font-bold tracking-wide pr-6"><i data-lucide="infinity" class="w-3.5 h-3.5 mr-1"></i>不限時間存放</div>`;
                     else {
                         const tLeft = (r.depositTime + CR_TIME_LIMIT_MS) - now;
-                        timeStatus = tLeft > 0
-                            ? `<div class="flex items-center ${tLeft < 14400000 ? 'text-amber-600' : 'text-emerald-600'} text-[11px] font-bold tracking-wide cr-timer-display pr-6"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1"></i>剩餘: ${Math.floor(tLeft / 3600000)}小時 ${Math.floor((tLeft % 3600000) / 60000)}分</div>`
-                            : `<div class="flex items-center text-red-600 text-[11px] font-bold tracking-wide timer-pulse pr-6"><i data-lucide="alert-circle" class="w-3.5 h-3.5 mr-1"></i>已超時 ${Math.floor(Math.abs(tLeft) / 3600000)} 小時！</div>`;
+                        if (tLeft > 0) {
+                            timeStatus = `<div class="flex items-center ${tLeft < 14400000 ? 'text-amber-600' : 'text-emerald-600'} text-[11px] font-bold tracking-wide cr-timer-display pr-6"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1"></i>剩餘: ${Math.floor(tLeft / 3600000)}小時 ${Math.floor((tLeft % 3600000) / 60000)}分</div>`;
+                        } else {
+                            const overdueMs = Math.abs(tLeft);
+                            const odH = Math.floor(overdueMs / 3600000);
+                            const odM = Math.floor((overdueMs % 3600000) / 60000);
+                            const overdueFormatted = odH > 0 ? `${odH}小時 ${odM}分` : `${odM}分`;
+                            timeStatus = `<div class="flex items-center text-red-600 text-[11px] font-bold tracking-wide timer-pulse pr-6"><i data-lucide="alert-circle" class="w-3.5 h-3.5 mr-1"></i>已超時 ${overdueFormatted}！</div>`;
+                        }
                     }
                     actHtml = `<div class="mt-2 pt-2 border-t border-slate-100 flex justify-end"><button onclick="event.stopPropagation(); window.crOpenWithdrawModal('${r.id}')" class="bg-blue-50 text-blue-600 hover:bg-blue-100 px-2.5 py-1 rounded text-[11px] font-bold transition-colors border border-blue-200 active:scale-95 flex items-center shadow-sm">取出更新 <i data-lucide="arrow-right-circle" class="w-3 h-3 ml-1 pointer-events-none"></i></button></div>`;
                 } else {
@@ -1361,6 +1547,7 @@
                     syncConfig('gallery_categories', { categories: galleryCategories });
                     syncConfig('coldRoom', { records: crRecords, types: crItemTypes });
                     window.renderDailySchedule(); window.showToast("導入全部成功！");
+                    window.checkColdRoomOverdueAlerts();
                 } catch(err) { window.showToast("導入失敗", true); }
                 event.target.value = '';
             };
@@ -1659,6 +1846,7 @@
                     if (!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
                     if (!document.getElementById('mapPage').classList.contains('hidden')) window.updateMapSimulation();
                     if (!document.getElementById('coldRoomPage').classList.contains('hidden')) window.crRenderList();
+                    window.checkColdRoomOverdueAlerts();
                 }
             }
         };
@@ -1744,6 +1932,7 @@
                     if (!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
                     if (!document.getElementById('mapPage').classList.contains('hidden')) window.updateMapSimulation();
                     if (!document.getElementById('coldRoomPage').classList.contains('hidden')) window.crRenderList();
+                    window.checkColdRoomOverdueAlerts();
                 }, 200);
             } else {
                 clearInterval(simInterval); window.showToast("⏸️ 暫停加速，時間恢復平穩流逝");
@@ -1763,6 +1952,7 @@
             if (!document.getElementById('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
             if (!document.getElementById('mapPage').classList.contains('hidden')) window.updateMapSimulation();
             if (!document.getElementById('coldRoomPage').classList.contains('hidden')) window.crRenderList();
+            window.checkColdRoomOverdueAlerts();
         };
 
         window.promptResetOptions = () => {
@@ -1821,6 +2011,7 @@
             if (!document.getElementById('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
             if (!document.getElementById('memoPage')?.classList.contains('hidden')) window.updateMemoCountdowns();
             if (!document.getElementById('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
+            window.checkColdRoomOverdueAlerts();
         }, 60000);
 
         function parseTime(tStr) { const [h, m] = tStr.split(':').map(Number), d = window.getNow(); d.setHours(h, m, 0, 0); return d; }
@@ -2121,9 +2312,9 @@
                         <!-- 客服室：大空間居中 -->
                         <div class="absolute top-[8%] left-[50%] -translate-x-1/2 w-[38%] h-[24%] bg-blue-100/80 border-2 border-blue-400 rounded-lg flex flex-col justify-end pb-2 items-center shadow-inner pointer-events-none"><div class="text-blue-600 font-bold text-sm tracking-wider flex items-center"><i data-lucide="headphones" class="w-4 h-4 mr-1"></i>客服室</div></div>
                         <!-- 地面層各站點 -->
-                        <div class="absolute top-[52%] left-[10%] w-[35%] h-[20%] bg-green-100/80 border-2 border-green-500 rounded-lg overflow-hidden flex flex-col justify-end pb-2 items-center shadow-inner pointer-events-none"><i data-lucide="flower-2" class="w-8 h-8 text-green-500/20 absolute top-1.5"></i><div class="text-green-700 font-bold text-sm tracking-wider relative z-10 flex items-center"><i data-lucide="leaf" class="w-4 h-4 mr-1"></i>花園仔</div></div>
-                        <div class="absolute top-[52%] right-[10%] w-[35%] h-[20%] bg-cyan-100/80 border-2 border-cyan-500 rounded-lg overflow-hidden flex flex-col justify-end pb-2 items-center shadow-inner pointer-events-none"><i data-lucide="fish" class="w-8 h-8 text-cyan-500/20 absolute top-1.5"></i><div class="text-cyan-700 font-bold text-sm tracking-wider relative z-10 flex items-center"><i data-lucide="droplets" class="w-4 h-4 mr-1"></i>魚檔</div></div>
-                        <div class="absolute top-[80%] left-[50%] -translate-x-1/2 w-[70%] h-[15%] bg-purple-100/80 border-2 border-purple-400 rounded-lg flex flex-col justify-end pb-1.5 items-center shadow-inner pointer-events-none"><div class="text-purple-600 font-bold text-sm tracking-wider flex items-center"><i data-lucide="shield" class="w-4 h-4 mr-1"></i>整體巡邏</div></div>
+                        <div class="absolute top-[52%] left-[10%] w-[35%] h-[20%] bg-green-100/80 border-2 border-green-500 rounded-lg overflow-hidden flex flex-col justify-end pb-2 items-center shadow-inner pointer-events-none"><i data-lucide="flower-2" class="w-8 h-8 text-green-500/20 absolute top-1.5"></i><div class="text-green-700 font-bold text-sm tracking-wider relative z-10 flex items-center"><i data-lucide="leaf" class="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1"></i>花園仔</div></div>
+                        <div class="absolute top-[52%] right-[10%] w-[35%] h-[20%] bg-cyan-100/80 border-2 border-cyan-500 rounded-lg overflow-hidden flex flex-col justify-end pb-2 items-center shadow-inner pointer-events-none"><i data-lucide="fish" class="w-8 h-8 text-cyan-500/20 absolute top-1.5"></i><div class="text-cyan-700 font-bold text-sm tracking-wider relative z-10 flex items-center"><i data-lucide="droplets" class="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1"></i>魚檔</div></div>
+                        <div class="absolute top-[80%] left-[50%] -translate-x-1/2 w-[70%] h-[15%] bg-purple-100/80 border-2 border-purple-400 rounded-lg flex flex-col justify-end pb-1.5 items-center shadow-inner pointer-events-none"><div class="text-purple-600 font-bold text-sm tracking-wider flex items-center"><i data-lucide="shield" class="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1"></i>整體巡邏</div></div>
                         <div id="mapPointsContainer" class="absolute inset-0 pointer-events-none overflow-hidden z-30"></div>
                     </div>
 
@@ -2169,7 +2360,11 @@
                         <button type="button" class="sim-restore-btn hidden bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-md w-6 h-6 shadow-sm active:scale-95 transition-all flex items-center justify-center" onclick="window.restoreRealTime()"><i data-lucide="rotate-ccw" class="w-3.5 h-3.5 pointer-events-none"></i></button>
                         <button type="button" class="sim-toggle-btn bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-md w-6 h-6 shadow-sm active:scale-95 transition-all flex items-center justify-center" onclick="window.toggleSimulation()"><i data-lucide="fast-forward" class="w-3.5 h-3.5 pointer-events-none"></i></button>
                     </div>
-                    <button onclick="window.crExportToCSV()" class="text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 p-1.5 rounded-full active:scale-95 transition-all shadow-sm border border-transparent hover:border-emerald-200 z-10"><i data-lucide="file-spreadsheet" class="w-4 h-4 pointer-events-none"></i></button>
+                    <!-- 右上角操作按鈕組：通知提醒鍵在 Excel 匯出鍵左邊 -->
+                    <div class="flex items-center space-x-1.5 z-10">
+                        <button id="crNotifyToggleBtn" onclick="window.toggleNotificationState()" class="flex items-center space-x-1 px-2 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-400 shadow-xs hover:bg-slate-200 transition-all active:scale-95" title="點擊切換超時提醒"><i data-lucide="bell-off" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i><span class="text-[9.5px] font-bold">靜音</span></button>
+                        <button onclick="window.crExportToCSV()" class="text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 p-1.5 rounded-full active:scale-95 transition-all shadow-sm border border-transparent hover:border-emerald-200" title="匯出Excel (CSV)"><i data-lucide="file-spreadsheet" class="w-4 h-4 pointer-events-none"></i></button>
+                    </div>
                 </div>
                 <div class="flex bg-[#f0ebe1] rounded-lg p-0.5 shadow-inner border border-[#e5dfd3]">
                     <button id="crTabActive" onclick="window.crSwitchTab('active')" class="flex-1 py-1 px-0.5 text-xs rounded bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all tracking-widest text-center">存放中</button>
