@@ -374,12 +374,13 @@
             }
         });
 
-        // 分頁顯示/隱藏管理
+        // 分頁顯示/隱藏管理（雙重強制 display: none，杜絕 className 重設帶來的還原 BUG）
         window.applyTabVisibility = () => {
             tabMetadata.forEach(tab => {
                 const btn = document.getElementById(tab.btnId);
                 const isVisible = tabVisibilityState[tab.id] !== false;
                 if (btn) {
+                    btn.style.display = isVisible ? '' : 'none';
                     if (isVisible) {
                         btn.classList.remove('hidden');
                     } else {
@@ -392,7 +393,10 @@
             const currentTab = localStorage.getItem('activeTab') || 'daily';
             if (tabVisibilityState[currentTab] === false) {
                 const firstVisible = tabMetadata.find(t => tabVisibilityState[t.id] !== false);
-                if (firstVisible) window.switchTab(firstVisible.id);
+                if (firstVisible) {
+                    localStorage.setItem('activeTab', firstVisible.id);
+                    window.switchTab(firstVisible.id);
+                }
             }
         };
 
@@ -1828,6 +1832,26 @@
             }
         };
 
+        window.switchTab = (tab) => {
+            const pages = { daily: 'dailySchedulePage', gallery: 'galleryPage', timeline: 'timelinePage', memo: 'memoPage', map: 'mapPage', coldRoom: 'coldRoomPage' };
+            const btns = { daily: 'tabDaily', timeline: 'tabTimeline', memo: 'tabMemo', map: 'tabMap', gallery: 'tabGallery', coldRoom: 'tabColdRoom' };
+            const actCls = "flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
+            const inactCls = "flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap";
+
+            Object.values(pages).forEach(id => { const el = document.getElementById(id); if (el) { el.classList.add('hidden'); el.classList.remove('flex', 'block'); } });
+            Object.values(btns).forEach(id => { const el = document.getElementById(id); if (el) el.className = inactCls; });
+
+            const targetPage = document.getElementById(pages[tab]), targetBtn = document.getElementById(btns[tab]);
+            if (targetPage) { targetPage.classList.remove('hidden'); targetPage.classList.add(['map', 'gallery', 'coldRoom'].includes(tab) ? 'flex' : 'block'); }
+            if (targetBtn) targetBtn.className = actCls;
+
+            ({ daily: window.renderDailySchedule, gallery: window.renderGallery, timeline: () => window.renderTimeline(true), memo: window.renderMemos, map: window.renderMap, coldRoom: window.crRenderList })[tab]?.();
+            localStorage.setItem('activeTab', tab);
+            
+            // 每次切換分頁後自動重新套用隱藏設定，防止樣式重設造成 BUG
+            window.applyTabVisibility();
+        };
+
         window.renderTimeline = (scrollToCenter = false) => {
             const container = document.getElementById('timelineContainer');
             if (!container) return;
@@ -2147,23 +2171,6 @@
             const v = document.getElementById('imageViewer');
             document.getElementById('imageViewerImg').src = src;
             v.classList.replace('hidden', 'flex');
-        };
-
-        window.switchTab = (tab) => {
-            const pages = { daily: 'dailySchedulePage', gallery: 'galleryPage', timeline: 'timelinePage', memo: 'memoPage', map: 'mapPage', coldRoom: 'coldRoomPage' };
-            const btns = { daily: 'tabDaily', timeline: 'tabTimeline', memo: 'tabMemo', map: 'tabMap', gallery: 'tabGallery', coldRoom: 'tabColdRoom' };
-            const actCls = "flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
-            const inactCls = "flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap";
-
-            Object.values(pages).forEach(id => { const el = document.getElementById(id); if (el) { el.classList.add('hidden'); el.classList.remove('flex', 'block'); } });
-            Object.values(btns).forEach(id => { const el = document.getElementById(id); if (el) el.className = inactCls; });
-
-            const targetPage = document.getElementById(pages[tab]), targetBtn = document.getElementById(btns[tab]);
-            if (targetPage) { targetPage.classList.remove('hidden'); targetPage.classList.add(['map', 'gallery', 'coldRoom'].includes(tab) ? 'flex' : 'block'); }
-            if (targetBtn) targetBtn.className = actCls;
-
-            ({ daily: window.renderDailySchedule, gallery: window.renderGallery, timeline: () => window.renderTimeline(true), memo: window.renderMemos, map: window.renderMap, coldRoom: window.crRenderList })[tab]?.();
-            localStorage.setItem('activeTab', tab);
         };
 
         window.renderMemos = () => {
