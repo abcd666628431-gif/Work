@@ -129,6 +129,20 @@
 
         let dailyScheduleData = [], taskCompletionState = {}, taskExtrasState = {}, taskArchiveState = {}, subTaskCompletionState = {}, expandedTasksState = {};
         let galleryCategories = ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他'], galleryItems = [], futureMemos = [];
+        
+        // 分頁自訂顯示設定
+        const defaultTabVisibility = { daily: true, timeline: true, memo: true, map: true, gallery: true, coldRoom: true };
+        let tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility);
+
+        const tabMetadata = [
+            { id: 'daily', name: '排程', btnId: 'tabDaily', pageId: 'dailySchedulePage', icon: 'clipboard-list' },
+            { id: 'timeline', name: '動態', btnId: 'tabTimeline', pageId: 'timelinePage', icon: 'activity' },
+            { id: 'memo', name: '備忘', btnId: 'tabMemo', pageId: 'memoPage', icon: 'calendar-clock' },
+            { id: 'map', name: '地圖', btnId: 'tabMap', pageId: 'mapPage', icon: 'map' },
+            { id: 'gallery', name: '圖庫', btnId: 'tabGallery', pageId: 'galleryPage', icon: 'image' },
+            { id: 'coldRoom', name: '雪房', btnId: 'tabColdRoom', pageId: 'coldRoomPage', icon: 'snowflake' }
+        ];
+
         const defaultMapPoints = {
             'pt_1': { name: '客服室', x: 50, y: 16 }, 'pt_2': { name: '一樓大清點', x: 0, y: 0 },
             'pt_3': { name: '花園仔', x: 27.5, y: 64 }, 'pt_4': { name: '魚檔', x: 72.5, y: 64 },
@@ -176,7 +190,7 @@
         window.crNotifiedSet = new Set();
         let crAudioCtx = null, crSoundIntervalId = null, crBannerTimeoutId = null;
 
-        // 雙音節提示音（880Hz -> 1174.66Hz），節奏放慢，持續 10 秒
+        // 雙音節提示音（880Hz -> 1174.66Hz），每 1.2 秒一組，持續 10 秒
         window.playAlertSound = () => {
             try {
                 const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -190,7 +204,7 @@
                 const playDualBeep = () => {
                     if (!ctx || ctx.state === 'closed') return;
                     const now = ctx.currentTime;
-                    // 第一音階: 880Hz (舒適正弦波)
+                    // 第一音階: 880Hz
                     const osc1 = ctx.createOscillator();
                     const gain1 = ctx.createGain();
                     osc1.type = 'sine';
@@ -202,7 +216,7 @@
                     osc1.start(now);
                     osc1.stop(now + 0.18);
 
-                    // 第二音階: 1174.66Hz (舒適正弦波)
+                    // 第二音階: 1174.66Hz
                     const osc2 = ctx.createOscillator();
                     const gain2 = ctx.createGain();
                     osc2.type = 'sine';
@@ -216,10 +230,8 @@
                 };
 
                 playDualBeep();
-                // 節奏放慢：每 1.2 秒鳴響一組雙音階
                 crSoundIntervalId = setInterval(playDualBeep, 1200);
 
-                // 持續 10 秒後自動停止
                 setTimeout(() => {
                     if (crSoundIntervalId) { clearInterval(crSoundIntervalId); crSoundIntervalId = null; }
                 }, 10000);
@@ -323,7 +335,6 @@
                         if (!window.crNotifiedSet.has(r.id)) {
                             window.crNotifiedSet.add(r.id);
                             newOverdueList.push(r);
-                            // 桌面原生推播
                             if ("Notification" in window && Notification.permission === "granted") {
                                 const overdueMs = now - (r.depositTime + CR_TIME_LIMIT_MS);
                                 const h = Math.floor(overdueMs / 3600000);
@@ -346,6 +357,93 @@
                 window.playAlertSound();
                 window.showOverdueAlertBanner(summary);
             }
+        };
+
+        // 齒輪選單展開/收合
+        window.toggleSettingsMenu = (e) => {
+            if (e) e.stopPropagation();
+            const dropdown = document.getElementById('settingsDropdown');
+            if (dropdown) dropdown.classList.toggle('hidden');
+        };
+
+        document.addEventListener('click', (e) => {
+            const dropdown = document.getElementById('settingsDropdown');
+            const btn = document.getElementById('settingsMenuBtn');
+            if (dropdown && !dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && e.target !== btn) {
+                dropdown.classList.add('hidden');
+            }
+        });
+
+        // 分頁顯示/隱藏管理
+        window.applyTabVisibility = () => {
+            tabMetadata.forEach(tab => {
+                const btn = document.getElementById(tab.btnId);
+                const isVisible = tabVisibilityState[tab.id] !== false;
+                if (btn) {
+                    if (isVisible) {
+                        btn.classList.remove('hidden');
+                    } else {
+                        btn.classList.add('hidden');
+                    }
+                }
+            });
+
+            // 若當前啟動的分頁被隱藏，自動切換至第一個可見分頁
+            const currentTab = localStorage.getItem('activeTab') || 'daily';
+            if (tabVisibilityState[currentTab] === false) {
+                const firstVisible = tabMetadata.find(t => tabVisibilityState[t.id] !== false);
+                if (firstVisible) window.switchTab(firstVisible.id);
+            }
+        };
+
+        window.openTabVisibilityModal = () => {
+            const dropdown = document.getElementById('settingsDropdown');
+            if (dropdown) dropdown.classList.add('hidden');
+
+            const list = document.getElementById('tabVisibilityList');
+            if (!list) return;
+            list.innerHTML = tabMetadata.map(tab => {
+                const isChecked = tabVisibilityState[tab.id] !== false;
+                return `
+                <label class="flex items-center justify-between p-2.5 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 cursor-pointer transition-colors select-none">
+                    <div class="flex items-center space-x-2">
+                        <i data-lucide="${tab.icon}" class="w-4 h-4 text-slate-500"></i>
+                        <span class="text-xs font-bold text-slate-800">${tab.name}</span>
+                    </div>
+                    <input type="checkbox" data-tab-id="${tab.id}" ${isChecked ? 'checked' : ''} class="tab-vis-checkbox w-4 h-4 rounded text-blue-600 focus:ring-0 cursor-pointer">
+                </label>`;
+            }).join('');
+            lucide.createIcons({ root: list });
+
+            const modal = document.getElementById('tabVisibilityModal');
+            modal.classList.replace('hidden', 'flex');
+        };
+
+        window.closeTabVisibilityModal = () => {
+            const modal = document.getElementById('tabVisibilityModal');
+            modal.classList.replace('flex', 'hidden');
+        };
+
+        window.saveTabVisibility = () => {
+            const checkboxes = document.querySelectorAll('.tab-vis-checkbox');
+            let hasAtLeastOne = false;
+            let newState = {};
+
+            checkboxes.forEach(cb => {
+                const id = cb.dataset.tabId;
+                newState[id] = cb.checked;
+                if (cb.checked) hasAtLeastOne = true;
+            });
+
+            if (!hasAtLeastOne) {
+                return window.showToast("至少需保留一個可見分頁！", true);
+            }
+
+            tabVisibilityState = newState;
+            safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
+            window.applyTabVisibility();
+            window.closeTabVisibilityModal();
+            window.showToast("分頁顯示設定已儲存");
         };
 
         const getNowInputStrs = (targetMs) => {
@@ -378,6 +476,8 @@
             localStorage.setItem('work_cache_dark_mode', isDark);
             const icon = document.getElementById('darkModeIcon');
             if (icon) { icon.setAttribute('data-lucide', isDark ? 'sun' : 'moon'); lucide.createIcons(); }
+            const dropdown = document.getElementById('settingsDropdown');
+            if (dropdown) dropdown.classList.add('hidden');
         };
 
         window.showToast = (msg, isErr = false) => {
@@ -455,6 +555,7 @@
             }
             memberSchedules = getLocal('work_cache_member_schedules', []);
             checkAndResetDailySchedule();
+            window.applyTabVisibility();
             const curTab = localStorage.getItem('activeTab') || 'daily';
             window.switchTab(curTab);
         }
@@ -1513,6 +1614,8 @@
                 const blob = new Blob([JSON.stringify({ version: "5.0", exportDate: new Date().toISOString(), dailyScheduleData, taskCompletionState, taskExtrasState, subTaskCompletionState, galleryCategories, galleryItems, crRecords, crItemTypes }, null, 2)], { type: 'application/json' });
                 const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `工作記錄本_備份_${new Date().toISOString().slice(0,10)}.json`; a.click();
                 window.showToast("導出成功！已儲存至下載資料夾");
+                const dropdown = document.getElementById('settingsDropdown');
+                if (dropdown) dropdown.classList.add('hidden');
             } catch(e) { window.showToast("導出失敗", true); }
         };
 
@@ -1548,6 +1651,8 @@
                     syncConfig('coldRoom', { records: crRecords, types: crItemTypes });
                     window.renderDailySchedule(); window.showToast("導入全部成功！");
                     window.checkColdRoomOverdueAlerts();
+                    const dropdown = document.getElementById('settingsDropdown');
+                    if (dropdown) dropdown.classList.add('hidden');
                 } catch(err) { window.showToast("導入失敗", true); }
                 event.target.value = '';
             };
@@ -2202,9 +2307,9 @@
 <body class="flex justify-center items-center min-h-screen p-0 sm:py-6 bg-[#f0ebe1]">
     <!-- 統一卡片容器：尺寸在獨立視窗與網頁皆 100% 保持相同比例 -->
     <div class="w-full max-w-[430px] h-[910px] max-h-[100vh] sm:max-h-[96vh] bg-[#fdfbf7] sm:rounded-[2.5rem] shadow-2xl sm:border-[6px] border-[#d6d0c4] overflow-hidden relative flex flex-col mx-auto my-auto">
-        <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-10 border-b border-[#e5dfd3] p-4 pt-6 shadow-sm shrink-0">
+        <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-30 border-b border-[#e5dfd3] p-4 pt-6 shadow-sm shrink-0">
             <div class="flex items-center justify-between relative">
-                <div class="w-1"></div>
+                <div class="w-8"></div>
                 <div class="flex items-center justify-center space-x-2 shrink-0">
                     <h1 class="text-xl text-slate-800 tracking-widest font-black">工作記錄本</h1>
                     <div class="flex items-center space-x-1.5 bg-white/70 px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
@@ -2212,16 +2317,38 @@
                         <span id="connectionStatus" class="text-[9px] font-bold text-slate-500 tracking-wider">連線中...</span>
                     </div>
                 </div>
-                <div class="flex items-center gap-1.5 shrink-0">
-                    <button type="button" onclick="window.openAsPopout()" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="以獨立視窗開啟"><i data-lucide="external-link" class="w-4 h-4 pointer-events-none"></i></button>
-                    <button type="button" onclick="window.toggleDarkMode()" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="切換深色模式"><i id="darkModeIcon" data-lucide="moon" class="w-4 h-4 pointer-events-none"></i></button>
-                    <input type="file" id="importInput" accept=".json" class="hidden" onchange="window.importData(event)">
-                    <button type="button" onclick="document.getElementById('importInput').click()" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="導入舊資料 (自動轉檔)"><i data-lucide="upload" class="w-4 h-4 pointer-events-none"></i></button>
-                    <button type="button" onclick="window.exportData()" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="導出備份資料"><i data-lucide="download" class="w-4 h-4 pointer-events-none"></i></button>
+                
+                <!-- 單一齒輪設定鍵與延伸下拉選單 -->
+                <div class="relative shrink-0">
+                    <button id="settingsMenuBtn" type="button" onclick="window.toggleSettingsMenu(event)" class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-600 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-sm" title="設定與更多選項">
+                        <i data-lucide="settings" class="w-4 h-4 pointer-events-none"></i>
+                    </button>
+                    
+                    <!-- 下拉延伸選單 -->
+                    <div id="settingsDropdown" class="hidden absolute right-0 mt-2 w-48 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200 p-1.5 z-50 flex flex-col space-y-1 animate-flag-in">
+                        <button onclick="window.openAsPopout(); window.toggleSettingsMenu();" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left">
+                            <i data-lucide="external-link" class="w-3.5 h-3.5 mr-2 text-slate-400"></i> 以獨立視窗開啟
+                        </button>
+                        <button onclick="window.toggleDarkMode()" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left">
+                            <i id="darkModeIcon" data-lucide="moon" class="w-3.5 h-3.5 mr-2 text-slate-400"></i> 切換深色模式
+                        </button>
+                        <button onclick="window.openTabVisibilityModal()" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left">
+                            <i data-lucide="layout-grid" class="w-3.5 h-3.5 mr-2 text-slate-400"></i> 調整分頁顯示
+                        </button>
+                        <div class="border-t border-slate-100 my-1"></div>
+                        <input type="file" id="importInput" accept=".json" class="hidden" onchange="window.importData(event)">
+                        <button onclick="document.getElementById('importInput').click()" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left">
+                            <i data-lucide="upload" class="w-3.5 h-3.5 mr-2 text-slate-400"></i> 導入資料 (JSON)
+                        </button>
+                        <button onclick="window.exportData()" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left">
+                            <i data-lucide="download" class="w-3.5 h-3.5 mr-2 text-slate-400"></i> 導出資料備份
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            <div class="mt-3 flex bg-[#f0ebe1] rounded-lg p-1 shadow-inner border border-[#e5dfd3] relative z-20 overflow-x-auto scrollbar-hide">
+            <!-- 分頁切換列 -->
+            <div id="tabBarContainer" class="mt-3 flex bg-[#f0ebe1] rounded-lg p-1 shadow-inner border border-[#e5dfd3] relative z-20 overflow-x-auto scrollbar-hide">
                 <button id="tabDaily" onclick="window.switchTab('daily')" class="flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap">排程</button>
                 <button id="tabTimeline" onclick="window.switchTab('timeline')" class="flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">動態</button>
                 <button id="tabMemo" onclick="window.switchTab('memo')" class="flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">備忘</button>
@@ -2267,7 +2394,7 @@
                 <div class="flex items-center justify-center gap-2 w-full max-w-[500px]">
                     <div class="flex items-center gap-1.5 justify-end flex-1">
                         <button type="button" onclick="window.promptResetOptions()" class="bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="狀態還原選項"><i data-lucide="list-restart" class="w-4 h-4 pointer-events-none"></i></button>
-                        <button type="button" onclick="window.restoreRealTime()" class="sim-restore-btn hidden bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="還原真實時間"><i data-lucide="rotate-ccw" class="w-3.5 h-3.5 pointer-events-none"></i></button>
+                        <button type="button" onclick="window.restoreRealTime()" class="sim-restore-btn hidden bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="還原真實時間"><i data-lucide="rotate-ccw" class="w-4 h-4 pointer-events-none"></i></button>
                         <button type="button" onclick="window.toggleSimulation()" class="sim-toggle-btn bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="開啟時間加速模擬"><i data-lucide="fast-forward" class="w-4 h-4 pointer-events-none"></i></button>
                     </div>
                     <div id="tlBigClock" onclick="window.promptChangeTime()" title="點擊設定指定時間" class="text-center min-w-[140px] cursor-pointer hover:scale-105 font-mono text-3xl font-black text-slate-800 tracking-tighter bg-white/90 backdrop-blur-md px-4 py-1.5 rounded-[1.25rem] border border-slate-200 shadow-sm pointer-events-auto transition-all shrink-0">--:--:--</div>
@@ -2314,7 +2441,7 @@
                         <!-- 地面層各站點 -->
                         <div class="absolute top-[52%] left-[10%] w-[35%] h-[20%] bg-green-100/80 border-2 border-green-500 rounded-lg overflow-hidden flex flex-col justify-end pb-2 items-center shadow-inner pointer-events-none"><i data-lucide="flower-2" class="w-8 h-8 text-green-500/20 absolute top-1.5"></i><div class="text-green-700 font-bold text-sm tracking-wider relative z-10 flex items-center"><i data-lucide="leaf" class="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1"></i>花園仔</div></div>
                         <div class="absolute top-[52%] right-[10%] w-[35%] h-[20%] bg-cyan-100/80 border-2 border-cyan-500 rounded-lg overflow-hidden flex flex-col justify-end pb-2 items-center shadow-inner pointer-events-none"><i data-lucide="fish" class="w-8 h-8 text-cyan-500/20 absolute top-1.5"></i><div class="text-cyan-700 font-bold text-sm tracking-wider relative z-10 flex items-center"><i data-lucide="droplets" class="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1"></i>魚檔</div></div>
-                        <div class="absolute top-[80%] left-[50%] -translate-x-1/2 w-[70%] h-[15%] bg-purple-100/80 border-2 border-purple-400 rounded-lg flex flex-col justify-end pb-1.5 items-center shadow-inner pointer-events-none"><div class="text-purple-600 font-bold text-sm tracking-wider flex items-center"><i data-lucide="shield" class="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1"></i>整體巡邏</div></div>
+                        <div class="absolute top-[80%] left-[50%] -translate-x-1/2 w-[70%] h-[15%] bg-purple-100/80 border-2 border-purple-400 rounded-lg flex flex-col justify-end pb-1.5 items-center shadow-inner pointer-events-none"><div class="text-purple-600 font-bold text-sm tracking-wider flex items-center"><i data-lucide="shield" class="w-4 h-4 mr-1"></i>整體巡邏</div></div>
                         <div id="mapPointsContainer" class="absolute inset-0 pointer-events-none overflow-hidden z-30"></div>
                     </div>
 
@@ -2382,6 +2509,21 @@
     </div>
 
     <!-- Modals -->
+    <div id="tabVisibilityModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] hidden flex-col items-center justify-center p-4">
+        <div class="bg-white rounded-2xl p-4 w-full max-w-[320px] shadow-2xl relative scrollbar-hide flex flex-col" onclick="event.stopPropagation()">
+            <header class="flex justify-between items-center pb-2.5 mb-3 border-b border-slate-100">
+                <h3 class="font-bold text-sm text-slate-800 flex items-center"><i data-lucide="layout-grid" class="w-4 h-4 mr-2 text-blue-500"></i> 自訂分頁顯示</h3>
+                <button onclick="window.closeTabVisibilityModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-full"><i data-lucide="x" class="w-4 h-4"></i></button>
+            </header>
+            <p class="text-[11px] text-slate-500 mb-3 text-center">勾選您需要在主介面顯示的功能分頁：</p>
+            <div id="tabVisibilityList" class="space-y-2 mb-4"></div>
+            <div class="flex justify-end space-x-2 pt-2 border-t border-slate-100">
+                <button onclick="window.closeTabVisibilityModal()" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-bold transition-colors">取消</button>
+                <button onclick="window.saveTabVisibility()" class="px-4 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-bold shadow-sm transition-colors active:scale-95">確認儲存</button>
+            </div>
+        </div>
+    </div>
+
     <div id="imageViewer" class="fixed inset-0 bg-black/95 z-[200] hidden flex-col items-center justify-center p-4">
         <button onclick="document.getElementById('imageViewer').classList.replace('flex', 'hidden')" class="absolute top-6 right-6 text-white bg-slate-800/80 p-2 rounded-full active:scale-95 shadow-lg border border-slate-600"><i data-lucide="x" class="w-6 h-6"></i></button>
         <img id="imageViewerImg" src="" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl border border-slate-700" />
