@@ -1256,8 +1256,7 @@
         window.pendingUploadImages = [];
 
         window.handleGalleryUpload = async (input) => {
-            const files = Array.from(input.files || []);
-            if (!files.length) return;
+            const files = Array.from(input.files || []); if (!files.length) return;
             window.showToast(`正在讀取圖片...`);
             window.pendingUploadImages = [];
 
@@ -1271,7 +1270,7 @@
                     window.pendingUploadImages.push({
                         tempId: 'tmp_' + Date.now() + Math.random().toString(36).substr(2, 4),
                         src,
-                        title: f.name.replace(/\.[^/.]+$/, ""),
+                        title: "", // 名稱預設為空白
                         time: timeStr,
                         category: defaultCat,
                         activeSeg: null
@@ -1490,6 +1489,7 @@
             }
         };
 
+        // 上傳預覽清單渲染：改為圖片在上方、下方為輸入欄位，名稱預設空白並帶有提示字
         window.renderUploadBatchList = () => {
             const list = document.getElementById('uploadBatchList');
             const cntEl = document.getElementById('uploadBatchCount');
@@ -1507,41 +1507,47 @@
                 const [hStr, mStr] = (item.time || '00:00').split(':');
 
                 return `
-                <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center space-x-3 relative group">
-                    <img src="${item.src}" class="w-20 h-20 object-cover rounded-lg shrink-0 border border-slate-200 bg-white shadow-xs">
-                    <div class="flex-1 min-w-0 space-y-2">
-                        <div>
-                            <label class="text-xs font-bold text-slate-600 block mb-1">分類</label>
-                            <select onchange="window.updatePendingItemCategory('${item.tempId}', this.value)" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm font-bold text-slate-700 focus:outline-none focus:border-blue-500 shadow-2xs">
-                                ${selectableCategories.map(cat => `<option value="${cat}" ${item.category === cat ? 'selected' : ''}>${cat}</option>`).join('')}
-                            </select>
-                        </div>
-                        <div class="flex items-center space-x-2.5">
-                            <div class="w-[125px] shrink-0">
-                                <label class="text-xs font-bold text-slate-600 block mb-1">時間</label>
-                                <div id="tbox-${item.tempId}" tabindex="0"
-                                     onkeydown="window.handleTimeKey(event, '${item.tempId}')"
-                                     onblur="window.blurTimePicker('${item.tempId}', event)"
-                                     class="flex items-center justify-between bg-white border border-slate-300 rounded-lg px-2 py-1.5 cursor-pointer select-none focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-400 shadow-2xs">
-                                    <div class="flex items-center space-x-0.5">
-                                        <span id="h-${item.tempId}" onclick="window.setTimeSegment('${item.tempId}', 'h', event)" class="px-1.5 py-0.5 rounded text-slate-800 font-mono font-bold text-sm hover:bg-slate-100 transition-colors">
-                                            ${hStr}
-                                        </span>
-                                        <span class="text-slate-400 font-mono font-bold text-sm">:</span>
-                                        <span id="m-${item.tempId}" onclick="window.setTimeSegment('${item.tempId}', 'm', event)" class="px-1.5 py-0.5 rounded text-slate-800 font-mono font-bold text-sm hover:bg-slate-100 transition-colors">
-                                            ${mStr}
-                                        </span>
-                                    </div>
-                                    <i data-lucide="clock" class="w-4 h-4 text-slate-400 shrink-0 pointer-events-none"></i>
-                                </div>
+                <div class="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-col space-y-3 relative group shadow-xs">
+                    <!-- 上方：圖片預覽與刪除按鈕 -->
+                    <div class="flex items-center space-x-3">
+                        <img src="${item.src}" class="w-20 h-24 object-cover rounded-lg shrink-0 border border-slate-200 bg-white shadow-xs">
+                        <div class="flex-1 min-w-0 space-y-2">
+                            <div>
+                                <label class="text-xs font-bold text-slate-600 block mb-1">分類</label>
+                                <select onchange="window.updatePendingItemCategory('${item.tempId}', this.value)" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm font-bold text-slate-700 focus:outline-none focus:border-blue-500 shadow-2xs">
+                                    ${selectableCategories.map(cat => `<option value="${cat}" ${item.category === cat ? 'selected' : ''}>${cat}</option>`).join('')}
+                                </select>
                             </div>
-                            <div class="flex-1 min-w-0">
+                            <div>
                                 <label class="text-xs font-bold text-slate-600 block mb-1">名稱</label>
-                                <input type="text" value="${item.title}" oninput="window.updatePendingItemTitle('${item.tempId}', this.value)" placeholder="輸入名稱..." class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm font-bold text-slate-700 focus:outline-none focus:border-blue-500 shadow-2xs">
+                                <input type="text" value="${item.title}" oninput="window.updatePendingItemTitle('${item.tempId}', this.value)" placeholder="例如:R-099" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm font-bold text-slate-700 focus:outline-none focus:border-blue-500 shadow-2xs">
+                            </div>
+                        </div>
+                        <button onclick="window.removePendingUploadItem('${item.tempId}')" class="absolute top-3 right-3 text-slate-400 hover:text-red-500 p-1.5 rounded-full transition-colors active:scale-95 shrink-0 bg-white shadow-xs border border-slate-100" title="移除此張圖片"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                    </div>
+
+                    <!-- 下方：時間調整 -->
+                    <div class="flex items-center space-x-2 pt-2 border-t border-slate-200/60">
+                        <span class="text-xs font-bold text-slate-600 shrink-0">時間</span>
+                        <div class="flex-1">
+                            <div id="tbox-${item.tempId}" tabindex="0"
+                                 onkeydown="window.handleTimeKey(event, '${item.tempId}')"
+                                 onblur="window.blurTimePicker('${item.tempId}', event)"
+                                 class="flex items-center justify-between bg-white border border-slate-300 rounded-lg px-3 py-1.5 cursor-pointer select-none focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-400 shadow-2xs">
+                                <div class="flex items-center space-x-0.5">
+                                    <span id="h-${item.tempId}" onclick="window.setTimeSegment('${item.tempId}', 'h', event)" class="px-1.5 py-0.5 rounded text-slate-800 font-mono font-bold text-sm hover:bg-slate-100 transition-colors">
+                                        ${hStr}
+                                    </span>
+                                    <span class="text-slate-400 font-mono font-bold text-sm">:</span>
+                                    <span id="m-${item.tempId}" onclick="window.setTimeSegment('${item.tempId}', 'm', event)" class="px-1.5 py-0.5 rounded text-slate-800 font-mono font-bold text-sm hover:bg-slate-100 transition-colors">
+                                        ${mStr}
+                                    </span>
+                                </div>
+                                <span class="text-[10px] text-blue-500 font-medium">↑↓增減</span>
+                                <i data-lucide="clock" class="w-4 h-4 text-slate-400 shrink-0 pointer-events-none"></i>
                             </div>
                         </div>
                     </div>
-                    <button onclick="window.removePendingUploadItem('${item.tempId}')" class="text-slate-400 hover:text-red-500 p-1.5 rounded-full transition-colors active:scale-95 shrink-0" title="移除此張圖片"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
                 </div>`;
             }).join('');
             lucide.createIcons({ root: list });
