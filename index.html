@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>圖庫管理系統 - 4K分塊與序列上傳版</title>
+    <title>圖庫管理系統 - 4K分塊序列同步版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
@@ -70,7 +70,7 @@
             lucide.createIcons(); modal.classList.replace('hidden', 'flex');
         };
 
-        // 🌟 4K 圖片水平切半工具：將照片分為上下兩半，每塊控制在 300-400KB 內
+        // 🌟 4K 圖片水平切半工具：確保每一塊都安全小於 1MB 限制
         const splitImageToHalvesAsync = (file, maxDim = 800) => new Promise((resolve, reject) => {
             const r = new FileReader();
             r.readAsDataURL(file);
@@ -92,21 +92,27 @@
 
                     const halfH = Math.floor(h / 2);
 
-                    const topCanvas = document.createElement('canvas');
-                    topCanvas.width = w; topCanvas.height = halfH;
-                    topCanvas.getContext('2d').drawImage(canvas, 0, 0, w, halfH, 0, 0, w, halfH);
-                    let topHalf = topCanvas.toDataURL('image/webp', 0.8);
+                    const getSafeWebp = (sourceCanvas, sX, sY, sW, sH) => {
+                        const subCanvas = document.createElement('canvas');
+                        subCanvas.width = sW; subCanvas.height = sH;
+                        const subCtx = subCanvas.getContext('2d');
+                        subCtx.drawImage(sourceCanvas, sX, sY, sW, sH, 0, 0, sW, sH);
 
-                    const botCanvas = document.createElement('canvas');
-                    botCanvas.width = w; botCanvas.height = h - halfH;
-                    botCanvas.getContext('2d').drawImage(canvas, 0, halfH, w, h - halfH, 0, 0, w, h - halfH);
-                    let bottomHalf = botCanvas.toDataURL('image/webp', 0.8);
+                        let quality = 0.8;
+                        let result = subCanvas.toDataURL('image/webp', quality);
+                        while (result.length > 700000 && quality > 0.25) {
+                            quality -= 0.1;
+                            result = subCanvas.toDataURL('image/webp', quality);
+                        }
+                        subCanvas.width = 0; subCanvas.height = 0;
+                        return result;
+                    };
+
+                    const topHalf = getSafeWebp(canvas, 0, 0, w, halfH);
+                    const bottomHalf = getSafeWebp(canvas, 0, halfH, w, h - halfH);
 
                     img.src = '';
                     canvas.width = 0; canvas.height = 0;
-                    topCanvas.width = 0; topCanvas.height = 0;
-                    botCanvas.width = 0; botCanvas.height = 0;
-
                     resolve({ topHalf, bottomHalf });
                 };
                 img.onerror = () => reject(new Error("圖片解析失敗"));
@@ -148,7 +154,7 @@
             });
         };
 
-        // 🌟 序列化逐張上傳函式（慢慢上傳），徹底保護手機記憶體並支援分塊
+        // 🌟 序列化逐張上傳函式（慢慢上傳），有效保護手機記憶體
         window.handleGalleryUpload = async (input) => {
             const files = Array.from(input.files || []);
             if (!files.length) return;
@@ -158,7 +164,6 @@
             const { time } = getNowInputStrs();
             const defaultCat = currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory;
 
-            // 逐張迴圈排隊處理（慢慢上傳），防止同時處理多張 4K 圖導致記憶體崩潰
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
                 window.showToast(`正在處理第 ${i + 1} / ${files.length} 張圖片...`);
@@ -388,7 +393,7 @@
             lucide.createIcons({ root: list });
         };
 
-        // 🌟 Firestore 上傳確認函式：安全儲存分塊並依序寫入資料庫，防止回檔
+        // 🌟 Firestore 上傳確認函式：依序逐張寫入資料庫，防止回檔與網路超載
         window.confirmBatchUpload = async () => {
             if (!window.pendingUploadImages.length) return;
             window.showToast(`正在發布 ${window.pendingUploadImages.length} 張圖片到資料庫...`);
