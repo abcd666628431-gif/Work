@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>圖庫管理系統 - 4分塊極限高清版</title>
+    <title>圖庫管理系統 - 即時進度與自動關閉版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
@@ -35,9 +35,6 @@
         const appId = 'default-app-id';
         let currentUser = null;
 
-        // ==========================================
-        // 🌟 1. 本地大容量資料庫 (IndexedDB) 封裝
-        // ==========================================
         const IDB_NAME = 'QuadChunk_Gallery_DB';
         const IDB_STORE = 'hd_full_images';
 
@@ -78,15 +75,12 @@
             });
         };
 
-        // ==========================================
-        // 🌟 2. 輔助快取與工具函式
-        // ==========================================
         const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(e) { return d; } };
         const safeSetLocal = (k, d) => { try { localStorage.setItem(k, JSON.stringify(d)); } catch(e) {} };
         const pad = (n) => String(n).padStart(2, '0');
 
         let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
-        let galleryItems = [];
+        let galleryItems = getLocal('work_cache_gallery_items', []);
         let memoryImageCache = new Map();
         let currentGalleryCategory = '全部';
         window.pendingUploadImages = [];
@@ -105,25 +99,23 @@
             setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translate(-50%, -15px)'; setTimeout(() => t.remove(), 300); }, 2500);
         };
 
-        window.showConfirm = (title, message, onConfirm) => {
-            const modal = document.getElementById('customConfirmModal');
-            document.getElementById('confirmModalTitle').innerHTML = `<i data-lucide="alert-triangle" class="w-4 h-4 mr-1.5 text-amber-500"></i> ${title}`;
-            document.getElementById('confirmModalMessage').innerHTML = message;
-            const cancelBtn = document.getElementById('confirmBtnCancel'), okBtn = document.getElementById('confirmBtnOk');
-            const cleanup = () => { modal.classList.replace('flex', 'hidden'); okBtn.removeEventListener('click', okHandler); cancelBtn.removeEventListener('click', cleanup); };
-            const okHandler = () => { cleanup(); if (typeof onConfirm === 'function') onConfirm(); };
-            okBtn.addEventListener('click', okHandler); cancelBtn.addEventListener('click', cleanup);
-            lucide.createIcons(); modal.classList.replace('hidden', 'flex');
+        // 🌟 新增：全域上傳進度列控制項
+        window.setUploadProgress = (percent, text) => {
+            const bar = document.getElementById('globalProgressBar');
+            const container = document.getElementById('globalProgressContainer');
+            const textEl = document.getElementById('globalProgressText');
+            if (!bar || !container || !textEl) return;
+
+            if (percent < 0) {
+                container.classList.add('hidden');
+            } else {
+                container.classList.remove('hidden');
+                bar.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+                textEl.textContent = text;
+            }
         };
 
-        // ==========================================
-        // 🌟 3. 核心功能：切成 4 等份與拼回原圖
-        // ==========================================
-        
-        /**
-         * 將照片等比縮放至 1200px (高畫質)，並垂直切成 4 塊
-         */
-        const splitImageTo4ChunksAsync = (file, maxDim = 1200, quality = 0.8) => new Promise((resolve, reject) => {
+        const splitImageTo4ChunksAsync = (file, maxDim = 1200, quality = 0.6) => new Promise((resolve, reject) => {
             const r = new FileReader();
             r.readAsDataURL(file);
             r.onload = (e) => {
@@ -139,7 +131,7 @@
                     canvas.width = w; canvas.height = h;
                     const ctx = canvas.getContext('2d');
                     ctx.imageSmoothingEnabled = true;
-                    ctx.imageSmoothingQuality = 'high';
+                    ctx.imageSmoothingQuality = 'medium';
                     ctx.drawImage(img, 0, 0, w, h);
 
                     const chunkHeight = Math.floor(h / 4);
@@ -154,15 +146,12 @@
                         const subCtx = subCanvas.getContext('2d');
                         subCtx.drawImage(canvas, 0, i * chunkHeight, w, curH, 0, 0, w, curH);
 
-                        // 每一塊獨立壓縮為 WebP (0.8)
                         chunks.push(subCanvas.toDataURL('image/webp', quality));
-
                         subCanvas.width = 0; subCanvas.height = 0;
                     }
 
                     img.src = '';
                     canvas.width = 0; canvas.height = 0;
-
                     resolve({ chunks, width: w, height: h });
                 };
                 img.onerror = () => reject(new Error("圖片載入失敗"));
@@ -170,9 +159,6 @@
             r.onerror = () => reject(new Error("檔案讀取失敗"));
         });
 
-        /**
-         * 將 4 個切片無縫還原組合成高清原圖
-         */
         const merge4ChunksAsync = (chunks) => new Promise((resolve, reject) => {
             if (!chunks || chunks.length === 0) return resolve('');
             if (chunks.length === 1) return resolve(chunks[0]);
@@ -203,7 +189,7 @@
                             im.src = '';
                         });
 
-                        const finalUrl = canvas.toDataURL('image/webp', 0.85);
+                        const finalUrl = canvas.toDataURL('image/webp', 0.6);
                         canvas.width = 0; canvas.height = 0;
                         resolve(finalUrl);
                     }
@@ -214,14 +200,10 @@
             }
         });
 
-        /**
-         * 智慧取得完整圖片（快取 -> IndexedDB -> Firestore 查詢）
-         */
         const getFullImageUrlAsync = async (item) => {
             const id = item.id;
             if (memoryImageCache.has(id)) return memoryImageCache.get(id);
 
-            // 1. 優先從本地大容量 IndexedDB 取出
             try {
                 const idbCached = await idbGet(id);
                 if (idbCached) {
@@ -230,36 +212,28 @@
                 }
             } catch(e) {}
 
-            // 2. 若無本地快取，從 Firestore 的子集合抓取 4 個切片並組合
             if (currentUser && db) {
                 try {
                     const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id, 'chunks'));
                     const chunkList = [];
-                    snap.forEach(d => {
-                        chunkList.push(d.data());
-                    });
+                    snap.forEach(d => { chunkList.push(d.data()); });
                     chunkList.sort((a, b) => a.index - b.index);
 
                     if (chunkList.length > 0) {
                         const mergedUrl = await merge4ChunksAsync(chunkList.map(c => c.data));
                         memoryImageCache.set(id, mergedUrl);
-                        await idbSet(id, mergedUrl); // 存入本機，供之後秒開
+                        await idbSet(id, mergedUrl);
                         return mergedUrl;
                     }
-                } catch(e) {
-                    console.error("雲端切片載入失敗:", e);
-                }
+                } catch(e) {}
             }
             return '';
         };
 
-        // ==========================================
-        // 🌟 4. 上傳排隊邏輯（慢慢上傳）
-        // ==========================================
         window.handleGalleryUpload = async (input) => {
             const files = Array.from(input.files || []);
             if (!files.length) return;
-            window.showToast(`準備處理共 ${files.length} 張照片 (分割4塊)...`);
+            window.showToast(`準備處理共 ${files.length} 張照片...`);
             window.pendingUploadImages = [];
 
             const { time } = getNowInputStrs();
@@ -267,23 +241,16 @@
 
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
-                window.showToast(`正在切分第 ${i + 1} / ${files.length} 張照片...`);
+                window.showToast(`正在預處理第 ${i + 1} / ${files.length} 張...`);
                 try {
-                    const { chunks } = await splitImageTo4ChunksAsync(file, 1200, 0.8);
-                    const tempId = 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+                    const { chunks } = await splitImageTo4ChunksAsync(file, 1200, 0.6);
+                    const tempId = 'img_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substr(2, 4);
                     const previewSrc = await merge4ChunksAsync(chunks);
 
                     window.pendingUploadImages.push({
-                        tempId,
-                        chunks, // 包含 4 個切片 Base64
-                        src: previewSrc,
-                        title: "",
-                        time: time,
-                        category: defaultCat
+                        tempId, chunks, src: previewSrc, title: "", time: time, category: defaultCat
                     });
-                } catch (e) {
-                    console.error(`第 ${i + 1} 張處理失敗:`, e);
-                }
+                } catch (e) {}
             }
             input.value = '';
 
@@ -294,9 +261,6 @@
             }
         };
 
-        // ==========================================
-        // 🌟 5. 畫面渲染與分類
-        // ==========================================
         window.renderGallery = async () => {
             const sidebar = document.getElementById('gallerySidebar'), grid = document.getElementById('galleryGrid');
             if (!sidebar || !grid) return;
@@ -373,23 +337,21 @@
             }
         };
 
-        window.deleteGalleryItem = (id) => {
-            window.showConfirm('刪除圖片', '確定要刪除這張圖片嗎？', async () => {
-                galleryItems = galleryItems.filter(i => i.id !== id);
-                memoryImageCache.delete(id);
-                await idbDel(id); // 刪除本地 IndexedDB 暫存
-                safeSetLocal('work_cache_gallery_items', galleryItems);
-                
-                if (currentUser) {
-                    deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id));
-                    // 刪除子集合切片
-                    try {
-                        const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id, 'chunks'));
-                        snap.forEach(d => deleteDoc(d.ref));
-                    } catch(e) {}
-                }
-                window.renderGallery(); window.showToast("已刪除圖片");
-            });
+        window.deleteGalleryItem = async (id) => {
+            galleryItems = galleryItems.filter(i => i.id !== id);
+            memoryImageCache.delete(id);
+            await idbDel(id);
+            safeSetLocal('work_cache_gallery_items', galleryItems);
+            
+            if (currentUser) {
+                deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id));
+                try {
+                    const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id, 'chunks'));
+                    snap.forEach(d => deleteDoc(d.ref));
+                } catch(e) {}
+            }
+            window.renderGallery();
+            window.showToast("已刪除圖片");
         };
 
         window.exportAllGalleryImages = async () => {
@@ -404,7 +366,7 @@
                 document.body.appendChild(link); link.click(); link.remove();
                 await new Promise(resolve => setTimeout(resolve, 250));
             }
-            window.showToast(`✅ 全部 ${galleryItems.length} 張高清圖片已導出完成！`);
+            window.showToast(`✅ 全部 ${galleryItems.length} 張圖片已導出完成！`);
         };
 
         window.openUploadBatchModal = () => {
@@ -444,8 +406,10 @@
             const now = window.getNow();
             const h = pad(now.getHours()), m = pad(now.getMinutes());
             item.time = `${h}:${m}`;
-            const hSelect = document.getElementById(`h-select-${tempId}`), mSelect = document.getElementById(`m-select-${tempId}`);
-            if (hSelect) hSelect.value = h; if (mSelect) mSelect.value = m;
+            const hSelect = document.getElementById(`h-select-${tempId}`);
+            const mSelect = document.getElementById(`m-select-${tempId}`);
+            if (hSelect) hSelect.value = h;
+            if (mSelect) mSelect.value = m;
         };
 
         window.removePendingUploadItem = (tempId) => {
@@ -506,25 +470,32 @@
             lucide.createIcons({ root: list });
         };
 
-        // ==========================================
-        // 🌟 6. 核心上傳寫入：分散為獨立文件，永不超標！
-        // ==========================================
+        // 🌟 核心修改：點擊「確認發布」後瞬間自動關閉彈窗，並在畫面上方顯示即時進度條
         window.confirmBatchUpload = async () => {
-            if (!window.pendingUploadImages.length) return;
-            window.showToast(`正在發布 ${window.pendingUploadImages.length} 張高畫質照片到雲端...`);
+            const itemsToUpload = [...window.pendingUploadImages];
+            if (!itemsToUpload.length) return;
+
+            // 1. 瞬間自動關閉彈窗，釋放畫面
+            window.closeUploadBatchModal();
+            window.showToast("開始在背景上傳圖片...");
+
             try {
                 if (!currentUser || !db) throw new Error("系統尚未完成驗證授權，請重新整理頁面。");
 
+                const total = itemsToUpload.length;
                 const newDocs = [];
 
-                for (const item of window.pendingUploadImages) {
+                for (let i = 0; i < total; i++) {
+                    const item = itemsToUpload[i];
                     const docId = item.tempId;
 
-                    // 1. 本地 IndexedDB 存完整原圖 (0MB 雲端容量消耗)
+                    // 2. 顯示即時進度條
+                    const percent = Math.round(((i + 1) / total) * 100);
+                    window.setUploadProgress(percent, `正在上傳第 ${i + 1} / ${total} 張圖片 (${percent}%)`);
+
                     await idbSet(docId, item.src);
                     memoryImageCache.set(docId, item.src);
 
-                    // 2. 主文件：只存基本資訊（幾十 Bytes，永不超標）
                     const mainDocData = {
                         id: docId,
                         chunkCount: item.chunks.length,
@@ -538,7 +509,6 @@
                     const mainDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId);
                     batch.set(mainDocRef, mainDocData);
 
-                    // 3. 4 個切片各自分散存入獨立文檔，每塊僅 ~200KB，絕不超標！
                     item.chunks.forEach((chunkStr, idx) => {
                         const chunkRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId, 'chunks', `part_${idx}`);
                         batch.set(chunkRef, { index: idx, data: chunkStr });
@@ -548,12 +518,21 @@
                     newDocs.push(mainDocData);
                 }
 
-                galleryItems = [...newDocs, ...galleryItems];
+                // 3. 上傳完畢，隱藏進度條
+                window.setUploadProgress(-1, "");
+
+                const mergedMap = new Map();
+                [...newDocs, ...galleryItems].forEach(item => {
+                    if (item && item.id) mergedMap.set(item.id, item);
+                });
+                galleryItems = Array.from(mergedMap.values());
+                galleryItems.sort((a,b) => (b.id || '').localeCompare(a.id || ''));
+
                 safeSetLocal('work_cache_gallery_items', galleryItems);
                 await window.renderGallery();
-                window.showToast(`✅ 成功上傳 ${newDocs.length} 張高清照片！`);
-                window.closeUploadBatchModal();
+                window.showToast(`✅ 成功上傳 ${newDocs.length} 張圖片！`);
             } catch (err) {
+                window.setUploadProgress(-1, "");
                 console.error("上傳錯誤:", err);
                 window.showToast(`❌ 上傳失敗：${err.message}`, true);
             }
@@ -585,7 +564,6 @@
             window.openCategoryManager(); window.renderGallery();
         };
 
-        // 🌟 Firestore 即時同步
         async function initAuthAndSync() {
             try { await signInAnonymously(auth); } catch(e) {}
             onAuthStateChanged(auth, (user) => {
@@ -597,8 +575,14 @@
                 });
                 onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snap) => {
                     let items = []; snap.forEach(d => items.push(d.data()));
-                    items.sort((a,b) => (b.id || '').localeCompare(a.id || ''));
-                    galleryItems = items; safeSetLocal('work_cache_gallery_items', galleryItems); window.renderGallery();
+                    
+                    const mergedMap = new Map();
+                    items.forEach(item => { if (item && item.id) mergedMap.set(item.id, item); });
+                    galleryItems = Array.from(mergedMap.values());
+                    
+                    galleryItems.sort((a,b) => (b.id || '').localeCompare(a.id || ''));
+                    safeSetLocal('work_cache_gallery_items', galleryItems);
+                    window.renderGallery();
                 });
             });
         }
@@ -608,11 +592,22 @@
 </head>
 <body class="flex justify-center items-center min-h-screen p-0 sm:py-6 bg-[#f0ebe1]">
     <div class="w-full max-w-[430px] h-[910px] max-h-[100vh] sm:max-h-[96vh] bg-[#fdfbf7] sm:rounded-[2.5rem] shadow-2xl sm:border-[6px] border-[#d6d0c4] overflow-hidden relative flex flex-col mx-auto my-auto">
+        
+        <!-- 🌟 全局上傳進度條容器 (預設隱藏，上傳時自動顯示在頂部) -->
+        <div id="globalProgressContainer" class="hidden absolute top-0 left-0 right-0 z-[300] bg-slate-900/90 backdrop-blur-md p-3 text-white border-b border-blue-500 shadow-xl transition-all">
+            <div class="flex justify-between items-center text-xs font-bold mb-1.5">
+                <span id="globalProgressText" class="text-blue-300">正在上傳...</span>
+            </div>
+            <div class="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
+                <div id="globalProgressBar" class="bg-blue-500 h-full w-0 transition-all duration-300"></div>
+            </div>
+        </div>
+
         <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-30 border-b border-[#e5dfd3] p-4 pt-6 shadow-xs shrink-0">
             <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-2">
                     <div class="w-7 h-7 rounded-lg bg-blue-500 text-white flex items-center justify-center shadow-xs"><i data-lucide="image" class="w-4 h-4"></i></div>
-                    <h1 class="text-lg text-slate-800 tracking-wider font-black">圖庫管理系統 (4分塊高清版)</h1>
+                    <h1 class="text-lg text-slate-800 tracking-wider font-black">圖庫管理系統</h1>
                 </div>
                 <button type="button" onclick="window.exportAllGalleryImages()" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold tracking-wide transition-all shadow-xs" title="一次導出圖庫所有圖片">
                     <i data-lucide="download" class="w-3.5 h-3.5 mr-1"></i> 導出全部
@@ -648,12 +643,12 @@
             <header class="flex justify-between items-center pb-3 mb-2 border-b border-slate-100 shrink-0">
                 <div class="flex items-center space-x-2">
                     <div class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center"><i data-lucide="images" class="w-5 h-5"></i></div>
-                    <h3 class="font-bold text-base text-slate-800 tracking-wide">確認高清上傳</h3>
+                    <h3 class="font-bold text-base text-slate-800 tracking-wide">確認上傳圖片</h3>
                 </div>
                 <button onclick="window.closeUploadBatchModal()" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div class="bg-blue-50 border border-blue-100 rounded-xl p-2.5 text-center text-xs font-bold text-blue-700 shrink-0 mb-3">
-                📸 已選取 <span id="uploadBatchCount" class="text-blue-900 font-black text-sm">0</span> 張圖片 (已拆分為獨立4切片文檔，絕不超標)
+                📸 已選取 <span id="uploadBatchCount" class="text-blue-900 font-black text-sm">0</span> 張圖片
             </div>
             <div id="uploadBatchList" class="flex-1 overflow-y-auto space-y-3 pr-1 scrollbar-hide mb-3"></div>
             <div class="flex justify-end space-x-2.5 pt-3 border-t border-slate-100 shrink-0">
