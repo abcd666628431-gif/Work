@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>圖庫管理系統 - 1200px極速高清版</title>
+    <title>圖庫管理系統 - 1000px 0.65畫質版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
@@ -36,9 +36,9 @@
         let currentUser = null;
 
         // ==========================================
-        // 🌟 本地大容量資料庫 (IndexedDB)
+        // 🌟 1. 本地大容量資料庫 (IndexedDB)
         // ==========================================
-        const IDB_NAME = 'Gallery_HD_Fast_DB';
+        const IDB_NAME = 'Gallery_HD_Fast_DB_V4';
         const IDB_STORE = 'hd_images';
 
         const openIDB = () => new Promise((resolve, reject) => {
@@ -79,11 +79,13 @@
         };
 
         // ==========================================
-        // 快取與輔助函式
+        // 🌟 2. 輔助快取與工具函式
         // ==========================================
         const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(e) { return d; } };
         const safeSetLocal = (k, d) => { try { localStorage.setItem(k, JSON.stringify(d)); } catch(e) {} };
         const pad = (n) => String(n).padStart(2, '0');
+        
+        const yieldToMain = () => new Promise(resolve => setTimeout(resolve, 0));
 
         let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
         let galleryItems = getLocal('work_cache_gallery_items', []);
@@ -119,45 +121,70 @@
             }
         };
 
-        // 🌟 核心高畫質安全壓縮：單張直出 1200px、約 200KB，遠低於 1MB 限制，完全零卡頓
-        const compressImageHDAsync = (file, maxDim = 1200) => new Promise((resolve, reject) => {
-            const r = new FileReader();
-            r.readAsDataURL(file);
-            r.onload = (e) => {
-                const img = new Image();
-                img.src = e.target.result;
-                img.onload = () => {
-                    let w = img.width, h = img.height;
+        // 🌟 3. 調整為 1000px 與 0.65 畫質的壓縮核心
+        const compressImageOptimizedAsync = async (file, maxDim = 1000) => {
+            let bitmap;
+            try {
+                if ('createImageBitmap' in window) {
+                    bitmap = await createImageBitmap(file);
+                }
+            } catch (e) {
+                bitmap = null;
+            }
+
+            return new Promise((resolve, reject) => {
+                const processImg = (sourceWidth, sourceHeight, drawCallback) => {
+                    let w = sourceWidth;
+                    let h = sourceHeight;
                     if (w > maxDim || h > maxDim) {
                         if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
                         else { w = Math.round((w * maxDim) / h); h = maxDim; }
                     }
+
                     const canvas = document.createElement('canvas');
-                    canvas.width = w; canvas.height = h;
-                    const ctx = canvas.getContext('2d');
+                    canvas.width = w;
+                    canvas.height = h;
+                    const ctx = canvas.getContext('2d', { alpha: false });
                     ctx.imageSmoothingEnabled = true;
                     ctx.imageSmoothingQuality = 'high';
-                    ctx.drawImage(img, 0, 0, w, h);
+                    drawCallback(ctx, w, h);
 
-                    let quality = 0.75;
+                    // 🌟 畫質設定為 0.65
+                    let quality = 0.65;
                     let result = canvas.toDataURL('image/webp', quality);
 
-                    // 🛡️ 嚴格保險閥：若 Base64 大於 800,000 字元 (約 600KB)，自動向下微調
-                    while (result.length > 800000 && quality > 0.3) {
-                        quality -= 0.08;
+                    while (result.length > 800000 && quality > 0.25) {
+                        quality -= 0.05;
                         result = canvas.toDataURL('image/webp', quality);
                     }
 
-                    img.src = '';
-                    canvas.width = 0; canvas.height = 0;
+                    canvas.width = 0;
+                    canvas.height = 0;
                     resolve(result);
                 };
-                img.onerror = () => reject(new Error("圖片解析失敗"));
-            };
-            r.onerror = () => reject(new Error("檔案讀取失敗"));
-        });
 
-        // 🌟 批次快速預處理（無切片、無多次重繪，瞬間秒開）
+                if (bitmap) {
+                    processImg(bitmap.width, bitmap.height, (ctx, w, h) => {
+                        ctx.drawImage(bitmap, 0, 0, w, h);
+                        bitmap.close();
+                    });
+                } else {
+                    const r = new FileReader();
+                    r.readAsDataURL(file);
+                    r.onload = (e) => {
+                        const img = new Image();
+                        img.src = e.target.result;
+                        img.onload = () => {
+                            processImg(img.width, img.height, (ctx, w, h) => ctx.drawImage(img, 0, 0, w, h));
+                            img.src = '';
+                        };
+                        img.onerror = () => reject(new Error("圖片載入失敗"));
+                    };
+                    r.onerror = () => reject(new Error("檔案讀取失敗"));
+                }
+            });
+        };
+
         window.handleGalleryUpload = async (input) => {
             const files = Array.from(input.files || []);
             if (!files.length) return;
@@ -168,9 +195,12 @@
 
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
-                window.setUploadProgress(Math.round(((i + 1) / files.length) * 50), `正在載入第 ${i + 1} / ${files.length} 張圖片...`);
+                window.setUploadProgress(Math.round(((i + 1) / files.length) * 100), `正在優化第 ${i + 1} / ${files.length} 張圖片...`);
+                
+                await yieldToMain();
+
                 try {
-                    const src = await compressImageHDAsync(file, 1200);
+                    const src = await compressImageOptimizedAsync(file, 1000);
                     const tempId = 'img_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substr(2, 4);
 
                     window.pendingUploadImages.push({
@@ -184,6 +214,7 @@
                     console.error("處理失敗:", e);
                 }
             }
+            
             window.setUploadProgress(-1, "");
             input.value = '';
 
@@ -228,7 +259,7 @@
                                 </div>
                             </div>
                             <div class="w-full h-28 bg-slate-100 overflow-hidden cursor-pointer" onclick="window.openFullscreenImg('${i.src}')">
-                                <img src="${i.src}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${i.title || '圖片'}">
+                                <img src="${i.src}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${i.title || '圖片'}">
                             </div>
                             <div class="p-2 flex justify-between items-center bg-white border-t border-slate-100 text-xs gap-1.5">
                                 <span class="text-[11px] text-slate-500 font-mono font-bold shrink-0 flex items-center">
@@ -260,15 +291,14 @@
             if (newTitle !== null && newTitle.trim()) {
                 item.title = newTitle.trim();
                 safeSetLocal('work_cache_gallery_items', galleryItems);
-                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item, { merge: true });
+                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), item, { merge: true });
                 window.renderGallery(); window.showToast('圖片名稱已更新');
             }
         };
 
-        // 🌟 直接刪除圖片（無彈窗阻礙）
         window.deleteGalleryItem = async (id) => {
             galleryItems = galleryItems.filter(i => i.id !== id);
-            await idbDel(id);
+            idbDel(id);
             safeSetLocal('work_cache_gallery_items', galleryItems);
             
             if (currentUser) {
@@ -287,9 +317,9 @@
                 const safeName = (item.title && item.title.trim() ? item.title.trim() : `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
                 const link = document.createElement('a'); link.href = item.src; link.download = `${safeName}.webp`;
                 document.body.appendChild(link); link.click(); link.remove();
-                await new Promise(resolve => setTimeout(resolve, 250));
+                await new Promise(resolve => setTimeout(resolve, 200));
             }
-            window.showToast(`✅ 全部 ${galleryItems.length} 張高清圖片已導出完成！`);
+            window.showToast(`✅ 全部 ${galleryItems.length} 張圖片已導出完成！`);
         };
 
         window.openUploadBatchModal = () => {
@@ -393,7 +423,6 @@
             lucide.createIcons({ root: list });
         };
 
-        // 🌟 極速平行上傳核心：使用 writeBatch 一次完成所有上傳，幾秒鐘結束！
         window.confirmBatchUpload = async () => {
             const itemsToUpload = [...window.pendingUploadImages];
             if (!itemsToUpload.length) return;
@@ -406,6 +435,7 @@
                 const total = itemsToUpload.length;
                 const newDocs = [];
                 const batch = writeBatch(db);
+                const idbPromises = [];
 
                 for (let i = 0; i < total; i++) {
                     const item = itemsToUpload[i];
@@ -414,7 +444,7 @@
                     const percent = Math.round(((i + 1) / total) * 100);
                     window.setUploadProgress(percent, `正在儲存第 ${i + 1} / ${total} 張圖片 (${percent}%)`);
 
-                    await idbSet(docId, item.src);
+                    idbPromises.push(idbSet(docId, item.src));
 
                     const docData = {
                         id: docId,
@@ -430,8 +460,8 @@
                     newDocs.push(docData);
                 }
 
-                // 一次提交所有變更，免去多次網路等待
-                await batch.commit();
+                window.setUploadProgress(100, "正在提交至雲端資料庫...");
+                await Promise.all([batch.commit(), ...idbPromises]);
 
                 window.setUploadProgress(-1, "");
 
@@ -444,7 +474,7 @@
 
                 safeSetLocal('work_cache_gallery_items', galleryItems);
                 window.renderGallery();
-                window.showToast(`✅ 成功上傳 ${newDocs.length} 張高清圖片！`);
+                window.showToast(`✅ 成功上傳 ${newDocs.length} 張圖片！`);
             } catch (err) {
                 window.setUploadProgress(-1, "");
                 console.error("上傳錯誤:", err);
@@ -507,13 +537,12 @@
 <body class="flex justify-center items-center min-h-screen p-0 sm:py-6 bg-[#f0ebe1]">
     <div class="w-full max-w-[430px] h-[910px] max-h-[100vh] sm:max-h-[96vh] bg-[#fdfbf7] sm:rounded-[2.5rem] shadow-2xl sm:border-[6px] border-[#d6d0c4] overflow-hidden relative flex flex-col mx-auto my-auto">
         
-        <!-- 全域即時上傳進度條 -->
         <div id="globalProgressContainer" class="hidden absolute top-0 left-0 right-0 z-[300] bg-slate-900/95 backdrop-blur-md p-3 text-white border-b border-blue-500 shadow-2xl transition-all">
             <div class="flex justify-between items-center text-xs font-bold mb-1.5">
-                <span id="globalProgressText" class="text-blue-300">正在上傳...</span>
+                <span id="globalProgressText" class="text-blue-300">正在處理...</span>
             </div>
             <div class="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
-                <div id="globalProgressBar" class="bg-blue-500 h-full w-0 transition-all duration-300"></div>
+                <div id="globalProgressBar" class="bg-blue-500 h-full w-0 transition-all duration-200"></div>
             </div>
         </div>
 
