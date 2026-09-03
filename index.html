@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>圖庫管理系統 - 完成張數即時進度版</title>
+    <title>圖庫管理系統 - 完整預覽點擊放大版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
@@ -20,8 +20,8 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // 🌟 1. 核心參數與組態設定
-        const CONFIG = { maxDim: 1200, quality: 0.6 };
+        // 🌟 1. 核心參數：1000px、0.6 畫質
+        const CONFIG = { maxDim: 1000, quality: 0.6 };
         const firebaseConfig = {
             apiKey: "AIzaSyBsdBYBeJYqgeDDxF39lZ0pr785SMnwvJs", 
             authDomain: "work-eb62f.firebaseapp.com",
@@ -82,12 +82,13 @@
             });
         };
 
-        // 🌟 4. 全域狀態
+        // 🌟 4. 全域狀態與防重複衝突鎖
         let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
         let galleryItems = getLocal('work_cache_gallery_items', []);
         let memoryImageCache = new Map();
         let currentGalleryCategory = '全部';
         window.pendingUploadImages = [];
+        window.isUploading = false;
 
         window.getNow = () => new Date();
         const getNowInputStrs = () => {
@@ -103,7 +104,6 @@
             setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translate(-50%, -15px)'; setTimeout(() => t.remove(), 300); }, 2500);
         };
 
-        // 即時平滑進度條 (支援小數點後 1 位與張數文字)
         window.setUploadProgress = (percent, text) => {
             const c = $('globalProgressContainer');
             if (!c) return;
@@ -204,8 +204,13 @@
             return '';
         };
 
-        // 🌟 6. 上傳與列表互動 (進度條標記預處理已完成張數)
+        // 🌟 6. 上傳與列表互動
         window.handleGalleryUpload = async (input) => {
+            if (window.isUploading) {
+                input.value = '';
+                return window.showToast("⚠️ 上傳正在進行中，請等待完成後再選取！", true);
+            }
+
             const files = Array.from(input.files || []);
             if (!files.length) return;
             window.pendingUploadImages = [];
@@ -231,11 +236,13 @@
                     });
                 } catch (e) {}
 
-                // 🌟 更新顯示已完成張數與百分比
                 const percent = (((i + 1) / files.length) * 100).toFixed(1);
                 window.setUploadProgress(percent, `正在預處理：已完成 ${i + 1} / ${files.length} 張 (${percent}%)`);
             }
-            window.setUploadProgress(-1, "");
+
+            if (!window.isUploading) {
+                window.setUploadProgress(-1, "");
+            }
             input.value = '';
 
             if (window.pendingUploadImages.length) window.openUploadBatchModal();
@@ -295,7 +302,24 @@
         };
 
         window.setGalleryCategory = (c) => { currentGalleryCategory = c; window.renderGallery(); };
-        window.openFullscreenImg = (src) => { $('imageViewerImg').src = src; $('imageViewer')?.classList.replace('hidden', 'flex'); };
+        
+        // 🌟 預覽圖片開啟與關閉函式（通用於圖庫與上傳彈窗）
+        window.openFullscreenImg = (src) => { 
+            $('imageViewerImg').src = src; 
+            const viewer = $('imageViewer');
+            if (viewer) {
+                viewer.classList.remove('hidden');
+                viewer.classList.add('flex');
+            }
+        };
+
+        window.closeFullscreenImg = () => {
+            const viewer = $('imageViewer');
+            if (viewer) {
+                viewer.classList.remove('flex');
+                viewer.classList.add('hidden');
+            }
+        };
         
         window.editGalleryItemTitle = (id, e) => {
             if (e) e.stopPropagation();
@@ -354,13 +378,6 @@
             item.title = `${prefix}${code}`.trim();
         };
 
-        window.updatePendingPrefix = (tempId, val) => {
-            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
-            if (!item) return;
-            item.prefix = val.trim();
-            syncItemFullTitle(item);
-        };
-
         window.updatePendingCode = (tempId, val) => {
             const item = window.pendingUploadImages.find(x => x.tempId === tempId);
             if (!item) return;
@@ -368,19 +385,29 @@
             syncItemFullTitle(item);
         };
 
-        window.selectPendingPrefix = (tempId, prefixVal) => {
+        window.selectPrefixOption = (tempId, prefixVal) => {
             const item = window.pendingUploadImages.find(x => x.tempId === tempId);
             if (!item) return;
-            item.prefix = prefixVal;
+
+            item.prefix = (item.prefix === prefixVal) ? "" : prefixVal;
             syncItemFullTitle(item);
 
-            const prefixInput = $(`prefix-input-${tempId}`);
-            if (prefixInput) prefixInput.value = prefixVal;
+            ['1-0', 'R-0', 'J-0'].forEach(val => {
+                const btn = $(`btn-prefix-${tempId}-${val}`);
+                if (btn) {
+                    if (item.prefix === val) {
+                        btn.className = "w-full py-1.5 rounded text-[11px] font-bold tracking-wide transition-all shadow-xs bg-blue-600 text-white border border-blue-600";
+                    } else {
+                        btn.className = "w-full py-1.5 rounded text-[11px] font-bold tracking-wide transition-all bg-white hover:bg-slate-100 text-slate-600 border border-slate-200";
+                    }
+                }
+            });
 
             const codeInput = $(`code-input-${tempId}`);
             if (codeInput) codeInput.focus();
         };
 
+        // 🌟 核心更新：預覽圖改為 object-contain 完整呈現，並加入點擊放大原圖觀看
         window.renderUploadBatchList = () => {
             const list = $('uploadBatchList');
             if ($('uploadBatchCount')) $('uploadBatchCount').textContent = window.pendingUploadImages.length;
@@ -389,12 +416,21 @@
             const selectableCats = galleryCategories.filter(c => c !== '全部');
             list.innerHTML = window.pendingUploadImages.map(item => {
                 const [hStr, mStr] = (item.time || '00:00').split(':');
+                const curPrefix = item.prefix || '';
+
                 return `
                 <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col space-y-2.5 shadow-xs">
-                    <div class="relative w-full h-36 bg-slate-200 rounded-lg overflow-hidden flex items-center justify-center">
-                        <img src="${item.src}" class="w-full h-full object-cover">
-                        <button onclick="window.removePendingUploadItem('${item.tempId}')" class="absolute top-2 right-2 text-slate-500 hover:text-red-500 p-1.5 rounded-full bg-white/90 shadow-md transition-colors"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                    <!-- 🌟 完整呈現圖片預覽框（高度適中 h-40，object-contain 完整比例不被裁切，點擊可放大觀看原圖） -->
+                    <div class="relative w-full h-40 bg-slate-900/90 rounded-lg overflow-hidden flex items-center justify-center cursor-zoom-in group border border-slate-300" onclick="window.openFullscreenImg('${item.src}')" title="點擊放大觀看完整圖片">
+                        <img src="${item.src}" class="w-full h-full object-contain p-1 group-hover:scale-105 transition-transform duration-200">
+                        <div class="absolute bottom-2 left-2 bg-black/60 backdrop-blur-xs text-white/90 text-[10px] px-2 py-0.5 rounded flex items-center pointer-events-none">
+                            <i data-lucide="zoom-in" class="w-3 h-3 mr-1"></i>點擊放大
+                        </div>
+                        <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-2 right-2 text-slate-500 hover:text-red-500 p-1.5 rounded-full bg-white/95 shadow-md transition-colors active:scale-95" title="移除此圖">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
                     </div>
+
                     <div>
                         <label class="text-xs font-bold text-slate-600 block mb-1">分類</label>
                         <select onchange="window.pendingUploadImages.find(x=>x.tempId==='${item.tempId}').category=this.value" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700">
@@ -402,7 +438,7 @@
                         </select>
                     </div>
                     <div class="flex items-start space-x-2">
-                        <div class="w-[140px] shrink-0">
+                        <div class="w-[145px] shrink-0">
                             <label class="text-xs font-bold text-slate-600 block mb-1">時間</label>
                             <div class="flex items-center justify-between bg-white border border-slate-300 rounded-lg px-2 py-1.5">
                                 <div class="flex items-center font-mono font-bold text-xs text-slate-800">
@@ -415,16 +451,17 @@
                         </div>
 
                         <div class="flex-1 min-w-0">
-                            <label class="text-xs font-bold text-slate-600 block mb-1">檔號</label>
-                            <div class="flex items-center space-x-1">
-                                <input type="text" id="prefix-input-${item.tempId}" value="${item.prefix || ''}" oninput="window.updatePendingPrefix('${item.tempId}', this.value)" placeholder="代碼" class="w-16 bg-slate-100 border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-slate-700 text-center h-[34px] focus:bg-white focus:outline-none">
-                                <input type="text" id="code-input-${item.tempId}" value="${item.code || ''}" oninput="window.updatePendingCode('${item.tempId}', this.value)" placeholder="請輸入檔號" class="flex-1 min-w-0 bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 text-center h-[34px] focus:outline-none focus:border-blue-500">
-                            </div>
-                            
-                            <div class="flex items-center gap-1.5 mt-1.5">
-                                <button type="button" onclick="window.selectPendingPrefix('${item.tempId}', '1-0')" class="flex-1 bg-white hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 border border-slate-200 text-slate-600 py-1 rounded-md text-[11px] font-bold transition-all shadow-2xs active:scale-95">一樓</button>
-                                <button type="button" onclick="window.selectPendingPrefix('${item.tempId}', 'R-0')" class="flex-1 bg-white hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 border border-slate-200 text-slate-600 py-1 rounded-md text-[11px] font-bold transition-all shadow-2xs active:scale-95">魚檔</button>
-                                <button type="button" onclick="window.selectPendingPrefix('${item.tempId}', 'J-0')" class="flex-1 bg-white hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 border border-slate-200 text-slate-600 py-1 rounded-md text-[11px] font-bold transition-all shadow-2xs active:scale-95">雞檔</button>
+                            <label class="text-xs font-bold text-slate-600 block mb-1">代碼與檔號</label>
+                            <div class="flex items-stretch space-x-1.5">
+                                <div class="w-14 flex flex-col space-y-1 shrink-0">
+                                    <button type="button" id="btn-prefix-${item.tempId}-1-0" onclick="window.selectPrefixOption('${item.tempId}', '1-0')" class="w-full py-1.5 rounded text-[11px] font-bold tracking-wide transition-all ${curPrefix === '1-0' ? 'bg-blue-600 text-white border border-blue-600 shadow-xs' : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'}">一樓</button>
+                                    <button type="button" id="btn-prefix-${item.tempId}-R-0" onclick="window.selectPrefixOption('${item.tempId}', 'R-0')" class="w-full py-1.5 rounded text-[11px] font-bold tracking-wide transition-all ${curPrefix === 'R-0' ? 'bg-blue-600 text-white border border-blue-600 shadow-xs' : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'}">魚檔</button>
+                                    <button type="button" id="btn-prefix-${item.tempId}-J-0" onclick="window.selectPrefixOption('${item.tempId}', 'J-0')" class="w-full py-1.5 rounded text-[11px] font-bold tracking-wide transition-all ${curPrefix === 'J-0' ? 'bg-blue-600 text-white border border-blue-600 shadow-xs' : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'}">雞檔</button>
+                                </div>
+                                
+                                <div class="flex-1 min-w-0 flex flex-col">
+                                    <textarea id="code-input-${item.tempId}" oninput="window.updatePendingCode('${item.tempId}', this.value)" placeholder="輸入檔號" rows="3" class="w-full flex-1 bg-white border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-700 text-center focus:outline-none focus:border-blue-500 resize-none">${item.code || ''}</textarea>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -451,10 +488,12 @@
             if ($(`m-${id}`)) $(`m-${id}`).value = m;
         };
 
-        // 🌟 7. 上傳發布：進度條即時顯示已完成張數與百分比
+        // 🌟 7. 上傳發布
         window.confirmBatchUpload = async () => {
             const items = [...window.pendingUploadImages];
-            if (!items.length) return;
+            if (!items.length || window.isUploading) return;
+            
+            window.isUploading = true;
             window.closeUploadBatchModal();
 
             try {
@@ -467,7 +506,6 @@
                     const item = items[i];
                     const docId = item.tempId;
 
-                    // 1. 本地 IndexedDB 快速快取
                     await idbSet(docId, item.src);
                     memoryImageCache.set(docId, item.src);
 
@@ -477,7 +515,6 @@
                         time: item.time || '12:00', createdAt: Date.now()
                     };
 
-                    // 2. 針對該張圖片建立獨立的原子 Batch（包含主文檔 + 4 個切片）
                     const singleBatch = writeBatch(db);
                     singleBatch.set(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId), mainDocData);
 
@@ -486,21 +523,17 @@
                         singleBatch.set(chunkRef, { index: idx, data: chunkStr });
                     });
 
-                    // 3. 逐張提交給雲端，避免網路請求超載
                     await singleBatch.commit();
                     newDocs.push(mainDocData);
 
-                    // 🌟 4. 即時更新已完成張數提示 (例如：已完成 3 / 14 張 (21.4%))
                     const currentPercent = (((i + 1) / total) * 100).toFixed(1);
                     window.setUploadProgress(currentPercent, `正在上傳：已完成 ${i + 1} / ${total} 張 (${currentPercent}%)`);
                 }
 
-                // 全部完成提示
                 window.setUploadProgress("100.0", `全部完成！共 ${total} 張圖片 (100.0%)`);
                 await new Promise(r => setTimeout(r, 450));
                 window.setUploadProgress(-1, "");
 
-                // 去重複並更新前端列表
                 const map = new Map();
                 [...newDocs, ...galleryItems].forEach(x => { if (x?.id) map.set(x.id, x); });
                 galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
@@ -512,6 +545,8 @@
                 window.setUploadProgress(-1, "");
                 console.error("上傳錯誤:", err);
                 window.showToast(`❌ 上傳失敗：${err.message}`, true);
+            } finally {
+                window.isUploading = false;
             }
         };
 
@@ -633,9 +668,12 @@
         </div>
     </div>
 
-    <div id="imageViewer" class="fixed inset-0 bg-black/95 z-[200] hidden flex-col items-center justify-center p-4">
-        <button onclick="$('imageViewer').classList.replace('flex', 'hidden')" class="absolute top-6 right-6 text-white bg-slate-800/80 p-2 rounded-full active:scale-95 shadow-lg border border-slate-600 hover:bg-red-600"><i data-lucide="x" class="w-6 h-6"></i></button>
-        <img id="imageViewerImg" src="" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl border border-slate-700" />
+    <!-- 🌟 全螢幕圖片檢視器 (點擊右上角關閉或點擊背景關閉) -->
+    <div id="imageViewer" class="fixed inset-0 bg-black/95 z-[350] hidden flex-col items-center justify-center p-4" onclick="window.closeFullscreenImg()">
+        <button type="button" onclick="window.closeFullscreenImg()" class="absolute top-6 right-6 text-white bg-slate-800/80 p-2.5 rounded-full active:scale-95 shadow-lg border border-slate-600 hover:bg-red-600 transition-colors z-10" title="關閉預覽">
+            <i data-lucide="x" class="w-6 h-6"></i>
+        </button>
+        <img id="imageViewerImg" src="" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl border border-slate-700" onclick="event.stopPropagation()" />
     </div>
 
     <div id="categoryManageModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
