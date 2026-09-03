@@ -69,8 +69,8 @@
             lucide.createIcons(); modal.classList.replace('hidden', 'flex');
         };
 
-        // 🌟 防崩潰安全壓縮：限制最大邊長 1280px，並使用 Promise.all 平行處理多圖
-        const compressImageSafeAsync = (file, maxDim = 1280) => new Promise((resolve, reject) => {
+        // 🌟 升級版安全壓縮：嚴格控制大小在 Firestore 1MB 限制之內 (maxDim = 800)
+        const compressImageSafeAsync = (file, maxDim = 800) => new Promise((resolve, reject) => {
             const r = new FileReader();
             r.readAsDataURL(file);
             r.onload = (e) => {
@@ -90,7 +90,15 @@
                     ctx.imageSmoothingQuality = 'medium';
                     ctx.drawImage(img, 0, 0, w, h);
                     
-                    const resultWebp = canvas.toDataURL('image/webp', 0.8);
+                    let quality = 0.8;
+                    let resultWebp = canvas.toDataURL('image/webp', quality);
+                    
+                    // 🛡️ 迴圈防禦機制：若 Base64 字串超過 900KB，自動降低品質直到安全為止
+                    while (resultWebp.length > 900000 && quality > 0.3) {
+                        quality -= 0.1;
+                        resultWebp = canvas.toDataURL('image/webp', quality);
+                    }
+                    
                     img.src = '';
                     canvas.width = 0;
                     canvas.height = 0;
@@ -375,7 +383,7 @@
             lucide.createIcons({ root: list });
         };
 
-        // 🌟 修正後的確認上傳函式：使用 async/await 與 Promise.all 徹底防止回檔
+        // 🌟 防回檔且符合 1MB 大小限制的確認上傳函式
         window.confirmBatchUpload = async () => {
             if (!window.pendingUploadImages.length) return;
             window.showToast(`正在發布 ${window.pendingUploadImages.length} 張圖片...`);
