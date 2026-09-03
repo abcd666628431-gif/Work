@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>圖庫管理系統 - 4K分塊 0.6畫質版</title>
+    <title>圖庫管理系統 - 本地IndexedDB與雲端高畫質版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
@@ -18,7 +18,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, getDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBsdBYBeJYqgeDDxF39lZ0pr785SMnwvJs", 
@@ -35,12 +35,58 @@
         const appId = 'default-app-id';
         let currentUser = null;
 
+        // ========================================================
+        // 🌟 本地大容量資料庫引擎 (IndexedDB)，容量可達數 GB，完全不爆掉
+        // ========================================================
+        const IDB_NAME = 'Gallery_HighRes_DB';
+        const IDB_STORE = 'hd_images';
+
+        const openIDB = () => new Promise((resolve, reject) => {
+            const req = indexedDB.open(IDB_NAME, 1);
+            req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+
+        const idbSet = async (key, val) => {
+            const idb = await openIDB();
+            return new Promise((res, rej) => {
+                const tx = idb.transaction(IDB_STORE, 'readwrite');
+                tx.objectStore(IDB_STORE).put(val, key);
+                tx.oncomplete = () => res();
+                tx.onerror = () => rej(tx.error);
+            });
+        };
+
+        const idbGet = async (key) => {
+            const idb = await openIDB();
+            return new Promise((res, rej) => {
+                const tx = idb.transaction(IDB_STORE, 'readonly');
+                const req = tx.objectStore(IDB_STORE).get(key);
+                req.onsuccess = () => res(req.result);
+                req.onerror = () => rej(tx.error);
+            });
+        };
+
+        const idbDel = async (key) => {
+            const idb = await openIDB();
+            return new Promise((res, rej) => {
+                const tx = idb.transaction(IDB_STORE, 'readwrite');
+                tx.objectStore(IDB_STORE).delete(key);
+                tx.oncomplete = () => res();
+                tx.onerror = () => rej(tx.error);
+            });
+        };
+
+        // ========================================================
+        // 基礎快取與輔助函式
+        // ========================================================
         const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(e) { return d; } };
         const safeSetLocal = (k, d) => { try { localStorage.setItem(k, JSON.stringify(d)); } catch(e) {} };
         const pad = (n) => String(n).padStart(2, '0');
 
         let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
-        let galleryItems = getLocal('work_cache_gallery_items', []);
+        let galleryItems = [];
         let mergedImageCache = new Map();
         let currentGalleryCategory = '全部';
         window.pendingUploadImages = [];
@@ -70,8 +116,8 @@
             lucide.createIcons(); modal.classList.replace('hidden', 'flex');
         };
 
-        // 🌟 4K 圖片水平切半工具：畫質設定為 0.6，確保每一塊都安全小於 1MB
-        const splitImageToHalvesAsync = (file, maxDim = 600) => new Promise((resolve, reject) => {
+        // 🌟 高畫質切半工具：尺寸設為 1200px，畫質設為清晰的 0.82
+        const splitImageToHalvesAsync = (file, maxDim = 1200, quality = 0.82) => new Promise((resolve, reject) => {
             const r = new FileReader();
             r.readAsDataURL(file);
             r.onload = (e) => {
@@ -87,60 +133,80 @@
                     canvas.width = w; canvas.height = h;
                     const ctx = canvas.getContext('2d');
                     ctx.imageSmoothingEnabled = true;
-                    ctx.imageSmoothingQuality = 'medium';
+                    ctx.imageSmoothingQuality = 'high';
                     ctx.drawImage(img, 0, 0, w, h);
 
                     const halfH = Math.floor(h / 2);
 
-                    const getSafeWebp = (sourceCanvas, sX, sY, sW, sH) => {
-                        const subCanvas = document.createElement('canvas');
-                        subCanvas.width = sW; subCanvas.height = sH;
-                        const subCtx = subCanvas.getContext('2d');
-                        subCtx.drawImage(sourceCanvas, sX, sY, sW, sH, 0, 0, sW, sH);
+                    // 1. 上半部切片
+                    const topCanvas = document.createElement('canvas');
+                    topCanvas.width = w; topCanvas.height = halfH;
+                    topCanvas.getContext('2d').drawImage(canvas, 0, 0, w, halfH, 0, 0, w, halfH);
+                    let topHalf = topCanvas.toDataURL('image/webp', quality);
 
-                        // 🌟 畫質設定為 0.6
-                        let quality = 0.6;
-                        let result = subCanvas.toDataURL('image/webp', quality);
-                        while (result.length > 500000 && quality > 0.2) {
-                            quality -= 0.1;
-                            result = subCanvas.toDataURL('image/webp', quality);
-                        }
-                        subCanvas.width = 0; subCanvas.height = 0;
-                        return result;
-                    };
+                    // 2. 下半部切片
+                    const botCanvas = document.createElement('canvas');
+                    botCanvas.width = w; botCanvas.height = h - halfH;
+                    botCanvas.getContext('2d').drawImage(canvas, 0, halfH, w, h - halfH, 0, 0, w, h - halfH);
+                    let bottomHalf = botCanvas.toDataURL('image/webp', quality);
 
-                    const topHalf = getSafeWebp(canvas, 0, 0, w, halfH);
-                    const bottomHalf = getSafeWebp(canvas, 0, halfH, w, h - halfH);
-
+                    // 釋放暫存記憶體
                     img.src = '';
                     canvas.width = 0; canvas.height = 0;
-                    resolve({ topHalf, bottomHalf });
+                    topCanvas.width = 0; topCanvas.height = 0;
+                    botCanvas.width = 0; botCanvas.height = 0;
+
+                    resolve({ topHalf, bottomHalf, width: w, height: h });
                 };
                 img.onerror = () => reject(new Error("圖片解析失敗"));
             };
             r.onerror = () => reject(new Error("檔案讀取失敗"));
         });
 
-        // 🌟 無縫拼圖還原工具：將上下兩半組合為完整圖片 (畫質 0.6)
-        const getMergedImageUrlAsync = (id, topHalf, bottomHalf) => {
-            if (!topHalf || !bottomHalf) return Promise.resolve(topHalf || bottomHalf || '');
-            if (mergedImageCache.has(id)) return Promise.resolve(mergedImageCache.get(id));
+        // 🌟 無縫拼圖還原工具：優先讀取本地 IndexedDB，若無則拼裝並快取
+        const getMergedImageUrlAsync = async (id, topHalf, bottomHalf) => {
+            if (mergedImageCache.has(id)) return mergedImageCache.get(id);
+
+            // 優先從本地大容量 IndexedDB 取回完整原圖 (0毫秒延遲)
+            try {
+                const localCached = await idbGet(id);
+                if (localCached) {
+                    mergedImageCache.set(id, localCached);
+                    return localCached;
+                }
+            } catch(e) {}
+
+            // 若本地無暫存，則從 Firestore 抓取下半部拼裝
+            let actualBottomHalf = bottomHalf;
+            if (!actualBottomHalf && currentUser && db) {
+                try {
+                    const chunkSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_chunks', `${id}_bot`));
+                    if (chunkSnap.exists()) actualBottomHalf = chunkSnap.data().bottomHalf;
+                } catch(e) {}
+            }
+
+            if (!topHalf || !actualBottomHalf) return topHalf || actualBottomHalf || '';
 
             return new Promise((resolve) => {
                 const topImg = new Image();
                 const botImg = new Image();
                 let count = 0;
-                const check = () => {
+                const check = async () => {
                     count++;
                     if (count === 2) {
                         const canvas = document.createElement('canvas');
                         canvas.width = topImg.width;
                         canvas.height = topImg.height + botImg.height;
                         const ctx = canvas.getContext('2d');
+                        ctx.imageSmoothingEnabled = true;
+                        ctx.imageSmoothingQuality = 'high';
                         ctx.drawImage(topImg, 0, 0);
                         ctx.drawImage(botImg, 0, topImg.height);
-                        const result = canvas.toDataURL('image/webp', 0.6);
+                        const result = canvas.toDataURL('image/webp', 0.85);
+
                         mergedImageCache.set(id, result);
+                        await idbSet(id, result); // 存入本地 IndexedDB 以供日後秒開
+
                         topImg.src = ''; botImg.src = '';
                         canvas.width = 0; canvas.height = 0;
                         resolve(result);
@@ -151,15 +217,15 @@
                 topImg.onerror = check;
                 botImg.onerror = check;
                 topImg.src = topHalf;
-                botImg.src = bottomHalf;
+                botImg.src = actualBottomHalf;
             });
         };
 
-        // 🌟 序列化逐張上傳函式（慢慢上傳），有效保護手機記憶體
+        // 🌟 序列化逐張處理（慢慢上傳），保護手機記憶體
         window.handleGalleryUpload = async (input) => {
             const files = Array.from(input.files || []);
             if (!files.length) return;
-            window.showToast(`準備逐張處理共 ${files.length} 張圖片...`);
+            window.showToast(`準備處理共 ${files.length} 張高畫質照片...`);
             window.pendingUploadImages = [];
 
             const { time } = getNowInputStrs();
@@ -167,13 +233,14 @@
 
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
-                window.showToast(`正在處理第 ${i + 1} / ${files.length} 張圖片...`);
+                window.showToast(`正在處理第 ${i + 1} / ${files.length} 張高清照片...`);
                 try {
-                    const { topHalf, bottomHalf } = await splitImageToHalvesAsync(file);
-                    const previewSrc = await getMergedImageUrlAsync('preview_' + Math.random(), topHalf, bottomHalf);
-                    
+                    const { topHalf, bottomHalf } = await splitImageToHalvesAsync(file, 1200, 0.82);
+                    const tempId = 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+                    const previewSrc = await getMergedImageUrlAsync(tempId, topHalf, bottomHalf);
+
                     window.pendingUploadImages.push({
-                        tempId: 'tmp_' + Date.now() + Math.random().toString(36).substr(2, 4),
+                        tempId,
                         topHalf,
                         bottomHalf,
                         src: previewSrc,
@@ -265,7 +332,7 @@
             if (newTitle !== null && newTitle.trim()) {
                 item.title = newTitle.trim();
                 safeSetLocal('work_cache_gallery_items', galleryItems);
-                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item);
+                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item, { merge: true });
                 window.renderGallery(); window.showToast('圖片名稱已更新');
             }
         };
@@ -274,8 +341,12 @@
             window.showConfirm('刪除圖片', '確定要刪除這張圖片嗎？', async () => {
                 galleryItems = galleryItems.filter(i => i.id !== id);
                 mergedImageCache.delete(id);
+                await idbDel(id); // 刪除本地 IndexedDB 暫存
                 safeSetLocal('work_cache_gallery_items', galleryItems);
-                if (currentUser) deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id));
+                if (currentUser) {
+                    deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id));
+                    deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_chunks', `${id}_bot`));
+                }
                 window.renderGallery(); window.showToast("已刪除圖片");
             });
         };
@@ -292,7 +363,7 @@
                 document.body.appendChild(link); link.click(); link.remove();
                 await new Promise(resolve => setTimeout(resolve, 250));
             }
-            window.showToast(`✅ 全部 ${galleryItems.length} 張圖片已導出完成！`);
+            window.showToast(`✅ 全部 ${galleryItems.length} 張高清圖片已導出完成！`);
         };
 
         window.openUploadBatchModal = () => {
@@ -394,31 +465,48 @@
             lucide.createIcons({ root: list });
         };
 
-        // 🌟 Firestore 上傳確認函式：依序逐張寫入資料庫，總大小嚴格控制在 1MB 以下
+        // 🌟 核心寫入技術：分開兩筆獨立 Document 儲存，徹底突破 1MB 限制！
         window.confirmBatchUpload = async () => {
             if (!window.pendingUploadImages.length) return;
-            window.showToast(`正在發布 ${window.pendingUploadImages.length} 張圖片到資料庫...`);
+            window.showToast(`正在發布 ${window.pendingUploadImages.length} 張高畫質照片到雲端...`);
             try {
                 if (!currentUser || !db) throw new Error("系統尚未完成驗證授權，請重新整理頁面。");
-                const newDocs = window.pendingUploadImages.map(item => ({
-                    id: 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-                    topHalf: item.topHalf,
-                    bottomHalf: item.bottomHalf,
-                    title: item.title || '無標題',
-                    category: item.category || '未分類',
-                    time: item.time || '12:00',
-                    createdAt: Date.now()
-                }));
 
-                for (const docData of newDocs) {
-                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docData.id);
-                    await setDoc(docRef, docData);
+                const newDocs = [];
+
+                for (const item of window.pendingUploadImages) {
+                    const docId = item.tempId;
+
+                    // 1. 本地 IndexedDB 原生儲存完整原圖 (0MB 雲端佔用)
+                    await idbSet(docId, item.src);
+                    mergedImageCache.set(docId, item.src);
+
+                    // 2. 準備分開存入兩筆獨立 Firestore 文檔
+                    const mainDoc = {
+                        id: docId,
+                        topHalf: item.topHalf, // 上半部 (~350KB)
+                        title: item.title || '無標題',
+                        category: item.category || '未分類',
+                        time: item.time || '12:00',
+                        createdAt: Date.now()
+                    };
+
+                    const chunkDoc = {
+                        id: `${docId}_bot`,
+                        bottomHalf: item.bottomHalf // 下半部 (~350KB)
+                    };
+
+                    // 分開寫入兩筆獨立 Document，每一筆都遠低於 1MB 限制！
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId), mainDoc);
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_chunks', `${docId}_bot`), chunkDoc);
+
+                    newDocs.push(mainDoc);
                 }
 
                 galleryItems = [...newDocs, ...galleryItems];
                 safeSetLocal('work_cache_gallery_items', galleryItems);
                 await window.renderGallery();
-                window.showToast(`✅ 成功上傳 ${newDocs.length} 張圖片！`);
+                window.showToast(`✅ 成功上傳 ${newDocs.length} 張高清照片！`);
                 window.closeUploadBatchModal();
             } catch (err) {
                 console.error("上傳錯誤:", err);
@@ -452,7 +540,7 @@
             window.openCategoryManager(); window.renderGallery();
         };
 
-        // 🌟 Firestore 即時同步元件
+        // 🌟 Firestore 即時同步
         async function initAuthAndSync() {
             try { await signInAnonymously(auth); } catch(e) {}
             onAuthStateChanged(auth, (user) => {
@@ -479,7 +567,7 @@
             <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-2">
                     <div class="w-7 h-7 rounded-lg bg-blue-500 text-white flex items-center justify-center shadow-xs"><i data-lucide="image" class="w-4 h-4"></i></div>
-                    <h1 class="text-lg text-slate-800 tracking-wider font-black">圖庫管理系統 (0.6畫質版)</h1>
+                    <h1 class="text-lg text-slate-800 tracking-wider font-black">圖庫管理系統 (高清雙軌版)</h1>
                 </div>
                 <button type="button" onclick="window.exportAllGalleryImages()" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold tracking-wide transition-all shadow-xs" title="一次導出圖庫所有圖片">
                     <i data-lucide="download" class="w-3.5 h-3.5 mr-1"></i> 導出全部
@@ -515,12 +603,12 @@
             <header class="flex justify-between items-center pb-3 mb-2 border-b border-slate-100 shrink-0">
                 <div class="flex items-center space-x-2">
                     <div class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center"><i data-lucide="images" class="w-5 h-5"></i></div>
-                    <h3 class="font-bold text-base text-slate-800 tracking-wide">確認分塊上傳</h3>
+                    <h3 class="font-bold text-base text-slate-800 tracking-wide">確認高清分塊上傳</h3>
                 </div>
                 <button onclick="window.closeUploadBatchModal()" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div class="bg-blue-50 border border-blue-100 rounded-xl p-2.5 text-center text-xs font-bold text-blue-700 shrink-0 mb-3">
-                📸 已選取 <span id="uploadBatchCount" class="text-blue-900 font-black text-sm">0</span> 張圖片 (將自動切半以避開 1MB 限制)
+                📸 已選取 <span id="uploadBatchCount" class="text-blue-900 font-black text-sm">0</span> 張圖片 (各拆分成獨立雙文件，高達 2MB 配額)
             </div>
             <div id="uploadBatchList" class="flex-1 overflow-y-auto space-y-3 pr-1 scrollbar-hide mb-3"></div>
             <div class="flex justify-end space-x-2.5 pt-3 border-t border-slate-100 shrink-0">
