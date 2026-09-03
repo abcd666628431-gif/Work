@@ -1005,7 +1005,7 @@
             lucide.createIcons();
         };
 
-        const compressImageSafeAsync = (file, maxDim = 1920) => new Promise((resolve, reject) => {
+        const compressImageSafeAsync = (file, maxDim = 1280) => new Promise((resolve, reject) => {
             const r = new FileReader();
             r.readAsDataURL(file);
             r.onload = (e) => {
@@ -1014,20 +1014,32 @@
                 img.onload = () => {
                     const canvas = document.createElement('canvas');
                     let w = img.width, h = img.height;
+                    
+                    // 等比例縮放，避免過大解析度佔用過多記憶體
                     if (w > maxDim || h > maxDim) {
                         if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
                         else { w = Math.round((w * maxDim) / h); h = maxDim; }
                     }
-                    canvas.width = w; canvas.height = h;
+                    
+                    canvas.width = w;
+                    canvas.height = h;
                     const ctx = canvas.getContext('2d');
                     ctx.imageSmoothingEnabled = true;
-                    ctx.imageSmoothingQuality = 'high';
+                    ctx.imageSmoothingQuality = 'medium'; // 調整為 medium 提升批次處理速度
                     ctx.drawImage(img, 0, 0, w, h);
-                    resolve(canvas.toDataURL('image/webp', 0.85));
+                    
+                    const resultWebp = canvas.toDataURL('image/webp', 0.8);
+                    
+                    // 釋放記憶體
+                    img.src = '';
+                    canvas.width = 0;
+                    canvas.height = 0;
+                    
+                    resolve(resultWebp);
                 };
-                img.onerror = () => reject(new Error("解析失敗"));
+                img.onerror = () => reject(new Error("圖片解析失敗"));
             };
-            r.onerror = () => reject(new Error("讀取失敗"));
+            r.onerror = () => reject(new Error("檔案讀取失敗"));
         });
 
         window.toggleEditMode = (checked) => {
@@ -1310,25 +1322,35 @@
         window.handleGalleryUpload = async (input) => {
             const files = Array.from(input.files || []);
             if (!files.length) return;
-            window.showToast(`正在讀取圖片...`);
+            
+            window.showToast(`正在處理 ${files.length} 張圖片，請稍候...`);
             window.pendingUploadImages = [];
 
             const { time } = getNowInputStrs();
             const defaultCat = currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory;
 
-            for (const f of files) {
+            // 使用 Promise.all 讓多張圖片平行非同步壓縮，大幅提升效率
+            const compressionPromises = files.map(async (f) => {
                 try {
                     const src = await compressImageSafeAsync(f);
-                    window.pendingUploadImages.push({
+                    return {
                         tempId: 'tmp_' + Date.now() + Math.random().toString(36).substr(2, 4),
                         src,
                         title: "",
                         time: time,
                         category: defaultCat
-                    });
-                } catch(e) {}
-            }
+                    };
+                } catch (e) {
+                    console.warn("單張圖片壓縮失敗跳過:", e);
+                    return null;
+                }
+            });
+
+            const results = await Promise.all(compressionPromises);
+            window.pendingUploadImages = results.filter(Boolean);
+            
             input.value = '';
+            
             if (window.pendingUploadImages.length > 0) {
                 window.openUploadBatchModal();
             } else {
