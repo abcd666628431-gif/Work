@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>圖庫管理系統</title>
+    <title>圖庫管理系統 - 4K 分塊分頁版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
@@ -40,7 +40,8 @@
         const pad = (n) => String(n).padStart(2, '0');
 
         let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
-        let galleryItems = getLocal('work_cache_gallery_items', []);
+        let galleryItems = [];
+        let mergedImageCache = new Map();
         let currentGalleryCategory = '全部';
         window.pendingUploadImages = [];
 
@@ -69,8 +70,8 @@
             lucide.createIcons(); modal.classList.replace('hidden', 'flex');
         };
 
-        // 🌟 專為 iPhone 4K 超大相片設計的安全壓縮函式 (含 900KB 容量防禦迴圈)
-        const compressImageSafeAsync = (file, maxDim = 800) => new Promise((resolve, reject) => {
+        // 🌟 核心技術：將圖片等比例縮放後，切成上下兩半以繞過 Firestore 1MB 限制
+        const splitImageToHalvesAsync = (file, maxDim = 800) => new Promise((resolve, reject) => {
             const r = new FileReader();
             r.readAsDataURL(file);
             r.onload = (e) => {
@@ -88,28 +89,74 @@
                     ctx.imageSmoothingEnabled = true;
                     ctx.imageSmoothingQuality = 'medium';
                     ctx.drawImage(img, 0, 0, w, h);
-                    
-                    let quality = 0.8;
-                    let resultWebp = canvas.toDataURL('image/webp', quality);
-                    
-                    while (resultWebp.length > 900000 && quality > 0.3) {
-                        quality -= 0.1;
-                        resultWebp = canvas.toDataURL('image/webp', quality);
-                    }
-                    
+
+                    const halfH = Math.floor(h / 2);
+
+                    // 製作上半部
+                    const topCanvas = document.createElement('canvas');
+                    topCanvas.width = w; topCanvas.height = halfH;
+                    const topCtx = topCanvas.getContext('2d');
+                    topCtx.drawImage(canvas, 0, 0, w, halfH, 0, 0, w, halfH);
+                    let topHalf = topCanvas.toDataURL('image/webp', 0.8);
+
+                    // 製作下半部
+                    const botCanvas = document.createElement('canvas');
+                    botCanvas.width = w; botCanvas.height = h - halfH;
+                    const botCtx = botCanvas.getContext('2d');
+                    botCtx.drawImage(canvas, 0, halfH, w, h - halfH, 0, 0, w, h - halfH);
+                    let bottomHalf = botCanvas.toDataURL('image/webp', 0.8);
+
+                    // 清理記憶體
                     img.src = '';
                     canvas.width = 0; canvas.height = 0;
-                    resolve(resultWebp);
+                    topCanvas.width = 0; topCanvas.height = 0;
+                    botCanvas.width = 0; botCanvas.height = 0;
+
+                    resolve({ topHalf, bottomHalf });
                 };
                 img.onerror = () => reject(new Error("圖片解析失敗"));
             };
             r.onerror = () => reject(new Error("檔案讀取失敗"));
         });
 
+        // 🌟 核心技術：將上下兩半 Base64 拼湊還原成完整圖片 URL
+        const getMergedImageUrlAsync = (id, topHalf, bottomHalf) => {
+            if (!topHalf || !bottomHalf) return Promise.resolve(topHalf || bottomHalf || '');
+            if (mergedImageCache.has(id)) return Promise.resolve(mergedImageCache.get(id));
+
+            return new Promise((resolve) => {
+                const topImg = new Image();
+                const botImg = new Image();
+                let count = 0;
+                const check = () => {
+                    count++;
+                    if (count === 2) {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = topImg.width;
+                        canvas.height = topImg.height + botImg.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(topImg, 0, 0);
+                        ctx.drawImage(botImg, 0, topImg.height);
+                        const result = canvas.toDataURL('image/webp', 0.85);
+                        mergedImageCache.set(id, result);
+                        topImg.src = ''; botImg.src = '';
+                        canvas.width = 0; canvas.height = 0;
+                        resolve(result);
+                    }
+                };
+                topImg.onload = check;
+                botImg.onload = check;
+                topImg.onerror = check;
+                botImg.onerror = check;
+                topImg.src = topHalf;
+                botImg.src = bottomHalf;
+            });
+        };
+
         window.handleGalleryUpload = async (input) => {
             const files = Array.from(input.files || []);
             if (!files.length) return;
-            window.showToast(`正在處理 ${files.length} 張圖片，請稍候...`);
+            window.showToast(`正在分割與處理 ${files.length} 張 4K 圖片...`);
             window.pendingUploadImages = [];
 
             const { time } = getNowInputStrs();
@@ -117,10 +164,16 @@
 
             const compressionPromises = files.map(async (f) => {
                 try {
-                    const src = await compressImageSafeAsync(f);
+                    const { topHalf, bottomHalf } = await splitImageToHalvesAsync(f);
+                    const previewSrc = await getMergedImageUrlAsync('preview_' + Math.random(), topHalf, bottomHalf);
                     return {
                         tempId: 'tmp_' + Date.now() + Math.random().toString(36).substr(2, 4),
-                        src, title: "", time: time, category: defaultCat
+                        topHalf,
+                        bottomHalf,
+                        src: previewSrc,
+                        title: "",
+                        time: time,
+                        category: defaultCat
                     };
                 } catch (e) { return null; }
             });
@@ -136,7 +189,7 @@
             }
         };
 
-        window.renderGallery = () => {
+        window.renderGallery = async () => {
             const sidebar = document.getElementById('gallerySidebar'), grid = document.getElementById('galleryGrid');
             if (!sidebar || !grid) return;
             const query = (document.getElementById('gallerySearchInput')?.value || '').trim().toLowerCase();
@@ -158,27 +211,33 @@
                 </label>
             `;
 
+            // 確保所有顯示的項目都已經在記憶體中還原組合完成
+            const renderedCards = await Promise.all(filtered.map(async (i) => {
+                const fullSrc = await getMergedImageUrlAsync(i.id, i.topHalf, i.bottomHalf);
+                return `
+                    <div class="relative group bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col">
+                        <div class="px-2 py-1.5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+                            <span class="text-[9.5px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 truncate max-w-[100px]">${i.category || '未分類'}</span>
+                            <div class="flex items-center shrink-0">
+                                <button onclick="window.deleteGalleryItem('${i.id}')" class="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1 rounded transition-colors active:scale-95" title="刪除圖片"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                            </div>
+                        </div>
+                        <div class="w-full h-28 bg-slate-100 overflow-hidden cursor-pointer" onclick="window.openFullscreenImg('${fullSrc}')">
+                            <img src="${fullSrc}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${i.title || '圖片'}">
+                        </div>
+                        <div class="p-2 flex justify-between items-center bg-white border-t border-slate-100 text-xs gap-1.5">
+                            <span class="text-[11px] text-slate-500 font-mono font-bold shrink-0 flex items-center">
+                                <i data-lucide="clock" class="w-3 h-3 mr-1 text-slate-400"></i>${i.time || '12:00'}
+                            </span>
+                            <span onclick="window.editGalleryItemTitle('${i.id}', event)" class="text-[11px] font-bold text-slate-800 truncate text-right flex-1 cursor-pointer hover:text-blue-600" title="點擊可修改名稱">${i.title || '無標題'}</span>
+                        </div>
+                    </div>`;
+            }));
+
             grid.innerHTML = `
                 <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                     ${cameraSlotHtml}
-                    ${filtered.map(i => `
-                        <div class="relative group bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col">
-                            <div class="px-2 py-1.5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-                                <span class="text-[9.5px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 truncate max-w-[100px]">${i.category || '未分類'}</span>
-                                <div class="flex items-center shrink-0">
-                                    <button onclick="window.deleteGalleryItem('${i.id}')" class="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1 rounded transition-colors active:scale-95" title="刪除圖片"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
-                                </div>
-                            </div>
-                            <div class="w-full h-28 bg-slate-100 overflow-hidden cursor-pointer" onclick="window.openFullscreenImg('${i.src}')">
-                                <img src="${i.src}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${i.title || '圖片'}">
-                            </div>
-                            <div class="p-2 flex justify-between items-center bg-white border-t border-slate-100 text-xs gap-1.5">
-                                <span class="text-[11px] text-slate-500 font-mono font-bold shrink-0 flex items-center">
-                                    <i data-lucide="clock" class="w-3 h-3 mr-1 text-slate-400"></i>${i.time || '12:00'}
-                                </span>
-                                <span onclick="window.editGalleryItemTitle('${i.id}', event)" class="text-[11px] font-bold text-slate-800 truncate text-right flex-1 cursor-pointer hover:text-blue-600" title="點擊可修改名稱">${i.title || '無標題'}</span>
-                            </div>
-                        </div>`).join('')}
+                    ${renderedCards.join('')}
                 </div>`;
 
             lucide.createIcons({ root: grid });
@@ -210,6 +269,7 @@
         window.deleteGalleryItem = (id) => {
             window.showConfirm('刪除圖片', '確定要刪除這張圖片嗎？', async () => {
                 galleryItems = galleryItems.filter(i => i.id !== id);
+                mergedImageCache.delete(id);
                 safeSetLocal('work_cache_gallery_items', galleryItems);
                 if (currentUser) deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id));
                 window.renderGallery(); window.showToast("已刪除圖片");
@@ -218,29 +278,13 @@
 
         window.exportAllGalleryImages = async () => {
             if (!galleryItems || galleryItems.length === 0) return window.showToast('目前圖庫內沒有任何圖片可導出', true);
-            if ('showDirectoryPicker' in window) {
-                try {
-                    const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-                    window.showToast(`已選定資料夾，開始匯出共 ${galleryItems.length} 張圖片...`);
-                    for (let i = 0; i < galleryItems.length; i++) {
-                        const item = galleryItems[i];
-                        if (!item.src) continue;
-                        const safeName = (item.title && item.title.trim() ? item.title.trim() : `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
-                        const res = await fetch(item.src);
-                        const blob = await res.blob();
-                        const fileHandle = await dirHandle.getFileHandle(`${safeName}.webp`, { create: true });
-                        const writable = await fileHandle.createWritable();
-                        await writable.write(blob); await writable.close();
-                    }
-                    window.showToast(`✅ 全部 ${galleryItems.length} 張圖片已成功存入指定資料夾！`);
-                    return;
-                } catch (err) { if (err.name === 'AbortError') return window.showToast('已取消選取資料夾'); }
-            }
-            window.showToast(`開始逐張導出共 ${galleryItems.length} 張圖片...`);
+            window.showToast(`開始導出共 ${galleryItems.length} 張圖片，請稍候...`);
             for (let i = 0; i < galleryItems.length; i++) {
-                const item = galleryItems[i]; if (!item.src) continue;
+                const item = galleryItems[i];
+                const fullSrc = await getMergedImageUrlAsync(item.id, item.topHalf, item.bottomHalf);
+                if (!fullSrc) continue;
                 const safeName = (item.title && item.title.trim() ? item.title.trim() : `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
-                const link = document.createElement('a'); link.href = item.src; link.download = `${safeName}.webp`;
+                const link = document.createElement('a'); link.href = fullSrc; link.download = `${safeName}.webp`;
                 document.body.appendChild(link); link.click(); link.remove();
                 await new Promise(resolve => setTimeout(resolve, 250));
             }
@@ -348,23 +392,33 @@
 
         window.confirmBatchUpload = async () => {
             if (!window.pendingUploadImages.length) return;
-            window.showToast(`正在發布 ${window.pendingUploadImages.length} 張圖片...`);
+            window.showToast(`正在發布 ${window.pendingUploadImages.length} 張圖片到資料庫...`);
             try {
                 if (!currentUser || !db) throw new Error("系統尚未完成驗證授權，請重新整理頁面。");
                 const newDocs = window.pendingUploadImages.map(item => ({
                     id: 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-                    src: item.src, title: item.title || '無標題', category: item.category || '未分類', time: item.time || '12:00', createdAt: Date.now()
+                    topHalf: item.topHalf,
+                    bottomHalf: item.bottomHalf,
+                    title: item.title || '無標題',
+                    category: item.category || '未分類',
+                    time: item.time || '12:00',
+                    createdAt: Date.now()
                 }));
+
                 const uploadPromises = newDocs.map(async (docData) => {
                     const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docData.id);
                     await setDoc(docRef, docData);
                 });
+
                 await Promise.all(uploadPromises);
                 galleryItems = [...newDocs, ...galleryItems];
                 safeSetLocal('work_cache_gallery_items', galleryItems);
-                window.renderGallery(); window.showToast(`✅ 成功上傳 ${newDocs.length} 張圖片！`); window.closeUploadBatchModal();
+                await window.renderGallery();
+                window.showToast(`✅ 成功上傳 ${newDocs.length} 張圖片！`);
+                window.closeUploadBatchModal();
             } catch (err) {
-                console.error("詳細上傳錯誤資訊:", err); window.showToast(`❌ 上傳失敗：${err.message}`, true);
+                console.error("上傳錯誤:", err);
+                window.showToast(`❌ 上傳失敗：${err.message}`, true);
             }
         };
 
@@ -420,7 +474,7 @@
             <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-2">
                     <div class="w-7 h-7 rounded-lg bg-blue-500 text-white flex items-center justify-center shadow-xs"><i data-lucide="image" class="w-4 h-4"></i></div>
-                    <h1 class="text-lg text-slate-800 tracking-wider font-black">圖庫管理系統</h1>
+                    <h1 class="text-lg text-slate-800 tracking-wider font-black">圖庫管理系統 (4K分塊版)</h1>
                 </div>
                 <button type="button" onclick="window.exportAllGalleryImages()" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold tracking-wide transition-all shadow-xs" title="一次導出圖庫所有圖片">
                     <i data-lucide="download" class="w-3.5 h-3.5 mr-1"></i> 導出全部
@@ -456,12 +510,12 @@
             <header class="flex justify-between items-center pb-3 mb-2 border-b border-slate-100 shrink-0">
                 <div class="flex items-center space-x-2">
                     <div class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center"><i data-lucide="images" class="w-5 h-5"></i></div>
-                    <h3 class="font-bold text-base text-slate-800 tracking-wide">確認上傳圖片</h3>
+                    <h3 class="font-bold text-base text-slate-800 tracking-wide">確認分塊上傳</h3>
                 </div>
                 <button onclick="window.closeUploadBatchModal()" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div class="bg-blue-50 border border-blue-100 rounded-xl p-2.5 text-center text-xs font-bold text-blue-700 shrink-0 mb-3">
-                📸 已選取 <span id="uploadBatchCount" class="text-blue-900 font-black text-sm">0</span> 張圖片
+                📸 已選取 <span id="uploadBatchCount" class="text-blue-900 font-black text-sm">0</span> 張圖片 (將自動切半以避開 1MB 限制)
             </div>
             <div id="uploadBatchList" class="flex-1 overflow-y-auto space-y-3 pr-1 scrollbar-hide mb-3"></div>
             <div class="flex justify-end space-x-2.5 pt-3 border-t border-slate-100 shrink-0">
