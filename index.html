@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>圖庫管理系統 - 精確進度即時反饋版</title>
+    <title>圖庫管理系統 - 完成張數即時進度版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
@@ -103,7 +103,7 @@
             setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translate(-50%, -15px)'; setTimeout(() => t.remove(), 300); }, 2500);
         };
 
-        // 🌟 精準進度條：支援小數點後 1 位 (toFixed(1))
+        // 即時平滑進度條 (支援小數點後 1 位與張數文字)
         window.setUploadProgress = (percent, text) => {
             const c = $('globalProgressContainer');
             if (!c) return;
@@ -204,7 +204,7 @@
             return '';
         };
 
-        // 🌟 6. 上傳與列表互動
+        // 🌟 6. 上傳與列表互動 (進度條標記預處理已完成張數)
         window.handleGalleryUpload = async (input) => {
             const files = Array.from(input.files || []);
             if (!files.length) return;
@@ -214,17 +214,26 @@
             const defaultCat = currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory;
 
             for (let i = 0; i < files.length; i++) {
-                const percent = (((i + 1) / files.length) * 100).toFixed(1);
-                window.setUploadProgress(percent, `正在預處理第 ${i + 1} / ${files.length} 張 (${percent}%)...`);
                 try {
                     const { chunks } = await splitImageTo4ChunksAsync(files[i]);
                     const tempId = `img_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`;
                     const previewSrc = await merge4ChunksAsync(chunks);
 
                     window.pendingUploadImages.push({
-                        tempId, chunks, src: previewSrc, title: "", time, category: defaultCat
+                        tempId,
+                        chunks,
+                        src: previewSrc,
+                        prefix: "",
+                        code: "",
+                        title: "",
+                        time,
+                        category: defaultCat
                     });
                 } catch (e) {}
+
+                // 🌟 更新顯示已完成張數與百分比
+                const percent = (((i + 1) / files.length) * 100).toFixed(1);
+                window.setUploadProgress(percent, `正在預處理：已完成 ${i + 1} / ${files.length} 張 (${percent}%)`);
             }
             window.setUploadProgress(-1, "");
             input.value = '';
@@ -339,6 +348,39 @@
         window.closeUploadBatchModal = () => { window.pendingUploadImages = []; $('uploadBatchModal')?.classList.replace('flex', 'hidden'); };
         window.removePendingUploadItem = (tempId) => { window.pendingUploadImages = window.pendingUploadImages.filter(x => x.tempId !== tempId); window.renderUploadBatchList(); };
 
+        const syncItemFullTitle = (item) => {
+            const prefix = item.prefix || '';
+            const code = item.code || '';
+            item.title = `${prefix}${code}`.trim();
+        };
+
+        window.updatePendingPrefix = (tempId, val) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
+            if (!item) return;
+            item.prefix = val.trim();
+            syncItemFullTitle(item);
+        };
+
+        window.updatePendingCode = (tempId, val) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
+            if (!item) return;
+            item.code = val.trim();
+            syncItemFullTitle(item);
+        };
+
+        window.selectPendingPrefix = (tempId, prefixVal) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
+            if (!item) return;
+            item.prefix = prefixVal;
+            syncItemFullTitle(item);
+
+            const prefixInput = $(`prefix-input-${tempId}`);
+            if (prefixInput) prefixInput.value = prefixVal;
+
+            const codeInput = $(`code-input-${tempId}`);
+            if (codeInput) codeInput.focus();
+        };
+
         window.renderUploadBatchList = () => {
             const list = $('uploadBatchList');
             if ($('uploadBatchCount')) $('uploadBatchCount').textContent = window.pendingUploadImages.length;
@@ -359,21 +401,31 @@
                             ${selectableCats.map(cat => `<option value="${cat}" ${item.category === cat ? 'selected' : ''}>${cat}</option>`).join('')}
                         </select>
                     </div>
-                    <div class="flex items-center space-x-2">
-                        <div class="w-[155px] shrink-0">
+                    <div class="flex items-start space-x-2">
+                        <div class="w-[140px] shrink-0">
                             <label class="text-xs font-bold text-slate-600 block mb-1">時間</label>
-                            <div class="flex items-center justify-between bg-white border border-slate-300 rounded-lg px-2.5 py-1.5">
-                                <div class="flex items-center font-mono font-bold text-sm text-slate-800">
+                            <div class="flex items-center justify-between bg-white border border-slate-300 rounded-lg px-2 py-1.5">
+                                <div class="flex items-center font-mono font-bold text-xs text-slate-800">
                                     <select id="h-${item.tempId}" onchange="window.updateTimePart('${item.tempId}','h',this.value)" class="bg-transparent text-center font-mono font-bold">${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}</select>
-                                    <span class="text-slate-400 mx-1 font-bold">:</span>
+                                    <span class="text-slate-400 mx-0.5 font-bold">:</span>
                                     <select id="m-${item.tempId}" onchange="window.updateTimePart('${item.tempId}','m',this.value)" class="bg-transparent text-center font-mono font-bold">${Array.from({length: 60}, (_, i) => `<option value="${pad(i)}" ${pad(i) === mStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}</select>
                                 </div>
                                 <button type="button" onclick="window.setTimeNow('${item.tempId}')" class="text-slate-400 hover:text-blue-500 text-[10px] font-bold ml-1 flex items-center"><i data-lucide="clock" class="w-3 h-3 mr-0.5"></i>現在</button>
                             </div>
                         </div>
+
                         <div class="flex-1 min-w-0">
-                            <label class="text-xs font-bold text-slate-600 block mb-1">名稱</label>
-                            <input type="text" value="${item.title || ''}" oninput="window.pendingUploadImages.find(x=>x.tempId==='${item.tempId}').title=this.value.trim()" placeholder="例如:R-099" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 text-center h-[34px]">
+                            <label class="text-xs font-bold text-slate-600 block mb-1">檔號</label>
+                            <div class="flex items-center space-x-1">
+                                <input type="text" id="prefix-input-${item.tempId}" value="${item.prefix || ''}" oninput="window.updatePendingPrefix('${item.tempId}', this.value)" placeholder="代碼" class="w-16 bg-slate-100 border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-slate-700 text-center h-[34px] focus:bg-white focus:outline-none">
+                                <input type="text" id="code-input-${item.tempId}" value="${item.code || ''}" oninput="window.updatePendingCode('${item.tempId}', this.value)" placeholder="請輸入檔號" class="flex-1 min-w-0 bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 text-center h-[34px] focus:outline-none focus:border-blue-500">
+                            </div>
+                            
+                            <div class="flex items-center gap-1.5 mt-1.5">
+                                <button type="button" onclick="window.selectPendingPrefix('${item.tempId}', '1-0')" class="flex-1 bg-white hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 border border-slate-200 text-slate-600 py-1 rounded-md text-[11px] font-bold transition-all shadow-2xs active:scale-95">一樓</button>
+                                <button type="button" onclick="window.selectPendingPrefix('${item.tempId}', 'R-0')" class="flex-1 bg-white hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 border border-slate-200 text-slate-600 py-1 rounded-md text-[11px] font-bold transition-all shadow-2xs active:scale-95">魚檔</button>
+                                <button type="button" onclick="window.selectPendingPrefix('${item.tempId}', 'J-0')" class="flex-1 bg-white hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 border border-slate-200 text-slate-600 py-1 rounded-md text-[11px] font-bold transition-all shadow-2xs active:scale-95">雞檔</button>
+                            </div>
                         </div>
                     </div>
                 </div>`;
@@ -399,7 +451,7 @@
             if ($(`m-${id}`)) $(`m-${id}`).value = m;
         };
 
-        // 🌟 7. 真實平滑進度提交：解決停在 100% 很久的問題，精準到小數點一位
+        // 🌟 7. 上傳發布：進度條即時顯示已完成張數與百分比
         window.confirmBatchUpload = async () => {
             const items = [...window.pendingUploadImages];
             if (!items.length) return;
@@ -410,18 +462,12 @@
 
                 const total = items.length;
                 const newDocs = [];
-                const allChunkPromises = [];
-                const batch = writeBatch(db);
 
-                // 階段一：逐張打包與本地儲存（佔總進度的 0.0% ~ 85.0%）
                 for (let i = 0; i < total; i++) {
                     const item = items[i];
                     const docId = item.tempId;
 
-                    // 精確計算到小數點後 1 位
-                    const percent = (((i + 1) / total) * 85).toFixed(1);
-                    window.setUploadProgress(percent, `正在準備第 ${i + 1} / ${total} 張 (${percent}%)...`);
-
+                    // 1. 本地 IndexedDB 快速快取
                     await idbSet(docId, item.src);
                     memoryImageCache.set(docId, item.src);
 
@@ -431,27 +477,30 @@
                         time: item.time || '12:00', createdAt: Date.now()
                     };
 
-                    batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId), mainDocData);
+                    // 2. 針對該張圖片建立獨立的原子 Batch（包含主文檔 + 4 個切片）
+                    const singleBatch = writeBatch(db);
+                    singleBatch.set(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId), mainDocData);
 
                     item.chunks.forEach((chunkStr, idx) => {
                         const chunkRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId, 'chunks', `part_${idx}`);
-                        allChunkPromises.push(setDoc(chunkRef, { index: idx, data: chunkStr }));
+                        singleBatch.set(chunkRef, { index: idx, data: chunkStr });
                     });
 
+                    // 3. 逐張提交給雲端，避免網路請求超載
+                    await singleBatch.commit();
                     newDocs.push(mainDocData);
+
+                    // 🌟 4. 即時更新已完成張數提示 (例如：已完成 3 / 14 張 (21.4%))
+                    const currentPercent = (((i + 1) / total) * 100).toFixed(1);
+                    window.setUploadProgress(currentPercent, `正在上傳：已完成 ${i + 1} / ${total} 張 (${currentPercent}%)`);
                 }
 
-                // 階段二：雲端網路發送中（推進至 92.5%）
-                window.setUploadProgress("92.5", "正在與雲端同步資料 (92.5%)...");
-
-                // 平行發送所有切片與主文件批次
-                await Promise.all([batch.commit(), ...allChunkPromises]);
-
-                // 階段三：雲端確認完成，抵達真正的 100.0%
-                window.setUploadProgress("100.0", "上傳完成！(100.0%)");
-                await new Promise(r => setTimeout(r, 350));
+                // 全部完成提示
+                window.setUploadProgress("100.0", `全部完成！共 ${total} 張圖片 (100.0%)`);
+                await new Promise(r => setTimeout(r, 450));
                 window.setUploadProgress(-1, "");
 
+                // 去重複並更新前端列表
                 const map = new Map();
                 [...newDocs, ...galleryItems].forEach(x => { if (x?.id) map.set(x.id, x); });
                 galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
@@ -461,6 +510,7 @@
                 window.showToast(`✅ 成功上傳 ${newDocs.length} 張高清圖片！`);
             } catch (err) {
                 window.setUploadProgress(-1, "");
+                console.error("上傳錯誤:", err);
                 window.showToast(`❌ 上傳失敗：${err.message}`, true);
             }
         };
@@ -550,10 +600,6 @@
                     <i data-lucide="search" class="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400"></i>
                     <input type="text" id="gallerySearchInput" placeholder="搜尋圖片..." oninput="window.renderGallery()" class="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-700 placeholder-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none tracking-wide text-center">
                 </div>
-                <label class="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold shadow-xs shrink-0">
-                    <i data-lucide="camera" class="w-3.5 h-3.5 mr-1"></i> 拍照
-                    <input type="file" accept="image/*" capture="environment" class="hidden" onchange="window.handleGalleryUpload(this)">
-                </label>
                 <label class="bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold shadow-xs shrink-0">
                     <i data-lucide="upload" class="w-3.5 h-3.5 mr-1"></i> 上傳
                     <input type="file" accept="image/*" multiple class="hidden" onchange="window.handleGalleryUpload(this)">
