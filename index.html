@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>圖庫管理系統 - 4K 分塊分頁版</title>
+    <title>圖庫管理系統 - 完整 Firestore 整合版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
@@ -40,7 +40,7 @@
         const pad = (n) => String(n).padStart(2, '0');
 
         let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
-        let galleryItems = [];
+        let galleryItems = getLocal('work_cache_gallery_items', []);
         let mergedImageCache = new Map();
         let currentGalleryCategory = '全部';
         window.pendingUploadImages = [];
@@ -70,7 +70,7 @@
             lucide.createIcons(); modal.classList.replace('hidden', 'flex');
         };
 
-        // 🌟 核心技術：將圖片等比例縮放後，切成上下兩半以繞過 Firestore 1MB 限制
+        // 🌟 4K 圖片切半工具：將高解析度相片切割為上下兩半，確保每塊低於 Firestore 1MB 限制
         const splitImageToHalvesAsync = (file, maxDim = 800) => new Promise((resolve, reject) => {
             const r = new FileReader();
             r.readAsDataURL(file);
@@ -92,21 +92,16 @@
 
                     const halfH = Math.floor(h / 2);
 
-                    // 製作上半部
                     const topCanvas = document.createElement('canvas');
                     topCanvas.width = w; topCanvas.height = halfH;
-                    const topCtx = topCanvas.getContext('2d');
-                    topCtx.drawImage(canvas, 0, 0, w, halfH, 0, 0, w, halfH);
+                    topCanvas.getContext('2d').drawImage(canvas, 0, 0, w, halfH, 0, 0, w, halfH);
                     let topHalf = topCanvas.toDataURL('image/webp', 0.8);
 
-                    // 製作下半部
                     const botCanvas = document.createElement('canvas');
                     botCanvas.width = w; botCanvas.height = h - halfH;
-                    const botCtx = botCanvas.getContext('2d');
-                    botCtx.drawImage(canvas, 0, halfH, w, h - halfH, 0, 0, w, h - halfH);
+                    botCanvas.getContext('2d').drawImage(canvas, 0, halfH, w, h - halfH, 0, 0, w, h - halfH);
                     let bottomHalf = botCanvas.toDataURL('image/webp', 0.8);
 
-                    // 清理記憶體
                     img.src = '';
                     canvas.width = 0; canvas.height = 0;
                     topCanvas.width = 0; topCanvas.height = 0;
@@ -119,7 +114,7 @@
             r.onerror = () => reject(new Error("檔案讀取失敗"));
         });
 
-        // 🌟 核心技術：將上下兩半 Base64 拼湊還原成完整圖片 URL
+        // 🌟 無縫合併還原工具：將上下兩半拼湊為完整圖片
         const getMergedImageUrlAsync = (id, topHalf, bottomHalf) => {
             if (!topHalf || !bottomHalf) return Promise.resolve(topHalf || bottomHalf || '');
             if (mergedImageCache.has(id)) return Promise.resolve(mergedImageCache.get(id));
@@ -156,7 +151,7 @@
         window.handleGalleryUpload = async (input) => {
             const files = Array.from(input.files || []);
             if (!files.length) return;
-            window.showToast(`正在分割與處理 ${files.length} 張 4K 圖片...`);
+            window.showToast(`正在分割與處理 ${files.length} 張圖片...`);
             window.pendingUploadImages = [];
 
             const { time } = getNowInputStrs();
@@ -168,12 +163,7 @@
                     const previewSrc = await getMergedImageUrlAsync('preview_' + Math.random(), topHalf, bottomHalf);
                     return {
                         tempId: 'tmp_' + Date.now() + Math.random().toString(36).substr(2, 4),
-                        topHalf,
-                        bottomHalf,
-                        src: previewSrc,
-                        title: "",
-                        time: time,
-                        category: defaultCat
+                        topHalf, bottomHalf, src: previewSrc, title: "", time: time, category: defaultCat
                     };
                 } catch (e) { return null; }
             });
@@ -211,7 +201,6 @@
                 </label>
             `;
 
-            // 確保所有顯示的項目都已經在記憶體中還原組合完成
             const renderedCards = await Promise.all(filtered.map(async (i) => {
                 const fullSrc = await getMergedImageUrlAsync(i.id, i.topHalf, i.bottomHalf);
                 return `
@@ -390,6 +379,7 @@
             lucide.createIcons({ root: list });
         };
 
+        // 🌟 Firestore 上傳確認函式：安全儲存 topHalf 與 bottomHalf 避開 1MB 限制並防止回檔
         window.confirmBatchUpload = async () => {
             if (!window.pendingUploadImages.length) return;
             window.showToast(`正在發布 ${window.pendingUploadImages.length} 張圖片到資料庫...`);
@@ -448,6 +438,7 @@
             window.openCategoryManager(); window.renderGallery();
         };
 
+        // 🌟 Firestore 即時同步元件
         async function initAuthAndSync() {
             try { await signInAnonymously(auth); } catch(e) {}
             onAuthStateChanged(auth, (user) => {
