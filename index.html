@@ -69,7 +69,7 @@
             lucide.createIcons(); modal.classList.replace('hidden', 'flex');
         };
 
-        // 🌟 升級版安全壓縮：嚴格控制大小在 Firestore 1MB 限制之內 (maxDim = 800)
+        // 🌟 專為 iPhone 4K 超大相片設計的安全壓縮函式 (含 900KB 容量防禦迴圈)
         const compressImageSafeAsync = (file, maxDim = 800) => new Promise((resolve, reject) => {
             const r = new FileReader();
             r.readAsDataURL(file);
@@ -77,14 +77,13 @@
                 const img = new Image();
                 img.src = e.target.result;
                 img.onload = () => {
-                    const canvas = document.createElement('canvas');
                     let w = img.width, h = img.height;
                     if (w > maxDim || h > maxDim) {
                         if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
                         else { w = Math.round((w * maxDim) / h); h = maxDim; }
                     }
-                    canvas.width = w;
-                    canvas.height = h;
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w; canvas.height = h;
                     const ctx = canvas.getContext('2d');
                     ctx.imageSmoothingEnabled = true;
                     ctx.imageSmoothingQuality = 'medium';
@@ -93,15 +92,13 @@
                     let quality = 0.8;
                     let resultWebp = canvas.toDataURL('image/webp', quality);
                     
-                    // 🛡️ 迴圈防禦機制：若 Base64 字串超過 900KB，自動降低品質直到安全為止
                     while (resultWebp.length > 900000 && quality > 0.3) {
                         quality -= 0.1;
                         resultWebp = canvas.toDataURL('image/webp', quality);
                     }
                     
                     img.src = '';
-                    canvas.width = 0;
-                    canvas.height = 0;
+                    canvas.width = 0; canvas.height = 0;
                     resolve(resultWebp);
                 };
                 img.onerror = () => reject(new Error("圖片解析失敗"));
@@ -123,14 +120,9 @@
                     const src = await compressImageSafeAsync(f);
                     return {
                         tempId: 'tmp_' + Date.now() + Math.random().toString(36).substr(2, 4),
-                        src,
-                        title: "",
-                        time: time,
-                        category: defaultCat
+                        src, title: "", time: time, category: defaultCat
                     };
-                } catch (e) {
-                    return null;
-                }
+                } catch (e) { return null; }
             });
 
             const results = await Promise.all(compressionPromises);
@@ -211,8 +203,7 @@
                 item.title = newTitle.trim();
                 safeSetLocal('work_cache_gallery_items', galleryItems);
                 if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item);
-                window.renderGallery();
-                window.showToast('圖片名稱已更新');
+                window.renderGallery(); window.showToast('圖片名稱已更新');
             }
         };
 
@@ -221,53 +212,36 @@
                 galleryItems = galleryItems.filter(i => i.id !== id);
                 safeSetLocal('work_cache_gallery_items', galleryItems);
                 if (currentUser) deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id));
-                window.renderGallery(); 
-                window.showToast("已刪除圖片");
+                window.renderGallery(); window.showToast("已刪除圖片");
             });
         };
 
         window.exportAllGalleryImages = async () => {
-            if (!galleryItems || galleryItems.length === 0) {
-                return window.showToast('目前圖庫內沒有任何圖片可導出', true);
-            }
-
+            if (!galleryItems || galleryItems.length === 0) return window.showToast('目前圖庫內沒有任何圖片可導出', true);
             if ('showDirectoryPicker' in window) {
                 try {
                     const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
                     window.showToast(`已選定資料夾，開始匯出共 ${galleryItems.length} 張圖片...`);
-
                     for (let i = 0; i < galleryItems.length; i++) {
                         const item = galleryItems[i];
                         if (!item.src) continue;
-
                         const safeName = (item.title && item.title.trim() ? item.title.trim() : `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
                         const res = await fetch(item.src);
                         const blob = await res.blob();
                         const fileHandle = await dirHandle.getFileHandle(`${safeName}.webp`, { create: true });
                         const writable = await fileHandle.createWritable();
-                        await writable.write(blob);
-                        await writable.close();
+                        await writable.write(blob); await writable.close();
                     }
-
                     window.showToast(`✅ 全部 ${galleryItems.length} 張圖片已成功存入指定資料夾！`);
                     return;
-                } catch (err) {
-                    if (err.name === 'AbortError') return window.showToast('已取消選取資料夾');
-                }
+                } catch (err) { if (err.name === 'AbortError') return window.showToast('已取消選取資料夾'); }
             }
-
-            window.showToast(`開始逐張導出共 ${galleryItems.length} 張圖片，請稍候...`);
+            window.showToast(`開始逐張導出共 ${galleryItems.length} 張圖片...`);
             for (let i = 0; i < galleryItems.length; i++) {
-                const item = galleryItems[i];
-                if (!item.src) continue;
-
+                const item = galleryItems[i]; if (!item.src) continue;
                 const safeName = (item.title && item.title.trim() ? item.title.trim() : `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
-                const link = document.createElement('a');
-                link.href = item.src;
-                link.download = `${safeName}.webp`;
-                document.body.appendChild(link);
-                link.click();
-                link.remove();
+                const link = document.createElement('a'); link.href = item.src; link.download = `${safeName}.webp`;
+                document.body.appendChild(link); link.click(); link.remove();
                 await new Promise(resolve => setTimeout(resolve, 250));
             }
             window.showToast(`✅ 全部 ${galleryItems.length} 張圖片已導出完成！`);
@@ -300,8 +274,7 @@
             const item = window.pendingUploadImages.find(x => x.tempId === tempId);
             if (!item) return;
             let [h, m] = (item.time || '00:00').split(':');
-            if (part === 'h') h = val;
-            if (part === 'm') m = val;
+            if (part === 'h') h = val; if (part === 'm') m = val;
             item.time = `${h}:${m}`;
         };
 
@@ -311,10 +284,8 @@
             const now = window.getNow();
             const h = pad(now.getHours()), m = pad(now.getMinutes());
             item.time = `${h}:${m}`;
-            const hSelect = document.getElementById(`h-select-${tempId}`);
-            const mSelect = document.getElementById(`m-select-${tempId}`);
-            if (hSelect) hSelect.value = h;
-            if (mSelect) mSelect.value = m;
+            const hSelect = document.getElementById(`h-select-${tempId}`), mSelect = document.getElementById(`m-select-${tempId}`);
+            if (hSelect) hSelect.value = h; if (mSelect) mSelect.value = m;
         };
 
         window.removePendingUploadItem = (tempId) => {
@@ -327,55 +298,47 @@
             const cntEl = document.getElementById('uploadBatchCount');
             if (cntEl) cntEl.textContent = window.pendingUploadImages.length;
             if (!list) return;
-
-            if (!window.pendingUploadImages.length) {
-                window.closeUploadBatchModal();
-                return;
-            }
+            if (!window.pendingUploadImages.length) { window.closeUploadBatchModal(); return; }
 
             const selectableCategories = galleryCategories.filter(c => c !== '全部');
 
             list.innerHTML = window.pendingUploadImages.map((item) => {
                 const [hStr, mStr] = (item.time || '00:00').split(':');
-
                 return `
                 <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col space-y-2.5 relative group shadow-xs">
                     <div class="relative w-full h-36 bg-slate-200 rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
                         <img src="${item.src}" class="w-full h-full object-cover">
-                        <button onclick="window.removePendingUploadItem('${item.tempId}')" class="absolute top-2 right-2 text-slate-500 hover:text-red-500 p-1.5 rounded-full bg-white/90 backdrop-blur-xs shadow-md border border-slate-200 transition-colors active:scale-95" title="移除此張圖片">
+                        <button onclick="window.removePendingUploadItem('${item.tempId}')" class="absolute top-2 right-2 text-slate-500 hover:text-red-500 p-1.5 rounded-full bg-white/90 shadow-md border border-slate-200 transition-colors active:scale-95" title="移除">
                             <i data-lucide="trash-2" class="w-4 h-4"></i>
                         </button>
                     </div>
-
                     <div>
                         <label class="text-xs font-bold text-slate-600 block mb-1">分類</label>
-                        <select onchange="window.updatePendingItemCategory('${item.tempId}', this.value)" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-500 shadow-2xs">
+                        <select onchange="window.updatePendingItemCategory('${item.tempId}', this.value)" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-500">
                             ${selectableCategories.map(cat => `<option value="${cat}" ${item.category === cat ? 'selected' : ''}>${cat}</option>`).join('')}
                         </select>
                     </div>
-
                     <div class="flex items-center space-x-2">
                         <div class="w-[155px] shrink-0">
                             <label class="text-xs font-bold text-slate-600 block mb-1">時間</label>
-                            <div class="flex items-center justify-between bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 shadow-2xs">
+                            <div class="flex items-center justify-between bg-white border border-slate-300 rounded-lg px-2.5 py-1.5">
                                 <div class="flex items-center font-mono font-bold text-sm text-slate-800 shrink-0">
-                                    <select id="h-select-${item.tempId}" onchange="window.updatePendingItemTimePart('${item.tempId}', 'h', this.value)" class="bg-transparent text-center cursor-pointer outline-none hover:text-blue-600 focus:text-blue-600 font-mono font-bold">
+                                    <select id="h-select-${item.tempId}" onchange="window.updatePendingItemTimePart('${item.tempId}', 'h', this.value)" class="bg-transparent text-center cursor-pointer outline-none hover:text-blue-600 font-mono font-bold">
                                         ${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
                                     </select>
                                     <span class="text-slate-400 mx-1 font-bold">:</span>
-                                    <select id="m-select-${item.tempId}" onchange="window.updatePendingItemTimePart('${item.tempId}', 'm', this.value)" class="bg-transparent text-center cursor-pointer outline-none hover:text-blue-600 focus:text-blue-600 font-mono font-bold">
+                                    <select id="m-select-${item.tempId}" onchange="window.updatePendingItemTimePart('${item.tempId}', 'm', this.value)" class="bg-transparent text-center cursor-pointer outline-none hover:text-blue-600 font-mono font-bold">
                                         ${Array.from({length: 60}, (_, i) => `<option value="${pad(i)}" ${pad(i) === mStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
                                     </select>
                                 </div>
-                                <button type="button" onclick="window.setPendingItemTimeToNow('${item.tempId}')" title="設為當前時間" class="text-slate-400 hover:text-blue-500 active:scale-95 transition-all flex items-center text-[10px] font-bold ml-1 whitespace-nowrap shrink-0">
+                                <button type="button" onclick="window.setPendingItemTimeToNow('${item.tempId}')" class="text-slate-400 hover:text-blue-500 active:scale-95 transition-all flex items-center text-[10px] font-bold ml-1 whitespace-nowrap shrink-0">
                                     <i data-lucide="clock" class="w-3 h-3 mr-0.5 shrink-0"></i>現在
                                 </button>
                             </div>
                         </div>
-
                         <div class="flex-1 min-w-0">
                             <label class="text-xs font-bold text-slate-600 block mb-1">名稱</label>
-                            <input type="text" value="${item.title || ''}" oninput="window.updatePendingItemTitle('${item.tempId}', this.value)" placeholder="例如:R-099" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-500 shadow-2xs text-center h-[34px]">
+                            <input type="text" value="${item.title || ''}" oninput="window.updatePendingItemTitle('${item.tempId}', this.value)" placeholder="例如:R-099" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-500 text-center h-[34px]">
                         </div>
                     </div>
                 </div>`;
@@ -383,42 +346,25 @@
             lucide.createIcons({ root: list });
         };
 
-        // 🌟 防回檔且符合 1MB 大小限制的確認上傳函式
         window.confirmBatchUpload = async () => {
             if (!window.pendingUploadImages.length) return;
             window.showToast(`正在發布 ${window.pendingUploadImages.length} 張圖片...`);
-
             try {
-                if (!currentUser || !db) {
-                    throw new Error("系統尚未完成驗證授權，請重新整理頁面。");
-                }
-
+                if (!currentUser || !db) throw new Error("系統尚未完成驗證授權，請重新整理頁面。");
                 const newDocs = window.pendingUploadImages.map(item => ({
                     id: 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-                    src: item.src,
-                    title: item.title || '無標題',
-                    category: item.category || '未分類',
-                    time: item.time || '12:00',
-                    createdAt: Date.now()
+                    src: item.src, title: item.title || '無標題', category: item.category || '未分類', time: item.time || '12:00', createdAt: Date.now()
                 }));
-
                 const uploadPromises = newDocs.map(async (docData) => {
                     const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docData.id);
                     await setDoc(docRef, docData);
                 });
-
                 await Promise.all(uploadPromises);
-
                 galleryItems = [...newDocs, ...galleryItems];
                 safeSetLocal('work_cache_gallery_items', galleryItems);
-
-                window.renderGallery();
-                window.showToast(`✅ 成功上傳 ${newDocs.length} 張圖片！`);
-                window.closeUploadBatchModal();
-
+                window.renderGallery(); window.showToast(`✅ 成功上傳 ${newDocs.length} 張圖片！`); window.closeUploadBatchModal();
             } catch (err) {
-                console.error("詳細上傳錯誤資訊:", err);
-                window.showToast(`❌ 上傳失敗：${err.message}`, true);
+                console.error("詳細上傳錯誤資訊:", err); window.showToast(`❌ 上傳失敗：${err.message}`, true);
             }
         };
 
@@ -431,55 +377,41 @@
                     <div class="flex justify-between items-center p-2 bg-white rounded-lg border border-slate-200 text-xs font-bold text-slate-700">
                         <span>${c}</span>${!['全部', '任務附件', '未分類'].includes(c) ? `<button onclick="window.removeCategoryAction(${idx})" class="text-slate-400 hover:text-red-500"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>` : '<span class="text-[9px] text-slate-400 font-normal">系統預設</span>'}
                     </div>`).join('')}</div>`;
-            modal.classList.replace('hidden', 'flex');
-            lucide.createIcons({ root: list });
+            modal.classList.replace('hidden', 'flex'); lucide.createIcons({ root: list });
         };
 
         window.closeCategoryManager = () => document.getElementById('categoryManageModal')?.classList.replace('flex', 'hidden');
-
         window.addCategoryAction = () => {
             const val = document.getElementById('newCatInput').value.trim();
             if (!val || galleryCategories.includes(val)) return;
-            galleryCategories.push(val); 
-            safeSetLocal('work_cache_gallery_categories', galleryCategories);
+            galleryCategories.push(val); safeSetLocal('work_cache_gallery_categories', galleryCategories);
             if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
-            window.openCategoryManager(); 
-            window.renderGallery();
+            window.openCategoryManager(); window.renderGallery();
         };
-
         window.removeCategoryAction = (idx) => {
-            galleryCategories.splice(idx, 1); 
-            safeSetLocal('work_cache_gallery_categories', galleryCategories);
+            galleryCategories.splice(idx, 1); safeSetLocal('work_cache_gallery_categories', galleryCategories);
             if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
-            window.openCategoryManager(); 
-            window.renderGallery();
+            window.openCategoryManager(); window.renderGallery();
         };
 
         async function initAuthAndSync() {
             try { await signInAnonymously(auth); } catch(e) {}
             onAuthStateChanged(auth, (user) => {
-                currentUser = user;
-                if (!user) return;
+                currentUser = user; if (!user) return;
                 onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), (snap) => {
                     if (snap.exists() && snap.data().categories) {
-                        galleryCategories = snap.data().categories;
-                        safeSetLocal('work_cache_gallery_categories', galleryCategories);
-                        window.renderGallery();
+                        galleryCategories = snap.data().categories; safeSetLocal('work_cache_gallery_categories', galleryCategories); window.renderGallery();
                     }
                 });
                 onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snap) => {
-                    let items = []; 
-                    snap.forEach(d => items.push(d.data()));
+                    let items = []; snap.forEach(d => items.push(d.data()));
                     items.sort((a,b) => (b.id || '').localeCompare(a.id || ''));
-                    galleryItems = items; 
-                    safeSetLocal('work_cache_gallery_items', galleryItems);
-                    window.renderGallery();
+                    galleryItems = items; safeSetLocal('work_cache_gallery_items', galleryItems); window.renderGallery();
                 });
             });
         }
 
-        window.renderGallery();
-        initAuthAndSync();
+        window.renderGallery(); initAuthAndSync();
     </script>
 </head>
 <body class="flex justify-center items-center min-h-screen p-0 sm:py-6 bg-[#f0ebe1]">
@@ -487,9 +419,7 @@
         <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-30 border-b border-[#e5dfd3] p-4 pt-6 shadow-xs shrink-0">
             <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-2">
-                    <div class="w-7 h-7 rounded-lg bg-blue-500 text-white flex items-center justify-center shadow-xs">
-                        <i data-lucide="image" class="w-4 h-4"></i>
-                    </div>
+                    <div class="w-7 h-7 rounded-lg bg-blue-500 text-white flex items-center justify-center shadow-xs"><i data-lucide="image" class="w-4 h-4"></i></div>
                     <h1 class="text-lg text-slate-800 tracking-wider font-black">圖庫管理系統</h1>
                 </div>
                 <button type="button" onclick="window.exportAllGalleryImages()" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold tracking-wide transition-all shadow-xs" title="一次導出圖庫所有圖片">
@@ -525,9 +455,7 @@
         <div class="bg-white rounded-2xl p-5 w-full max-w-[420px] shadow-2xl relative max-h-[88vh] flex flex-col" onclick="event.stopPropagation()">
             <header class="flex justify-between items-center pb-3 mb-2 border-b border-slate-100 shrink-0">
                 <div class="flex items-center space-x-2">
-                    <div class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-                        <i data-lucide="images" class="w-5 h-5"></i>
-                    </div>
+                    <div class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center"><i data-lucide="images" class="w-5 h-5"></i></div>
                     <h3 class="font-bold text-base text-slate-800 tracking-wide">確認上傳圖片</h3>
                 </div>
                 <button onclick="window.closeUploadBatchModal()" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
@@ -544,9 +472,7 @@
     </div>
 
     <div id="imageViewer" class="fixed inset-0 bg-black/95 z-[200] hidden flex-col items-center justify-center p-4">
-        <button onclick="document.getElementById('imageViewer').classList.replace('flex', 'hidden')" class="absolute top-6 right-6 text-white bg-slate-800/80 p-2 rounded-full active:scale-95 shadow-lg border border-slate-600 hover:bg-red-600 transition-colors" title="關閉">
-            <i data-lucide="x" class="w-6 h-6"></i>
-        </button>
+        <button onclick="document.getElementById('imageViewer').classList.replace('flex', 'hidden')" class="absolute top-6 right-6 text-white bg-slate-800/80 p-2 rounded-full active:scale-95 shadow-lg border border-slate-600 hover:bg-red-600 transition-colors" title="關閉"><i data-lucide="x" class="w-6 h-6"></i></button>
         <img id="imageViewerImg" src="" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl border border-slate-700" />
     </div>
 
