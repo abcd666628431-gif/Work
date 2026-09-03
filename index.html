@@ -69,7 +69,7 @@
             lucide.createIcons(); modal.classList.replace('hidden', 'flex');
         };
 
-        // 🌟 防崩潰安全壓縮：限制最大邊長 1280px，並使用 Promise.all 平行處理多圖
+        // 防崩潰安全壓縮：限制最大邊長 1280px，並使用 Promise.all 平行處理多圖
         const compressImageSafeAsync = (file, maxDim = 1280) => new Promise((resolve, reject) => {
             const r = new FileReader();
             r.readAsDataURL(file);
@@ -375,26 +375,40 @@
             lucide.createIcons({ root: list });
         };
 
-        window.confirmBatchUpload = () => {
+        // 🌟 修正後的確認上傳函式：使用 async/await 與 Promise.all 徹底防止回檔
+        window.confirmBatchUpload = async () => {
             if (!window.pendingUploadImages.length) return;
             window.showToast(`正在發布 ${window.pendingUploadImages.length} 張圖片...`);
 
-            window.pendingUploadImages.forEach(item => {
-                const galleryDoc = {
-                    id: 'img_' + Date.now() + Math.random().toString(36).substr(2, 4),
+            try {
+                const newDocs = window.pendingUploadImages.map(item => ({
+                    id: 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
                     src: item.src,
                     title: item.title || '無標題',
                     category: item.category || '未分類',
-                    time: item.time || '12:00'
-                };
-                galleryItems.unshift(galleryDoc);
-                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', galleryDoc.id), galleryDoc);
-            });
+                    time: item.time || '12:00',
+                    createdAt: Date.now()
+                }));
 
-            safeSetLocal('work_cache_gallery_items', galleryItems);
-            window.renderGallery();
-            window.showToast(`已成功上傳 ${window.pendingUploadImages.length} 張圖片！`);
-            window.closeUploadBatchModal();
+                if (currentUser && db) {
+                    const uploadPromises = newDocs.map(docData => {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docData.id);
+                        return setDoc(docRef, docData);
+                    });
+                    await Promise.all(uploadPromises);
+                }
+
+                galleryItems = [...newDocs, ...galleryItems];
+                safeSetLocal('work_cache_gallery_items', galleryItems);
+
+                window.renderGallery();
+                window.showToast(`✅ 成功上傳 ${newDocs.length} 張圖片！`);
+                window.closeUploadBatchModal();
+
+            } catch (err) {
+                console.error("上傳失敗:", err);
+                window.showToast("❌ 上傳失敗，請檢查網路連線", true);
+            }
         };
 
         window.openCategoryManager = () => {
