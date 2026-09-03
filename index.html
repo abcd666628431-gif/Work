@@ -69,7 +69,7 @@
             lucide.createIcons(); modal.classList.replace('hidden', 'flex');
         };
 
-        // 防崩潰安全壓縮：限制最大邊長 1280px，並使用 Promise.all 平行處理多圖
+        // 🌟 防崩潰安全壓縮：限制最大邊長 1280px，並使用 Promise.all 平行處理多圖
         const compressImageSafeAsync = (file, maxDim = 1280) => new Promise((resolve, reject) => {
             const r = new FileReader();
             r.readAsDataURL(file);
@@ -381,6 +381,10 @@
             window.showToast(`正在發布 ${window.pendingUploadImages.length} 張圖片...`);
 
             try {
+                if (!currentUser || !db) {
+                    throw new Error("系統尚未完成驗證授權，請重新整理頁面。");
+                }
+
                 const newDocs = window.pendingUploadImages.map(item => ({
                     id: 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
                     src: item.src,
@@ -390,13 +394,12 @@
                     createdAt: Date.now()
                 }));
 
-                if (currentUser && db) {
-                    const uploadPromises = newDocs.map(docData => {
-                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docData.id);
-                        return setDoc(docRef, docData);
-                    });
-                    await Promise.all(uploadPromises);
-                }
+                const uploadPromises = newDocs.map(async (docData) => {
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docData.id);
+                    await setDoc(docRef, docData);
+                });
+
+                await Promise.all(uploadPromises);
 
                 galleryItems = [...newDocs, ...galleryItems];
                 safeSetLocal('work_cache_gallery_items', galleryItems);
@@ -406,8 +409,8 @@
                 window.closeUploadBatchModal();
 
             } catch (err) {
-                console.error("上傳失敗:", err);
-                window.showToast("❌ 上傳失敗，請檢查網路連線", true);
+                console.error("詳細上傳錯誤資訊:", err);
+                window.showToast(`❌ 上傳失敗：${err.message}`, true);
             }
         };
 
