@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>圖庫管理系統 - 極速平行上傳版</title>
+    <title>圖庫管理系統 - 精確進度即時反饋版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
-        *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+        *::-webkit-scrollbar { display: none !important; width: 0 !important; }
         * { -ms-overflow-style: none !important; scrollbar-width: none !important; }
         html, body { font-family: 'Inter', 'Noto Sans TC', sans-serif; background-color: #f0ebe1 !important; color: #334155; margin: 0; padding: 0; min-height: 100%; overflow-x: hidden; }
         @keyframes flag-fade-in { 0% { opacity: 0; transform: scale(0.95); } 100% { opacity: 1; transform: scale(1); } }
@@ -18,8 +18,10 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, getDoc, getDocs, deleteDoc, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // 🌟 1. 核心參數與組態設定
+        const CONFIG = { maxDim: 1200, quality: 0.6 };
         const firebaseConfig = {
             apiKey: "AIzaSyBsdBYBeJYqgeDDxF39lZ0pr785SMnwvJs", 
             authDomain: "work-eb62f.firebaseapp.com",
@@ -35,20 +37,25 @@
         const appId = 'default-app-id';
         let currentUser = null;
 
-        const IDB_NAME = 'QuadChunk_Gallery_DB_V2';
-        const IDB_STORE = 'hd_full_images';
+        // 🌟 2. 輕量 DOM 選擇器與輔助函式
+        const $ = id => document.getElementById(id);
+        const pad = n => String(n).padStart(2, '0');
+        const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
+        const safeSetLocal = (k, d) => { try { localStorage.setItem(k, JSON.stringify(d)); } catch {} };
 
-        const openIDB = () => new Promise((resolve, reject) => {
-            const req = indexedDB.open(IDB_NAME, 1);
+        // 🌟 3. IndexedDB 模組
+        const IDB_STORE = 'hd_full_images';
+        const openIDB = () => new Promise((res, rej) => {
+            const req = indexedDB.open('QuadChunk_Gallery_DB_V2', 1);
             req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = () => reject(req.error);
+            req.onsuccess = () => res(req.result);
+            req.onerror = () => rej(req.error);
         });
 
         const idbSet = async (key, val) => {
-            const idb = await openIDB();
+            const dbInstance = await openIDB();
             return new Promise((res, rej) => {
-                const tx = idb.transaction(IDB_STORE, 'readwrite');
+                const tx = dbInstance.transaction(IDB_STORE, 'readwrite');
                 tx.objectStore(IDB_STORE).put(val, key);
                 tx.oncomplete = () => res();
                 tx.onerror = () => rej(tx.error);
@@ -56,29 +63,26 @@
         };
 
         const idbGet = async (key) => {
-            const idb = await openIDB();
-            return new Promise((res, rej) => {
-                const tx = idb.transaction(IDB_STORE, 'readonly');
+            const dbInstance = await openIDB();
+            return new Promise((res) => {
+                const tx = dbInstance.transaction(IDB_STORE, 'readonly');
                 const req = tx.objectStore(IDB_STORE).get(key);
                 req.onsuccess = () => res(req.result);
-                req.onerror = () => rej(tx.error);
+                req.onerror = () => res(null);
             });
         };
 
         const idbDel = async (key) => {
-            const idb = await openIDB();
-            return new Promise((res, rej) => {
-                const tx = idb.transaction(IDB_STORE, 'readwrite');
+            const dbInstance = await openIDB();
+            return new Promise((res) => {
+                const tx = dbInstance.transaction(IDB_STORE, 'readwrite');
                 tx.objectStore(IDB_STORE).delete(key);
                 tx.oncomplete = () => res();
-                tx.onerror = () => rej(tx.error);
+                tx.onerror = () => res();
             });
         };
 
-        const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(e) { return d; } };
-        const safeSetLocal = (k, d) => { try { localStorage.setItem(k, JSON.stringify(d)); } catch(e) {} };
-        const pad = (n) => String(n).padStart(2, '0');
-
+        // 🌟 4. 全域狀態
         let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
         let galleryItems = getLocal('work_cache_gallery_items', []);
         let memoryImageCache = new Map();
@@ -93,142 +97,114 @@
 
         window.showToast = (msg, isErr = false) => {
             const t = document.createElement('div');
-            t.className = `fixed top-6 left-1/2 transform -translate-x-1/2 px-5 py-2.5 rounded-full shadow-lg text-xs font-bold z-[9999] transition-all duration-300 pointer-events-none ${isErr ? 'bg-red-500 text-white' : 'bg-slate-800 text-white'}`;
+            t.className = `fixed top-6 left-1/2 -translate-x-1/2 px-5 py-2.5 rounded-full shadow-lg text-xs font-bold z-[9999] transition-all duration-300 pointer-events-none ${isErr ? 'bg-red-500' : 'bg-slate-800'} text-white`;
             t.textContent = msg;
             document.body.appendChild(t);
             setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translate(-50%, -15px)'; setTimeout(() => t.remove(), 300); }, 2500);
         };
 
+        // 🌟 精準進度條：支援小數點後 1 位 (toFixed(1))
         window.setUploadProgress = (percent, text) => {
-            const bar = document.getElementById('globalProgressBar');
-            const container = document.getElementById('globalProgressContainer');
-            const textEl = document.getElementById('globalProgressText');
-            if (!bar || !container || !textEl) return;
-
-            if (percent < 0) {
-                container.classList.add('hidden');
-            } else {
-                container.classList.remove('hidden');
-                bar.style.width = `${Math.min(100, Math.max(0, percent))}%`;
-                textEl.textContent = text;
-            }
+            const c = $('globalProgressContainer');
+            if (!c) return;
+            if (percent < 0) return c.classList.add('hidden');
+            c.classList.remove('hidden');
+            const safePercent = Math.min(100, Math.max(0, percent));
+            $('globalProgressBar').style.width = `${safePercent}%`;
+            $('globalProgressText').textContent = text;
         };
 
-        const splitImageTo4ChunksAsync = (file, maxDim = 1200, quality = 0.6) => new Promise((resolve, reject) => {
+        // 🌟 5. 高效 Canvas 圖片切分與拼合
+        const splitImageTo4ChunksAsync = (file, maxDim = CONFIG.maxDim, quality = CONFIG.quality) => new Promise((resolve, reject) => {
             const r = new FileReader();
             r.readAsDataURL(file);
             r.onload = (e) => {
                 const img = new Image();
                 img.src = e.target.result;
                 img.onload = () => {
-                    let w = img.width, h = img.height;
+                    let { width: w, height: h } = img;
                     if (w > maxDim || h > maxDim) {
-                        if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
-                        else { w = Math.round((w * maxDim) / h); h = maxDim; }
+                        const scale = maxDim / Math.max(w, h);
+                        w = Math.round(w * scale);
+                        h = Math.round(h * scale);
                     }
                     const canvas = document.createElement('canvas');
                     canvas.width = w; canvas.height = h;
-                    const ctx = canvas.getContext('2d');
-                    ctx.imageSmoothingEnabled = true;
-                    ctx.imageSmoothingQuality = 'medium';
-                    ctx.drawImage(img, 0, 0, w, h);
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
 
                     const chunkHeight = Math.floor(h / 4);
-                    const chunks = [];
-
-                    for (let i = 0; i < 4; i++) {
-                        const subCanvas = document.createElement('canvas');
+                    const chunks = Array.from({ length: 4 }, (_, i) => {
+                        const sub = document.createElement('canvas');
                         const curH = (i === 3) ? (h - chunkHeight * 3) : chunkHeight;
-                        subCanvas.width = w;
-                        subCanvas.height = curH;
-                        
-                        const subCtx = subCanvas.getContext('2d');
-                        subCtx.drawImage(canvas, 0, i * chunkHeight, w, curH, 0, 0, w, curH);
-
-                        chunks.push(subCanvas.toDataURL('image/webp', quality));
-                        subCanvas.width = 0; subCanvas.height = 0;
-                    }
+                        sub.width = w; sub.height = curH;
+                        sub.getContext('2d').drawImage(canvas, 0, i * chunkHeight, w, curH, 0, 0, w, curH);
+                        return sub.toDataURL('image/webp', quality);
+                    });
 
                     img.src = '';
-                    canvas.width = 0; canvas.height = 0;
                     resolve({ chunks, width: w, height: h });
                 };
-                img.onerror = () => reject(new Error("圖片解析失敗"));
+                img.onerror = () => reject(new Error("圖片載入失敗"));
             };
             r.onerror = () => reject(new Error("檔案讀取失敗"));
         });
 
-        const merge4ChunksAsync = (chunks) => new Promise((resolve, reject) => {
-            if (!chunks || chunks.length === 0) return resolve('');
-            if (chunks.length === 1) return resolve(chunks[0]);
+        const merge4ChunksAsync = async (chunks) => {
+            if (!chunks?.length) return '';
+            if (chunks.length === 1) return chunks[0];
+            const imgs = await Promise.all(chunks.map(src => new Promise((res, rej) => {
+                const im = new Image();
+                im.onload = () => res(im);
+                im.onerror = () => rej(new Error("切片載入失敗"));
+                im.src = src;
+            })));
 
-            const loadedImages = [];
-            let count = 0;
+            const totalW = imgs[0].naturalWidth;
+            const totalH = imgs.reduce((sum, im) => sum + im.naturalHeight, 0);
+            const canvas = document.createElement('canvas');
+            canvas.width = totalW; canvas.height = totalH;
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingQuality = 'high';
 
-            for (let i = 0; i < chunks.length; i++) {
-                const subImg = new Image();
-                subImg.onload = () => {
-                    count++;
-                    if (count === chunks.length) {
-                        const totalW = loadedImages[0].naturalWidth;
-                        let totalH = 0;
-                        loadedImages.forEach(im => totalH += im.naturalHeight);
-
-                        const canvas = document.createElement('canvas');
-                        canvas.width = totalW;
-                        canvas.height = totalH;
-                        const ctx = canvas.getContext('2d');
-                        ctx.imageSmoothingEnabled = true;
-                        ctx.imageSmoothingQuality = 'high';
-
-                        let curY = 0;
-                        loadedImages.forEach(im => {
-                            ctx.drawImage(im, 0, curY);
-                            curY += im.naturalHeight;
-                            im.src = '';
-                        });
-
-                        const finalUrl = canvas.toDataURL('image/webp', 0.6);
-                        canvas.width = 0; canvas.height = 0;
-                        resolve(finalUrl);
-                    }
-                };
-                subImg.onerror = () => reject(new Error("圖片切片還原失敗"));
-                subImg.src = chunks[i];
-                loadedImages.push(subImg);
-            }
-        });
+            let curY = 0;
+            imgs.forEach(im => {
+                ctx.drawImage(im, 0, curY);
+                curY += im.naturalHeight;
+            });
+            return canvas.toDataURL('image/webp', CONFIG.quality);
+        };
 
         const getFullImageUrlAsync = async (item) => {
             const id = item.id;
             if (memoryImageCache.has(id)) return memoryImageCache.get(id);
 
-            try {
-                const idbCached = await idbGet(id);
-                if (idbCached) {
-                    memoryImageCache.set(id, idbCached);
-                    return idbCached;
-                }
-            } catch(e) {}
+            const idbCached = await idbGet(id);
+            if (idbCached) {
+                memoryImageCache.set(id, idbCached);
+                return idbCached;
+            }
 
             if (currentUser && db) {
                 try {
                     const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id, 'chunks'));
                     const chunkList = [];
-                    snap.forEach(d => { chunkList.push(d.data()); });
+                    snap.forEach(d => chunkList.push(d.data()));
                     chunkList.sort((a, b) => a.index - b.index);
 
-                    if (chunkList.length > 0) {
+                    if (chunkList.length) {
                         const mergedUrl = await merge4ChunksAsync(chunkList.map(c => c.data));
                         memoryImageCache.set(id, mergedUrl);
                         await idbSet(id, mergedUrl);
                         return mergedUrl;
                     }
-                } catch(e) {}
+                } catch (e) {
+                    console.error("雲端載入失敗:", e);
+                }
             }
             return '';
         };
 
+        // 🌟 6. 上傳與列表互動
         window.handleGalleryUpload = async (input) => {
             const files = Array.from(input.files || []);
             if (!files.length) return;
@@ -238,42 +214,45 @@
             const defaultCat = currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory;
 
             for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                window.setUploadProgress(Math.round(((i + 1) / files.length) * 50), `正在切分第 ${i + 1} / ${files.length} 張...`);
+                const percent = (((i + 1) / files.length) * 100).toFixed(1);
+                window.setUploadProgress(percent, `正在預處理第 ${i + 1} / ${files.length} 張 (${percent}%)...`);
                 try {
-                    const { chunks } = await splitImageTo4ChunksAsync(file, 1200, 0.6);
-                    const tempId = 'img_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substr(2, 4);
+                    const { chunks } = await splitImageTo4ChunksAsync(files[i]);
+                    const tempId = `img_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`;
                     const previewSrc = await merge4ChunksAsync(chunks);
 
                     window.pendingUploadImages.push({
-                        tempId, chunks, src: previewSrc, title: "", time: time, category: defaultCat
+                        tempId, chunks, src: previewSrc, title: "", time, category: defaultCat
                     });
                 } catch (e) {}
             }
             window.setUploadProgress(-1, "");
             input.value = '';
 
-            if (window.pendingUploadImages.length > 0) {
-                window.openUploadBatchModal();
-            } else {
-                window.showToast("無法讀取選取的圖片", true);
-            }
+            if (window.pendingUploadImages.length) window.openUploadBatchModal();
+            else window.showToast("無法讀取選取的圖片", true);
         };
 
         window.renderGallery = async () => {
-            const sidebar = document.getElementById('gallerySidebar'), grid = document.getElementById('galleryGrid');
+            const sidebar = $('gallerySidebar'), grid = $('galleryGrid');
             if (!sidebar || !grid) return;
-            const query = (document.getElementById('gallerySearchInput')?.value || '').trim().toLowerCase();
+            const query = ($('gallerySearchInput')?.value || '').trim().toLowerCase();
 
             sidebar.innerHTML = `
-                <div class="p-2 border-b border-slate-200 w-full flex justify-between items-center bg-slate-100"><span class="text-[10px] font-bold text-slate-500">分類</span><button onclick="window.openCategoryManager()" class="text-slate-400 hover:text-blue-500 p-0.5"><i data-lucide="settings" class="w-3.5 h-3.5"></i></button></div>
-                ${galleryCategories.map(cat => `<button onclick="window.setGalleryCategory('${cat}')" class="w-full text-center py-2 px-1 text-[11px] font-bold rounded-md transition-colors truncate ${currentGalleryCategory === cat ? 'bg-blue-500 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-200'}">${cat}</button>`).join('')}`;
+                <div class="p-2 border-b border-slate-200 w-full flex justify-between items-center bg-slate-100">
+                    <span class="text-[10px] font-bold text-slate-500">分類</span>
+                    <button onclick="window.openCategoryManager()" class="text-slate-400 hover:text-blue-500 p-0.5"><i data-lucide="settings" class="w-3.5 h-3.5"></i></button>
+                </div>
+                ${galleryCategories.map(cat => `<button onclick="window.setGalleryCategory('${cat}')" class="w-full text-center py-2 px-1 text-[11px] font-bold rounded-md transition-colors truncate ${currentGalleryCategory === cat ? 'bg-blue-500 text-white' : 'text-slate-600 hover:bg-slate-200'}">${cat}</button>`).join('')}`;
 
-            const filtered = galleryItems.filter(item => (currentGalleryCategory === '全部' || item.category === currentGalleryCategory) && (!query || (item.title && item.title.toLowerCase().includes(query)) || (item.time && item.time.toLowerCase().includes(query))));
+            const filtered = galleryItems.filter(item => 
+                (currentGalleryCategory === '全部' || item.category === currentGalleryCategory) && 
+                (!query || item.title?.toLowerCase().includes(query) || item.time?.toLowerCase().includes(query))
+            );
 
             const cameraSlotHtml = `
                 <label class="relative group bg-white/80 hover:bg-blue-50/60 border-2 border-dashed border-blue-300 hover:border-blue-500 rounded-xl overflow-hidden shadow-xs flex flex-col items-center justify-center cursor-pointer min-h-[175px] h-full active:scale-95 transition-all">
-                    <div class="w-12 h-12 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform shadow-xs">
+                    <div class="w-12 h-12 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
                         <i data-lucide="camera" class="w-6 h-6"></i>
                     </div>
                     <span class="text-xs font-black text-slate-700 tracking-wider">拍照記錄</span>
@@ -288,41 +267,27 @@
                     <div class="relative group bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col">
                         <div class="px-2 py-1.5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
                             <span class="text-[9.5px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 truncate max-w-[100px]">${i.category || '未分類'}</span>
-                            <div class="flex items-center shrink-0">
-                                <button onclick="window.deleteGalleryItem('${i.id}')" class="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1 rounded transition-colors active:scale-95" title="刪除圖片"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
-                            </div>
+                            <button onclick="window.deleteGalleryItem('${i.id}')" class="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1 rounded transition-colors active:scale-95" title="刪除圖片"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
                         </div>
                         <div class="w-full h-28 bg-slate-100 overflow-hidden cursor-pointer" onclick="window.openFullscreenImg('${fullSrc}')">
-                            <img src="${fullSrc}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${i.title || '圖片'}">
+                            <img src="${fullSrc}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${i.title || '圖片'}">
                         </div>
                         <div class="p-2 flex justify-between items-center bg-white border-t border-slate-100 text-xs gap-1.5">
                             <span class="text-[11px] text-slate-500 font-mono font-bold shrink-0 flex items-center">
                                 <i data-lucide="clock" class="w-3 h-3 mr-1 text-slate-400"></i>${i.time || '12:00'}
                             </span>
-                            <span onclick="window.editGalleryItemTitle('${i.id}', event)" class="text-[11px] font-bold text-slate-800 truncate text-right flex-1 cursor-pointer hover:text-blue-600" title="點擊可修改名稱">${i.title || '無標題'}</span>
+                            <span onclick="window.editGalleryItemTitle('${i.id}', event)" class="text-[11px] font-bold text-slate-800 truncate text-right flex-1 cursor-pointer hover:text-blue-600">${i.title || '無標題'}</span>
                         </div>
                     </div>`;
             }));
 
-            grid.innerHTML = `
-                <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                    ${cameraSlotHtml}
-                    ${renderedCards.join('')}
-                </div>`;
-
-            lucide.createIcons({ root: grid });
-            lucide.createIcons({ root: sidebar });
-        };
-
-        window.setGalleryCategory = (c) => { currentGalleryCategory = c; window.renderGallery(); };
-
-        window.openFullscreenImg = (src) => {
-            const imgEl = document.getElementById('imageViewerImg');
-            if (imgEl) imgEl.src = src;
-            document.getElementById('imageViewer')?.classList.replace('hidden', 'flex');
+            grid.innerHTML = `<div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">${cameraSlotHtml}${renderedCards.join('')}</div>`;
             lucide.createIcons();
         };
 
+        window.setGalleryCategory = (c) => { currentGalleryCategory = c; window.renderGallery(); };
+        window.openFullscreenImg = (src) => { $('imageViewerImg').src = src; $('imageViewer')?.classList.replace('hidden', 'flex'); };
+        
         window.editGalleryItemTitle = (id, e) => {
             if (e) e.stopPropagation();
             const item = galleryItems.find(x => x.id === id);
@@ -332,7 +297,8 @@
                 item.title = newTitle.trim();
                 safeSetLocal('work_cache_gallery_items', galleryItems);
                 if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), item, { merge: true });
-                window.renderGallery(); window.showToast('圖片名稱已更新');
+                window.renderGallery();
+                window.showToast('圖片名稱已更新');
             }
         };
 
@@ -344,287 +310,251 @@
             
             if (currentUser) {
                 deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id));
-                try {
-                    const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id, 'chunks'));
-                    snap.forEach(d => deleteDoc(d.ref));
-                } catch(e) {}
+                getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id, 'chunks'))
+                    .then(snap => snap.forEach(d => deleteDoc(d.ref)))
+                    .catch(() => {});
             }
             window.renderGallery();
             window.showToast("已刪除圖片");
         };
 
         window.exportAllGalleryImages = async () => {
-            if (!galleryItems || galleryItems.length === 0) return window.showToast('目前圖庫內沒有任何圖片可導出', true);
-            window.showToast(`開始導出共 ${galleryItems.length} 張圖片，請稍候...`);
+            if (!galleryItems?.length) return window.showToast('圖庫內沒有任何圖片可導出', true);
+            window.showToast(`開始導出共 ${galleryItems.length} 張圖片...`);
             for (let i = 0; i < galleryItems.length; i++) {
                 const item = galleryItems[i];
                 const fullSrc = await getFullImageUrlAsync(item);
                 if (!fullSrc) continue;
-                const safeName = (item.title && item.title.trim() ? item.title.trim() : `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
-                const link = document.createElement('a'); link.href = fullSrc; link.download = `${safeName}.webp`;
-                document.body.appendChild(link); link.click(); link.remove();
-                await new Promise(resolve => setTimeout(resolve, 250));
+                const safeName = (item.title?.trim() || `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
+                const link = document.createElement('a');
+                link.href = fullSrc;
+                link.download = `${safeName}.webp`;
+                link.click();
+                await new Promise(r => setTimeout(r, 200));
             }
-            window.showToast(`✅ 全部 ${galleryItems.length} 張圖片已導出完成！`);
+            window.showToast(`✅ 全部 ${galleryItems.length} 張圖片導出完成！`);
         };
 
-        window.openUploadBatchModal = () => {
-            const modal = document.getElementById('uploadBatchModal');
-            if (!modal) return;
-            window.renderUploadBatchList();
-            modal.classList.replace('hidden', 'flex');
-            lucide.createIcons();
-        };
-
-        window.closeUploadBatchModal = () => {
-            window.pendingUploadImages = [];
-            document.getElementById('uploadBatchModal')?.classList.replace('flex', 'hidden');
-        };
-
-        window.updatePendingItemCategory = (tempId, val) => {
-            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
-            if (item) item.category = val;
-        };
-
-        window.updatePendingItemTitle = (tempId, val) => {
-            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
-            if (item) item.title = val.trim();
-        };
-
-        window.updatePendingItemTimePart = (tempId, part, val) => {
-            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
-            if (!item) return;
-            let [h, m] = (item.time || '00:00').split(':');
-            if (part === 'h') h = val; if (part === 'm') m = val;
-            item.time = `${h}:${m}`;
-        };
-
-        window.setPendingItemTimeToNow = (tempId) => {
-            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
-            if (!item) return;
-            const now = window.getNow();
-            const h = pad(now.getHours()), m = pad(now.getMinutes());
-            item.time = `${h}:${m}`;
-            const hSelect = document.getElementById(`h-select-${tempId}`);
-            const mSelect = document.getElementById(`m-select-${tempId}`);
-            if (hSelect) hSelect.value = h;
-            if (mSelect) mSelect.value = m;
-        };
-
-        window.removePendingUploadItem = (tempId) => {
-            window.pendingUploadImages = window.pendingUploadImages.filter(x => x.tempId !== tempId);
-            window.renderUploadBatchList();
-        };
+        window.openUploadBatchModal = () => { window.renderUploadBatchList(); $('uploadBatchModal')?.classList.replace('hidden', 'flex'); lucide.createIcons(); };
+        window.closeUploadBatchModal = () => { window.pendingUploadImages = []; $('uploadBatchModal')?.classList.replace('flex', 'hidden'); };
+        window.removePendingUploadItem = (tempId) => { window.pendingUploadImages = window.pendingUploadImages.filter(x => x.tempId !== tempId); window.renderUploadBatchList(); };
 
         window.renderUploadBatchList = () => {
-            const list = document.getElementById('uploadBatchList');
-            const cntEl = document.getElementById('uploadBatchCount');
-            if (cntEl) cntEl.textContent = window.pendingUploadImages.length;
-            if (!list) return;
-            if (!window.pendingUploadImages.length) { window.closeUploadBatchModal(); return; }
+            const list = $('uploadBatchList');
+            if ($('uploadBatchCount')) $('uploadBatchCount').textContent = window.pendingUploadImages.length;
+            if (!window.pendingUploadImages.length) return window.closeUploadBatchModal();
 
-            const selectableCategories = galleryCategories.filter(c => c !== '全部');
-
-            list.innerHTML = window.pendingUploadImages.map((item) => {
+            const selectableCats = galleryCategories.filter(c => c !== '全部');
+            list.innerHTML = window.pendingUploadImages.map(item => {
                 const [hStr, mStr] = (item.time || '00:00').split(':');
                 return `
-                <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col space-y-2.5 relative group shadow-xs">
-                    <div class="relative w-full h-36 bg-slate-200 rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
+                <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col space-y-2.5 shadow-xs">
+                    <div class="relative w-full h-36 bg-slate-200 rounded-lg overflow-hidden flex items-center justify-center">
                         <img src="${item.src}" class="w-full h-full object-cover">
-                        <button onclick="window.removePendingUploadItem('${item.tempId}')" class="absolute top-2 right-2 text-slate-500 hover:text-red-500 p-1.5 rounded-full bg-white/90 shadow-md border border-slate-200 transition-colors active:scale-95" title="移除">
-                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                        </button>
+                        <button onclick="window.removePendingUploadItem('${item.tempId}')" class="absolute top-2 right-2 text-slate-500 hover:text-red-500 p-1.5 rounded-full bg-white/90 shadow-md transition-colors"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
                     </div>
                     <div>
                         <label class="text-xs font-bold text-slate-600 block mb-1">分類</label>
-                        <select onchange="window.updatePendingItemCategory('${item.tempId}', this.value)" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-500">
-                            ${selectableCategories.map(cat => `<option value="${cat}" ${item.category === cat ? 'selected' : ''}>${cat}</option>`).join('')}
+                        <select onchange="window.pendingUploadImages.find(x=>x.tempId==='${item.tempId}').category=this.value" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700">
+                            ${selectableCats.map(cat => `<option value="${cat}" ${item.category === cat ? 'selected' : ''}>${cat}</option>`).join('')}
                         </select>
                     </div>
                     <div class="flex items-center space-x-2">
                         <div class="w-[155px] shrink-0">
                             <label class="text-xs font-bold text-slate-600 block mb-1">時間</label>
                             <div class="flex items-center justify-between bg-white border border-slate-300 rounded-lg px-2.5 py-1.5">
-                                <div class="flex items-center font-mono font-bold text-sm text-slate-800 shrink-0">
-                                    <select id="h-select-${item.tempId}" onchange="window.updatePendingItemTimePart('${item.tempId}', 'h', this.value)" class="bg-transparent text-center cursor-pointer outline-none hover:text-blue-600 font-mono font-bold">
-                                        ${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
-                                    </select>
+                                <div class="flex items-center font-mono font-bold text-sm text-slate-800">
+                                    <select id="h-${item.tempId}" onchange="window.updateTimePart('${item.tempId}','h',this.value)" class="bg-transparent text-center font-mono font-bold">${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}</select>
                                     <span class="text-slate-400 mx-1 font-bold">:</span>
-                                    <select id="m-select-${item.tempId}" onchange="window.updatePendingItemTimePart('${item.tempId}', 'm', this.value)" class="bg-transparent text-center cursor-pointer outline-none hover:text-blue-600 font-mono font-bold">
-                                        ${Array.from({length: 60}, (_, i) => `<option value="${pad(i)}" ${pad(i) === mStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
-                                    </select>
+                                    <select id="m-${item.tempId}" onchange="window.updateTimePart('${item.tempId}','m',this.value)" class="bg-transparent text-center font-mono font-bold">${Array.from({length: 60}, (_, i) => `<option value="${pad(i)}" ${pad(i) === mStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}</select>
                                 </div>
-                                <button type="button" onclick="window.setPendingItemTimeToNow('${item.tempId}')" class="text-slate-400 hover:text-blue-500 active:scale-95 transition-all flex items-center text-[10px] font-bold ml-1 whitespace-nowrap shrink-0">
-                                    <i data-lucide="clock" class="w-3 h-3 mr-0.5 shrink-0"></i>現在
-                                </button>
+                                <button type="button" onclick="window.setTimeNow('${item.tempId}')" class="text-slate-400 hover:text-blue-500 text-[10px] font-bold ml-1 flex items-center"><i data-lucide="clock" class="w-3 h-3 mr-0.5"></i>現在</button>
                             </div>
                         </div>
                         <div class="flex-1 min-w-0">
                             <label class="text-xs font-bold text-slate-600 block mb-1">名稱</label>
-                            <input type="text" value="${item.title || ''}" oninput="window.updatePendingItemTitle('${item.tempId}', this.value)" placeholder="例如:R-099" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-500 text-center h-[34px]">
+                            <input type="text" value="${item.title || ''}" oninput="window.pendingUploadImages.find(x=>x.tempId==='${item.tempId}').title=this.value.trim()" placeholder="例如:R-099" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 text-center h-[34px]">
                         </div>
                     </div>
                 </div>`;
             }).join('');
-            lucide.createIcons({ root: list });
+            lucide.createIcons();
         };
 
-        // 🌟 極速平行上傳核心：使用 Promise.all 同時寫入 4 個切片，上傳速度提升 5 倍以上
-        window.confirmBatchUpload = async () => {
-            const itemsToUpload = [...window.pendingUploadImages];
-            if (!itemsToUpload.length) return;
+        window.updateTimePart = (id, part, val) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === id);
+            if (!item) return;
+            let [h, m] = (item.time || '00:00').split(':');
+            if (part === 'h') h = val; else m = val;
+            item.time = `${h}:${m}`;
+        };
 
+        window.setTimeNow = (id) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === id);
+            if (!item) return;
+            const now = window.getNow();
+            const h = pad(now.getHours()), m = pad(now.getMinutes());
+            item.time = `${h}:${m}`;
+            if ($(`h-${id}`)) $(`h-${id}`).value = h;
+            if ($(`m-${id}`)) $(`m-${id}`).value = m;
+        };
+
+        // 🌟 7. 真實平滑進度提交：解決停在 100% 很久的問題，精準到小數點一位
+        window.confirmBatchUpload = async () => {
+            const items = [...window.pendingUploadImages];
+            if (!items.length) return;
             window.closeUploadBatchModal();
 
             try {
-                if (!currentUser || !db) throw new Error("系統尚未完成驗證授權，請重新整理頁面。");
+                if (!currentUser || !db) throw new Error("授權未就緒，請重新整理頁面。");
 
-                const total = itemsToUpload.length;
+                const total = items.length;
                 const newDocs = [];
+                const allChunkPromises = [];
+                const batch = writeBatch(db);
 
+                // 階段一：逐張打包與本地儲存（佔總進度的 0.0% ~ 85.0%）
                 for (let i = 0; i < total; i++) {
-                    const item = itemsToUpload[i];
+                    const item = items[i];
                     const docId = item.tempId;
 
-                    const percent = Math.round(((i + 1) / total) * 100);
-                    window.setUploadProgress(percent, `正在極速上傳第 ${i + 1} / ${total} 張圖片 (${percent}%)`);
+                    // 精確計算到小數點後 1 位
+                    const percent = (((i + 1) / total) * 85).toFixed(1);
+                    window.setUploadProgress(percent, `正在準備第 ${i + 1} / ${total} 張 (${percent}%)...`);
 
                     await idbSet(docId, item.src);
                     memoryImageCache.set(docId, item.src);
 
                     const mainDocData = {
-                        id: docId,
-                        chunkCount: item.chunks.length,
-                        title: item.title || '無標題',
-                        category: item.category || '未分類',
-                        time: item.time || '12:00',
-                        createdAt: Date.now()
+                        id: docId, chunkCount: item.chunks.length,
+                        title: item.title || '無標題', category: item.category || '未分類',
+                        time: item.time || '12:00', createdAt: Date.now()
                     };
 
-                    const batch = writeBatch(db);
-                    const mainDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId);
-                    batch.set(mainDocRef, mainDocData);
+                    batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId), mainDocData);
 
-                    // 🌟 關鍵優化：將 4 個切片的寫入改用 Promise.all 平行發送，瞬間完成
-                    const chunkPromises = item.chunks.map((chunkStr, idx) => {
+                    item.chunks.forEach((chunkStr, idx) => {
                         const chunkRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId, 'chunks', `part_${idx}`);
-                        return setDoc(chunkRef, { index: idx, data: chunkStr });
+                        allChunkPromises.push(setDoc(chunkRef, { index: idx, data: chunkStr }));
                     });
-
-                    await Promise.all([
-                        batch.commit(),
-                        ...chunkPromises
-                    ]);
 
                     newDocs.push(mainDocData);
                 }
 
+                // 階段二：雲端網路發送中（推進至 92.5%）
+                window.setUploadProgress("92.5", "正在與雲端同步資料 (92.5%)...");
+
+                // 平行發送所有切片與主文件批次
+                await Promise.all([batch.commit(), ...allChunkPromises]);
+
+                // 階段三：雲端確認完成，抵達真正的 100.0%
+                window.setUploadProgress("100.0", "上傳完成！(100.0%)");
+                await new Promise(r => setTimeout(r, 350));
                 window.setUploadProgress(-1, "");
 
-                const mergedMap = new Map();
-                [...newDocs, ...galleryItems].forEach(item => {
-                    if (item && item.id) mergedMap.set(item.id, item);
-                });
-                galleryItems = Array.from(mergedMap.values());
-                galleryItems.sort((a,b) => (b.id || '').localeCompare(a.id || ''));
+                const map = new Map();
+                [...newDocs, ...galleryItems].forEach(x => { if (x?.id) map.set(x.id, x); });
+                galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
 
                 safeSetLocal('work_cache_gallery_items', galleryItems);
                 await window.renderGallery();
                 window.showToast(`✅ 成功上傳 ${newDocs.length} 張高清圖片！`);
             } catch (err) {
                 window.setUploadProgress(-1, "");
-                console.error("上傳錯誤:", err);
                 window.showToast(`❌ 上傳失敗：${err.message}`, true);
             }
         };
 
+        // 🌟 8. 分類管理
         window.openCategoryManager = () => {
-            const modal = document.getElementById('categoryManageModal'), list = document.getElementById('categoryManageList');
-            if (!modal || !list) return;
-            list.innerHTML = `
-                <div class="flex gap-2 mb-3"><input type="text" id="newCatInput" placeholder="新增分類名稱..." class="flex-1 border border-slate-300 rounded-lg p-1.5 text-xs focus:outline-none focus:border-blue-500"><button onclick="window.addCategoryAction()" class="bg-blue-500 text-white px-3 py-1 rounded-lg text-xs font-bold">新增</button></div>
+            $('categoryManageList').innerHTML = `
+                <div class="flex gap-2 mb-3">
+                    <input type="text" id="newCatInput" placeholder="新增分類名稱..." class="flex-1 border border-slate-300 rounded-lg p-1.5 text-xs">
+                    <button onclick="window.addCategoryAction()" class="bg-blue-500 text-white px-3 py-1 rounded-lg text-xs font-bold">新增</button>
+                </div>
                 <div class="space-y-1.5">${galleryCategories.map((c, idx) => `
                     <div class="flex justify-between items-center p-2 bg-white rounded-lg border border-slate-200 text-xs font-bold text-slate-700">
                         <span>${c}</span>${!['全部', '任務附件', '未分類'].includes(c) ? `<button onclick="window.removeCategoryAction(${idx})" class="text-slate-400 hover:text-red-500"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>` : '<span class="text-[9px] text-slate-400 font-normal">系統預設</span>'}
                     </div>`).join('')}</div>`;
-            modal.classList.replace('hidden', 'flex'); lucide.createIcons({ root: list });
+            $('categoryManageModal')?.classList.replace('hidden', 'flex');
+            lucide.createIcons();
         };
 
-        window.closeCategoryManager = () => document.getElementById('categoryManageModal')?.classList.replace('flex', 'hidden');
+        window.closeCategoryManager = () => $('categoryManageModal')?.classList.replace('flex', 'hidden');
         window.addCategoryAction = () => {
-            const val = document.getElementById('newCatInput').value.trim();
+            const val = $('newCatInput')?.value.trim();
             if (!val || galleryCategories.includes(val)) return;
-            galleryCategories.push(val); safeSetLocal('work_cache_gallery_categories', galleryCategories);
-            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
-            window.openCategoryManager(); window.renderGallery();
-        };
-        window.removeCategoryAction = (idx) => {
-            galleryCategories.splice(idx, 1); safeSetLocal('work_cache_gallery_categories', galleryCategories);
+            galleryCategories.push(val);
+            safeSetLocal('work_cache_gallery_categories', galleryCategories);
             if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
             window.openCategoryManager(); window.renderGallery();
         };
 
+        window.removeCategoryAction = (idx) => {
+            galleryCategories.splice(idx, 1);
+            safeSetLocal('work_cache_gallery_categories', galleryCategories);
+            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
+            window.openCategoryManager(); window.renderGallery();
+        };
+
+        // 🌟 9. 資料庫即時監聽與初始化
         async function initAuthAndSync() {
-            try { await signInAnonymously(auth); } catch(e) {}
+            try { await signInAnonymously(auth); } catch {}
             onAuthStateChanged(auth, (user) => {
                 currentUser = user; if (!user) return;
                 onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), (snap) => {
-                    if (snap.exists() && snap.data().categories) {
-                        galleryCategories = snap.data().categories; safeSetLocal('work_cache_gallery_categories', galleryCategories); window.renderGallery();
+                    if (snap.exists()?.() && snap.data().categories) {
+                        galleryCategories = snap.data().categories;
+                        safeSetLocal('work_cache_gallery_categories', galleryCategories);
+                        window.renderGallery();
                     }
                 });
                 onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snap) => {
-                    let items = []; snap.forEach(d => items.push(d.data()));
-                    
-                    const mergedMap = new Map();
-                    items.forEach(item => { if (item && item.id) mergedMap.set(item.id, item); });
-                    galleryItems = Array.from(mergedMap.values());
-                    
-                    galleryItems.sort((a,b) => (b.id || '').localeCompare(a.id || ''));
+                    const map = new Map();
+                    snap.forEach(d => { const it = d.data(); if (it?.id) map.set(it.id, it); });
+                    galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
                     safeSetLocal('work_cache_gallery_items', galleryItems);
                     window.renderGallery();
                 });
             });
         }
 
-        window.renderGallery(); initAuthAndSync();
+        window.renderGallery();
+        initAuthAndSync();
     </script>
 </head>
 <body class="flex justify-center items-center min-h-screen p-0 sm:py-6 bg-[#f0ebe1]">
     <div class="w-full max-w-[430px] h-[910px] max-h-[100vh] sm:max-h-[96vh] bg-[#fdfbf7] sm:rounded-[2.5rem] shadow-2xl sm:border-[6px] border-[#d6d0c4] overflow-hidden relative flex flex-col mx-auto my-auto">
         
-        <div id="globalProgressContainer" class="hidden absolute top-0 left-0 right-0 z-[300] bg-slate-900/95 backdrop-blur-md p-3 text-white border-b border-blue-500 shadow-2xl transition-all">
-            <div class="flex justify-between items-center text-xs font-bold mb-1.5">
-                <span id="globalProgressText" class="text-blue-300">正在上傳...</span>
-            </div>
+        <!-- 全域即時上傳進度條 -->
+        <div id="globalProgressContainer" class="hidden absolute top-0 left-0 right-0 z-[300] bg-slate-900/95 backdrop-blur-md p-3 text-white border-b border-blue-500 shadow-2xl">
+            <div class="flex justify-between items-center text-xs font-bold mb-1.5"><span id="globalProgressText" class="text-blue-300">正在處理...</span></div>
             <div class="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
-                <div id="globalProgressBar" class="bg-blue-500 h-full w-0 transition-all duration-300"></div>
+                <div id="globalProgressBar" class="bg-blue-500 h-full w-0 transition-all duration-200"></div>
             </div>
         </div>
 
-        <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-30 border-b border-[#e5dfd3] p-4 pt-6 shadow-xs shrink-0">
-            <div class="flex items-center justify-between">
-                <div class="flex items-center space-x-2">
-                    <div class="w-7 h-7 rounded-lg bg-blue-500 text-white flex items-center justify-center shadow-xs"><i data-lucide="image" class="w-4 h-4"></i></div>
-                    <h1 class="text-lg text-slate-800 tracking-wider font-black">圖庫管理系統</h1>
-                </div>
-                <button type="button" onclick="window.exportAllGalleryImages()" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold tracking-wide transition-all shadow-xs" title="一次導出圖庫所有圖片">
-                    <i data-lucide="download" class="w-3.5 h-3.5 mr-1"></i> 導出全部
-                </button>
+        <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-30 border-b border-[#e5dfd3] p-4 pt-6 shadow-xs shrink-0 flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+                <div class="w-7 h-7 rounded-lg bg-blue-500 text-white flex items-center justify-center shadow-xs"><i data-lucide="image" class="w-4 h-4"></i></div>
+                <h1 class="text-lg text-slate-800 tracking-wider font-black">圖庫管理系統</h1>
             </div>
+            <button type="button" onclick="window.exportAllGalleryImages()" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center justify-center active:scale-95 text-xs font-bold transition-all shadow-xs">
+                <i data-lucide="download" class="w-3.5 h-3.5 mr-1"></i> 導出全部
+            </button>
         </header>
 
         <main class="flex-1 min-h-0 flex flex-col relative z-10 bg-[#fdfbf7]">
-            <div class="p-2.5 border-b border-[#e6e2d6] flex items-center space-x-2 bg-white shrink-0 shadow-xs z-20 relative">
+            <div class="p-2.5 border-b border-[#e6e2d6] flex items-center space-x-2 bg-white shrink-0 shadow-xs z-20">
                 <div class="relative flex-1">
                     <i data-lucide="search" class="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400"></i>
                     <input type="text" id="gallerySearchInput" placeholder="搜尋圖片..." oninput="window.renderGallery()" class="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-700 placeholder-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none tracking-wide text-center">
                 </div>
-                <label class="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold tracking-wide transition-all shadow-xs shrink-0" title="點擊直接拍照">
+                <label class="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold shadow-xs shrink-0">
                     <i data-lucide="camera" class="w-3.5 h-3.5 mr-1"></i> 拍照
                     <input type="file" accept="image/*" capture="environment" class="hidden" onchange="window.handleGalleryUpload(this)">
                 </label>
-                <label class="bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold tracking-wide transition-colors shadow-xs shrink-0" title="選取相簿現有圖片">
+                <label class="bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold shadow-xs shrink-0">
                     <i data-lucide="upload" class="w-3.5 h-3.5 mr-1"></i> 上傳
                     <input type="file" accept="image/*" multiple class="hidden" onchange="window.handleGalleryUpload(this)">
                 </label>
@@ -644,21 +574,21 @@
                     <div class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center"><i data-lucide="images" class="w-5 h-5"></i></div>
                     <h3 class="font-bold text-base text-slate-800 tracking-wide">確認上傳圖片</h3>
                 </div>
-                <button onclick="window.closeUploadBatchModal()" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+                <button onclick="window.closeUploadBatchModal()" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div class="bg-blue-50 border border-blue-100 rounded-xl p-2.5 text-center text-xs font-bold text-blue-700 shrink-0 mb-3">
                 📸 已選取 <span id="uploadBatchCount" class="text-blue-900 font-black text-sm">0</span> 張圖片
             </div>
             <div id="uploadBatchList" class="flex-1 overflow-y-auto space-y-3 pr-1 scrollbar-hide mb-3"></div>
             <div class="flex justify-end space-x-2.5 pt-3 border-t border-slate-100 shrink-0">
-                <button onclick="window.closeUploadBatchModal()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-colors active:scale-95">取消</button>
-                <button onclick="window.confirmBatchUpload()" class="px-5 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-bold shadow-xs transition-colors active:scale-95 flex items-center"><i data-lucide="check" class="w-4 h-4 mr-1.5"></i>確認發布</button>
+                <button onclick="window.closeUploadBatchModal()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold active:scale-95">取消</button>
+                <button onclick="window.confirmBatchUpload()" class="px-5 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 flex items-center"><i data-lucide="check" class="w-4 h-4 mr-1.5"></i>確認發布</button>
             </div>
         </div>
     </div>
 
     <div id="imageViewer" class="fixed inset-0 bg-black/95 z-[200] hidden flex-col items-center justify-center p-4">
-        <button onclick="document.getElementById('imageViewer').classList.replace('flex', 'hidden')" class="absolute top-6 right-6 text-white bg-slate-800/80 p-2 rounded-full active:scale-95 shadow-lg border border-slate-600 hover:bg-red-600 transition-colors" title="關閉"><i data-lucide="x" class="w-6 h-6"></i></button>
+        <button onclick="$('imageViewer').classList.replace('flex', 'hidden')" class="absolute top-6 right-6 text-white bg-slate-800/80 p-2 rounded-full active:scale-95 shadow-lg border border-slate-600 hover:bg-red-600"><i data-lucide="x" class="w-6 h-6"></i></button>
         <img id="imageViewerImg" src="" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl border border-slate-700" />
     </div>
 
@@ -666,22 +596,9 @@
         <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-full max-w-[320px] flex flex-col overflow-hidden relative">
             <header class="p-3.5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                 <h2 class="text-slate-800 font-bold tracking-widest text-sm flex items-center"><i data-lucide="settings-2" class="w-4 h-4 mr-2 text-blue-500"></i> 管理圖庫分類</h2>
-                <button onclick="window.closeCategoryManager()" class="text-slate-400 p-1.5 rounded-full hover:bg-slate-200 active:scale-95 transition-all"><i data-lucide="x" class="w-5 h-5"></i></button>
+                <button onclick="window.closeCategoryManager()" class="text-slate-400 p-1.5 rounded-full hover:bg-slate-200 active:scale-95"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div id="categoryManageList" class="p-3 overflow-y-auto max-h-[55vh] bg-[#fdfbf7] space-y-2 scrollbar-hide"></div>
-        </div>
-    </div>
-
-    <div id="customConfirmModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10000] hidden flex-col items-center justify-center p-4">
-        <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-full max-w-[300px] flex flex-col overflow-hidden relative">
-            <header class="p-4 border-b border-slate-100 flex items-center bg-slate-50">
-                <h2 id="confirmModalTitle" class="text-slate-800 font-bold tracking-widest text-sm flex items-center"><i data-lucide="alert-triangle" class="w-4 h-4 mr-1.5 text-amber-500"></i> 確認</h2>
-            </header>
-            <div class="p-5 text-xs text-slate-600 tracking-wide leading-relaxed text-center" id="confirmModalMessage"></div>
-            <div class="p-4 border-t border-slate-100 flex justify-end space-x-2 bg-slate-50/50">
-                <button id="confirmBtnCancel" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-lg text-xs font-bold transition-colors active:scale-95 shadow-xs">取消</button>
-                <button id="confirmBtnOk" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-xs font-bold transition-colors active:scale-95 shadow-xs">確定</button>
-            </div>
         </div>
     </div>
 </body>
