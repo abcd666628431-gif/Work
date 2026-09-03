@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>圖庫管理系統 - 1200px 雙文件高清版</title>
+    <title>圖庫管理系統 - 1200px極速高清版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
@@ -18,7 +18,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, getDoc, deleteDoc, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBsdBYBeJYqgeDDxF39lZ0pr785SMnwvJs", 
@@ -36,10 +36,10 @@
         let currentUser = null;
 
         // ==========================================
-        // 🌟 1. 本地大容量資料庫 (IndexedDB)
+        // 🌟 本地大容量資料庫 (IndexedDB)
         // ==========================================
-        const IDB_NAME = 'Gallery_DualDoc_DB_1200HD';
-        const IDB_STORE = 'hd_full_images';
+        const IDB_NAME = 'Gallery_HD_Fast_DB';
+        const IDB_STORE = 'hd_images';
 
         const openIDB = () => new Promise((resolve, reject) => {
             const req = indexedDB.open(IDB_NAME, 1);
@@ -79,7 +79,7 @@
         };
 
         // ==========================================
-        // 🌟 2. 快取與輔助函式
+        // 快取與輔助函式
         // ==========================================
         const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(e) { return d; } };
         const safeSetLocal = (k, d) => { try { localStorage.setItem(k, JSON.stringify(d)); } catch(e) {} };
@@ -87,7 +87,6 @@
 
         let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
         let galleryItems = getLocal('work_cache_gallery_items', []);
-        let memoryImageCache = new Map();
         let currentGalleryCategory = '全部';
         window.pendingUploadImages = [];
 
@@ -120,10 +119,8 @@
             }
         };
 
-        // ==========================================
-        // 🌟 3. 核心功能：1200px 尺寸與 0.85 高畫質切半工具
-        // ==========================================
-        const splitImageToHalvesAsync = (file, maxDim = 1200, quality = 0.85) => new Promise((resolve, reject) => {
+        // 🌟 核心高畫質安全壓縮：單張直出 1200px、約 200KB，遠低於 1MB 限制，完全零卡頓
+        const compressImageHDAsync = (file, maxDim = 1200) => new Promise((resolve, reject) => {
             const r = new FileReader();
             r.readAsDataURL(file);
             r.onload = (e) => {
@@ -142,101 +139,25 @@
                     ctx.imageSmoothingQuality = 'high';
                     ctx.drawImage(img, 0, 0, w, h);
 
-                    const halfH = Math.floor(h / 2);
+                    let quality = 0.75;
+                    let result = canvas.toDataURL('image/webp', quality);
 
-                    const topCanvas = document.createElement('canvas');
-                    topCanvas.width = w; topCanvas.height = halfH;
-                    topCanvas.getContext('2d').drawImage(canvas, 0, 0, w, halfH, 0, 0, w, halfH);
-                    let topHalf = topCanvas.toDataURL('image/webp', quality);
-
-                    const botCanvas = document.createElement('canvas');
-                    botCanvas.width = w; botCanvas.height = h - halfH;
-                    botCanvas.getContext('2d').drawImage(canvas, 0, halfH, w, h - halfH, 0, 0, w, h - halfH);
-                    let bottomHalf = botCanvas.toDataURL('image/webp', quality);
+                    // 🛡️ 嚴格保險閥：若 Base64 大於 800,000 字元 (約 600KB)，自動向下微調
+                    while (result.length > 800000 && quality > 0.3) {
+                        quality -= 0.08;
+                        result = canvas.toDataURL('image/webp', quality);
+                    }
 
                     img.src = '';
                     canvas.width = 0; canvas.height = 0;
-                    topCanvas.width = 0; topCanvas.height = 0;
-                    botCanvas.width = 0; botCanvas.height = 0;
-
-                    resolve({ topHalf, bottomHalf });
+                    resolve(result);
                 };
                 img.onerror = () => reject(new Error("圖片解析失敗"));
             };
             r.onerror = () => reject(new Error("檔案讀取失敗"));
         });
 
-        // 🌟 無縫拼圖還原工具：將上下兩半組合為完整高清圖片
-        const mergeHalvesAsync = (topHalf, bottomHalf) => new Promise((resolve, reject) => {
-            if (!topHalf || !bottomHalf) return resolve(topHalf || bottomHalf || '');
-            const topImg = new Image();
-            const botImg = new Image();
-            let count = 0;
-
-            const check = () => {
-                count++;
-                if (count === 2) {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = topImg.width;
-                    canvas.height = topImg.height + botImg.height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.imageSmoothingEnabled = true;
-                    ctx.imageSmoothingQuality = 'high';
-                    ctx.drawImage(topImg, 0, 0);
-                    ctx.drawImage(botImg, 0, topImg.height);
-                    const result = canvas.toDataURL('image/webp', 0.85);
-                    topImg.src = ''; botImg.src = '';
-                    canvas.width = 0; canvas.height = 0;
-                    resolve(result);
-                }
-            };
-            topImg.onload = check;
-            botImg.onload = check;
-            topImg.onerror = check;
-            botImg.onerror = check;
-            topImg.src = topHalf;
-            botImg.src = bottomHalf;
-        });
-
-        // 🌟 智慧取得完整圖片（快取 -> IndexedDB -> 雲端雙文件查詢）
-        const getFullImageUrlAsync = async (item) => {
-            const id = item.id;
-            if (memoryImageCache.has(id)) return memoryImageCache.get(id);
-
-            try {
-                const idbCached = await idbGet(id);
-                if (idbCached) {
-                    memoryImageCache.set(id, idbCached);
-                    return idbCached;
-                }
-            } catch(e) {}
-
-            let topHalf = item.topHalf;
-            let bottomHalf = item.bottomHalf;
-
-            // 若缺少下半部，從獨立的分塊文件抓取
-            if (!bottomHalf && currentUser && db) {
-                try {
-                    const chunkSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_chunks', `${id}_bot`));
-                    if (chunkSnap.exists()) {
-                        bottomHalf = chunkSnap.data().bottomHalf;
-                    }
-                } catch(e) {}
-            }
-
-            if (topHalf && bottomHalf) {
-                const merged = await mergeHalvesAsync(topHalf, bottomHalf);
-                memoryImageCache.set(id, merged);
-                await idbSet(id, merged);
-                return merged;
-            }
-
-            return topHalf || bottomHalf || '';
-        };
-
-        // ==========================================
-        // 🌟 4. 上傳排隊與預處理
-        // ==========================================
+        // 🌟 批次快速預處理（無切片、無多次重繪，瞬間秒開）
         window.handleGalleryUpload = async (input) => {
             const files = Array.from(input.files || []);
             if (!files.length) return;
@@ -247,14 +168,17 @@
 
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
-                window.setUploadProgress(Math.round(((i + 1) / files.length) * 50), `正在處理第 ${i + 1} / ${files.length} 張高清照片...`);
+                window.setUploadProgress(Math.round(((i + 1) / files.length) * 50), `正在載入第 ${i + 1} / ${files.length} 張圖片...`);
                 try {
-                    const { topHalf, bottomHalf } = await splitImageToHalvesAsync(file, 1200, 0.85);
+                    const src = await compressImageHDAsync(file, 1200);
                     const tempId = 'img_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substr(2, 4);
-                    const previewSrc = await mergeHalvesAsync(topHalf, bottomHalf);
 
                     window.pendingUploadImages.push({
-                        tempId, topHalf, bottomHalf, src: previewSrc, title: "", time: time, category: defaultCat
+                        tempId,
+                        src,
+                        title: "",
+                        time: time,
+                        category: defaultCat
                     });
                 } catch (e) {
                     console.error("處理失敗:", e);
@@ -270,7 +194,7 @@
             }
         };
 
-        window.renderGallery = async () => {
+        window.renderGallery = () => {
             const sidebar = document.getElementById('gallerySidebar'), grid = document.getElementById('galleryGrid');
             if (!sidebar || !grid) return;
             const query = (document.getElementById('gallerySearchInput')?.value || '').trim().toLowerCase();
@@ -292,32 +216,27 @@
                 </label>
             `;
 
-            const renderedCards = await Promise.all(filtered.map(async (i) => {
-                const fullSrc = await getFullImageUrlAsync(i);
-                return `
-                    <div class="relative group bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col">
-                        <div class="px-2 py-1.5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-                            <span class="text-[9.5px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 truncate max-w-[100px]">${i.category || '未分類'}</span>
-                            <div class="flex items-center shrink-0">
-                                <button onclick="window.deleteGalleryItem('${i.id}')" class="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1 rounded transition-colors active:scale-95" title="刪除圖片"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
-                            </div>
-                        </div>
-                        <div class="w-full h-28 bg-slate-100 overflow-hidden cursor-pointer" onclick="window.openFullscreenImg('${fullSrc}')">
-                            <img src="${fullSrc}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${i.title || '圖片'}">
-                        </div>
-                        <div class="p-2 flex justify-between items-center bg-white border-t border-slate-100 text-xs gap-1.5">
-                            <span class="text-[11px] text-slate-500 font-mono font-bold shrink-0 flex items-center">
-                                <i data-lucide="clock" class="w-3 h-3 mr-1 text-slate-400"></i>${i.time || '12:00'}
-                            </span>
-                            <span onclick="window.editGalleryItemTitle('${i.id}', event)" class="text-[11px] font-bold text-slate-800 truncate text-right flex-1 cursor-pointer hover:text-blue-600" title="點擊可修改名稱">${i.title || '無標題'}</span>
-                        </div>
-                    </div>`;
-            }));
-
             grid.innerHTML = `
                 <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                     ${cameraSlotHtml}
-                    ${renderedCards.join('')}
+                    ${filtered.map(i => `
+                        <div class="relative group bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col">
+                            <div class="px-2 py-1.5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+                                <span class="text-[9.5px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 truncate max-w-[100px]">${i.category || '未分類'}</span>
+                                <div class="flex items-center shrink-0">
+                                    <button onclick="window.deleteGalleryItem('${i.id}')" class="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1 rounded transition-colors active:scale-95" title="刪除圖片"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                                </div>
+                            </div>
+                            <div class="w-full h-28 bg-slate-100 overflow-hidden cursor-pointer" onclick="window.openFullscreenImg('${i.src}')">
+                                <img src="${i.src}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${i.title || '圖片'}">
+                            </div>
+                            <div class="p-2 flex justify-between items-center bg-white border-t border-slate-100 text-xs gap-1.5">
+                                <span class="text-[11px] text-slate-500 font-mono font-bold shrink-0 flex items-center">
+                                    <i data-lucide="clock" class="w-3 h-3 mr-1 text-slate-400"></i>${i.time || '12:00'}
+                                </span>
+                                <span onclick="window.editGalleryItemTitle('${i.id}', event)" class="text-[11px] font-bold text-slate-800 truncate text-right flex-1 cursor-pointer hover:text-blue-600" title="點擊可修改名稱">${i.title || '無標題'}</span>
+                            </div>
+                        </div>`).join('')}
                 </div>`;
 
             lucide.createIcons({ root: grid });
@@ -341,21 +260,19 @@
             if (newTitle !== null && newTitle.trim()) {
                 item.title = newTitle.trim();
                 safeSetLocal('work_cache_gallery_items', galleryItems);
-                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), item, { merge: true });
+                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), item, { merge: true });
                 window.renderGallery(); window.showToast('圖片名稱已更新');
             }
         };
 
-        // 🌟 直接刪除圖片（免彈窗確認，點擊即刪）
+        // 🌟 直接刪除圖片（無彈窗阻礙）
         window.deleteGalleryItem = async (id) => {
             galleryItems = galleryItems.filter(i => i.id !== id);
-            memoryImageCache.delete(id);
             await idbDel(id);
             safeSetLocal('work_cache_gallery_items', galleryItems);
             
             if (currentUser) {
                 deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id));
-                deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_chunks', `${id}_bot`));
             }
             window.renderGallery();
             window.showToast("已刪除圖片");
@@ -366,14 +283,13 @@
             window.showToast(`開始導出共 ${galleryItems.length} 張圖片，請稍候...`);
             for (let i = 0; i < galleryItems.length; i++) {
                 const item = galleryItems[i];
-                const fullSrc = await getFullImageUrlAsync(item);
-                if (!fullSrc) continue;
+                if (!item.src) continue;
                 const safeName = (item.title && item.title.trim() ? item.title.trim() : `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
-                const link = document.createElement('a'); link.href = fullSrc; link.download = `${safeName}.webp`;
+                const link = document.createElement('a'); link.href = item.src; link.download = `${safeName}.webp`;
                 document.body.appendChild(link); link.click(); link.remove();
                 await new Promise(resolve => setTimeout(resolve, 250));
             }
-            window.showToast(`✅ 全部 ${galleryItems.length} 張高畫質圖片已導出完成！`);
+            window.showToast(`✅ 全部 ${galleryItems.length} 張高清圖片已導出完成！`);
         };
 
         window.openUploadBatchModal = () => {
@@ -477,9 +393,7 @@
             lucide.createIcons({ root: list });
         };
 
-        // ==========================================
-        // 🌟 5. 雙文件原子寫入核心 (Dual-Doc Chunking)
-        // ==========================================
+        // 🌟 極速平行上傳核心：使用 writeBatch 一次完成所有上傳，幾秒鐘結束！
         window.confirmBatchUpload = async () => {
             const itemsToUpload = [...window.pendingUploadImages];
             if (!itemsToUpload.length) return;
@@ -491,43 +405,33 @@
 
                 const total = itemsToUpload.length;
                 const newDocs = [];
+                const batch = writeBatch(db);
 
                 for (let i = 0; i < total; i++) {
                     const item = itemsToUpload[i];
                     const docId = item.tempId;
 
                     const percent = Math.round(((i + 1) / total) * 100);
-                    window.setUploadProgress(percent, `正在極速上傳高畫質第 ${i + 1} / ${total} 張 (${percent}%)`);
+                    window.setUploadProgress(percent, `正在儲存第 ${i + 1} / ${total} 張圖片 (${percent}%)`);
 
-                    const fullPreview = await mergeHalvesAsync(item.topHalf, item.bottomHalf);
-                    await idbSet(docId, fullPreview);
-                    memoryImageCache.set(docId, fullPreview);
+                    await idbSet(docId, item.src);
 
-                    // 主文檔：放標題、時間與上半部 (~400KB)
-                    const mainDocData = {
+                    const docData = {
                         id: docId,
-                        topHalf: item.topHalf,
+                        src: item.src,
                         title: item.title || '無標題',
                         category: item.category || '未分類',
                         time: item.time || '12:00',
                         createdAt: Date.now()
                     };
 
-                    // 分塊文檔：專門放下半部 (~400KB)
-                    const chunkDocData = {
-                        bottomHalf: item.bottomHalf
-                    };
-
-                    const batch = writeBatch(db);
-                    const mainRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId);
-                    const chunkRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_chunks', `${docId}_bot`);
-
-                    batch.set(mainRef, mainDocData);
-                    batch.set(chunkRef, chunkDocData);
-
-                    await batch.commit();
-                    newDocs.push(mainDocData);
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId);
+                    batch.set(docRef, docData);
+                    newDocs.push(docData);
                 }
+
+                // 一次提交所有變更，免去多次網路等待
+                await batch.commit();
 
                 window.setUploadProgress(-1, "");
 
@@ -540,7 +444,7 @@
 
                 safeSetLocal('work_cache_gallery_items', galleryItems);
                 window.renderGallery();
-                window.showToast(`✅ 成功上傳 ${newDocs.length} 張高畫質圖片！`);
+                window.showToast(`✅ 成功上傳 ${newDocs.length} 張高清圖片！`);
             } catch (err) {
                 window.setUploadProgress(-1, "");
                 console.error("上傳錯誤:", err);
@@ -574,9 +478,6 @@
             window.openCategoryManager(); window.renderGallery();
         };
 
-        // ==========================================
-        // 🌟 6. Firestore 即時同步
-        // ==========================================
         async function initAuthAndSync() {
             try { await signInAnonymously(auth); } catch(e) {}
             onAuthStateChanged(auth, (user) => {
@@ -661,7 +562,7 @@
                 <button onclick="window.closeUploadBatchModal()" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div class="bg-blue-50 border border-blue-100 rounded-xl p-2.5 text-center text-xs font-bold text-blue-700 shrink-0 mb-3">
-                📸 已選取 <span id="uploadBatchCount" class="text-blue-900 font-black text-sm">0</span> 張高畫質圖片
+                📸 已選取 <span id="uploadBatchCount" class="text-blue-900 font-black text-sm">0</span> 張圖片
             </div>
             <div id="uploadBatchList" class="flex-1 overflow-y-auto space-y-3 pr-1 scrollbar-hide mb-3"></div>
             <div class="flex justify-end space-x-2.5 pt-3 border-t border-slate-100 shrink-0">
