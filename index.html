@@ -586,8 +586,61 @@
             window.showToast("已刪除圖片");
         };
 
+        // --- 修正後的圖庫批次導出邏輯（支援完整導出全部圖片） ---
         window.exportAllGalleryImages = async () => {
             if (!galleryItems?.length) return window.showToast('圖庫內沒有圖片可導出', true);
+            
+            // 優先嘗試使用資料夾選取器 (File System Access API)
+            if (window.showDirectoryPicker) {
+                try {
+                    const dirHandle = await window.showDirectoryPicker({
+                        mode: 'readwrite'
+                    });
+                    
+                    window.showToast(`準備導出共 ${galleryItems.length} 張圖片...`);
+                    let successCount = 0;
+
+                    for (let i = 0; i < galleryItems.length; i++) {
+                        const item = galleryItems[i];
+                        const fullSrc = await getFullImageUrlAsync(item);
+                        if (!fullSrc) continue;
+
+                        const safeName = (item.title?.trim() || `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
+                        
+                        try {
+                            // 獲取圖片 Blob
+                            const res = await fetch(fullSrc);
+                            const blob = await res.blob();
+
+                            // 建立並寫入檔案
+                            const fileHandle = await dirHandle.getFileHandle(`${safeName}.webp`, { create: true });
+                            const writable = await fileHandle.createWritable();
+                            await writable.write(blob);
+                            await writable.close();
+
+                            successCount++;
+                            // 加上微小延遲，防止瀏覽器安全機制因過快連續寫入而阻擋後續檔案
+                            await new Promise(r => setTimeout(r, 80));
+                        } catch (singleErr) {
+                            console.warn(`第 ${i + 1} 張圖片寫入失敗:`, singleErr);
+                        }
+                    }
+                    
+                    if (successCount > 0) {
+                        window.showToast(`✅ 成功導出 ${successCount} / ${galleryItems.length} 張圖片至指定資料夾！`);
+                    } else {
+                        window.showToast(`❌ 導出失敗，請檢查瀏覽器權限`, true);
+                    }
+                    return;
+                } catch (err) {
+                    if (err.name === 'AbortError') {
+                        return window.showToast('已取消導出', true);
+                    }
+                    console.warn('DirectoryPicker 異常，自動改用傳統下載備用方案:', err);
+                }
+            }
+
+            // 備用方案：若不支援或被拒絕，則採用傳統迴圈下載全部
             window.showToast(`開始導出 ${galleryItems.length} 張圖片...`);
             for (let i = 0; i < galleryItems.length; i++) {
                 const item = galleryItems[i];
@@ -598,7 +651,7 @@
                 link.href = fullSrc;
                 link.download = `${safeName}.webp`;
                 link.click();
-                await new Promise(r => setTimeout(r, 200));
+                await new Promise(r => setTimeout(r, 250)); // 增加間隔避免瀏覽器阻擋多檔案下載
             }
             window.showToast(`✅ 全部導出完成！`);
         };
