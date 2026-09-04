@@ -586,74 +586,129 @@
             window.showToast("已刪除圖片");
         };
 
-        // --- 修正後的圖庫批次導出邏輯（支援完整導出全部圖片） ---
+        // --- 輔助函數：安全將 DataURL 轉為 Blob ---
+        const dataURLToBlob = (dataURL) => {
+            try {
+                if (!dataURL.includes(';base64,')) return null;
+                const arr = dataURL.split(',');
+                const mime = arr[0].match(/:(.*?);/)[1];
+                const bstr = atob(arr[1]);
+                let n = bstr.length;
+                const u8arr = new Uint8Array(n);
+                while (n--) {
+                    u8arr[n] = bstr.charCodeAt(n);
+                }
+                return new Blob([u8arr], { type: mime });
+            } catch (e) {
+                return null;
+            }
+        };
+
+        // --- IndexedDB 專門用來記憶上次選取資料夾的 Handle ---
+        const saveDirHandleToIDB = async (handle) => {
+            const dbInstance = await openIDB();
+            return new Promise((res) => {
+                const tx = dbInstance.transaction('hd_full_images', 'readwrite');
+                tx.objectStore('hd_full_images').put(handle, '_cached_export_dir_handle_');
+                tx.oncomplete = () => res(true);
+                tx.onerror = () => res(false);
+            });
+        };
+
+        const getDirHandleFromIDB = async () => {
+            const dbInstance = await openIDB();
+            return new Promise((res) => {
+                const tx = dbInstance.transaction('hd_full_images', 'readonly');
+                const req = tx.objectStore('hd_full_images').get('_cached_export_dir_handle_');
+                req.onsuccess = () => res(req.result);
+                req.onerror = () => res(null);
+            });
+        };
+
+        // --- 具備記憶上次位置、但每次皆會跳出視窗確認的導出邏輯 ---
         window.exportAllGalleryImages = async () => {
             if (!galleryItems?.length) return window.showToast('圖庫內沒有圖片可導出', true);
-            
-            // 優先嘗試使用資料夾選取器 (File System Access API)
-            if (window.showDirectoryPicker) {
-                try {
-                    const dirHandle = await window.showDirectoryPicker({
-                        mode: 'readwrite'
-                    });
-                    
-                    window.showToast(`準備導出共 ${galleryItems.length} 張圖片...`);
-                    let successCount = 0;
 
-                    for (let i = 0; i < galleryItems.length; i++) {
-                        const item = galleryItems[i];
+            if (!window.showDirectoryPicker) {
+                return window.showToast('您的瀏覽器不支援自選資料夾功能', true);
+            }
+
+            try {
+                // 讀取上次記憶的資料夾作為選擇視窗的預設起點
+                const cachedHandle = await getDirHandleFromIDB();
+                const pickerOptions = { mode: 'readwrite' };
+                
+                if (cachedHandle) {
+                    try {
+                        const permission = await cachedHandle.queryPermission({ mode: 'readwrite' });
+                        if (permission === 'granted' || permission === 'prompt') {
+                            pickerOptions.startIn = cachedHandle; // 自動將視窗導向上次的位置
+                        }
+                    } catch (e) {}
+                }
+
+                // 每次都強制彈出資料夾選擇視窗，供您確認或隨時更改位置
+                window.showToast('請確認或選擇導出目標資料夾...');
+                const dirHandle = await window.showDirectoryPicker(pickerOptions);
+
+                if (!dirHandle) return;
+
+                // 記憶這次選擇的新位置
+                await saveDirHandleToIDB(dirHandle);
+
+                window.showToast(`準備導出共 ${galleryItems.length} 張圖片，請稍候...`);
+                let successCount = 0;
+
+                for (let i = 0; i < galleryItems.length; i++) {
+                    const item = galleryItems[i];
+                    try {
                         const fullSrc = await getFullImageUrlAsync(item);
                         if (!fullSrc) continue;
 
-                        const safeName = (item.title?.trim() || `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
-                        
-                        try {
-                            // 獲取圖片 Blob
-                            const res = await fetch(fullSrc);
-                            const blob = await res.blob();
-
-                            // 建立並寫入檔案
-                            const fileHandle = await dirHandle.getFileHandle(`${safeName}.webp`, { create: true });
-                            const writable = await fileHandle.createWritable();
-                            await writable.write(blob);
-                            await writable.close();
-
-                            successCount++;
-                            // 加上微小延遲，防止瀏覽器安全機制因過快連續寫入而阻擋後續檔案
-                            await new Promise(r => setTimeout(r, 80));
-                        } catch (singleErr) {
-                            console.warn(`第 ${i + 1} 張圖片寫入失敗:`, singleErr);
+                        let blob;
+                        if (fullSrc.startsWith('data:')) {
+                            blob = dataURLToBlob(fullSrc);
                         }
-                    }
-                    
-                    if (successCount > 0) {
-                        window.showToast(`✅ 成功導出 ${successCount} / ${galleryItems.length} 張圖片至指定資料夾！`);
-                    } else {
-                        window.showToast(`❌ 導出失敗，請檢查瀏覽器權限`, true);
-                    }
-                    return;
-                } catch (err) {
-                    if (err.name === 'AbortError') {
-                        return window.showToast('已取消導出', true);
-                    }
-                    console.warn('DirectoryPicker 異常，自動改用傳統下載備用方案:', err);
-                }
-            }
+                        if (!blob) {
+                            const res = await fetch(fullSrc);
+                            blob = await res.blob();
+                        }
+                        if (!blob) continue;
 
-            // 備用方案：若不支援或被拒絕，則採用傳統迴圈下載全部
-            window.showToast(`開始導出 ${galleryItems.length} 張圖片...`);
-            for (let i = 0; i < galleryItems.length; i++) {
-                const item = galleryItems[i];
-                const fullSrc = await getFullImageUrlAsync(item);
-                if (!fullSrc) continue;
-                const safeName = (item.title?.trim() || `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
-                const link = document.createElement('a');
-                link.href = fullSrc;
-                link.download = `${safeName}.webp`;
-                link.click();
-                await new Promise(r => setTimeout(r, 250)); // 增加間隔避免瀏覽器阻擋多檔案下載
+                        let safeName = (item.title?.trim() || `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
+                        let fileName = `${safeName}.webp`;
+                        let uniqueIdx = 1;
+
+                        try {
+                            while (await dirHandle.getFileHandle(fileName)) {
+                                fileName = `${safeName}_${uniqueIdx++}.webp`;
+                            }
+                        } catch (e) {}
+
+                        const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(blob);
+                        await writable.close();
+
+                        successCount++;
+                        await new Promise(r => setTimeout(r, 250)); // 安全緩衝間隔
+                    } catch (singleErr) {
+                        console.error(`第 ${i + 1} 張圖片寫入失敗:`, singleErr);
+                    }
+                }
+
+                if (successCount > 0) {
+                    window.showToast(`✅ 成功導出 ${successCount} / ${galleryItems.length} 張圖片！`);
+                } else {
+                    window.showToast(`❌ 導出失敗`, true);
+                }
+            } catch (err) {
+                if (err.name === 'AbortError') {
+                    return window.showToast('已取消導出', true);
+                }
+                console.error('資料夾選擇錯誤:', err);
+                window.showToast(`❌ 無法存取資料夾`, true);
             }
-            window.showToast(`✅ 全部導出完成！`);
         };
 
         window.openUploadBatchModal = () => { window.renderUploadBatchList(); $('uploadBatchModal')?.classList.replace('hidden', 'flex'); lucide.createIcons(); };
