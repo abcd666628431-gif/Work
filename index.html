@@ -45,6 +45,15 @@
         .animate-float-a { animation: room-walk-a 14s linear infinite; will-change: transform; }
         .animate-float-b { animation: room-walk-b 16s linear infinite; will-change: transform; }
         .animate-float-c { animation: room-walk-c 12s linear infinite; will-change: transform; }
+
+        /* 相片疊加收攏卡片群動態樣式 */
+        .photo-deck-container { position: relative; height: 170px; width: 100%; display: flex; align-items: center; justify-content: center; margin-bottom: 0.75rem; }
+        .deck-card { position: absolute; width: 220px; height: 150px; border-radius: 1rem; border: 3px solid #ffffff; box-shadow: 0 10px 20px -3px rgba(0,0,0,0.25); overflow: hidden; transition: all 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); background: #0f172a; }
+        .deck-card:nth-child(1) { transform: translate3d(0, 0, 0) rotate(0deg); z-index: 10; }
+        .deck-card:nth-child(2) { transform: translate3d(6px, -4px, 0) rotate(3.5deg); z-index: 9; opacity: 0.95; }
+        .deck-card:nth-child(3) { transform: translate3d(-6px, -8px, 0) rotate(-4deg); z-index: 8; opacity: 0.9; }
+        .deck-card:nth-child(4) { transform: translate3d(12px, -12px, 0) rotate(6deg); z-index: 7; opacity: 0.85; }
+        .deck-card:nth-child(n+5) { transform: translate3d(-10px, -14px, 0) rotate(-7deg); z-index: 6; opacity: 0.75; }
     </style>
     <script type="module">
         import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -121,14 +130,124 @@
         const defaultTabVisibility = { timeline: true, memo: true, map: true, gallery: true, coldRoom: true, closing: true };
         let tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility);
 
-        const tabMetadata = [
-            { id: 'timeline', name: '動態', btnId: 'tabTimeline', pageId: 'timelinePage', icon: 'activity' },
-            { id: 'memo', name: '備忘', btnId: 'tabMemo', pageId: 'memoPage', icon: 'calendar-clock' },
-            { id: 'map', name: '地圖', btnId: 'tabMap', pageId: 'mapPage', icon: 'map' },
-            { id: 'gallery', name: '圖庫', btnId: 'tabGallery', pageId: 'galleryPage', icon: 'image' },
-            { id: 'coldRoom', name: '雪房', btnId: 'tabColdRoom', pageId: 'coldRoomPage', icon: 'snowflake' },
-            { id: 'closing', name: '收工', btnId: 'tabClosing', pageId: 'closingPage', icon: 'store' }
-        ];
+        const defaultTabOrder = ['timeline', 'memo', 'map', 'gallery', 'coldRoom', 'closing'];
+        let tabOrderList = getLocal('work_tab_order_ids', defaultTabOrder);
+
+        const tabMetadataMap = {
+            timeline: { name: '動態', btnId: 'tabTimeline', icon: 'activity' },
+            memo: { name: '備忘', btnId: 'tabMemo', icon: 'calendar-clock' },
+            map: { name: '地圖', btnId: 'tabMap', icon: 'map' },
+            gallery: { name: '圖庫', btnId: 'tabGallery', icon: 'image' },
+            coldRoom: { name: '雪房', btnId: 'tabColdRoom', icon: 'snowflake' },
+            closing: { name: '收工', btnId: 'tabClosing', icon: 'store' }
+        };
+
+        window.applyTabVisibility = () => {
+            const container = $('tabBarContainer');
+            if (!container) return;
+
+            const curActive = localStorage.getItem('activeTab') || 'timeline';
+
+            container.innerHTML = tabOrderList.map(tabKey => {
+                const meta = tabMetadataMap[tabKey];
+                if (!meta) return '';
+                const isVisible = tabVisibilityState[tabKey] !== false;
+                const isCurrent = curActive === tabKey;
+                const actCls = "flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
+                const inactCls = "flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap";
+
+                return `<button id="${meta.btnId}" onclick="window.switchTab('${tabKey}')" style="${isVisible ? '' : 'display:none;'}" class="${isCurrent ? actCls : inactCls} ${isVisible ? '' : 'hidden'}">${meta.name}</button>`;
+            }).join('');
+
+            if (tabVisibilityState[curActive] === false) {
+                const firstVisible = tabOrderList.find(k => tabVisibilityState[k] !== false);
+                if (firstVisible) {
+                    window.switchTab(firstVisible);
+                }
+            }
+        };
+
+        window.tempModalTabOrder = [];
+
+        window.openTabVisibilityModal = () => {
+            $('settingsDropdown')?.classList.add('hidden');
+            window.tempModalTabOrder = [...tabOrderList];
+            window.renderTabVisibilityList();
+            $('tabVisibilityModal')?.classList.replace('hidden', 'flex');
+        };
+
+        window.renderTabVisibilityList = () => {
+            const list = $('tabVisibilityList');
+            if (!list) return;
+
+            list.innerHTML = window.tempModalTabOrder.map((key, idx) => {
+                const meta = tabMetadataMap[key];
+                if (!meta) return '';
+                const checked = tabVisibilityState[key] !== false;
+                const isFirst = idx === 0;
+                const isLast = idx === window.tempModalTabOrder.length - 1;
+
+                return `
+                <div class="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+                    <div class="flex items-center space-x-2">
+                        <div class="flex flex-col space-y-1 mr-1">
+                            <button type="button" onclick="window.moveTabRow(${idx}, -1)" class="p-1 rounded bg-white hover:bg-blue-50 text-slate-500 hover:text-blue-600 border border-slate-200 shadow-2xs ${isFirst ? 'opacity-30 pointer-events-none' : 'active:scale-90'}">
+                                <i data-lucide="chevron-up" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button type="button" onclick="window.moveTabRow(${idx}, 1)" class="p-1 rounded bg-white hover:bg-blue-50 text-slate-500 hover:text-blue-600 border border-slate-200 shadow-2xs ${isLast ? 'opacity-30 pointer-events-none' : 'active:scale-90'}">
+                                <i data-lucide="chevron-down" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+                        <i data-lucide="${meta.icon}" class="w-4 h-4 text-slate-500"></i>
+                        <span class="text-xs font-bold text-slate-800">${meta.name}</span>
+                    </div>
+                    <input type="checkbox" id="tab_chk_${key}" ${checked ? 'checked' : ''} class="w-4 h-4 rounded text-blue-600 focus:ring-0 cursor-pointer">
+                </div>`;
+            }).join('');
+
+            lucide.createIcons({ root: list });
+        };
+
+        window.moveTabRow = (index, dir) => {
+            const targetIdx = index + dir;
+            if (targetIdx < 0 || targetIdx >= window.tempModalTabOrder.length) return;
+            const temp = window.tempModalTabOrder[index];
+            window.tempModalTabOrder[index] = window.tempModalTabOrder[targetIdx];
+            window.tempModalTabOrder[targetIdx] = temp;
+            window.renderTabVisibilityList();
+        };
+
+        window.closeTabVisibilityModal = () => {
+            $('tabVisibilityModal')?.classList.replace('flex', 'hidden');
+        };
+
+        window.saveTabVisibility = () => {
+            let hasOne = false;
+            let newState = {};
+
+            window.tempModalTabOrder.forEach(key => {
+                const isChecked = $(`tab_chk_${key}`)?.checked;
+                newState[key] = !!isChecked;
+                if (isChecked) hasOne = true;
+            });
+
+            if (!hasOne) return window.showToast("至少需保留一個可見分頁！", true);
+
+            tabVisibilityState = newState;
+            tabOrderList = [...window.tempModalTabOrder];
+
+            safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
+            safeSetLocal('work_tab_order_ids', tabOrderList);
+
+            syncConfig('tab_visibility', { 
+                visibility: tabVisibilityState,
+                order: tabOrderList 
+            });
+
+            window.applyTabVisibility();
+            window.closeTabVisibilityModal();
+            window.showToast("✅ 分頁排列與顯示已更新！");
+        };
 
         const defaultMapPoints = {
             'pt_1': { name: '客服室', x: 50, y: 16 }, 'pt_2': { name: '一樓大清點', x: 0, y: 0 },
@@ -187,7 +306,8 @@
             return { state: 'overdue', text: `已結束 (超時 ${fmt(Math.floor((now - e) / 60000))})` };
         }
 
-        window.crNotifiedSet = new Set(); window.memoNotifiedSet = new Set();
+        window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notified') || '[]'));
+        window.memoNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_memo_notified') || '[]'));
         let crAudioCtx = null, crSoundIntervalId = null, crBannerTimeoutId = null;
 
         window.playAlertSound = () => {
@@ -267,7 +387,9 @@
             const now = window.getNow().getTime(); let newOverdueList = [];
             crRecords.forEach(r => {
                 if (r.status === 'active' && r.type !== '包裝冰' && now > (r.depositTime + CR_TIME_LIMIT_MS) && !window.crNotifiedSet.has(r.id)) {
-                    window.crNotifiedSet.add(r.id); newOverdueList.push(r);
+                    window.crNotifiedSet.add(r.id);
+                    sessionStorage.setItem('work_cr_notified', JSON.stringify([...window.crNotifiedSet]));
+                    newOverdueList.push(r);
                 }
             });
             if (newOverdueList.length > 0) { window.playAlertSound(); window.showOverdueAlertBanner(newOverdueList.map(x => `${x.tenant}(${x.type})`).join('、'), "⚠️ 雪房存貨超時警報！"); }
@@ -278,7 +400,9 @@
             const now = window.getNow().getTime(); let newDueMemos = [];
             futureMemos.forEach(m => {
                 if (now >= new Date(`${m.date}T${m.time || '00:00'}`).getTime() && !window.memoNotifiedSet.has(m.id)) {
-                    window.memoNotifiedSet.add(m.id); newDueMemos.push(m);
+                    window.memoNotifiedSet.add(m.id);
+                    sessionStorage.setItem('work_memo_notified', JSON.stringify([...window.memoNotifiedSet]));
+                    newDueMemos.push(m);
                 }
             });
             if (newDueMemos.length > 0) { window.playAlertSound(); window.showOverdueAlertBanner(newDueMemos.map(x => x.title).join('、'), "📌 備忘任務到期提醒！"); }
@@ -289,35 +413,6 @@
             const dropdown = $('settingsDropdown'), btn = $('settingsMenuBtn');
             if (dropdown && !dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && e.target !== btn) dropdown.classList.add('hidden');
         });
-
-        window.applyTabVisibility = () => {
-            tabMetadata.forEach(tab => {
-                const btn = $(tab.btnId), isVisible = tabVisibilityState[tab.id] !== false;
-                if (btn) { btn.style.display = isVisible ? '' : 'none'; btn.classList.toggle('hidden', !isVisible); }
-            });
-            const cur = localStorage.getItem('activeTab') || 'timeline';
-            if (tabVisibilityState[cur] === false) {
-                const first = tabMetadata.find(t => tabVisibilityState[t.id] !== false);
-                if (first) { localStorage.setItem('activeTab', first.id); window.switchTab(first.id); }
-            }
-        };
-
-        window.openTabVisibilityModal = () => {
-            $('settingsDropdown')?.classList.add('hidden');
-            const list = $('tabVisibilityList'); if (!list) return;
-            list.innerHTML = tabMetadata.map(t => `<label class="flex items-center justify-between p-2.5 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 cursor-pointer transition-colors select-none"><div class="flex items-center space-x-2"><i data-lucide="${t.icon}" class="w-4 h-4 text-slate-500"></i><span class="text-xs font-bold text-slate-800">${t.name}</span></div><input type="checkbox" data-tab-id="${t.id}" ${tabVisibilityState[t.id] !== false ? 'checked' : ''} class="tab-vis-checkbox w-4 h-4 rounded text-blue-600 focus:ring-0 cursor-pointer"></label>`).join('');
-            lucide.createIcons({ root: list }); $('tabVisibilityModal')?.classList.replace('hidden', 'flex');
-        };
-
-        window.closeTabVisibilityModal = () => $('tabVisibilityModal')?.classList.replace('flex', 'hidden');
-
-        window.saveTabVisibility = () => {
-            const boxes = document.querySelectorAll('.tab-vis-checkbox'); let hasOne = false, newState = {};
-            boxes.forEach(cb => { newState[cb.dataset.tabId] = cb.checked; if (cb.checked) hasOne = true; });
-            if (!hasOne) return window.showToast("至少需保留一個可見分頁！", true);
-            tabVisibilityState = newState; safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
-            syncConfig('tab_visibility', { visibility: tabVisibilityState }); window.applyTabVisibility(); window.closeTabVisibilityModal(); window.showToast("分頁設定已儲存");
-        };
 
         const getNowInputStrs = (targetMs) => {
             const d = targetMs ? new Date(targetMs) : window.getNow();
@@ -366,7 +461,6 @@
             lucide.createIcons(); modal.classList.replace('hidden', 'flex');
         };
 
-        // --- 圖庫切片與高解析快取核心 ---
         window.setUploadProgress = (percent, text) => {
             const c = $('globalProgressContainer');
             if (!c) return;
@@ -586,7 +680,6 @@
             window.showToast("已刪除圖片");
         };
 
-        // --- 輔助函數：安全將 DataURL 轉為 Blob ---
         const dataURLToBlob = (dataURL) => {
             try {
                 if (!dataURL.includes(';base64,')) return null;
@@ -604,12 +697,11 @@
             }
         };
 
-        // --- IndexedDB 專門用來記憶上次選取資料夾的 Handle ---
         const saveDirHandleToIDB = async (handle) => {
             const dbInstance = await openIDB();
             return new Promise((res) => {
-                const tx = dbInstance.transaction('hd_full_images', 'readwrite');
-                tx.objectStore('hd_full_images').put(handle, '_cached_export_dir_handle_');
+                const tx = dbInstance.transaction(IDB_STORE, 'readwrite');
+                tx.objectStore(IDB_STORE).put(handle, '_cached_export_dir_handle_');
                 tx.oncomplete = () => res(true);
                 tx.onerror = () => res(false);
             });
@@ -618,14 +710,13 @@
         const getDirHandleFromIDB = async () => {
             const dbInstance = await openIDB();
             return new Promise((res) => {
-                const tx = dbInstance.transaction('hd_full_images', 'readonly');
-                const req = tx.objectStore('hd_full_images').get('_cached_export_dir_handle_');
+                const tx = dbInstance.transaction(IDB_STORE, 'readonly');
+                const req = tx.objectStore(IDB_STORE).get('_cached_export_dir_handle_');
                 req.onsuccess = () => res(req.result);
                 req.onerror = () => res(null);
             });
         };
 
-        // --- 具備記憶上次位置、但每次皆會跳出視窗確認的導出邏輯 ---
         window.exportAllGalleryImages = async () => {
             if (!galleryItems?.length) return window.showToast('圖庫內沒有圖片可導出', true);
 
@@ -634,7 +725,6 @@
             }
 
             try {
-                // 讀取上次記憶的資料夾作為選擇視窗的預設起點
                 const cachedHandle = await getDirHandleFromIDB();
                 const pickerOptions = { mode: 'readwrite' };
                 
@@ -642,18 +732,15 @@
                     try {
                         const permission = await cachedHandle.queryPermission({ mode: 'readwrite' });
                         if (permission === 'granted' || permission === 'prompt') {
-                            pickerOptions.startIn = cachedHandle; // 自動將視窗導向上次的位置
+                            pickerOptions.startIn = cachedHandle;
                         }
                     } catch (e) {}
                 }
 
-                // 每次都強制彈出資料夾選擇視窗，供您確認或隨時更改位置
                 window.showToast('請確認或選擇導出目標資料夾...');
                 const dirHandle = await window.showDirectoryPicker(pickerOptions);
 
                 if (!dirHandle) return;
-
-                // 記憶這次選擇的新位置
                 await saveDirHandleToIDB(dirHandle);
 
                 window.showToast(`準備導出共 ${galleryItems.length} 張圖片，請稍候...`);
@@ -691,7 +778,7 @@
                         await writable.close();
 
                         successCount++;
-                        await new Promise(r => setTimeout(r, 250)); // 安全緩衝間隔
+                        await new Promise(r => setTimeout(r, 250));
                     } catch (singleErr) {
                         console.error(`第 ${i + 1} 張圖片寫入失敗:`, singleErr);
                     }
@@ -711,23 +798,61 @@
             }
         };
 
-        window.openUploadBatchModal = () => { window.renderUploadBatchList(); $('uploadBatchModal')?.classList.replace('hidden', 'flex'); lucide.createIcons(); };
-        window.closeUploadBatchModal = () => { window.pendingUploadImages = []; $('uploadBatchModal')?.classList.replace('flex', 'hidden'); };
-        window.removePendingUploadItem = (tempId) => { window.pendingUploadImages = window.pendingUploadImages.filter(x => x.tempId !== tempId); window.renderUploadBatchList(); };
+        window.isBatchMergedView = false;
+        window.mergedBatchForm = {
+            prefix: "",
+            code: "",
+            category: "未分類",
+            time: ""
+        };
 
-        const syncItemFullTitle = (item) => { item.title = `${item.prefix || ''}${item.code || ''}`.trim(); };
-        window.updatePendingCode = (tempId, val) => {
-            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
-            if (!item) return;
-            item.code = val.trim();
-            syncItemFullTitle(item);
+        window.openUploadBatchModal = () => { 
+            window.isBatchMergedView = window.pendingUploadImages.length > 1;
+            const { time } = getNowInputStrs();
+            window.mergedBatchForm = {
+                prefix: "",
+                code: "",
+                category: currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory,
+                time: time
+            };
+            window.renderUploadBatchList(); 
+            $('uploadBatchModal')?.classList.replace('hidden', 'flex'); 
+            lucide.createIcons(); 
+        };
+
+        window.closeUploadBatchModal = () => { 
+            window.pendingUploadImages = []; 
+            window.isBatchMergedView = false;
+            $('uploadBatchModal')?.classList.replace('flex', 'hidden'); 
+        };
+
+        window.removePendingUploadItem = (tempId) => { 
+            window.pendingUploadImages = window.pendingUploadImages.filter(x => x.tempId !== tempId); 
+            window.renderUploadBatchList(); 
+        };
+
+        window.toggleBatchMergeView = () => {
+            window.isBatchMergedView = !window.isBatchMergedView;
+            window.renderUploadBatchList();
+        };
+
+        window.setMergedPrefix = (val) => {
+            window.mergedBatchForm.prefix = (window.mergedBatchForm.prefix === val) ? "" : val;
+            ['1-0', 'R-0', 'J-0'].forEach(p => {
+                const btn = $(`merged-prefix-${p}`);
+                if (btn) {
+                    btn.className = (window.mergedBatchForm.prefix === p)
+                        ? "w-full py-1 rounded-lg text-xs font-bold bg-blue-600 text-white border border-blue-600 shadow-xs"
+                        : "w-full py-1 rounded-lg text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-100";
+                }
+            });
         };
 
         window.selectPrefixOption = (tempId, prefixVal) => {
             const item = window.pendingUploadImages.find(x => x.tempId === tempId);
             if (!item) return;
             item.prefix = (item.prefix === prefixVal) ? "" : prefixVal;
-            syncItemFullTitle(item);
+            item.title = `${item.prefix || ''}${item.code || ''}`.trim();
             ['1-0', 'R-0', 'J-0'].forEach(val => {
                 const btn = $(`btn-prefix-${tempId}-${val}`);
                 if (btn) {
@@ -738,43 +863,11 @@
             });
         };
 
-        window.renderUploadBatchList = () => {
-            const list = $('uploadBatchList');
-            if ($('uploadBatchCount')) $('uploadBatchCount').textContent = window.pendingUploadImages.length;
-            if (!window.pendingUploadImages.length) return window.closeUploadBatchModal();
-
-            const selectableCats = galleryCategories.filter(c => c !== '全部');
-            list.innerHTML = window.pendingUploadImages.map(item => {
-                const [hStr, mStr] = (item.time || '00:00').split(':');
-                return `
-                <div class="bg-slate-50 border border-slate-200 rounded-xl p-2.5 flex flex-col space-y-2 shadow-xs">
-                    <div class="relative w-full h-32 bg-slate-900 rounded-lg overflow-hidden flex items-center justify-center cursor-zoom-in group border border-slate-300" onclick="window.openFullscreenImg('${item.src}')">
-                        <img src="${item.src}" class="w-full h-full object-contain p-1">
-                        <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1.5 right-1.5 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md">
-                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                        </button>
-                    </div>
-                    <div class="flex items-center space-x-2">
-                        <select onchange="window.pendingUploadImages.find(x=>x.tempId==='${item.tempId}').category=this.value" class="flex-1 bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-700">
-                            ${selectableCats.map(cat => `<option value="${cat}" ${item.category === cat ? 'selected' : ''}>${cat}</option>`).join('')}
-                        </select>
-                        <div class="flex items-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-lg px-2 py-1">
-                            <select onchange="window.updateTimePart('${item.tempId}','h',this.value)" class="bg-transparent font-mono">${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}</select>
-                            <span>:</span>
-                            <select onchange="window.updateTimePart('${item.tempId}','m',this.value)" class="bg-transparent font-mono">${Array.from({length: 60}, (_, i) => `<option value="${pad(i)}" ${pad(i) === mStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}</select>
-                        </div>
-                    </div>
-                    <div class="flex items-stretch space-x-1.5">
-                        <div class="w-12 flex flex-col space-y-1 shrink-0">
-                            <button type="button" id="btn-prefix-${item.tempId}-1-0" onclick="window.selectPrefixOption('${item.tempId}', '1-0')" class="w-full py-1 rounded text-[10px] font-bold border ${item.prefix === '1-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">一樓</button>
-                            <button type="button" id="btn-prefix-${item.tempId}-R-0" onclick="window.selectPrefixOption('${item.tempId}', 'R-0')" class="w-full py-1 rounded text-[10px] font-bold border ${item.prefix === 'R-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">魚檔</button>
-                            <button type="button" id="btn-prefix-${item.tempId}-J-0" onclick="window.selectPrefixOption('${item.tempId}', 'J-0')" class="w-full py-1 rounded text-[10px] font-bold border ${item.prefix === 'J-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">雞檔</button>
-                        </div>
-                        <textarea oninput="window.updatePendingCode('${item.tempId}', this.value)" placeholder="輸入檔號" rows="3" class="flex-1 bg-white border border-slate-300 rounded-lg p-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-500 resize-none">${item.code || ''}</textarea>
-                    </div>
-                </div>`;
-            }).join('');
-            lucide.createIcons();
+        window.updatePendingCode = (tempId, val) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
+            if (!item) return;
+            item.code = val.trim();
+            item.title = `${item.prefix || ''}${item.code || ''}`.trim();
         };
 
         window.updateTimePart = (id, part, val) => {
@@ -785,9 +878,128 @@
             item.time = `${h}:${m}`;
         };
 
+        window.updateMergedTimePart = (part, val) => {
+            let [h, m] = (window.mergedBatchForm.time || '00:00').split(':');
+            if (part === 'h') h = val; else m = val;
+            window.mergedBatchForm.time = `${h}:${m}`;
+        };
+
+        window.renderUploadBatchList = () => {
+            const list = $('uploadBatchList');
+            const total = window.pendingUploadImages.length;
+            if ($('uploadBatchCount')) $('uploadBatchCount').textContent = total;
+            if (!total) return window.closeUploadBatchModal();
+
+            const toggleBtn = $('toggleMergeViewBtn');
+            if (toggleBtn) {
+                toggleBtn.innerHTML = window.isBatchMergedView
+                    ? `<i data-lucide="layout-grid" class="w-3.5 h-3.5 mr-1"></i>展開分開`
+                    : `<i data-lucide="layers" class="w-3.5 h-3.5 mr-1"></i>合併疊加`;
+            }
+
+            const selectableCats = galleryCategories.filter(c => c !== '全部');
+
+            if (window.isBatchMergedView) {
+                const [hStr, mStr] = (window.mergedBatchForm.time || '00:00').split(':');
+                list.innerHTML = `
+                <div class="flex flex-col items-center animate-pop-in pt-1 pb-2">
+                    <div class="photo-deck-container cursor-pointer" onclick="window.openFullscreenImg('${window.pendingUploadImages[0]?.src}')" title="點擊放大預覽">
+                        ${window.pendingUploadImages.slice(0, 5).map((img) => `
+                            <div class="deck-card">
+                                <img src="${img.src}" class="w-full h-full object-contain p-1">
+                            </div>
+                        `).join('')}
+                        <div class="absolute -bottom-1.5 bg-slate-900/85 backdrop-blur-md text-white text-[11px] font-black px-3.5 py-1 rounded-full shadow-lg border border-white/40 flex items-center z-20">
+                            <i data-lucide="images" class="w-3.5 h-3.5 mr-1.5 text-blue-400"></i>共疊加收攏 ${total} 張相片
+                        </div>
+                    </div>
+
+                    <div class="w-full bg-slate-50 border-2 border-indigo-200/80 rounded-2xl p-3 shadow-xs space-y-2.5 mt-2">
+                        <div class="flex items-center justify-center">
+                            <select id="mergedCatInput" onchange="window.mergedBatchForm.category = this.value" class="w-fit max-w-[130px] bg-white border border-slate-300 rounded-xl px-3 py-1 text-xs font-bold text-slate-700 shadow-inner focus:outline-none focus:border-blue-500 text-center">
+                                ${selectableCats.map(cat => `<option value="${cat}" ${window.mergedBatchForm.category === cat ? 'selected' : ''}>${cat}</option>`).join('')}
+                            </select>
+                        </div>
+
+                        <div class="flex items-center justify-center space-x-2">
+                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-xl px-2 py-2 shadow-inner shrink-0">
+                                <select onchange="window.updateMergedTimePart('h', this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
+                                    ${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
+                                </select>
+                                <span class="px-0.5">:</span>
+                                <select onchange="window.updateMergedTimePart('m', this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
+                                    ${Array.from({length: 60}, (_, i) => `<option value="${pad(i)}" ${pad(i) === mStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
+                                </select>
+                            </div>
+
+                            <div class="w-14 flex flex-col space-y-1 shrink-0">
+                                <button type="button" id="merged-prefix-1-0" onclick="window.setMergedPrefix('1-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${window.mergedBatchForm.prefix === '1-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">一樓</button>
+                                <button type="button" id="merged-prefix-R-0" onclick="window.setMergedPrefix('R-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${window.mergedBatchForm.prefix === 'R-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">魚檔</button>
+                                <button type="button" id="merged-prefix-J-0" onclick="window.setMergedPrefix('J-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${window.mergedBatchForm.prefix === 'J-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">雞檔</button>
+                            </div>
+
+                            <textarea id="mergedCodeInput" oninput="window.mergedBatchForm.code = this.value.trim()" placeholder="輸入統一檔號 (例如: 012)" class="flex-1 h-[76px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${window.mergedBatchForm.code || ''}</textarea>
+                        </div>
+                    </div>
+                </div>`;
+            } else {
+                list.innerHTML = window.pendingUploadImages.map(item => {
+                    const [hStr, mStr] = (item.time || '00:00').split(':');
+                    return `
+                    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 flex flex-col space-y-2.5 shadow-xs">
+                        <div class="relative w-fit max-w-full mx-auto rounded-xl overflow-hidden cursor-zoom-in group border border-slate-300 shadow-sm" onclick="window.openFullscreenImg('${item.src}')">
+                            <img src="${item.src}" class="max-h-48 w-auto object-contain rounded-xl block">
+                            <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1.5 right-1.5 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md active:scale-95 transition-all">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+
+                        <div class="flex items-center justify-center">
+                            <select onchange="window.pendingUploadImages.find(x=>x.tempId==='${item.tempId}').category=this.value" class="w-fit max-w-[130px] bg-white border border-slate-300 rounded-xl px-3 py-1 text-xs font-bold text-slate-700 shadow-inner focus:outline-none focus:border-blue-500 text-center">
+                                ${selectableCats.map(cat => `<option value="${cat}" ${item.category === cat ? 'selected' : ''}>${cat}</option>`).join('')}
+                            </select>
+                        </div>
+
+                        <div class="flex items-center justify-center space-x-2">
+                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-xl px-2 py-2 shadow-inner shrink-0">
+                                <select onchange="window.updateTimePart('${item.tempId}','h',this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
+                                    ${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
+                                </select>
+                                <span class="px-0.5">:</span>
+                                <select onchange="window.updateTimePart('${item.tempId}','m',this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
+                                    ${Array.from({length: 60}, (_, i) => `<option value="${pad(i)}" ${pad(i) === mStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
+                                </select>
+                            </div>
+
+                            <div class="w-14 flex flex-col space-y-1 shrink-0">
+                                <button type="button" id="btn-prefix-${item.tempId}-1-0" onclick="window.selectPrefixOption('${item.tempId}', '1-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${item.prefix === '1-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">一樓</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-R-0" onclick="window.selectPrefixOption('${item.tempId}', 'R-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${item.prefix === 'R-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">魚檔</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-J-0" onclick="window.selectPrefixOption('${item.tempId}', 'J-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${item.prefix === 'J-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">雞檔</button>
+                            </div>
+
+                            <textarea oninput="window.updatePendingCode('${item.tempId}', this.value)" placeholder="輸入檔號" class="flex-1 h-[76px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${item.code || ''}</textarea>
+                        </div>
+                    </div>`;
+                }).join('');
+            }
+            lucide.createIcons();
+        };
+
         window.confirmBatchUpload = async () => {
             const items = [...window.pendingUploadImages];
             if (!items.length || window.isUploading) return;
+
+            if (window.isBatchMergedView) {
+                const fullTitle = `${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`.trim();
+                items.forEach(it => {
+                    it.prefix = window.mergedBatchForm.prefix;
+                    it.code = window.mergedBatchForm.code;
+                    it.title = fullTitle || '無標題';
+                    it.category = window.mergedBatchForm.category || '未分類';
+                    it.time = window.mergedBatchForm.time || '12:00';
+                });
+            }
+
             window.isUploading = true;
             window.closeUploadBatchModal();
 
@@ -866,7 +1078,7 @@
             window.openCategoryManager(); window.renderGallery();
         };
 
-        function loadLocalFastCache() {
+function loadLocalFastCache() {
             dailyScheduleData = getLocal('work_cache_schedule', []);
             taskCompletionState = getLocal('work_cache_task_states', {});
             subTaskCompletionState = getLocal('work_cache_subtask_states', {});
@@ -886,7 +1098,9 @@
 
             memberSchedules = getLocal('work_cache_member_schedules', []);
             tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility);
-            checkAndResetDailySchedule(); window.applyTabVisibility();
+            tabOrderList = getLocal('work_tab_order_ids', defaultTabOrder);
+            checkAndResetDailySchedule(); 
+            window.applyTabVisibility();
             window.switchTab(localStorage.getItem('activeTab') || 'timeline');
         }
 
@@ -914,7 +1128,19 @@
                 if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
                 if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
             });
-            bindSync('tab_visibility', 'work_cache_tab_visibility', d => { if (d.visibility) { tabVisibilityState = d.visibility; safeSetLocal('work_cache_tab_visibility', tabVisibilityState); window.applyTabVisibility(); } });
+
+            bindSync('tab_visibility', 'work_cache_tab_visibility', d => { 
+                if (d.visibility) { 
+                    tabVisibilityState = d.visibility; 
+                    safeSetLocal('work_cache_tab_visibility', tabVisibilityState); 
+                }
+                if (d.order && Array.isArray(d.order)) {
+                    tabOrderList = d.order;
+                    safeSetLocal('work_tab_order_ids', tabOrderList);
+                }
+                window.applyTabVisibility(); 
+            });
+
             bindSync('coldRoom', 'coldRoomRecords', d => {
                 if (d.records) { crRecords = d.records; safeSetLocal('coldRoomRecords', crRecords); }
                 if (d.types) { crItemTypes = d.types; safeSetLocal('coldRoomTypes', crItemTypes); }
@@ -1285,7 +1511,7 @@
 
         window.getGroupColor = (g) => ({ A: 'bg-pink-50 text-pink-600 border-pink-200', B: 'bg-blue-50 text-blue-600 border-blue-200', C: 'bg-emerald-50 text-emerald-600 border-emerald-200' }[g] || 'bg-slate-50 text-slate-600 border-slate-200');
 
-        window.crSaveData = () => {
+window.crSaveData = () => {
             safeSetLocal('coldRoomRecords', crRecords);
             safeSetLocal('coldRoomTypes', crItemTypes);
             syncConfig('coldRoom', { records: crRecords, types: crItemTypes }, true);
@@ -1503,7 +1729,7 @@
             if (needReRender) { window.renderTimeline(false); return; }
             document.querySelectorAll('.conveyor-task').forEach(w => {
                 const status = calculateTaskStatus(w.dataset.start, w.dataset.end); if (status.state !== 'waiting') { needReRender = true; return; }
-                const st = parseTime(w.dataset.start); w.style.marginTop = `${8 + Math.min(Math.max(0, (st - prev) / 60000) * 1.5, 120)}px`;
+                const st = parseTime(w.dataset.start); w.style.marginTop = `${Math.min(8 + Math.max(0, (st - prev) / 60000) * 0.1, 16)}px`;
                 const tEl = w.querySelector('.time-text'); if (tEl) tEl.innerHTML = `<span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ${status.text.replace('未開始 (', '還有 ').replace('後)', '')} 到來</span>`;
                 prev = st;
             });
@@ -1554,19 +1780,39 @@
 
         window.scrollToTopUncompleted = (e) => {
             if (e) e.stopPropagation(); const page = $('timelinePage');
-            for (let w of page.querySelectorAll('.timeline-wrapper')) { if (!taskCompletionState[w.dataset.taskId]) { const card = w.querySelector('.timeline-card'); if (card) { page.scrollTo({ top: Math.max(0, page.scrollTop + (card.getBoundingClientRect().top - page.getBoundingClientRect().top) - 75), behavior: 'smooth' }); break; } } }
+            for (let w of page.querySelectorAll('.timeline-wrapper')) { 
+                if (!taskCompletionState[w.dataset.taskId]) { 
+                    const card = w.querySelector('.timeline-card'); 
+                    if (card) { 
+                        page.scrollTo({ top: Math.max(0, page.scrollTop + (card.getBoundingClientRect().top - page.getBoundingClientRect().top) - 75), behavior: 'smooth' }); 
+                        break; 
+                    } 
+                } 
+            }
         };
 
         window.switchTab = (tab) => {
             const pages = { gallery: 'galleryPage', timeline: 'timelinePage', memo: 'memoPage', map: 'mapPage', coldRoom: 'coldRoomPage', closing: 'closingPage' };
-            const btns = { timeline: 'tabTimeline', memo: 'tabMemo', map: 'tabMap', gallery: 'tabGallery', coldRoom: 'tabColdRoom', closing: 'tabClosing' };
             const actCls = "flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
             const inactCls = "flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap";
-            Object.values(pages).forEach(id => { const el = $(id); if (el) { el.classList.add('hidden'); el.classList.remove('flex', 'block'); } });
-            Object.values(btns).forEach(id => { const el = $(id); if (el) el.className = inactCls; });
-            const targetPage = $(pages[tab]), targetBtn = $(btns[tab]);
-            if (targetPage) { targetPage.classList.remove('hidden'); targetPage.classList.add(['map', 'gallery', 'coldRoom', 'closing'].includes(tab) ? 'flex' : 'block'); }
+            
+            Object.values(pages).forEach(id => { 
+                const el = $(id); 
+                if (el) { el.classList.add('hidden'); el.classList.remove('flex', 'block'); } 
+            });
+
+            tabOrderList.forEach(k => {
+                const btn = $(tabMetadataMap[k]?.btnId);
+                if (btn) btn.className = inactCls;
+            });
+
+            const targetPage = $(pages[tab]), targetBtn = $(tabMetadataMap[tab]?.btnId);
+            if (targetPage) { 
+                targetPage.classList.remove('hidden'); 
+                targetPage.classList.add(['map', 'gallery', 'coldRoom', 'closing'].includes(tab) ? 'flex' : 'block'); 
+            }
             if (targetBtn) targetBtn.className = actCls;
+
             ({
                 gallery: window.renderGallery,
                 timeline: () => window.renderTimeline(true),
@@ -1575,7 +1821,8 @@
                 coldRoom: window.crRenderList,
                 closing: () => { window.searchStall?.(); }
             })[tab]?.();
-            localStorage.setItem('activeTab', tab); window.applyTabVisibility();
+
+            localStorage.setItem('activeTab', tab);
         };
 
         window.renderTimeline = (scrollToCenter = false) => {
@@ -1584,7 +1831,7 @@
             if (!tasks.length) { container.innerHTML = '<div class="flex flex-col items-center justify-center pt-24 pb-32 text-slate-400"><i data-lucide="party-popper" class="w-16 h-16 mb-4 text-green-500 opacity-80"></i><span class="text-base font-black tracking-widest text-slate-600">目前沒有任何任務</span></div>'; lucide.createIcons(); return; }
             let targetScrollId = null, minDiff = Infinity;
             tasks.forEach(t => { const s = parseTime(t.start).getTime(), e = parseTime(t.end).getTime(); if (now >= s && now <= e) { targetScrollId = `tl-task-wrapper-${t.id}`; minDiff = -1; } else if (minDiff !== -1 && Math.min(Math.abs(s - now), Math.abs(e - now)) < minDiff) { minDiff = Math.min(Math.abs(s - now), Math.abs(e - now)); targetScrollId = `tl-task-wrapper-${t.id}`; } });
-            let html = '<div class="relative pt-[2vh] pb-[20vh] w-full max-w-[500px] mx-auto flex flex-col">';
+            let html = '<div class="relative pt-2 pb-8 w-full max-w-[500px] mx-auto flex flex-col">';
             html += `<div id="uncompleted-indicator-container" class="sticky top-[125px] z-[60] w-0 h-0 overflow-visible transition-all duration-300 opacity-0 pointer-events-none -translate-y-2"><button type="button" onclick="window.scrollToTopUncompleted(event)" class="absolute left-[13px] -translate-y-full pointer-events-auto bg-red-500 text-white border-2 border-white rounded-full pl-1.5 pr-2 py-1 flex items-center shadow-lg shadow-red-500/40 text-[10px] font-bold hover:bg-red-600 active:scale-95 transition-all whitespace-nowrap"><i data-lucide="arrow-up" class="w-3.5 h-3.5 mr-0.5"></i><span id="uncompleted-count">0</span></button></div>`;
             html += `<div id="nowTimeMarker" class="absolute left-0 right-0 z-0 flex items-center pointer-events-none -translate-y-1/2 transition-all duration-500" style="top:0px; display:none;"><span class="text-blue-600 text-lg font-black shrink-0 -ml-1 drop-shadow-md select-none leading-none">➤</span><div class="flex-1 h-[2px] bg-blue-500/80 shadow-[0_0_8px_rgba(59,130,246,0.8)] border-t border-b border-blue-300"></div></div>`;
             let lastWasStacked = false, prevGapTime = window.getNow();
@@ -1611,7 +1858,7 @@
                     activeLine = `<div class="absolute left-[-15px] right-[-15px] top-1/2 -translate-y-1/2 h-[2px] bg-green-400 shadow-[0_0_12px_rgba(74,222,128,0.8)] z-0 pointer-events-none rounded-full flex justify-between items-center px-1"><div class="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(74,222,128,1)]"></div><div class="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(74,222,128,1)]"></div></div>`;
                 } else {
                     wClass = 'timeline-wrapper relative transition-all duration-1000 ease-linear conveyor-task';
-                    wStyle += ` margin-top: ${8 + Math.min(Math.max(0, (parseTime(t.start) - prevGapTime) / 60000) * 1.5, 120)}px;`;
+                    wStyle += ` margin-top: ${Math.min(8 + Math.max(0, (parseTime(t.start) - prevGapTime) / 60000) * 0.1, 16)}px;`;
                     lastWasStacked = false; cClass = 'opacity-85 scale-[0.92] border-[#d6d0c4] bg-white'; dotClass = 'bg-amber-400 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
                     tText = `<div class="time-text text-[11px] mt-1.5 tracking-widest"><span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ${status.text.replace('未開始 (', '還有 ').replace('後)', '')} 到來</span></div>`;
                     prevGapTime = parseTime(t.start);
@@ -1733,7 +1980,7 @@
             if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
         };
 
-        setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
+setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         setInterval(() => {
             checkAndResetDailySchedule();
             if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
@@ -1876,10 +2123,18 @@
             resultList.classList.remove('hidden');
 
             const matched = (window.stallList || []).filter(s => {
-                const codeStr = String(s.code || '');
+                const codeStr = String(s.code || '').trim();
                 const cleanCode = codeStr.replace(/^0+/, '');
-                const nameStr = String(s.name || '');
-                return codeStr.includes(query) || cleanCode === query || nameStr.includes(query);
+                const nameStr = String(s.name || '').trim();
+                const cleanQuery = query.replace(/^0+/, '');
+
+                // 檔號必須「完全相等」（支援輸入完整格式如 "001" 或去掉前導零的 "1"）
+                const isCodeMatch = (codeStr === query) || (cleanCode === cleanQuery);
+                
+                // 寶號（店名）則維持模糊包含搜尋，方便直接搜店名
+                const isNameMatch = nameStr.includes(query);
+
+                return isCodeMatch || isNameMatch;
             });
 
             if (!matched.length) {
@@ -2011,7 +2266,9 @@
             else { dot?.classList.replace('bg-green-500', 'bg-red-500'); if (st) st.textContent = '連線中...'; }
         });
 
-        loadLocalFastCache(); initAuth();
+        loadLocalFastCache(); 
+        initAuth();
+
         if (getLocal('work_cache_dark_mode', false)) {
             document.body.classList.add('dark-mode');
             window.addEventListener('DOMContentLoaded', () => { const icon = $('darkModeIcon'); if (icon) { icon.setAttribute('data-lucide', 'sun'); lucide.createIcons(); } });
@@ -2043,18 +2300,11 @@
                     </div>
                 </div>
             </div>
-            <div id="tabBarContainer" class="mt-3 flex bg-[#f0ebe1] rounded-lg p-1 shadow-inner border border-[#e5dfd3] relative z-20 overflow-x-auto scrollbar-hide">
-                <button id="tabTimeline" onclick="window.switchTab('timeline')" class="flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">動態</button>
-                <button id="tabMemo" onclick="window.switchTab('memo')" class="flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">備忘</button>
-                <button id="tabMap" onclick="window.switchTab('map')" class="flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">地圖</button>
-                <button id="tabGallery" onclick="window.switchTab('gallery')" class="flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">圖庫</button>
-                <button id="tabColdRoom" onclick="window.switchTab('coldRoom')" class="flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">雪房</button>
-                <button id="tabClosing" onclick="window.switchTab('closing')" class="flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap">收工</button>
-            </div>
+            <div id="tabBarContainer" class="mt-3 flex bg-[#f0ebe1] rounded-lg p-1 shadow-inner border border-[#e5dfd3] relative z-20 overflow-x-auto scrollbar-hide"></div>
         </header>
 
         <main id="timelinePage" class="hidden flex-1 min-h-0 overflow-y-auto relative z-10 bg-[#fdfbf7] scrollbar-hide scroll-smooth">
-            <div id="timelineStickyHeader" class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-3 pb-6 px-4 flex flex-col items-center justify-center pointer-events-none transition-all">
+            <div id="timelineStickyHeader" class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-2 pb-2 px-4 flex flex-col items-center justify-center pointer-events-none transition-all">
                 <div class="flex items-center justify-center gap-2 w-full max-w-[500px]">
                     <div class="flex items-center gap-1.5 justify-end flex-1">
                         <button type="button" onclick="window.promptResetOptions()" class="bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-full w-8 h-8 shadow-sm active:scale-95 transition-all flex items-center justify-center pointer-events-auto shrink-0" title="狀態還原選項"><i data-lucide="list-restart" class="w-4 h-4 pointer-events-none"></i></button>
@@ -2118,9 +2368,7 @@
             </div>
         </main>
 
-        <!-- 圖庫分頁 -->
         <main id="galleryPage" class="hidden flex-1 min-h-0 flex-col relative z-10 bg-[#fdfbf7] overflow-hidden">
-            <!-- 全域即時上傳進度條 -->
             <div id="globalProgressContainer" class="hidden absolute top-0 left-0 right-0 z-[300] bg-slate-900/95 backdrop-blur-md p-3 text-white border-b border-blue-500 shadow-2xl">
                 <div class="flex justify-between items-center text-xs font-bold mb-1.5"><span id="globalProgressText" class="text-blue-300">正在處理...</span></div>
                 <div class="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
@@ -2128,9 +2376,7 @@
                 </div>
             </div>
 
-            <!-- 圖庫主體區域 -->
             <div class="flex-1 min-h-0 flex flex-col w-full h-full relative z-10 bg-[#fdfbf7]">
-                <!-- 頂部功能列 -->
                 <div class="p-2.5 border-b border-[#e6e2d6] flex items-center justify-between bg-white shrink-0 shadow-xs z-20 gap-2">
                     <div class="relative flex-1">
                         <i data-lucide="search" class="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400"></i>
@@ -2145,7 +2391,6 @@
                     </label>
                 </div>
 
-                <!-- 側邊分類與網格列表 (每行 3 張) -->
                 <div class="flex flex-1 min-h-0 overflow-hidden relative z-10">
                     <div class="w-[70px] shrink-0 border-r border-[#e6e2d6] bg-[#f4f1eb] overflow-y-auto flex flex-col items-center space-y-1.5 scrollbar-hide" id="gallerySidebar"></div>
                     <div class="flex-1 p-2 overflow-y-auto bg-[#fdfbf7] relative scrollbar-hide" id="galleryGrid"></div>
@@ -2181,9 +2426,7 @@
             </div>
         </main>
 
-        <!-- 收工查核分頁 -->
         <main id="closingPage" class="hidden flex-1 min-h-0 flex-col relative z-10 bg-[#fdfbf7] overflow-hidden">
-            <!-- 頂部功能子導航 -->
             <div class="bg-[#fdfbf7]/95 backdrop-blur-md p-3 border-b border-[#e5dfd3] shadow-xs shrink-0 flex items-center justify-between z-20">
                 <div class="flex items-center space-x-2">
                     <div class="w-6 h-6 rounded-lg bg-indigo-500 text-white flex items-center justify-center shadow-xs">
@@ -2201,10 +2444,8 @@
                 </div>
             </div>
 
-            <!-- 搜尋與比對呈現區域 -->
             <div class="flex-1 min-h-0 flex flex-col items-center p-3 relative z-10 overflow-hidden">
                 <div class="w-full max-w-[390px] flex flex-col items-center pt-3 h-full">
-                    <!-- 搜尋卡片 -->
                     <div class="bg-white border border-slate-200 rounded-2xl shadow-xs p-2.5 w-full text-center shrink-0">
                         <div class="relative flex items-center">
                             <i data-lucide="search" class="absolute left-3 w-4 h-4 text-slate-400"></i>
@@ -2215,19 +2456,17 @@
                         </div>
                     </div>
 
-                    <!-- 引導說明 -->
                     <div id="placeholderInfo" class="text-center py-5 text-slate-400 text-xs">
                         請於上方輸入檔號，系統將自動比對各樓層狀況
                     </div>
 
-                    <!-- 滾動結果清單 -->
                     <div id="stallResultList" class="w-full flex-1 min-h-0 overflow-y-auto space-y-2.5 scrollbar-hide hidden mt-2.5 pb-6"></div>
                 </div>
             </div>
         </main>
     </div>
 
-    <!-- 彈窗群 -->
+    <!-- 彈窗：調整分頁顯示 (支援上下鍵重排與顯示切換) -->
     <div id="tabVisibilityModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] hidden flex-col items-center justify-center p-4">
         <div class="bg-white rounded-2xl p-4 w-full max-w-[320px] shadow-2xl relative scrollbar-hide flex flex-col" onclick="event.stopPropagation()">
             <header class="flex justify-between items-center pb-2.5 mb-3 border-b border-slate-100">
@@ -2242,9 +2481,9 @@
         </div>
     </div>
 
-    <!-- 彈窗：確認上傳圖片 -->
+    <!-- 彈窗：確認上傳圖片（支援拍立得疊加與批量合併命名） -->
     <div id="uploadBatchModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[260] hidden flex-col items-center justify-center p-3 sm:p-4">
-        <div class="bg-white rounded-2xl p-4 w-full max-w-[400px] shadow-2xl relative max-h-[85vh] flex flex-col" onclick="event.stopPropagation()">
+        <div class="bg-white rounded-2xl p-4 w-full max-w-[400px] shadow-2xl relative max-h-[86vh] flex flex-col" onclick="event.stopPropagation()">
             <header class="flex justify-between items-center pb-2.5 mb-2 border-b border-slate-100 shrink-0">
                 <div class="flex items-center space-x-2">
                     <div class="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center"><i data-lucide="images" class="w-4 h-4"></i></div>
@@ -2252,10 +2491,16 @@
                 </div>
                 <button onclick="window.closeUploadBatchModal()" class="text-slate-400 hover:text-slate-600 p-1"><i data-lucide="x" class="w-4 h-4"></i></button>
             </header>
-            <div class="bg-blue-50 border border-blue-100 rounded-xl p-2 text-center text-xs font-bold text-blue-700 shrink-0 mb-2.5">
-                📸 已選取 <span id="uploadBatchCount" class="text-blue-900 font-black">0</span> 張圖片
+
+            <div class="bg-slate-50 border border-slate-200 rounded-xl p-2 px-3 text-xs font-bold text-slate-700 shrink-0 mb-2 flex items-center justify-between">
+                <span>📸 已選取 <span id="uploadBatchCount" class="text-blue-600 font-black">0</span> 張圖片</span>
+                <button type="button" id="toggleMergeViewBtn" onclick="window.toggleBatchMergeView()" class="bg-white border border-slate-300 hover:border-indigo-400 text-indigo-600 px-2.5 py-1 rounded-lg text-xs font-black flex items-center shadow-xs active:scale-95 transition-all">
+                    <i data-lucide="layers" class="w-3.5 h-3.5 mr-1"></i> 合併疊加
+                </button>
             </div>
+
             <div id="uploadBatchList" class="flex-1 overflow-y-auto space-y-2.5 pr-1 scrollbar-hide mb-2.5"></div>
+
             <div class="flex justify-end space-x-2 pt-2.5 border-t border-slate-100 shrink-0">
                 <button onclick="window.closeUploadBatchModal()" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold active:scale-95">取消</button>
                 <button onclick="window.confirmBatchUpload()" class="px-4 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 flex items-center"><i data-lucide="check" class="w-3.5 h-3.5 mr-1"></i>確認發布</button>
@@ -2282,6 +2527,7 @@
         </div>
     </div>
 
+    <!-- 通用確認對話框 -->
     <div id="customConfirmModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10000] hidden flex-col items-center justify-center p-4">
         <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-full max-w-[300px] flex flex-col overflow-hidden relative">
             <header class="p-4 border-b border-slate-100 flex items-center bg-slate-50"><h2 id="confirmModalTitle" class="text-slate-800 font-bold text-base flex items-center"><i data-lucide="alert-triangle" class="w-5 h-5 mr-2 text-amber-500"></i> 確認</h2></header>
@@ -2293,6 +2539,7 @@
         </div>
     </div>
 
+    <!-- 成員排班表彈窗 -->
     <div id="scheduleManageModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-2 sm:p-4 overflow-y-auto">
         <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-fit min-w-[96vw] max-w-[98vw] flex flex-col overflow-hidden relative">
             <header class="p-2.5 sm:p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50"><h2 class="text-slate-800 font-bold text-sm flex items-center"><i data-lucide="users-round" class="w-4 h-4 mr-2 text-blue-500"></i> 成員排班表</h2><button onclick="window.closeScheduleManager()" class="text-slate-400 p-1.5 rounded-full"><i data-lucide="x" class="w-5 h-5"></i></button></header>
@@ -2300,6 +2547,7 @@
         </div>
     </div>
 
+    <!-- 雪房新增存放彈窗 -->
     <div id="crAddModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
         <div class="bg-white rounded-2xl p-4 w-full max-w-[300px] shadow-2xl relative max-h-[85vh] overflow-y-auto scrollbar-hide">
             <h3 class="font-bold text-base mb-3 text-slate-800 flex items-center border-b pb-2"><i data-lucide="package-plus" class="w-4 h-4 mr-2 text-blue-500"></i> 新增存放</h3>
@@ -2327,6 +2575,7 @@
         </div>
     </div>
 
+    <!-- 雪房取出貨物彈窗 -->
     <div id="crWithdrawModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
         <div class="bg-white rounded-2xl p-4 w-full max-w-[300px] shadow-2xl relative scrollbar-hide">
             <h3 class="font-bold text-base mb-3 text-slate-800 flex items-center border-b pb-2"><i data-lucide="package-minus" class="w-4 h-4 mr-2 text-amber-500"></i> 取出貨物</h3>
@@ -2362,7 +2611,6 @@
                 </button>
             </header>
 
-            <!-- 手動新增 -->
             <div class="bg-slate-50 border border-slate-200 rounded-xl p-2.5 my-2.5 shrink-0 space-y-1.5">
                 <div class="text-[11px] font-bold text-slate-600">手動新增攤位</div>
                 <div class="grid grid-cols-2 gap-1.5">
@@ -2376,7 +2624,6 @@
                 <button type="button" onclick="window.addNewStall()" class="w-full bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg py-1.5 text-xs font-bold transition-all shadow-xs active:scale-95">確認新增</button>
             </div>
 
-            <!-- 清單表格 -->
             <div class="flex-1 overflow-y-auto border border-slate-200 rounded-xl">
                 <table class="w-full text-left border-collapse">
                     <thead class="bg-slate-100 text-[10.5px] text-slate-600 sticky top-0 shadow-xs">
