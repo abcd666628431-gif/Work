@@ -1,4 +1,1887 @@
-window.resetTo108Stalls = () => {
+<!DOCTYPE html>
+<html lang="zh-TW" class="bg-[#f0ebe1]">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>工作記錄本</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+        * { -ms-overflow-style: none !important; scrollbar-width: none !important; }
+        html, body { font-family: 'Inter', 'Noto Sans TC', sans-serif; background-color: #f0ebe1 !important; color: #334155; overflow-x: hidden; width: 100%; min-height: 100%; margin: 0; padding: 0; }
+        .hud-ring { transition: stroke-dashoffset 1s cubic-bezier(0.4, 0, 0.2, 1); }
+        .tape-strip { position: absolute; top: -6px; left: 50%; transform: translateX(-50%); width: 35px; height: 12px; border: 1px solid rgba(255,255,255,0.8); box-shadow: 0 1px 2px rgba(0,0,0,0.05); backdrop-filter: blur(2px); z-index: 5; border-radius: 1px; }
+        .tape-strip-blue { background-color: rgba(186, 230, 253, 0.5); }
+        .tape-strip-red { background-color: rgba(254, 205, 211, 0.5); }
+        .daily-task-card, .timeline-card { transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+        .timer-pulse { animation: pulse-red 2s infinite; }
+        @keyframes pulse-red { 0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); } 70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); } }
+        @keyframes flag-fade-in { 0% { opacity: 0; transform: scale(0.5) translateY(10px); } 100% { opacity: 1; transform: scale(1) translateY(0); } }
+        .animate-flag-in { animation: flag-fade-in 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        @keyframes pop-fade-in { 0% { opacity: 0; transform: scale(0.95); } 100% { opacity: 1; transform: scale(1); } }
+        .animate-pop-in { animation: pop-fade-in 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        @keyframes sky-time-glow { 0%, 100% { box-shadow: 0 0 8px rgba(56, 189, 248, 0.55), inset 0 0 4px rgba(56, 189, 248, 0.25); border-color: #38bdf8; } 50% { box-shadow: 0 0 14px rgba(125, 211, 252, 0.85), inset 0 0 8px rgba(125, 211, 252, 0.4); border-color: #7dd3fc; } }
+        .now-glowing-slot, .now-glowing-header { animation: sky-time-glow 2.8s infinite ease-in-out; border-left: 2px solid #38bdf8 !important; border-right: 2px solid #38bdf8 !important; position: relative; }
+        .now-glowing-slot { z-index: 15; } .now-glowing-header { z-index: 25; border-top: 2px solid #38bdf8 !important; }
+        .now-glowing-sub { box-shadow: 0 0 8px rgba(56, 189, 248, 0.5) inset; border: 1.5px solid #38bdf8 !important; border-radius: 4px; }
+        body.dark-mode { background-color: #0f172a !important; color: #cbd5e1 !important; color-scheme: dark; }
+        .dark-mode .bg-\[\#fdfbf7\], .dark-mode .bg-white, .dark-mode .timeline-card { background-color: #1e293b !important; border-color: #334155 !important; }
+        .dark-mode .bg-\[\#f0ebe1\], .dark-mode .bg-slate-50, .dark-mode .bg-slate-100, .dark-mode #mapWrapper, .dark-mode .bg-\[\#f4f1eb\] { background-color: #0f172a !important; border-color: #334155 !important; }
+        .dark-mode header.bg-\[\#fdfbf7\]\/95 { background-color: rgba(30, 41, 59, 0.95) !important; border-color: #334155 !important; }
+        .dark-mode .text-slate-800 { color: #cbd5e1 !important; } .dark-mode .text-slate-700 { color: #94a3b8 !important; }
+        .dark-mode .text-slate-600 { color: #64748b !important; } .dark-mode .text-slate-500 { color: #475569 !important; }
+        .dark-mode .border-slate-200, .dark-mode .border-slate-300, .dark-mode .border-\[\#d6d0c4\] { border-color: #334155 !important; }
+        .dark-mode .tape-strip { background-color: rgba(255,255,255,0.1) !important; border-color: rgba(255,255,255,0.05) !important; }
+        .dark-mode #timelineStickyHeader { background: linear-gradient(to bottom, #1e293b, rgba(30,41,59,0.95), transparent) !important; }
+        .dark-mode #tlBigClock { background-color: rgba(30, 41, 59, 0.9) !important; color: #f8fafc !important; border-color: #334155 !important; }
+        .dark-mode .active-task .timeline-card { background-color: #172554 !important; border-color: #1e3a8a !important; }
+        .dark-mode input, .dark-mode textarea, .dark-mode select { background-color: #334155 !important; color: #f8fafc !important; border-color: #475569 !important; }
+        .dark-mode #dbTableBody tr:hover { background-color: #334155 !important; }
+        @keyframes room-walk-a { 0%, 100% { transform: translate3d(0, 0, 0); } 33% { transform: translate3d(-25px, 12px, 0); } 66% { transform: translate3d(20px, 18px, 0); } }
+        @keyframes room-walk-b { 0%, 100% { transform: translate3d(0, 0, 0); } 25% { transform: translate3d(22px, 8px, 0); } 50% { transform: translate3d(-15px, 20px, 0); } 75% { transform: translate3d(-22px, 5px, 0); } }
+        @keyframes room-walk-c { 0%, 100% { transform: translate3d(0, 0, 0); } 33% { transform: translate3d(12px, 15px, 0); } 66% { transform: translate3d(-18px, 8px, 0); } }
+        .animate-float-a { animation: room-walk-a 14s linear infinite; will-change: transform; }
+        .animate-float-b { animation: room-walk-b 16s linear infinite; will-change: transform; }
+        .animate-float-c { animation: room-walk-c 12s linear infinite; will-change: transform; }
+    </style>
+    <script type="module">
+        import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const CONFIG = { maxDim: 1000, quality: 0.6 };
+        const firebaseConfig = {
+            apiKey: "AIzaSyBsdBYBeJYqgeDDxF39lZ0pr785SMnwvJs",
+            authDomain: "work-eb62f.firebaseapp.com",
+            databaseURL: "https://work-eb62f-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "work-eb62f",
+            storageBucket: "work-eb62f.firebasestorage.app",
+            messagingSenderId: "428210130706",
+            appId: "1:428210130706:web:142207595423bdf661adcb"
+        };
+        const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        let currentUser = null;
+
+        const $ = id => document.getElementById(id);
+        const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
+        const safeSetLocal = (k, d) => { try { localStorage.setItem(k, JSON.stringify(d)); } catch {} };
+        const cfgDoc = (key) => doc(db, 'artifacts', appId, 'public', 'data', 'config', key);
+        const syncConfig = (key, data, merge = false) => { if (currentUser) setDoc(cfgDoc(key), data, { merge }); };
+        const pad = (n) => String(n).padStart(2, '0');
+
+        const IDB_STORE = 'hd_full_images';
+        const openIDB = () => new Promise((res, rej) => {
+            const req = indexedDB.open('QuadChunk_Gallery_DB_V2', 1);
+            req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+            req.onsuccess = () => res(req.result);
+            req.onerror = () => rej(req.error);
+        });
+        const idbSet = async (key, val) => {
+            const dbInstance = await openIDB();
+            return new Promise((res, rej) => {
+                const tx = dbInstance.transaction(IDB_STORE, 'readwrite');
+                tx.objectStore(IDB_STORE).put(val, key);
+                tx.oncomplete = () => res();
+                tx.onerror = () => rej(tx.error);
+            });
+        };
+        const idbGet = async (key) => {
+            const dbInstance = await openIDB();
+            return new Promise((res) => {
+                const tx = dbInstance.transaction(IDB_STORE, 'readonly');
+                const req = tx.objectStore(IDB_STORE).get(key);
+                req.onsuccess = () => res(req.result);
+                req.onerror = () => res(null);
+            });
+        };
+        const idbDel = async (key) => {
+            const dbInstance = await openIDB();
+            return new Promise((res) => {
+                const tx = dbInstance.transaction(IDB_STORE, 'readwrite');
+                tx.objectStore(IDB_STORE).delete(key);
+                tx.oncomplete = () => res();
+                tx.onerror = () => res();
+            });
+        };
+
+        let dailyScheduleData = [], taskCompletionState = {}, subTaskCompletionState = {};
+        let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
+        let galleryItems = getLocal('work_cache_gallery_items', []);
+        let memoryImageCache = new Map();
+        let currentGalleryCategory = '全部';
+        window.pendingUploadImages = [];
+        window.isUploading = false;
+        window._isTogglingTask = false;
+
+        const defaultTabVisibility = { timeline: true, memo: true, map: true, gallery: true, coldRoom: true, closing: true };
+        let tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility);
+
+        const tabMetadata = [
+            { id: 'timeline', name: '動態', btnId: 'tabTimeline', pageId: 'timelinePage', icon: 'activity' },
+            { id: 'memo', name: '備忘', btnId: 'tabMemo', pageId: 'memoPage', icon: 'calendar-clock' },
+            { id: 'map', name: '地圖', btnId: 'tabMap', pageId: 'mapPage', icon: 'map' },
+            { id: 'gallery', name: '圖庫', btnId: 'tabGallery', pageId: 'galleryPage', icon: 'image' },
+            { id: 'coldRoom', name: '雪房', btnId: 'tabColdRoom', pageId: 'coldRoomPage', icon: 'snowflake' },
+            { id: 'closing', name: '收工', btnId: 'tabClosing', pageId: 'closingPage', icon: 'store' }
+        ];
+
+        const defaultMapPoints = {
+            'pt_1': { name: '客服室', x: 50, y: 16 }, 'pt_2': { name: '一樓大清點', x: 0, y: 0 },
+            'pt_3': { name: '花園仔', x: 27.5, y: 64 }, 'pt_4': { name: '魚檔', x: 72.5, y: 64 },
+            'pt_5': { name: '整體巡邏', x: 50, y: 88 }, 'pt_6': { name: '地面層 大清點', x: 0, y: 0 },
+            'pt_7': { name: '休息中', x: 0, y: 0 }
+        };
+        let mapData = { points: JSON.parse(JSON.stringify(defaultMapPoints)) }, memberSchedules = [], teamMembers = [];
+        let activeGridMember = null, isEditingMembers = false, isGridDragging = false, gridDragAction = null, splitHoursState = {};
+        window.lastTouchedEl = null;
+
+        const memberColorPalettes = [
+            { bg: 'bg-rose-100', text: 'text-rose-700', border: 'border-rose-300', activeBg: 'bg-rose-500' },
+            { bg: 'bg-sky-100', text: 'text-sky-700', border: 'border-sky-300', activeBg: 'bg-sky-500' },
+            { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-300', activeBg: 'bg-emerald-500' },
+            { bg: 'bg-amber-100', text: 'text-amber-800', border: 'border-amber-300', activeBg: 'bg-amber-500' },
+            { bg: 'bg-violet-100', text: 'text-violet-700', border: 'border-violet-300', activeBg: 'bg-violet-500' },
+            { bg: 'bg-teal-100', text: 'text-teal-700', border: 'border-teal-300', activeBg: 'bg-teal-500' },
+            { bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-300', activeBg: 'bg-orange-500' },
+            { bg: 'bg-indigo-100', text: 'text-indigo-700', border: 'border-indigo-300', activeBg: 'bg-indigo-500' },
+            { bg: 'bg-pink-100', text: 'text-pink-700', border: 'border-pink-300', activeBg: 'bg-pink-500' },
+            { bg: 'bg-lime-100', text: 'text-lime-800', border: 'border-lime-300', activeBg: 'bg-lime-500' },
+            { bg: 'bg-cyan-100', text: 'text-cyan-800', border: 'border-cyan-300', activeBg: 'bg-cyan-500' },
+            { bg: 'bg-fuchsia-100', text: 'text-fuchsia-700', border: 'border-fuchsia-300', activeBg: 'bg-fuchsia-500' }
+        ];
+
+        window.getMemberColorClass = (name) => {
+            if (!name) return { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', activeBg: 'bg-blue-500' };
+            let seed = 0; for (let i = 0; i < name.length; i++) seed += name.charCodeAt(i);
+            return memberColorPalettes[Math.abs(seed) % memberColorPalettes.length];
+        };
+
+        window.openAsPopout = () => {
+            const w = 480, h = 950, l = Math.max(0, (window.screen.width - w) / 2), t = Math.max(0, (window.screen.height - h) / 2);
+            window.open(window.location.href, 'WorkRecordPopup', `width=${w},height=${h},left=${l},top=${t},menubar=no,status=no,toolbar=no,location=no,scrollbars=no,resizable=yes`);
+        };
+
+        let crRecords = [], crItemTypes = ['海鮮', '肉類', '蔬果', '包裝冰', '其他'], crCurrentSelectedType = '', crCurrentTab = 'active';
+        const CR_TIME_LIMIT_MS = 86400000;
+        let actionHistory = [], futureMemos = [], timeOffset = 0, isFastForwarding = false, simInterval = null, timelineUpdateInterval;
+        window.getNow = () => new Date(Date.now() + timeOffset);
+
+        function parseTime(tStr) {
+            const d = window.getNow();
+            if (!tStr || typeof tStr !== 'string' || !tStr.includes(':')) { d.setHours(0, 0, 0, 0); return d; }
+            const [h, m] = tStr.split(':').map(Number);
+            d.setHours(isNaN(h) ? 0 : h, isNaN(m) ? 0 : m, 0, 0);
+            return d;
+        }
+
+        function calculateTaskStatus(startStr, endStr) {
+            const now = window.getNow(), s = parseTime(startStr), e = parseTime(endStr);
+            const fmt = (diff) => `${Math.floor(diff/60) > 0 ? Math.floor(diff/60) + '小時' : ''}${diff % 60}分`;
+            if (now < s) return { state: 'waiting', text: `未開始 (約 ${fmt(Math.floor((s - now) / 60000))}後)` };
+            if (now >= s && now <= e) return { state: 'active', text: `進行中 (剩餘 ${fmt(Math.floor((e - now) / 60000))})` };
+            return { state: 'overdue', text: `已結束 (超時 ${fmt(Math.floor((now - e) / 60000))})` };
+        }
+
+        window.crNotifiedSet = new Set(); window.memoNotifiedSet = new Set();
+        let crAudioCtx = null, crSoundIntervalId = null, crBannerTimeoutId = null;
+
+        window.playAlertSound = () => {
+            try {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (!AudioCtx) return;
+                if (crSoundIntervalId) { clearInterval(crSoundIntervalId); crSoundIntervalId = null; }
+                const ctx = new AudioCtx(); crAudioCtx = ctx;
+                const playDualBeep = () => {
+                    if (!ctx || ctx.state === 'closed') return;
+                    const now = ctx.currentTime;
+                    const o1 = ctx.createOscillator(), g1 = ctx.createGain();
+                    o1.type = 'sine'; o1.frequency.setValueAtTime(880, now);
+                    g1.gain.setValueAtTime(0.3, now); g1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+                    o1.connect(g1); g1.connect(ctx.destination); o1.start(now); o1.stop(now + 0.18);
+                    const o2 = ctx.createOscillator(), g2 = ctx.createGain();
+                    o2.type = 'sine'; o2.frequency.setValueAtTime(1174.66, now + 0.22);
+                    g2.gain.setValueAtTime(0.3, now + 0.22); g2.gain.exponentialRampToValueAtTime(0.001, now + 0.48);
+                    o2.connect(g2); g2.connect(ctx.destination); o2.start(now + 0.22); o2.stop(now + 0.48);
+                };
+                playDualBeep(); crSoundIntervalId = setInterval(playDualBeep, 1200);
+                setTimeout(() => { if (crSoundIntervalId) { clearInterval(crSoundIntervalId); crSoundIntervalId = null; } }, 10000);
+            } catch (e) {}
+        };
+
+        window.stopOverdueAlarm = () => {
+            if (crSoundIntervalId) { clearInterval(crSoundIntervalId); crSoundIntervalId = null; }
+            if (crBannerTimeoutId) { clearTimeout(crBannerTimeoutId); crBannerTimeoutId = null; }
+            if (crAudioCtx && crAudioCtx.state !== 'closed') { try { crAudioCtx.close(); } catch(e){} }
+            const banner = $('crOverdueAlertBanner');
+            if (banner) { banner.style.opacity = '0'; banner.style.transform = 'translate(-50%, -20px)'; setTimeout(() => banner.classList.add('hidden'), 300); }
+        };
+
+        window.showOverdueAlertBanner = (itemsText, title = "⚠️ 雪房存貨超時警報！") => {
+            let banner = $('crOverdueAlertBanner');
+            if (!banner) {
+                banner = document.createElement('div'); banner.id = 'crOverdueAlertBanner';
+                banner.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[10000] w-[92%] max-w-[390px] bg-red-600 text-white p-3.5 rounded-2xl shadow-2xl flex items-center justify-between border-2 border-white/90 backdrop-blur-md transition-all duration-300 animate-bounce cursor-pointer';
+                banner.onclick = window.stopOverdueAlarm; document.body.appendChild(banner);
+            }
+            banner.innerHTML = `<div class="flex items-center space-x-2.5 min-w-0 flex-1"><div class="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shrink-0 animate-pulse"><i data-lucide="bell-ring" class="w-4 h-4 text-white"></i></div><div class="min-w-0 flex-1"><div class="text-xs font-black tracking-wide flex items-center space-x-1.5"><span>${title}</span><span class="bg-white text-red-600 text-[9px] px-1.5 py-0.2 rounded font-bold">10秒</span></div><div class="text-[11px] text-red-100 font-bold truncate mt-0.5">${itemsText}</div></div></div><button onclick="event.stopPropagation(); window.stopOverdueAlarm();" class="ml-2 bg-white/20 hover:bg-white/30 text-white px-2.5 py-1 rounded-lg text-[10px] font-black shrink-0 border border-white/40 active:scale-95 transition-all">關閉/靜音</button>`;
+            banner.style.opacity = '1'; banner.style.transform = 'translate(-50%, 0)'; banner.classList.remove('hidden');
+            lucide.createIcons({ root: banner });
+            if (crBannerTimeoutId) clearTimeout(crBannerTimeoutId);
+            crBannerTimeoutId = setTimeout(window.stopOverdueAlarm, 10000);
+        };
+
+        window.toggleNotificationState = async () => {
+            let isEnabled = getLocal('work_cache_cr_notify', false);
+            if (!isEnabled) {
+                if ("Notification" in window && await Notification.requestPermission() === "granted") {
+                    safeSetLocal('work_cache_cr_notify', true); window.showToast("✅ 已開啟推播提醒！"); window.playAlertSound();
+                } else {
+                    safeSetLocal('work_cache_cr_notify', true); window.showToast("✅ 已開啟站內提示音！"); window.playAlertSound();
+                }
+            } else { safeSetLocal('work_cache_cr_notify', false); window.stopOverdueAlarm(); window.showToast("🔕 已關閉提醒"); }
+            window.crUpdateNotificationBtn();
+        };
+
+        window.crUpdateNotificationBtn = () => {
+            const isEnabled = getLocal('work_cache_cr_notify', false);
+            ['crNotifyToggleBtn', 'memoNotifyToggleBtn'].forEach(btnId => {
+                const btn = $(btnId); if (!btn) return;
+                if (isEnabled) {
+                    btn.className = "flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-100 border border-emerald-300 text-emerald-700 shadow-xs hover:bg-emerald-200 transition-all active:scale-95 cursor-pointer";
+                    btn.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span><i data-lucide="bell" class="w-3.5 h-3.5 text-emerald-600 pointer-events-none"></i><span class="text-[10px] font-black">提醒中</span>`;
+                } else {
+                    btn.className = "flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-400 shadow-xs hover:bg-slate-200 transition-all active:scale-95 cursor-pointer";
+                    btn.innerHTML = `<i data-lucide="bell-off" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i><span class="text-[10px] font-bold">靜音</span>`;
+                }
+            });
+            lucide.createIcons();
+        };
+
+        window.checkColdRoomOverdueAlerts = () => {
+            if (!getLocal('work_cache_cr_notify', false)) return;
+            const now = window.getNow().getTime(); let newOverdueList = [];
+            crRecords.forEach(r => {
+                if (r.status === 'active' && r.type !== '包裝冰' && now > (r.depositTime + CR_TIME_LIMIT_MS) && !window.crNotifiedSet.has(r.id)) {
+                    window.crNotifiedSet.add(r.id); newOverdueList.push(r);
+                }
+            });
+            if (newOverdueList.length > 0) { window.playAlertSound(); window.showOverdueAlertBanner(newOverdueList.map(x => `${x.tenant}(${x.type})`).join('、'), "⚠️ 雪房存貨超時警報！"); }
+        };
+
+        window.checkMemoAlerts = () => {
+            if (!getLocal('work_cache_cr_notify', false)) return;
+            const now = window.getNow().getTime(); let newDueMemos = [];
+            futureMemos.forEach(m => {
+                if (now >= new Date(`${m.date}T${m.time || '00:00'}`).getTime() && !window.memoNotifiedSet.has(m.id)) {
+                    window.memoNotifiedSet.add(m.id); newDueMemos.push(m);
+                }
+            });
+            if (newDueMemos.length > 0) { window.playAlertSound(); window.showOverdueAlertBanner(newDueMemos.map(x => x.title).join('、'), "📌 備忘任務到期提醒！"); }
+        };
+
+        window.toggleSettingsMenu = (e) => { if (e) e.stopPropagation(); $('settingsDropdown')?.classList.toggle('hidden'); };
+        document.addEventListener('click', (e) => {
+            const dropdown = $('settingsDropdown'), btn = $('settingsMenuBtn');
+            if (dropdown && !dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && e.target !== btn) dropdown.classList.add('hidden');
+        });
+
+        window.applyTabVisibility = () => {
+            tabMetadata.forEach(tab => {
+                const btn = $(tab.btnId), isVisible = tabVisibilityState[tab.id] !== false;
+                if (btn) { btn.style.display = isVisible ? '' : 'none'; btn.classList.toggle('hidden', !isVisible); }
+            });
+            const cur = localStorage.getItem('activeTab') || 'timeline';
+            if (tabVisibilityState[cur] === false) {
+                const first = tabMetadata.find(t => tabVisibilityState[t.id] !== false);
+                if (first) { localStorage.setItem('activeTab', first.id); window.switchTab(first.id); }
+            }
+        };
+
+        window.openTabVisibilityModal = () => {
+            $('settingsDropdown')?.classList.add('hidden');
+            const list = $('tabVisibilityList'); if (!list) return;
+            list.innerHTML = tabMetadata.map(t => `<label class="flex items-center justify-between p-2.5 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 cursor-pointer transition-colors select-none"><div class="flex items-center space-x-2"><i data-lucide="${t.icon}" class="w-4 h-4 text-slate-500"></i><span class="text-xs font-bold text-slate-800">${t.name}</span></div><input type="checkbox" data-tab-id="${t.id}" ${tabVisibilityState[t.id] !== false ? 'checked' : ''} class="tab-vis-checkbox w-4 h-4 rounded text-blue-600 focus:ring-0 cursor-pointer"></label>`).join('');
+            lucide.createIcons({ root: list }); $('tabVisibilityModal')?.classList.replace('hidden', 'flex');
+        };
+
+        window.closeTabVisibilityModal = () => $('tabVisibilityModal')?.classList.replace('flex', 'hidden');
+
+        window.saveTabVisibility = () => {
+            const boxes = document.querySelectorAll('.tab-vis-checkbox'); let hasOne = false, newState = {};
+            boxes.forEach(cb => { newState[cb.dataset.tabId] = cb.checked; if (cb.checked) hasOne = true; });
+            if (!hasOne) return window.showToast("至少需保留一個可見分頁！", true);
+            tabVisibilityState = newState; safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
+            syncConfig('tab_visibility', { visibility: tabVisibilityState }); window.applyTabVisibility(); window.closeTabVisibilityModal(); window.showToast("分頁設定已儲存");
+        };
+
+        const getNowInputStrs = (targetMs) => {
+            const d = targetMs ? new Date(targetMs) : window.getNow();
+            return { date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, time: `${pad(d.getHours())}:${pad(d.getMinutes())}` };
+        };
+
+        function checkAndResetDailySchedule() {
+            const todayStr = getNowInputStrs().date, lastSavedDate = getLocal('work_cache_schedule_date', todayStr);
+            if (lastSavedDate !== todayStr) {
+                memberSchedules = []; safeSetLocal('work_cache_member_schedules', memberSchedules);
+                safeSetLocal('work_cache_schedule_date', todayStr); syncConfig('member_schedules', { schedules: [], date: todayStr });
+                if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+            }
+        }
+
+        window.saveStateSnapshot = () => {
+            actionHistory.push({ tasks: { ...taskCompletionState }, subtasks: JSON.parse(JSON.stringify(subTaskCompletionState || {})) });
+            if (actionHistory.length > 30) actionHistory.shift();
+        };
+
+        window.toggleDarkMode = () => {
+            const isDark = document.body.classList.toggle('dark-mode');
+            localStorage.setItem('work_cache_dark_mode', isDark);
+            const icon = $('darkModeIcon');
+            if (icon) { icon.setAttribute('data-lucide', isDark ? 'sun' : 'moon'); lucide.createIcons(); }
+            $('settingsDropdown')?.classList.add('hidden');
+        };
+
+        window.showToast = (msg, isErr = false) => {
+            const t = document.createElement('div');
+            t.className = `fixed top-16 left-1/2 transform -translate-x-1/2 px-5 py-3 rounded-full shadow-lg text-sm font-bold z-[9999] transition-all duration-300 ${isErr ? 'bg-red-500 text-white' : 'bg-slate-800 text-white'}`;
+            t.textContent = msg; document.body.appendChild(t);
+            setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translate(-50%, -20px)'; setTimeout(() => t.remove(), 300); }, 3000);
+        };
+
+        window.showConfirm = (title, message, onConfirm) => {
+            const modal = $('customConfirmModal');
+            $('confirmModalTitle').innerHTML = `<i data-lucide="alert-triangle" class="w-5 h-5 mr-2 text-amber-500"></i> ${title}`;
+            $('confirmModalMessage').innerHTML = message;
+            const cancelBtn = $('confirmBtnCancel'), okBtn = $('confirmBtnOk');
+            cancelBtn.onclick = () => { modal.classList.replace('flex', 'hidden'); };
+            okBtn.onclick = () => {
+                modal.classList.replace('flex', 'hidden');
+                if (typeof onConfirm === 'function') onConfirm();
+            };
+            lucide.createIcons(); modal.classList.replace('hidden', 'flex');
+        };
+
+        // --- 圖庫切片與高解析快取核心 ---
+        window.setUploadProgress = (percent, text) => {
+            const c = $('globalProgressContainer');
+            if (!c) return;
+            if (percent < 0) return c.classList.add('hidden');
+            c.classList.remove('hidden');
+            const safePercent = Math.min(100, Math.max(0, percent));
+            $('globalProgressBar').style.width = `${safePercent}%`;
+            $('globalProgressText').textContent = text;
+        };
+
+        const splitImageTo4ChunksAsync = (file, maxDim = CONFIG.maxDim, quality = CONFIG.quality) => new Promise((resolve, reject) => {
+            const r = new FileReader();
+            r.readAsDataURL(file);
+            r.onload = (e) => {
+                const img = new Image();
+                img.src = e.target.result;
+                img.onload = () => {
+                    let { width: w, height: h } = img;
+                    if (w > maxDim || h > maxDim) {
+                        const scale = maxDim / Math.max(w, h);
+                        w = Math.round(w * scale);
+                        h = Math.round(h * scale);
+                    }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w; canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+
+                    const chunkHeight = Math.floor(h / 4);
+                    const chunks = Array.from({ length: 4 }, (_, i) => {
+                        const sub = document.createElement('canvas');
+                        const curH = (i === 3) ? (h - chunkHeight * 3) : chunkHeight;
+                        sub.width = w; sub.height = curH;
+                        sub.getContext('2d').drawImage(canvas, 0, i * chunkHeight, w, curH, 0, 0, w, curH);
+                        return sub.toDataURL('image/webp', quality);
+                    });
+                    img.src = '';
+                    resolve({ chunks, width: w, height: h });
+                };
+                img.onerror = () => reject(new Error("圖片載入失敗"));
+            };
+            r.onerror = () => reject(new Error("檔案讀取失敗"));
+        });
+
+        const merge4ChunksAsync = async (chunks) => {
+            if (!chunks?.length) return '';
+            if (chunks.length === 1) return chunks[0];
+            const imgs = await Promise.all(chunks.map(src => new Promise((res, rej) => {
+                const im = new Image();
+                im.onload = () => res(im);
+                im.onerror = () => rej(new Error("切片載入失敗"));
+                im.src = src;
+            })));
+
+            const totalW = imgs[0].naturalWidth;
+            const totalH = imgs.reduce((sum, im) => sum + im.naturalHeight, 0);
+            const canvas = document.createElement('canvas');
+            canvas.width = totalW; canvas.height = totalH;
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingQuality = 'high';
+
+            let curY = 0;
+            imgs.forEach(im => {
+                ctx.drawImage(im, 0, curY);
+                curY += im.naturalHeight;
+            });
+            return canvas.toDataURL('image/webp', CONFIG.quality);
+        };
+
+        const getFullImageUrlAsync = async (item) => {
+            const id = item.id;
+            if (memoryImageCache.has(id)) return memoryImageCache.get(id);
+
+            const idbCached = await idbGet(id);
+            if (idbCached) {
+                memoryImageCache.set(id, idbCached);
+                return idbCached;
+            }
+
+            if (item.src) {
+                memoryImageCache.set(id, item.src);
+                return item.src;
+            }
+
+            if (currentUser && db) {
+                try {
+                    const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id, 'chunks'));
+                    const chunkList = [];
+                    snap.forEach(d => chunkList.push(d.data()));
+                    chunkList.sort((a, b) => a.index - b.index);
+
+                    if (chunkList.length) {
+                        const mergedUrl = await merge4ChunksAsync(chunkList.map(c => c.data));
+                        memoryImageCache.set(id, mergedUrl);
+                        await idbSet(id, mergedUrl);
+                        return mergedUrl;
+                    }
+                } catch (e) {
+                    console.error("雲端載入失敗:", e);
+                }
+            }
+            return '';
+        };
+
+        window.handleGalleryUpload = async (input) => {
+            if (window.isUploading) {
+                input.value = '';
+                return window.showToast("⚠️ 上傳正在進行中，請等待完成後再選取！", true);
+            }
+            const files = Array.from(input.files || []);
+            if (!files.length) return;
+            window.pendingUploadImages = [];
+
+            const { time } = getNowInputStrs();
+            const defaultCat = currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory;
+
+            for (let i = 0; i < files.length; i++) {
+                try {
+                    const { chunks } = await splitImageTo4ChunksAsync(files[i]);
+                    const tempId = `img_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`;
+                    const previewSrc = await merge4ChunksAsync(chunks);
+
+                    window.pendingUploadImages.push({
+                        tempId, chunks, src: previewSrc,
+                        prefix: "", code: "", title: "", time, category: defaultCat
+                    });
+                } catch (e) {}
+
+                const percent = (((i + 1) / files.length) * 100).toFixed(1);
+                window.setUploadProgress(percent, `處理中：${i + 1} / ${files.length} (${percent}%)`);
+            }
+
+            window.setUploadProgress(-1, "");
+            input.value = '';
+
+            if (window.pendingUploadImages.length) window.openUploadBatchModal();
+            else window.showToast("無法讀取圖片", true);
+        };
+
+        window.renderGallery = async () => {
+            const sidebar = $('gallerySidebar'), grid = $('galleryGrid');
+            if (!sidebar || !grid) return;
+            const query = ($('gallerySearchInput')?.value || '').trim().toLowerCase();
+
+            sidebar.innerHTML = `
+                <div class="p-2 border-b border-slate-200 w-full flex justify-between items-center bg-slate-100">
+                    <span class="text-[10px] font-bold text-slate-500">分類</span>
+                    <button onclick="window.openCategoryManager()" class="text-slate-400 hover:text-blue-500 p-0.5"><i data-lucide="settings" class="w-3 h-3"></i></button>
+                </div>
+                ${galleryCategories.map(cat => `<button onclick="window.setGalleryCategory('${cat}')" class="w-full text-center py-2 px-1 text-[11px] font-bold rounded-md transition-colors truncate ${currentGalleryCategory === cat ? 'bg-blue-500 text-white' : 'text-slate-600 hover:bg-slate-200'}">${cat}</button>`).join('')}`;
+
+            const filtered = galleryItems.filter(item => 
+                (currentGalleryCategory === '全部' || item.category === currentGalleryCategory) && 
+                (!query || item.title?.toLowerCase().includes(query) || item.time?.toLowerCase().includes(query))
+            );
+
+            const cameraSlotHtml = `
+                <label class="relative group bg-white/80 hover:bg-blue-50/60 border-2 border-dashed border-blue-300 hover:border-blue-500 rounded-xl overflow-hidden shadow-xs flex flex-col items-center justify-center cursor-pointer min-h-[125px] h-full active:scale-95 transition-all p-1">
+                    <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+                        <i data-lucide="camera" class="w-4 h-4"></i>
+                    </div>
+                    <span class="text-[11px] font-black text-slate-700">拍照記錄</span>
+                    <input type="file" accept="image/*" capture="environment" class="hidden" onchange="window.handleGalleryUpload(this)">
+                </label>`;
+
+            const renderedCards = await Promise.all(filtered.map(async (i) => {
+                const fullSrc = await getFullImageUrlAsync(i);
+                return `
+                    <div class="relative group bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs flex flex-col">
+                        <div class="px-1.5 py-0.5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+                            <span class="text-[8px] font-bold text-blue-600 bg-blue-50 px-1 py-0.2 rounded border border-blue-100 truncate max-w-[55px]">${i.category || '未分類'}</span>
+                            <button onclick="window.deleteGalleryItem('${i.id}')" class="text-slate-400 hover:text-red-500 p-0.5 rounded transition-colors active:scale-95"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
+                        </div>
+                        <div class="w-full h-20 sm:h-24 bg-slate-100 overflow-hidden cursor-pointer" onclick="window.openFullscreenImg('${fullSrc}')">
+                            <img src="${fullSrc}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${i.title || '圖片'}">
+                        </div>
+                        <div class="p-1 flex justify-between items-center bg-white border-t border-slate-100 text-xs gap-0.5">
+                            <span class="text-[9px] text-slate-500 font-mono font-bold shrink-0">${i.time || '12:00'}</span>
+                            <span onclick="window.editGalleryItemTitle('${i.id}', event)" class="text-[9.5px] font-bold text-slate-800 truncate text-right flex-1 cursor-pointer hover:text-blue-600">${i.title || '無標題'}</span>
+                        </div>
+                    </div>`;
+            }));
+
+            grid.innerHTML = `<div class="grid grid-cols-3 gap-1.5">${cameraSlotHtml}${renderedCards.join('')}</div>`;
+            lucide.createIcons();
+        };
+
+        window.setGalleryCategory = (c) => { currentGalleryCategory = c; window.renderGallery(); };
+        window.openFullscreenImg = (src) => { $('imageViewerImg').src = src; $('imageViewer')?.classList.replace('hidden', 'flex'); };
+        window.closeFullscreenImg = () => $('imageViewer')?.classList.replace('flex', 'hidden');
+
+        window.editGalleryItemTitle = (id, e) => {
+            if (e) e.stopPropagation();
+            const item = galleryItems.find(x => x.id === id);
+            if (!item) return;
+            const newTitle = prompt('請輸入新的圖片名稱：', item.title || '');
+            if (newTitle !== null && newTitle.trim()) {
+                item.title = newTitle.trim();
+                safeSetLocal('work_cache_gallery_items', galleryItems);
+                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), item, { merge: true });
+                window.renderGallery();
+                window.showToast('圖片名稱已更新');
+            }
+        };
+
+        window.deleteGalleryItem = async (id) => {
+            galleryItems = galleryItems.filter(i => i.id !== id);
+            memoryImageCache.delete(id);
+            await idbDel(id);
+            safeSetLocal('work_cache_gallery_items', galleryItems);
+            if (currentUser) {
+                deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id));
+                getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id, 'chunks'))
+                    .then(snap => snap.forEach(d => deleteDoc(d.ref)))
+                    .catch(() => {});
+            }
+            window.renderGallery();
+            window.showToast("已刪除圖片");
+        };
+
+        window.exportAllGalleryImages = async () => {
+            if (!galleryItems?.length) return window.showToast('圖庫內沒有圖片可導出', true);
+            window.showToast(`開始導出 ${galleryItems.length} 張圖片...`);
+            for (let i = 0; i < galleryItems.length; i++) {
+                const item = galleryItems[i];
+                const fullSrc = await getFullImageUrlAsync(item);
+                if (!fullSrc) continue;
+                const safeName = (item.title?.trim() || `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
+                const link = document.createElement('a');
+                link.href = fullSrc;
+                link.download = `${safeName}.webp`;
+                link.click();
+                await new Promise(r => setTimeout(r, 200));
+            }
+            window.showToast(`✅ 全部導出完成！`);
+        };
+
+        window.openUploadBatchModal = () => { window.renderUploadBatchList(); $('uploadBatchModal')?.classList.replace('hidden', 'flex'); lucide.createIcons(); };
+        window.closeUploadBatchModal = () => { window.pendingUploadImages = []; $('uploadBatchModal')?.classList.replace('flex', 'hidden'); };
+        window.removePendingUploadItem = (tempId) => { window.pendingUploadImages = window.pendingUploadImages.filter(x => x.tempId !== tempId); window.renderUploadBatchList(); };
+
+        const syncItemFullTitle = (item) => { item.title = `${item.prefix || ''}${item.code || ''}`.trim(); };
+        window.updatePendingCode = (tempId, val) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
+            if (!item) return;
+            item.code = val.trim();
+            syncItemFullTitle(item);
+        };
+
+        window.selectPrefixOption = (tempId, prefixVal) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
+            if (!item) return;
+            item.prefix = (item.prefix === prefixVal) ? "" : prefixVal;
+            syncItemFullTitle(item);
+            ['1-0', 'R-0', 'J-0'].forEach(val => {
+                const btn = $(`btn-prefix-${tempId}-${val}`);
+                if (btn) {
+                    btn.className = (item.prefix === val)
+                        ? "w-full py-1 rounded text-[10px] font-bold bg-blue-600 text-white border border-blue-600"
+                        : "w-full py-1 rounded text-[10px] font-bold bg-white hover:bg-slate-100 text-slate-600 border border-slate-200";
+                }
+            });
+        };
+
+        window.renderUploadBatchList = () => {
+            const list = $('uploadBatchList');
+            if ($('uploadBatchCount')) $('uploadBatchCount').textContent = window.pendingUploadImages.length;
+            if (!window.pendingUploadImages.length) return window.closeUploadBatchModal();
+
+            const selectableCats = galleryCategories.filter(c => c !== '全部');
+            list.innerHTML = window.pendingUploadImages.map(item => {
+                const [hStr, mStr] = (item.time || '00:00').split(':');
+                return `
+                <div class="bg-slate-50 border border-slate-200 rounded-xl p-2.5 flex flex-col space-y-2 shadow-xs">
+                    <div class="relative w-full h-32 bg-slate-900 rounded-lg overflow-hidden flex items-center justify-center cursor-zoom-in group border border-slate-300" onclick="window.openFullscreenImg('${item.src}')">
+                        <img src="${item.src}" class="w-full h-full object-contain p-1">
+                        <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1.5 right-1.5 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <select onchange="window.pendingUploadImages.find(x=>x.tempId==='${item.tempId}').category=this.value" class="flex-1 bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-700">
+                            ${selectableCats.map(cat => `<option value="${cat}" ${item.category === cat ? 'selected' : ''}>${cat}</option>`).join('')}
+                        </select>
+                        <div class="flex items-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-lg px-2 py-1">
+                            <select onchange="window.updateTimePart('${item.tempId}','h',this.value)" class="bg-transparent font-mono">${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}</select>
+                            <span>:</span>
+                            <select onchange="window.updateTimePart('${item.tempId}','m',this.value)" class="bg-transparent font-mono">${Array.from({length: 60}, (_, i) => `<option value="${pad(i)}" ${pad(i) === mStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}</select>
+                        </div>
+                    </div>
+                    <div class="flex items-stretch space-x-1.5">
+                        <div class="w-12 flex flex-col space-y-1 shrink-0">
+                            <button type="button" id="btn-prefix-${item.tempId}-1-0" onclick="window.selectPrefixOption('${item.tempId}', '1-0')" class="w-full py-1 rounded text-[10px] font-bold border ${item.prefix === '1-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">一樓</button>
+                            <button type="button" id="btn-prefix-${item.tempId}-R-0" onclick="window.selectPrefixOption('${item.tempId}', 'R-0')" class="w-full py-1 rounded text-[10px] font-bold border ${item.prefix === 'R-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">魚檔</button>
+                            <button type="button" id="btn-prefix-${item.tempId}-J-0" onclick="window.selectPrefixOption('${item.tempId}', 'J-0')" class="w-full py-1 rounded text-[10px] font-bold border ${item.prefix === 'J-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">雞檔</button>
+                        </div>
+                        <textarea oninput="window.updatePendingCode('${item.tempId}', this.value)" placeholder="輸入檔號" rows="3" class="flex-1 bg-white border border-slate-300 rounded-lg p-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-500 resize-none">${item.code || ''}</textarea>
+                    </div>
+                </div>`;
+            }).join('');
+            lucide.createIcons();
+        };
+
+        window.updateTimePart = (id, part, val) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === id);
+            if (!item) return;
+            let [h, m] = (item.time || '00:00').split(':');
+            if (part === 'h') h = val; else m = val;
+            item.time = `${h}:${m}`;
+        };
+
+        window.confirmBatchUpload = async () => {
+            const items = [...window.pendingUploadImages];
+            if (!items.length || window.isUploading) return;
+            window.isUploading = true;
+            window.closeUploadBatchModal();
+
+            try {
+                if (!currentUser || !db) throw new Error("授權未就緒，請重新整理");
+                const total = items.length, newDocs = [];
+
+                for (let i = 0; i < total; i++) {
+                    const item = items[i], docId = item.tempId;
+                    await idbSet(docId, item.src);
+                    memoryImageCache.set(docId, item.src);
+
+                    const mainDocData = {
+                        id: docId, chunkCount: item.chunks.length,
+                        title: item.title || '無標題', category: item.category || '未分類',
+                        time: item.time || '12:00', createdAt: Date.now()
+                    };
+
+                    const singleBatch = writeBatch(db);
+                    singleBatch.set(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId), mainDocData);
+                    item.chunks.forEach((chunkStr, idx) => {
+                        const chunkRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId, 'chunks', `part_${idx}`);
+                        singleBatch.set(chunkRef, { index: idx, data: chunkStr });
+                    });
+
+                    await singleBatch.commit();
+                    newDocs.push(mainDocData);
+                    const currentPercent = (((i + 1) / total) * 100).toFixed(1);
+                    window.setUploadProgress(currentPercent, `上傳中：${i + 1} / ${total} (${currentPercent}%)`);
+                }
+
+                window.setUploadProgress(-1, "");
+                const map = new Map();
+                [...newDocs, ...galleryItems].forEach(x => { if (x?.id) map.set(x.id, x); });
+                galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+
+                safeSetLocal('work_cache_gallery_items', galleryItems);
+                await window.renderGallery();
+                window.showToast(`✅ 成功上傳 ${newDocs.length} 張圖片！`);
+            } catch (err) {
+                window.setUploadProgress(-1, "");
+                window.showToast(`❌ 上傳失敗：${err.message}`, true);
+            } finally {
+                window.isUploading = false;
+            }
+        };
+
+        window.openCategoryManager = () => {
+            $('categoryManageList').innerHTML = `
+                <div class="flex gap-2 mb-2">
+                    <input type="text" id="newCatInput" placeholder="新分類名稱..." class="flex-1 border border-slate-300 rounded-lg p-1 text-xs">
+                    <button onclick="window.addCategoryAction()" class="bg-blue-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold">新增</button>
+                </div>
+                <div class="space-y-1">${galleryCategories.map((c, idx) => `
+                    <div class="flex justify-between items-center p-1.5 bg-white rounded-lg border border-slate-200 text-xs font-bold text-slate-700">
+                        <span>${c}</span>${!['全部', '任務附件', '未分類'].includes(c) ? `<button onclick="window.removeCategoryAction(${idx})" class="text-slate-400 hover:text-red-500"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>` : '<span class="text-[9px] text-slate-400">預設</span>'}
+                    </div>`).join('')}</div>`;
+            $('categoryManageModal')?.classList.replace('hidden', 'flex');
+            lucide.createIcons();
+        };
+
+        window.closeCategoryManager = () => $('categoryManageModal')?.classList.replace('flex', 'hidden');
+        window.addCategoryAction = () => {
+            const val = $('newCatInput')?.value.trim();
+            if (!val || galleryCategories.includes(val)) return;
+            galleryCategories.push(val);
+            safeSetLocal('work_cache_gallery_categories', galleryCategories);
+            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
+            window.openCategoryManager(); window.renderGallery();
+        };
+
+        window.removeCategoryAction = (idx) => {
+            galleryCategories.splice(idx, 1);
+            safeSetLocal('work_cache_gallery_categories', galleryCategories);
+            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
+            window.openCategoryManager(); window.renderGallery();
+        };
+
+        function loadLocalFastCache() {
+            dailyScheduleData = getLocal('work_cache_schedule', []);
+            taskCompletionState = getLocal('work_cache_task_states', {});
+            subTaskCompletionState = getLocal('work_cache_subtask_states', {});
+            galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
+            galleryItems = getLocal('work_cache_gallery_items', []);
+            splitHoursState = getLocal('work_cache_split_hours', {});
+            futureMemos = getLocal('work_cache_future_memos', []);
+            mapData = getLocal('work_cache_map_data', { points: {} });
+            teamMembers = getLocal('work_cache_team_members', ['周靜儀', '蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲']);
+            crRecords = getLocal('coldRoomRecords', []);
+            crItemTypes = getLocal('coldRoomTypes', ['海鮮', '肉類', '蔬果', '包裝冰', '其他']);
+            if (!crItemTypes.includes('包裝冰')) crItemTypes.push('包裝冰');
+            if (!galleryCategories.includes('任務附件')) galleryCategories.push('任務附件');
+
+            if (!mapData.points || Object.keys(mapData.points).length === 0) mapData.points = JSON.parse(JSON.stringify(defaultMapPoints));
+            else Object.keys(defaultMapPoints).forEach(k => { if (mapData.points[k]) { mapData.points[k].x = defaultMapPoints[k].x; mapData.points[k].y = defaultMapPoints[k].y; } });
+
+            memberSchedules = getLocal('work_cache_member_schedules', []);
+            tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility);
+            checkAndResetDailySchedule(); window.applyTabVisibility();
+            window.switchTab(localStorage.getItem('activeTab') || 'timeline');
+        }
+
+        function setupPureRealtimeSync() {
+            if (!currentUser) return;
+            const bindSync = (key, localKey, onUpdate) => {
+                onSnapshot(cfgDoc(key), (snap) => {
+                    if (snap.exists()) {
+                        const data = snap.data();
+                        safeSetLocal(localKey, data[Object.keys(data)[0]] !== undefined ? data[Object.keys(data)[0]] : data);
+                        onUpdate(data);
+                    }
+                }, console.error);
+            };
+
+            bindSync('schedule', 'work_cache_schedule', d => { if (d.tasks) { dailyScheduleData = d.tasks; if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false); } });
+            bindSync('task_states', 'work_cache_task_states', d => { if (d.states) { taskCompletionState = d.states; if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false); } });
+            bindSync('subtask_states', 'work_cache_subtask_states', d => { if (d.states) { subTaskCompletionState = d.states; if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false); } });
+            bindSync('gallery_categories', 'work_cache_gallery_categories', d => { galleryCategories = d.categories || galleryCategories; if (!galleryCategories.includes('任務附件')) galleryCategories.push('任務附件'); window.renderGallery(); });
+            bindSync('future_memos', 'work_cache_future_memos', d => { futureMemos = d.memos || []; if (!$('memoPage')?.classList.contains('hidden')) window.renderMemos(); window.checkMemoAlerts(); });
+            bindSync('team_members', 'work_cache_team_members', d => { teamMembers = d.members || []; if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager(); });
+            bindSync('member_schedules', 'work_cache_member_schedules', d => {
+                memberSchedules = d.schedules || []; if (d.date) safeSetLocal('work_cache_schedule_date', d.date);
+                checkAndResetDailySchedule();
+                if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+                if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
+            });
+            bindSync('tab_visibility', 'work_cache_tab_visibility', d => { if (d.visibility) { tabVisibilityState = d.visibility; safeSetLocal('work_cache_tab_visibility', tabVisibilityState); window.applyTabVisibility(); } });
+            bindSync('coldRoom', 'coldRoomRecords', d => {
+                if (d.records) { crRecords = d.records; safeSetLocal('coldRoomRecords', crRecords); }
+                if (d.types) { crItemTypes = d.types; safeSetLocal('coldRoomTypes', crItemTypes); }
+                if (!$('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
+                window.checkColdRoomOverdueAlerts();
+            });
+
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snap) => {
+                const map = new Map();
+                snap.forEach(d => { const it = d.data(); if (it?.id) map.set(it.id, it); });
+                galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+                safeSetLocal('work_cache_gallery_items', galleryItems);
+                if (!$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
+            }, console.error);
+        }
+
+        window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML = ''; window.updateMapSimulation(); };
+
+        window.updateMapSimulation = () => {
+            if ($('mapPage')?.classList.contains('hidden')) return;
+            const container = $('mapPointsContainer'); if (!container) return;
+            const now = window.getNow(), nowTime = now.getTime(), curMins = now.getHours() * 60 + now.getMinutes();
+            let activeMembers = {}, incomingMembers = {};
+
+            memberSchedules.forEach(sched => {
+                const s = parseTime(sched.start).getTime(), e = parseTime(sched.end).getTime();
+                if (nowTime >= s && nowTime <= e) {
+                    activeMembers[sched.name] = sched.locationId;
+                    const [endH, endM] = sched.end.split(':').map(Number);
+                    const remainMins = (endH * 60 + endM) - curMins;
+                    if (remainMins > 0 && remainMins <= 10) {
+                        const nextSched = memberSchedules.find(ns => ns.locationId === sched.locationId && ns.name !== sched.name && ns.start === sched.end);
+                        if (nextSched) { incomingMembers[sched.locationId] = incomingMembers[sched.locationId] || []; if (!incomingMembers[sched.locationId].includes(nextSched.name)) incomingMembers[sched.locationId].push(nextSched.name); }
+                    }
+                }
+                if (sched.locationId === 'pt_7') {
+                    const [sH, sM] = sched.start.split(':').map(Number);
+                    const diffToRest = (sH * 60 + sM) - curMins;
+                    if (diffToRest > 0 && diffToRest <= 15) { incomingMembers['pt_7'] = incomingMembers['pt_7'] || []; if (!incomingMembers['pt_7'].includes(sched.name)) incomingMembers['pt_7'].push(sched.name); }
+                }
+            });
+
+            let locGroups = {}; Object.entries(activeMembers).forEach(([n, loc]) => { (locGroups[loc] = locGroups[loc] || []).push(n); });
+
+            ['pt_2', 'pt_6', 'pt_7'].forEach(locId => {
+                const names = locGroups[locId] || [], incoming = incomingMembers[locId] || [];
+                const card = $(`station-${locId}`);
+                if (card) {
+                    let box = card.querySelector('.ext-members-box') || document.createElement('div');
+                    if (!box.parentNode) { box.className = 'ext-members-box flex flex-wrap items-center justify-center gap-1.5 -mt-1 pt-0'; card.appendChild(box); }
+                    else box.innerHTML = '';
+                    names.forEach(n => box.insertAdjacentHTML('beforeend', `<div class="flex flex-col items-center justify-center m-0.5"><div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${n}</div><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div></div>`));
+                    incoming.forEach(n => box.insertAdjacentHTML('beforeend', `<div class="flex flex-col items-center justify-center m-0.5 animate-flag-in"><div class="bg-amber-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider border border-white/90 flex items-center shadow-amber-500/30"><i data-lucide="user-plus" class="w-3 h-3 mr-1 text-white"></i>待:${n}</div><div class="w-5 h-5 bg-amber-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div></div>`));
+                }
+            });
+
+            const staffStatusListEl = $('todayDutyStaffList');
+            if (staffStatusListEl) {
+                const uniqueScheduled = Array.from(new Set(memberSchedules.filter(s => s.name && !s.name.includes('休')).map(s => s.name)));
+                if (uniqueScheduled.length === 0) {
+                    staffStatusListEl.innerHTML = '<div class="text-[10px] text-slate-400 text-center py-3 font-bold">今日尚無排班資料</div>';
+                } else {
+                    const memberDutyList = uniqueScheduled.map(name => {
+                        const shifts = memberSchedules.filter(s => s.name === name);
+                        const earliest = shifts.reduce((min, s) => s.start < min ? s.start : min, "23:59");
+                        const latest = shifts.reduce((max, s) => s.end > max ? s.end : max, "00:00");
+                        const [esH, esM] = earliest.split(':').map(Number), [leH, leM] = latest.split(':').map(Number);
+                        const eMins = esH * 60 + esM, lMins = leH * 60 + leM, col = window.getMemberColorClass(name);
+                        let rank = 3, subSort = lMins, statusBadge = '';
+                        if (eMins <= curMins && curMins < lMins) {
+                            rank = 1; const diff = lMins - curMins; subSort = diff;
+                            const h = Math.floor(diff / 60), m = diff % 60;
+                            statusBadge = `<div class="bg-emerald-50 border border-emerald-300 text-emerald-700 font-bold text-[10px] px-2 py-0.5 rounded-md flex items-center shadow-xs whitespace-nowrap"><i data-lucide="timer" class="w-3 h-3 mr-1 text-emerald-600"></i>剩 ${h>0?h+'小時':''}${m}分 下班</div>`;
+                        } else if (curMins < eMins) {
+                            rank = 2; const diff = eMins - curMins; subSort = diff;
+                            const h = Math.floor(diff / 60), m = diff % 60;
+                            statusBadge = `<div class="bg-amber-50 border border-amber-300 text-amber-700 font-bold text-[10px] px-2 py-0.5 rounded-md flex items-center shadow-xs whitespace-nowrap"><i data-lucide="clock" class="w-3 h-3 mr-1 text-amber-600"></i>再過 ${h>0?h+'小時':''}${m}分 上班</div>`;
+                        } else {
+                            rank = 3; subSort = -lMins;
+                            statusBadge = `<div class="bg-slate-100 border border-slate-200 text-slate-400 font-medium text-[10px] px-2 py-0.5 rounded-md flex items-center whitespace-nowrap"><i data-lucide="check" class="w-3 h-3 mr-1 text-slate-400"></i>下班了</div>`;
+                        }
+                        return { name, rank, subSort, col, statusBadge };
+                    });
+                    memberDutyList.sort((a, b) => a.rank - b.rank || a.subSort - b.subSort || a.name.localeCompare(b.name));
+                    staffStatusListEl.innerHTML = memberDutyList.map(item => `<div class="bg-white border border-slate-200/80 rounded-lg p-1.5 px-2.5 flex items-center justify-between shadow-xs hover:border-slate-300 transition-colors"><div class="flex items-center min-w-0 pr-2"><div class="w-2 h-2 rounded-full ${item.col.activeBg} mr-2 shrink-0"></div><span class="font-black text-[11px] text-slate-800 tracking-wide truncate">${item.name}</span></div><div class="shrink-0">${item.statusBadge}</div></div>`).join('');
+                }
+            }
+
+            document.querySelectorAll('.member-dynamic-marker').forEach(el => el.dataset.active = "false");
+            Object.entries(locGroups).forEach(([locId, names]) => {
+                if (['pt_2', 'pt_6', 'pt_7'].includes(locId) || !mapData.points[locId]) return;
+                const loc = mapData.points[locId], incoming = incomingMembers[locId] || [];
+                names.forEach((name, idx) => {
+                    let marker = $(`dyn-marker-${name}-${locId}-current`) || document.createElement('div');
+                    marker.id = `dyn-marker-${name}-${locId}-current`;
+                    marker.innerHTML = `<div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-lg whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${name}</div><div class="relative flex items-center justify-center"><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md z-10 relative flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div><div class="absolute w-8 h-8 bg-blue-400/40 rounded-full radar-slow z-0"></div></div>`;
+                    if (marker.parentNode !== container) container.appendChild(marker);
+                    const off = names.length > 1 ? (idx - (names.length - 1) / 2) * 75 : 0;
+                    marker.style.left = `calc(${loc.x}% + ${off}px - 20px)`; marker.style.top = `calc(${loc.y}% - 50px)`;
+                    let seed = 0; for (let i = 0; i < name.length; i++) seed += name.charCodeAt(i);
+                    marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 pointer-events-none z-40 drop-shadow-xl ${['animate-float-a', 'animate-float-b', 'animate-float-c'][seed % 3]}`;
+                    marker.style.animationDelay = `${(seed % 5) * -3}s`; marker.dataset.active = "true";
+                });
+                incoming.forEach((name, idx) => {
+                    let marker = $(`dyn-marker-${name}-${locId}-incoming`) || document.createElement('div');
+                    marker.id = `dyn-marker-${name}-${locId}-incoming`;
+                    marker.innerHTML = `<div class="bg-amber-600 text-white text-[11px] font-bold px-2 py-0.5 rounded-md shadow-lg whitespace-nowrap mb-1 tracking-wider border border-white/90 flex items-center shadow-amber-500/30"><i data-lucide="user-plus" class="w-3 h-3 mr-1 text-white"></i>待: ${name}</div><div class="relative flex items-center justify-center"><div class="w-5 h-5 bg-amber-500 rounded-full border-[2px] border-white shadow-md z-10 relative flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div><div class="absolute w-8 h-8 bg-amber-400/40 rounded-full radar-slow z-0"></div></div>`;
+                    if (marker.parentNode !== container) container.appendChild(marker);
+                    const off = incoming.length > 1 ? (idx - (incoming.length - 1) / 2) * 55 : 0;
+                    marker.style.left = `calc(${loc.x}% + ${off}px - 35px)`;
+                    let topOff = locId === 'pt_1' ? '-45px' : (locId === 'pt_3' || locId === 'pt_4' ? '-90px' : '-70px');
+                    marker.style.top = `calc(${loc.y}% + ${topOff})`;
+                    marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 pointer-events-none z-20 drop-shadow-xl animate-flag-in`;
+                    marker.dataset.active = "true";
+                });
+            });
+            lucide.createIcons(); document.querySelectorAll('.member-dynamic-marker[data-active="false"]').forEach(el => el.remove());
+        };
+
+        window.openScheduleManager = () => { window.renderScheduleManager(); $('scheduleManageModal')?.classList.replace('hidden', 'flex'); };
+        window.closeScheduleManager = () => { $('scheduleManageModal')?.classList.replace('flex', 'hidden'); window.updateMapSimulation(); };
+        window.toggleEditMembers = () => { isEditingMembers = !isEditingMembers; activeGridMember = null; window.renderScheduleManager(); };
+
+        window.addTeamMember = () => {
+            const name = prompt("請輸入新成員名字：");
+            if (name && name.trim()) { teamMembers.push(name.trim()); safeSetLocal('work_cache_team_members', teamMembers); syncConfig('team_members', { members: teamMembers }); window.renderScheduleManager(); }
+        };
+        window.removeTeamMember = (idx) => { teamMembers.splice(idx, 1); safeSetLocal('work_cache_team_members', teamMembers); syncConfig('team_members', { members: teamMembers }); window.renderScheduleManager(); };
+
+        window.selectGridMember = (name) => {
+            activeGridMember = (activeGridMember === name) ? null : name;
+            document.querySelectorAll('.member-btn-container').forEach(c => {
+                const cName = c.dataset.name, sel = cName === activeGridMember, isEraser = cName === 'ERASER', div = c.querySelector('div');
+                if (!div) return;
+                if (isEraser) div.className = `px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}`;
+                else { const col = window.getMemberColorClass(cName); div.className = `px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all justify-center flex items-center ${sel ? `${col.activeBg} text-white border-transparent shadow-md scale-105` : `${col.bg} ${col.text} ${col.border} hover:opacity-80 shadow-sm`}`; }
+            });
+            const hint = $('grid-hint-text');
+            if (hint) {
+                if (activeGridMember === 'ERASER') { hint.className = 'mt-2 text-[10px] text-pink-600 font-bold animate-pulse px-1 block text-center'; hint.innerHTML = '👉 橡皮擦模式：點擊或拖曳表格以清除整格內容。'; }
+                else if (activeGridMember) { hint.className = 'mt-2 text-[10px] text-blue-600 font-bold animate-pulse px-1 block text-center'; hint.innerHTML = `👉 已選取「${activeGridMember}」，請點擊或拖曳下方表格填入。`; }
+                else { hint.className = 'hidden'; hint.innerHTML = ''; }
+            }
+            document.querySelectorAll('.grid-input').forEach(ta => { ta.classList.toggle('cursor-pointer', !!activeGridMember); ta.classList.toggle('select-none', !!activeGridMember); });
+        };
+
+        const applyGridAction = (el) => {
+            if (gridDragAction === 'erase') el.value = '';
+            else {
+                let names = (el.value || '').split(/[\n\s]+/).filter(Boolean);
+                if (gridDragAction === 'add' && !names.includes(activeGridMember)) names.push(activeGridMember);
+                else if (gridDragAction === 'remove') names = names.filter(n => n !== activeGridMember);
+                el.value = names.join('\n');
+            }
+        };
+
+        window.startGridDrag = (el) => {
+            if (!activeGridMember) return; el.blur(); isGridDragging = true;
+            if (activeGridMember === 'ERASER') { gridDragAction = 'erase'; el.value = ''; }
+            else { let names = (el.value || '').split(/[\n\s]+/).filter(Boolean); gridDragAction = names.includes(activeGridMember) ? 'remove' : 'add'; applyGridAction(el); }
+        };
+        window.onGridDragEnter = (el) => { if (isGridDragging && activeGridMember) { el.blur(); applyGridAction(el); } };
+        window.onGridTouchMove = (e) => {
+            if (!isGridDragging || !activeGridMember) return; e.preventDefault();
+            const el = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
+            if (el && el.classList.contains('grid-input') && el !== window.lastTouchedEl) { window.lastTouchedEl = el; window.onGridDragEnter(el); }
+        };
+        window.stopGridDrag = () => { isGridDragging = false; gridDragAction = null; window.lastTouchedEl = null; };
+        document.addEventListener('mouseup', window.stopGridDrag); document.addEventListener('touchend', window.stopGridDrag);
+
+        window.toggleSplitHour = (locId, hourStr) => {
+            const [startH] = hourStr.split(':'), endH = String(parseInt(startH, 10) + 1).padStart(2, '0');
+            const stateKey = `${locId}_${hourStr}`, willBeSplit = !splitHoursState[stateKey];
+            window._tempGridValues = window._tempGridValues || {};
+            document.querySelectorAll('.grid-input').forEach(i => window._tempGridValues[`${i.dataset.loc}_${i.dataset.start}_${i.dataset.end}`] = i.value);
+            const fullKey = `${locId}_${hourStr}_${endH}:00`, hA = `${locId}_${startH}:00_${startH}:30`, hB = `${locId}_${startH}:30_${endH}:00`;
+            if (willBeSplit) { const val = window._tempGridValues[fullKey] || ''; window._tempGridValues[hA] = val; window._tempGridValues[hB] = val; delete window._tempGridValues[fullKey]; }
+            else { const names = Array.from(new Set([...(window._tempGridValues[hA]||'').split(/[\n\s]+/), ...(window._tempGridValues[hB]||'').split(/[\n\s]+/)])).map(n => n.trim()).filter(Boolean); window._tempGridValues[fullKey] = names.join('\n'); delete window._tempGridValues[hA]; delete window._tempGridValues[hB]; }
+            splitHoursState[stateKey] = willBeSplit; safeSetLocal('work_cache_split_hours', splitHoursState); window.renderScheduleManager();
+        };
+
+        window.saveGridSchedule = () => {
+            let newScheds = [], locKeys = Object.keys(mapData.points);
+            document.querySelectorAll('.grid-input').forEach(i => {
+                const { loc, start, end } = i.dataset, text = i.value.trim();
+                if (text && start && end) { text.split(/[\n\s]+/).forEach(r => { let clean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim(); if (clean && !clean.includes('休')) newScheds.push({ id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5), name: clean, locationId: loc, start, end }); }); }
+            });
+            let merged = [];
+            locKeys.forEach(locId => {
+                teamMembers.forEach(name => {
+                    let slots = newScheds.filter(s => s.locationId === locId && s.name === name).sort((a, b) => a.start.localeCompare(b.start));
+                    let cur = null;
+                    slots.forEach(s => { if (!cur) cur = { ...s }; else if (cur.end === s.start) cur.end = s.end; else { merged.push(cur); cur = { ...s }; } });
+                    if (cur) merged.push(cur);
+                });
+            });
+            memberSchedules = [...memberSchedules.filter(s => !s.id.startsWith('sch_grid_')), ...merged];
+            const todayStr = getNowInputStrs().date; safeSetLocal('work_cache_schedule_date', todayStr);
+            syncConfig('member_schedules', { schedules: memberSchedules, date: todayStr });
+            window._tempGridValues = null; window.showToast(`排班已儲存！共生效 ${merged.length} 筆時段。`); window.closeScheduleManager();
+        };
+
+        window.clearAllSchedules = () => {
+            window.showConfirm('清空排班', '確定要清空當前所有的排班資料嗎？', () => {
+                memberSchedules = []; window._tempGridValues = {};
+                const todayStr = getNowInputStrs().date; safeSetLocal('work_cache_schedule_date', todayStr);
+                syncConfig('member_schedules', { schedules: [], date: todayStr });
+                window.renderScheduleManager(); window.showToast('已清空所有排班');
+            });
+        };
+
+        window.importScheduleCSV = (event) => {
+            const file = event.target.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const text = e.target.result; const rows = []; let row = [], cur = '', inQuotes = false;
+                    for (let i = 0; i < text.length; i++) {
+                        const c = text[i], next = text[i+1];
+                        if (c === '"') { if (inQuotes && next === '"') { cur += '"'; i++; } else inQuotes = !inQuotes; }
+                        else if (c === ',' && !inQuotes) { row.push(cur.trim()); cur = ''; }
+                        else if ((c === '\r' && next === '\n') && !inQuotes) { row.push(cur.trim()); rows.push(row); row = []; cur = ''; i++; }
+                        else if ((c === '\n' || c === '\r') && !inQuotes) { row.push(cur.trim()); rows.push(row); row = []; cur = ''; }
+                        else cur += c;
+                    }
+                    if (cur || row.length) { row.push(cur.trim()); rows.push(row); }
+                    const validRows = rows.filter(r => r.length > 0 && r.some(Boolean));
+                    if (validRows.length < 2) return window.showToast("匯入檔案內容格式不正確", true);
+                    const headers = validRows[0].map(h => h.replace(/^"+|"+$/g, '').trim());
+                    window._tempGridValues = window._tempGridValues || {};
+                    const locMap = { '花園仔': 'pt_3', '魚檔': 'pt_4', '整體巡邏': 'pt_5', '客服室': 'pt_1', '一樓大清點': 'pt_2', '一樓': 'pt_2', '地面層大清點': 'pt_6', '地面層': 'pt_6', '休息中': 'pt_7', '人員休息中': 'pt_7', '休息': 'pt_7' };
+                    const isHalfHourFormat = headers.some(h => h.includes('07:30') || h.includes('08:30'));
+                    for (let rowIdx = 1; rowIdx < validRows.length; rowIdx++) {
+                        const cols = validRows[rowIdx]; if (!cols.length) continue;
+                        const stationRaw = (cols[0] || '').replace(/\s+/g, '');
+                        let matchedLocId = null; for (let [k, v] of Object.entries(locMap)) { if (stationRaw.includes(k)) { matchedLocId = v; break; } }
+                        if (!matchedLocId) continue;
+                        if (isHalfHourFormat) {
+                            let halfCols = {};
+                            for (let c = 1; c < headers.length; c++) { const timeCol = headers[c]; if (!timeCol || !timeCol.includes('-')) continue; halfCols[timeCol] = cols[c] ? cols[c].replace(/^"+|"+$/g, '').trim() : ''; }
+                            for (let h = 7; h < 22; h++) {
+                                const hStr = pad(h), nextHStr = pad(h + 1);
+                                const t1 = `${hStr}:00-${hStr}:30`, t2 = `${hStr}:30-${nextHStr}:00`;
+                                const v1 = halfCols[t1] || '', v2 = halfCols[t2] || '';
+                                if (v1 && v1 === v2) {
+                                    splitHoursState[`${matchedLocId}_${hStr}:00`] = false; window._tempGridValues[`${matchedLocId}_${hStr}:00_${nextHStr}:00`] = v1;
+                                    delete window._tempGridValues[`${matchedLocId}_${hStr}:00_${hStr}:30`]; delete window._tempGridValues[`${matchedLocId}_${hStr}:30_${nextHStr}:00`];
+                                } else {
+                                    splitHoursState[`${matchedLocId}_${hStr}:00`] = !!(v1 || v2);
+                                    if (v1 || v2) { window._tempGridValues[`${matchedLocId}_${hStr}:00_${hStr}:30`] = v1; window._tempGridValues[`${matchedLocId}_${hStr}:30_${nextHStr}:00`] = v2; delete window._tempGridValues[`${matchedLocId}_${hStr}:00_${nextHStr}:00`]; }
+                                    else { window._tempGridValues[`${matchedLocId}_${hStr}:00_${nextHStr}:00`] = ''; delete window._tempGridValues[`${matchedLocId}_${hStr}:00_${hStr}:30`]; delete window._tempGridValues[`${matchedLocId}_${hStr}:30_${nextHStr}:00`]; }
+                                }
+                            }
+                        } else {
+                            const timeSlots = Array.from({length: 15}, (_, i) => `${pad(i + 7)}:00-${pad(i + 8)}:00`);
+                            for (let tIdx = 0; tIdx < 15; tIdx++) { const val = cols[tIdx + 1] ? cols[tIdx + 1].replace(/^"+|"+$/g, '').trim() : ''; const [sStart, sEnd] = timeSlots[tIdx].split('-'); window._tempGridValues[`${matchedLocId}_${sStart}_${sEnd}`] = val; }
+                        }
+                    }
+                    safeSetLocal('work_cache_split_hours', splitHoursState); window.renderScheduleManager(); window.showToast("已成功載入排班內容！");
+                } catch(err) { window.showToast("解析失敗", true); }
+                event.target.value = '';
+            };
+            reader.readAsText(file);
+        };
+
+        const getLocColorClass = (id) => ({
+            pt_1: 'bg-blue-50 text-blue-700 border-r border-blue-200', pt_3: 'bg-emerald-50 text-emerald-700 border-r border-emerald-200',
+            pt_4: 'bg-cyan-50 text-cyan-700 border-r border-cyan-200', pt_5: 'bg-purple-50 text-purple-700 border-r border-purple-200',
+            pt_2: 'bg-amber-50 text-amber-800 border-r border-amber-200', pt_6: 'bg-amber-100 text-amber-900 border-r border-amber-300',
+            pt_7: 'bg-slate-100 text-slate-700 border-r border-slate-200'
+        }[id] || 'bg-white text-slate-700');
+
+        window.renderScheduleManager = () => {
+            const list = $('scheduleManageList');
+            let domVals = window._tempGridValues || {};
+            if (!window._tempGridValues) document.querySelectorAll('.grid-input').forEach(i => domVals[`${i.dataset.loc}_${i.dataset.start}_${i.dataset.end}`] = i.value);
+
+            const timeSlots = Array.from({length: 15}, (_, i) => `${pad(i + 7)}:00-${pad(i + 8)}:00`);
+            const validCountSlots = ['13:00-14:00', '14:00-15:00', '19:00-20:00', '20:00-21:00', '21:00-22:00'];
+            const curTotalMins = window.getNow().getHours() * 60 + window.getNow().getMinutes();
+
+            let th = `<th class="sticky left-0 bg-slate-100 p-1 z-10 w-[56px] min-w-[56px] max-w-[56px] border border-slate-200 text-slate-600 font-black text-[9.5px] text-center align-middle whitespace-nowrap shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">崗位 \\ 時間</th>`;
+            timeSlots.forEach(ts => {
+                const [sH, sM] = ts.split('-')[0].split(':').map(Number), [eH, eM] = ts.split('-')[1].split(':').map(Number);
+                const isCurrentHour = curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
+                th += `<th class="p-1 border border-slate-200 w-[42px] min-w-[42px] text-[8.5px] font-bold ${isCurrentHour ? 'now-glowing-header bg-gradient-to-b from-sky-400 to-sky-500 text-white font-black shadow-md' : 'text-slate-500 bg-slate-50'} whitespace-nowrap text-center align-middle">${isCurrentHour ? '<div class="flex items-center justify-center space-x-0.5 mb-0.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-300 animate-ping"></span><span class="text-[7.5px] bg-amber-300 text-slate-900 px-1 py-0.2 rounded font-black tracking-tight leading-none shadow-xs">現在</span></div>' : ''}${ts}</th>`;
+            });
+
+            const order = ['pt_3', 'pt_4', 'pt_5', 'pt_1', 'pt_2', 'pt_6', 'pt_7'];
+            let sortedLocs = Object.entries(mapData.points).sort(([a], [b]) => (order.indexOf(a) === -1 ? 999 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 999 : order.indexOf(b)));
+            let rows = '';
+
+            sortedLocs.forEach(([locId, pt]) => {
+                const hClass = locId === 'pt_1' ? "min-h-[72px]" : "min-h-[30px]";
+                rows += `<tr><td class="sticky left-0 ${getLocColorClass(locId)} border border-slate-200 font-black text-[10px] p-0.5 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center align-middle break-words leading-tight w-[56px] min-w-[56px] max-w-[56px]">${pt.name.replace(/\s*大清點/, '<br>大清點')}</td>`;
+                timeSlots.forEach(ts => {
+                    const [tStart, tEnd] = ts.split('-');
+                    const [sH, sM] = tStart.split(':').map(Number), [eH, eM] = tEnd.split(':').map(Number);
+                    const isCurrentHour = curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
+                    const isHalfAActive = isCurrentHour && (curTotalMins < (sH * 60 + sM) + 30);
+                    const isHalfBActive = isCurrentHour && (curTotalMins >= (sH * 60 + sM) + 30);
+                    const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border border-slate-200' : 'border border-slate-200';
+
+                    if ((locId === 'pt_2' || locId === 'pt_6') && !validCountSlots.includes(ts)) {
+                        rows += `<td class="p-0 border border-slate-200 bg-slate-200/60 pointer-events-none align-middle w-[40px] min-w-[40px]"><div class="w-full h-full ${hClass}"></div></td>`;
+                    } else {
+                        const [startH] = tStart.split(':'), [endH] = tEnd.split(':'), isSplit = !!splitHoursState[`${locId}_${tStart}`];
+                        if (isSplit) {
+                            const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
+                            const kA = `${locId}_${hA_s}_${hA_e}`, kB = `${locId}_${hB_s}_${hB_e}`;
+                            let cA = domVals[kA], cB = domVals[kB];
+                            const getNamesForHalf = (sStr, eStr) => {
+                                const sNum = parseInt(sStr.replace(':',''), 10), eNum = parseInt(eStr.replace(':',''), 10), res = [];
+                                memberSchedules.forEach(s => { if (s.locationId === locId && parseInt(s.start.replace(':',''), 10) <= sNum && parseInt(s.end.replace(':',''), 10) >= eNum) res.push(s.name); });
+                                return res.join('\n');
+                            };
+                            if (cA === undefined) cA = domVals[`${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${locId}_${tStart}_${tEnd}`] : getNamesForHalf(hA_s, hA_e);
+                            if (cB === undefined) cB = domVals[`${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${locId}_${tStart}_${tEnd}`] : getNamesForHalf(hB_s, hB_e);
+                            const colA = cA.split('\n')[0] ? window.getMemberColorClass(cA.split('\n')[0]).bg : 'bg-white';
+                            const colB = cB.split('\n')[0] ? window.getMemberColorClass(cB.split('\n')[0]).bg : 'bg-white';
+                            rows += `<td class="p-0 ${cellSlotClass} bg-white relative align-middle w-[40px] min-w-[40px]"><button type="button" onclick="window.toggleSplitHour('${locId}', '${tStart}')" class="absolute top-0 right-0 z-20 bg-slate-200 hover:bg-slate-300 text-slate-600 p-0.5 rounded-bl text-[8px] font-bold shadow-sm" title="復原整格">🩹</button><div class="flex w-full h-full ${hClass}"><div class="flex-1 min-w-[20px] border-r border-slate-200 flex flex-col justify-start items-center ${colA} ${isHalfAActive ? 'now-glowing-sub bg-sky-100/90 font-black' : ''} pt-0.5"><div class="text-[7px] font-bold ${isHalfAActive ? 'text-sky-800 bg-sky-100 font-black' : 'text-slate-400 bg-slate-50'} text-center w-full py-0.2 border-b border-slate-100 whitespace-nowrap mb-0.5">${startH}:00~${startH}:30</div><textarea class="grid-input w-full p-0 text-[9.5px] resize-none focus:outline-none focus:bg-blue-50 border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent text-center overflow-y-auto ${activeGridMember ? 'cursor-pointer select-none' : ''}" style="height: calc(100% - 12px);" data-loc="${locId}" data-start="${hA_s}" data-end="${hA_e}" placeholder="..." onmousedown="window.startGridDrag(this)" onmouseenter="window.onGridDragEnter(this)" ontouchstart="window.startGridDrag(this)">${cA}</textarea></div><div class="flex-1 min-w-[20px] flex flex-col justify-start items-center ${colB} ${isHalfBActive ? 'now-glowing-sub bg-sky-100/90 font-black' : ''} pt-0.5"><div class="text-[7px] font-bold ${isHalfBActive ? 'text-sky-800 bg-sky-100 font-black' : 'text-slate-400 bg-slate-50'} text-center w-full py-0.2 border-b border-slate-100 whitespace-nowrap mb-0.5">${startH}:30~${endH}:00</div><textarea class="grid-input w-full p-0 text-[9.5px] resize-none focus:outline-none focus:bg-blue-50 border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent text-center overflow-y-auto ${activeGridMember ? 'cursor-pointer select-none' : ''}" style="height: calc(100% - 12px);" data-loc="${locId}" data-start="${hB_s}" data-end="${hB_e}" placeholder="..." onmousedown="window.startGridDrag(this)" onmouseenter="window.onGridDragEnter(this)" ontouchstart="window.startGridDrag(this)">${cB}</textarea></div></div></td>`;
+                        } else {
+                            const cKey = `${locId}_${tStart}_${tEnd}`; let val = domVals[cKey];
+                            if (val === undefined) {
+                                const kA = `${startH}:00_${startH}:30`, kB = `${startH}:30_${endH}:00`;
+                                if (domVals[`${locId}_${kA}`] !== undefined || domVals[`${locId}_${kB}`] !== undefined) {
+                                    val = Array.from(new Set([...(domVals[`${locId}_${kA}`] || '').split(/[\n\s]+/), ...(domVals[`${locId}_${kB}`] || '').split(/[\n\s]+/)])).map(n => n.trim()).filter(Boolean).join('\n');
+                                } else {
+                                    let names = []; memberSchedules.forEach(s => { if (s.locationId === locId && parseInt(s.start.replace(':',''), 10) <= parseInt(tStart.replace(':',''), 10) && parseInt(s.end.replace(':',''), 10) >= parseInt(tEnd.replace(':',''), 10)) names.push(s.name); });
+                                    val = names.join('\n');
+                                }
+                            }
+                            const bgCol = val.split('\n')[0] ? window.getMemberColorClass(val.split('\n')[0]).bg : 'bg-white';
+                            rows += `<td class="p-0 ${cellSlotClass} ${bgCol} hover:opacity-90 transition-colors relative align-middle w-[40px] min-w-[40px]"><button type="button" onclick="window.toggleSplitHour('${locId}', '${tStart}')" class="absolute top-0 right-0 z-20 bg-slate-100 hover:bg-slate-200 text-slate-500 p-0.5 rounded-bl text-[8px] font-bold shadow-sm" title="切割半格">✂️</button><textarea class="grid-input w-full h-full p-0.5 text-[10px] resize-none focus:outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400 border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent text-center overflow-y-auto ${activeGridMember ? 'cursor-pointer select-none' : ''}" style="height: ${locId === 'pt_1' ? '72px' : '30px'}; min-height: ${locId === 'pt_1' ? '72px' : '30px'};" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}" placeholder="..." onmousedown="window.startGridDrag(this)" onmouseenter="window.onGridDragEnter(this)" ontouchstart="window.startGridDrag(this)">${val}</textarea></td>`;
+                        }
+                    }
+                });
+                rows += `</tr>`;
+            });
+
+            list.innerHTML = `<div class="mb-3 p-2 bg-slate-50 border border-slate-200 rounded-xl shadow-inner w-full"><div class="flex justify-between items-center mb-2 px-1"><span class="text-xs font-bold text-slate-700 flex items-center"><i data-lucide="palette" class="w-3.5 h-3.5 mr-1.5 text-blue-500"></i>快捷填表 (同名同色標記)</span><button onclick="window.toggleEditMembers()" class="text-[10px] font-bold text-slate-500 hover:text-blue-500 transition-colors bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">${isEditingMembers ? '完成編輯' : '編輯名單'}</button></div><div class="flex flex-wrap gap-1.5 px-1 justify-start items-center">${!isEditingMembers ? `<div class="relative group cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')"><div class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}"><i data-lucide="eraser" class="w-3.5 h-3.5 mr-1"></i>橡皮擦</div></div>` : ''}${teamMembers.map((name, idx) => {
+                const c = window.getMemberColorClass(name), sel = activeGridMember === name;
+                return `<div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? '' : `window.selectGridMember('${name}')`}"><div class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-105` : `${c.bg} ${c.text} ${c.border} hover:opacity-80 shadow-sm`}">${name}</div>${isEditingMembers ? `<button onclick="window.removeTeamMember(${idx}); event.stopPropagation();" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold z-10 hover:bg-red-600 transition-colors"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}</div>`;
+            }).join('')}${isEditingMembers ? `<button onclick="window.addTeamMember()" class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-dashed border-slate-400 text-slate-500 hover:bg-slate-200 flex items-center transition-colors justify-center"><i data-lucide="plus" class="w-3.5 h-3.5 mr-1"></i>新增</button>` : ''}</div><div id="grid-hint-text" class="${activeGridMember ? 'mt-2 text-[10px] font-bold animate-pulse px-1 block text-center ' + (activeGridMember === 'ERASER' ? 'text-pink-600' : 'text-blue-600') : 'hidden'}">${activeGridMember === 'ERASER' ? '👉 橡皮擦模式：點擊或拖曳表格以清除整格內容。' : (activeGridMember ? `👉 已選取「${activeGridMember}」，請點擊或拖曳下方表格填入。` : '')}</div></div><div class="bg-white border border-slate-200 rounded-xl mb-1 shadow-sm overflow-hidden flex flex-col relative w-full"><div class="p-2 sm:p-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-2 shrink-0"><h4 class="text-xs font-bold text-slate-700 flex items-center"><i data-lucide="grid" class="w-4 h-4 mr-1.5 text-indigo-500"></i>排班總表 (✂️切半小時 / 🩹復原)</h4><div class="flex items-center gap-1.5"><input type="file" id="scheduleExcelImportInput" accept=".csv" class="hidden" onchange="window.importScheduleCSV(event)"><button onclick="document.getElementById('scheduleExcelImportInput').click()" class="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg shadow-sm transition-colors flex items-center" title="匯入 Excel (CSV)"><i data-lucide="file-up" class="w-3 h-3 mr-1"></i>匯入Excel</button><button onclick="window.clearAllSchedules()" class="bg-red-50 hover:bg-red-100 text-red-600 font-bold text-[10px] px-2.5 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center"><i data-lucide="trash-2" class="w-3 h-3 mr-1"></i>清空</button><button onclick="window.saveGridSchedule()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg shadow-sm transition-colors active:scale-95 flex items-center"><i data-lucide="save" class="w-3 h-3 mr-1"></i>儲存表格</button></div></div><div class="overflow-x-auto w-full" ontouchmove="window.onGridTouchMove(event)"><table class="w-full text-center border-collapse"><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div></div>`;
+            lucide.createIcons();
+        };
+
+        window.toggleTask = async (taskId) => {
+            window.saveStateSnapshot();
+            taskCompletionState[taskId] = !taskCompletionState[taskId];
+            safeSetLocal('work_cache_task_states', taskCompletionState);
+            syncConfig('task_states', { states: taskCompletionState }, true);
+        };
+
+        window.deleteTaskCard = (taskId, e) => {
+            if (e) e.stopPropagation();
+            dailyScheduleData = dailyScheduleData.filter(t => t.id !== taskId);
+            delete taskCompletionState[taskId]; delete subTaskCompletionState[taskId];
+            safeSetLocal('work_cache_schedule', dailyScheduleData);
+            safeSetLocal('work_cache_task_states', taskCompletionState);
+            safeSetLocal('work_cache_subtask_states', subTaskCompletionState);
+            syncConfig('schedule', { tasks: dailyScheduleData });
+            syncConfig('task_states', { states: taskCompletionState });
+            syncConfig('subtask_states', { states: subTaskCompletionState });
+            if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+            window.showToast("卡片已刪除");
+        };
+
+        window.getGroupColor = (g) => ({ A: 'bg-pink-50 text-pink-600 border-pink-200', B: 'bg-blue-50 text-blue-600 border-blue-200', C: 'bg-emerald-50 text-emerald-600 border-emerald-200' }[g] || 'bg-slate-50 text-slate-600 border-slate-200');
+
+        window.crSaveData = () => {
+            safeSetLocal('coldRoomRecords', crRecords);
+            safeSetLocal('coldRoomTypes', crItemTypes);
+            syncConfig('coldRoom', { records: crRecords, types: crItemTypes }, true);
+        };
+
+        window.crSwitchTab = (tab) => {
+            crCurrentTab = tab;
+            const actCls = "flex-1 py-1.5 px-0.5 text-xs rounded bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-bold transition-all tracking-widest text-center";
+            const inactCls = "flex-1 py-1.5 px-0.5 text-xs text-slate-500 hover:text-slate-700 transition-all tracking-widest text-center font-medium";
+            $('crTabActive').className = tab === 'active' ? actCls : inactCls;
+            $('crTabHistory').className = tab === 'history' ? actCls : inactCls;
+            $('crActiveControls').classList.toggle('hidden', tab !== 'active');
+            window.crRenderList();
+        };
+
+        window.crRenderTypesInModal = () => {
+            const c = $('crTypeContainer'); if (!c) return;
+            c.innerHTML = crItemTypes.length ? crItemTypes.map((t, i) => `<div class="relative inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors cursor-pointer ${crCurrentSelectedType === t ? 'bg-blue-100 border-blue-400 text-blue-700 shadow-sm' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}" onclick="window.crSelectType('${t}')">${t}<button onclick="event.stopPropagation(); window.crDeleteType(${i})" class="ml-1 -mr-0.5 text-slate-400 hover:text-red-500 p-0.5 rounded-full hover:bg-red-50 transition-colors"><i data-lucide="x" class="w-2.5 h-2.5 pointer-events-none"></i></button></div>`).join('') : '<span class="text-[10px] text-slate-400 py-0.5">尚無類型，請新增</span>';
+            lucide.createIcons({ root: c });
+        };
+
+        window.crSelectType = (t) => { crCurrentSelectedType = (crCurrentSelectedType === t) ? '' : t; window.crRenderTypesInModal(); };
+        window.crAddNewType = () => {
+            const inp = $('crInputNewType'), val = inp.value.trim();
+            if (!val || crItemTypes.includes(val)) return window.showToast('類型已存在或為空', true);
+            crItemTypes.push(val); window.crSaveData(); inp.value = ''; crCurrentSelectedType = val; window.crRenderTypesInModal();
+        };
+        window.crDeleteType = (i) => { if (crCurrentSelectedType === crItemTypes[i]) crCurrentSelectedType = ''; crItemTypes.splice(i, 1); window.crSaveData(); window.crRenderTypesInModal(); };
+
+        window.crOpenAddModal = () => {
+            ['crInputTenant', 'crInputQuantity', 'crInputNewType'].forEach(id => $(id).value = '');
+            crCurrentSelectedType = ''; window.crRenderTypesInModal();
+            const { date, time } = getNowInputStrs();
+            $('crInputDate').value = date; $('crInputTime').value = time;
+            const staff = $('crInputStaff');
+            if (staff) staff.innerHTML = '<option value="">請選擇經手客服人員...</option>' + teamMembers.map(m => `<option value="${m}">${m}</option>`).join('');
+            $('crAddModal')?.classList.replace('hidden', 'flex');
+        };
+        window.crCloseAddModal = () => $('crAddModal')?.classList.replace('flex', 'hidden');
+
+        window.crSubmitAddRecord = () => {
+            const tenant = $('crInputTenant').value.trim();
+            const qty = parseInt($('crInputQuantity').value, 10);
+            const staff = $('crInputStaff')?.value || '';
+            const dStr = $('crInputDate').value, tStr = $('crInputTime').value;
+            if (!tenant || !qty || qty <= 0) return window.showToast('請填寫完整資訊與有效數量', true);
+            crRecords.unshift({
+                id: 'cr_' + window.getNow().getTime(), tenant, type: crCurrentSelectedType || '未指定', staff: staff || '未指定',
+                depositQuantity: qty, remainingQuantity: qty,
+                depositTime: (dStr && tStr) ? new Date(`${dStr}T${tStr}`).getTime() : window.getNow().getTime(),
+                withdrawHistory: [], status: 'active'
+            });
+            window.crSaveData(); window.crCloseAddModal(); window.crRenderList(); window.showToast('已成功新增存放紀錄');
+            window.checkColdRoomOverdueAlerts();
+        };
+
+        window.crOpenWithdrawModal = (id) => {
+            const r = crRecords.find(x => x.id === id); if (!r) return;
+            $('crCurrentActionId').value = id;
+            $('crWithdrawTenantDisplay').textContent = r.tenant;
+            $('crWithdrawRemainDisplay').textContent = r.remainingQuantity;
+            $('crInputWithdrawQty').value = r.remainingQuantity;
+            const { date, time } = getNowInputStrs();
+            $('crInputWithdrawDate').value = date; $('crInputWithdrawTime').value = time;
+            $('crWithdrawModal')?.classList.replace('hidden', 'flex');
+        };
+        window.crCloseWithdrawModal = () => $('crWithdrawModal')?.classList.replace('flex', 'hidden');
+
+        window.crSubmitWithdraw = () => {
+            const id = $('crCurrentActionId').value;
+            const qty = parseInt($('crInputWithdrawQty').value, 10);
+            const dStr = $('crInputWithdrawDate')?.value, tStr = $('crInputWithdrawTime')?.value;
+            const r = crRecords.find(x => x.id === id); if (!r || !qty || qty <= 0 || qty > r.remainingQuantity) return window.showToast('數量錯誤', true);
+            r.remainingQuantity -= qty;
+            r.withdrawHistory.push({ time: (dStr && tStr) ? new Date(`${dStr}T${tStr}`).getTime() : window.getNow().getTime(), qty });
+            if (r.remainingQuantity === 0) r.status = 'history';
+            window.crSaveData(); window.crCloseWithdrawModal(); window.crRenderList();
+        };
+
+        window.crDeleteRecord = (id, e) => {
+            if (e) e.stopPropagation();
+            window.showConfirm('刪除紀錄', '確定要刪除這筆雪房紀錄嗎？', () => { crRecords = crRecords.filter(r => r.id !== id); window.crSaveData(); window.crRenderList(); window.showToast('已刪除'); });
+        };
+
+        window.crOpenEditModal = (id) => {
+            const r = crRecords.find(x => x.id === id); if (!r) return;
+            const { date, time } = getNowInputStrs(r.depositTime);
+            const modalHtml = `<div id="crEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();"><div class="bg-white rounded-2xl p-4 w-full max-w-[300px] shadow-2xl relative scrollbar-hide" onclick="event.stopPropagation()"><h3 class="font-bold text-base mb-3 text-slate-800 flex items-center border-b pb-2"><i data-lucide="edit" class="w-4 h-4 mr-2 text-blue-500"></i> 修改存放內容</h3><div class="space-y-3"><div><label class="text-[10px] font-bold text-slate-500 block mb-1">檔主編號 / 名稱</label><input type="text" id="crEditTenant" value="${r.tenant}" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center"></div><div class="flex gap-2"><div class="flex-1"><label class="text-[10px] font-bold text-slate-500 block mb-1">存入日期</label><input type="date" id="crEditDate" value="${date}" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs focus:border-blue-500 focus:outline-none text-center"></div><div class="flex-1"><label class="text-[10px] font-bold text-slate-500 block mb-1">時間</label><input type="time" id="crEditTime" value="${time}" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs focus:border-blue-500 focus:outline-none text-center"></div></div><div><label class="text-[10px] font-bold text-slate-500 block mb-1">經手客服人員</label><select id="crEditStaff" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center"><option value="">未指定</option>${teamMembers.map(m => `<option value="${m}" ${r.staff === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div><div><label class="text-[10px] font-bold text-slate-500 block mb-1">貨物類型</label><select id="crEditType" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">${crItemTypes.map(t => `<option value="${t}" ${r.type === t ? 'selected' : ''}>${t}</option>`).join('')}<option value="未指定" ${!r.type || r.type === '未指定' ? 'selected' : ''}>未指定</option></select></div><div><label class="text-[10px] font-bold text-slate-500 block mb-1">剩餘數量</label><input type="number" id="crEditRemain" value="${r.remainingQuantity}" min="0" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center"></div></div><div class="mt-4 flex justify-between items-center border-t border-slate-100 pt-3"><button onclick="window.crDeleteRecord('${r.id}'); document.getElementById('crEditModal').remove();" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors">刪除紀錄</button><div class="space-x-2 flex"><button onclick="document.getElementById('crEditModal').remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">取消</button><button onclick="window.crSaveEditRecord('${r.id}')" class="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-bold shadow-sm">儲存</button></div></div></div></div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml); lucide.createIcons();
+        };
+
+        window.crSaveEditRecord = (id) => {
+            const r = crRecords.find(x => x.id === id); if (!r) return;
+            const tenant = $('crEditTenant').value.trim();
+            const dStr = $('crEditDate').value, tStr = $('crEditTime').value;
+            const staff = $('crEditStaff').value, type = $('crEditType').value;
+            const remain = parseInt($('crEditRemain').value, 10);
+            if (!tenant || isNaN(remain) || remain < 0) return window.showToast('填寫有誤', true);
+            r.tenant = tenant; if (dStr && tStr) r.depositTime = new Date(`${dStr}T${tStr}`).getTime();
+            r.staff = staff || '未指定'; r.type = type; r.remainingQuantity = remain;
+            if (remain === 0) r.status = 'history';
+            window.crSaveData(); $('crEditModal')?.remove(); window.crRenderList(); window.showToast('已更新');
+            window.checkColdRoomOverdueAlerts();
+        };
+
+        window.crExportToCSV = () => {
+            if (crRecords.length === 0) return window.showToast('沒有資料', true);
+            const rows = [['紀錄ID', '狀態', '檔主', '經手客服', '類型', '初始數量', '剩餘數量', '存入時間'], ...crRecords.map(r => [r.id, r.status === 'active' ? '存放中' : '歷史', r.tenant, r.staff || '未指定', r.type || '未指定', r.depositQuantity, r.remainingQuantity, new Date(r.depositTime).toLocaleString('zh-TW', { hour12: false })])];
+            const blob = new Blob(["\uFEFF" + rows.map(r => r.map(f => `"${f}"`).join(',')).join('\n')], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a"); link.href = URL.createObjectURL(blob);
+            link.download = `雪房存貨紀錄_${new Date().toISOString().slice(0,10)}.csv`; link.click(); window.showToast('已導出CSV');
+        };
+
+        window.crFormatTime = (ms) => { const d = new Date(ms); return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+
+        window.crRenderList = () => {
+            const container = $('crRecordsContainer'); if (!container) return;
+            container.innerHTML = ''; window.crUpdateNotificationBtn();
+            const filtered = crRecords.filter(r => (r.status === 'completed' ? 'history' : r.status) === crCurrentTab);
+            if (crCurrentTab === 'active') $('crActiveCount')?.replaceChildren(document.createTextNode(filtered.length));
+            if (filtered.length === 0) { container.innerHTML = `<div class="flex flex-col items-center justify-center py-16 text-slate-400"><i data-lucide="${crCurrentTab === 'active' ? 'inbox' : 'history'}" class="w-10 h-10 mb-2 opacity-30"></i><span class="text-sm font-bold tracking-widest text-center">${crCurrentTab === 'active' ? '目前雪房沒有存放物品' : '尚無歷史紀錄'}</span></div>`; lucide.createIcons({ root: container }); return; }
+            const now = window.getNow().getTime();
+            filtered.forEach((r, idx) => {
+                const isHist = r.status === 'history' || r.status === 'completed', isIce = r.type === '包裝冰';
+                let timeStatus = '', actHtml = '';
+                if (!isHist) {
+                    if (isIce) timeStatus = `<div class="flex items-center text-blue-600 text-xs font-black tracking-wide pr-6"><i data-lucide="infinity" class="w-4 h-4 mr-1"></i>不限時間存放</div>`;
+                    else {
+                        const tLeft = (r.depositTime + CR_TIME_LIMIT_MS) - now;
+                        if (tLeft > 0) timeStatus = `<div class="flex items-center ${tLeft < 14400000 ? 'text-amber-600' : 'text-emerald-600'} text-xs font-black tracking-wide cr-timer-display pr-6"><i data-lucide="clock" class="w-4 h-4 mr-1"></i>剩餘: ${Math.floor(tLeft / 3600000)}小時 ${Math.floor((tLeft % 3600000) / 60000)}分</div>`;
+                        else { const od = Math.abs(tLeft), odH = Math.floor(od / 3600000), odM = Math.floor((od % 3600000) / 60000); timeStatus = `<div class="flex items-center text-red-600 text-xs font-black tracking-wide timer-pulse pr-6"><i data-lucide="alert-circle" class="w-4 h-4 mr-1"></i>已超時 ${odH > 0 ? odH+'小時 ' : ''}${odM}分！</div>`; }
+                    }
+                    actHtml = `<div class="mt-2.5 pt-2 border-t border-slate-100 flex justify-end"><button onclick="event.stopPropagation(); window.crOpenWithdrawModal('${r.id}')" class="bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors border border-blue-200 active:scale-95 flex items-center shadow-sm">取出更新 <i data-lucide="arrow-right-circle" class="w-3.5 h-3.5 ml-1 pointer-events-none"></i></button></div>`;
+                } else {
+                    const lastW = r.withdrawHistory.length > 0 ? r.withdrawHistory[r.withdrawHistory.length - 1].time : r.depositTime;
+                    timeStatus = `<div class="text-xs text-slate-500 font-bold pr-6">總時長: ${((lastW - r.depositTime) / 3600000).toFixed(1)} 小時</div>`;
+                    actHtml = `<div class="mt-1.5 text-xs text-slate-400 font-medium flex items-center justify-end"><i data-lucide="check-circle-2" class="w-4 h-4 mr-1 text-emerald-500"></i> 已完全清空</div>`;
+                }
+                container.insertAdjacentHTML('beforeend', `<div onclick="window.openEditModal ? null : window.crOpenEditModal('${r.id}')" title="點擊可修改" class="daily-task-card ${isHist ? 'bg-slate-50 opacity-80 border-slate-200' : 'bg-white border-[#d6d0c4]'} rounded-xl p-3.5 border relative shadow-sm transition-all flex flex-col group cursor-pointer hover:border-blue-300"><div class="tape-strip ${idx % 2 === 0 ? 'tape-strip-blue' : 'tape-strip-red'} hidden sm:block"></div><button onclick="window.crDeleteRecord('${r.id}', event)" class="absolute top-1.5 right-1.5 p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors z-20 active:scale-95"><i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i></button><div class="flex justify-between items-center mb-2.5 pb-1.5 border-b border-slate-100"><div class="text-xs text-slate-500 font-bold tracking-wide flex items-center"><i data-lucide="calendar" class="w-4 h-4 mr-1 text-slate-400"></i>存貨時間: ${window.crFormatTime(r.depositTime)}</div>${timeStatus}</div><div class="flex items-center justify-between mt-1"><div class="flex items-center min-w-0 pr-2"><div class="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center mr-2.5 shrink-0"><i data-lucide="user" class="w-4 h-4 text-slate-500"></i></div><div class="min-w-0"><div class="flex items-center space-x-2 mb-0.5"><h3 class="text-base font-black text-slate-800 tracking-wide truncate">${r.tenant}</h3><span class="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-[10.5px] font-bold border border-slate-200 shrink-0 shadow-sm">${r.type || '未指定'}</span></div><div class="text-xs text-slate-500 font-medium">初始: <span class="font-bold text-slate-700">${r.depositQuantity}</span> | 客服: <span class="text-blue-600 font-bold">${r.staff || '未指定'}</span></div></div></div><div class="text-right shrink-0"><div class="text-[10px] text-slate-500 font-bold mb-0.5">剩餘</div><div class="text-2xl font-black ${r.remainingQuantity > 0 ? 'text-blue-600' : 'text-slate-400'} leading-none">${r.remainingQuantity}</div></div></div>${r.withdrawHistory.length ? `<div class="mt-2 space-y-1">${r.withdrawHistory.map(w => `<div class="text-xs text-slate-500 flex justify-between bg-slate-50 px-2.5 py-1 rounded border border-slate-100"><span>提取: ${window.crFormatTime(w.time)}</span><span class="font-bold text-slate-600">取出 -${w.qty}</span></div>`).join('')}</div>` : ''}${actHtml}</div>`);
+            });
+            lucide.createIcons({ root: container });
+        };
+
+        window.exportData = async () => {
+            try {
+                const blob = new Blob([JSON.stringify({ version: "6.0", exportDate: new Date().toISOString(), dailyScheduleData, taskCompletionState, subTaskCompletionState, galleryCategories, galleryItems, tabVisibilityState, crRecords, crItemTypes, stallList: window.stallList }, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `工作記錄本_備份_${new Date().toISOString().slice(0,10)}.json`; a.click();
+                window.showToast("導出成功！"); $('settingsDropdown')?.classList.add('hidden');
+            } catch(e) { window.showToast("導出失敗", true); }
+        };
+
+        window.importData = (event) => {
+            const f = event.target.files[0]; if (!f) return; const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const imp = JSON.parse(e.target.result);
+                    dailyScheduleData = imp.dailyScheduleData || dailyScheduleData; taskCompletionState = imp.taskCompletionState || taskCompletionState;
+                    subTaskCompletionState = imp.subTaskCompletionState || subTaskCompletionState; galleryCategories = imp.galleryCategories || galleryCategories;
+                    galleryItems = imp.galleryItems || galleryItems; tabVisibilityState = imp.tabVisibilityState || tabVisibilityState;
+                    crRecords = imp.crRecords || crRecords; crItemTypes = imp.crItemTypes || crItemTypes;
+                    if (imp.stallList && Array.isArray(imp.stallList)) { window.stallList = imp.stallList; saveStallDatabase(); }
+                    if (!galleryCategories.includes('任務附件')) galleryCategories.push('任務附件');
+                    safeSetLocal('work_cache_schedule', dailyScheduleData); safeSetLocal('work_cache_task_states', taskCompletionState);
+                    safeSetLocal('work_cache_subtask_states', subTaskCompletionState); safeSetLocal('work_cache_gallery_categories', galleryCategories);
+                    safeSetLocal('work_cache_gallery_items', galleryItems); safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
+                    safeSetLocal('coldRoomRecords', crRecords); safeSetLocal('coldRoomTypes', crItemTypes);
+                    syncConfig('schedule', { tasks: dailyScheduleData }); syncConfig('task_states', { states: taskCompletionState });
+                    syncConfig('subtask_states', { states: subTaskCompletionState }); syncConfig('gallery_categories', { categories: galleryCategories });
+                    syncConfig('tab_visibility', { visibility: tabVisibilityState }); syncConfig('coldRoom', { records: crRecords, types: crItemTypes });
+                    window.applyTabVisibility(); window.showToast("導入成功！"); window.checkColdRoomOverdueAlerts(); window.checkMemoAlerts();
+                    if (!$('closingPage')?.classList.contains('hidden')) window.searchStall();
+                    $('settingsDropdown')?.classList.add('hidden');
+                } catch(err) { window.showToast("導入失敗", true); }
+                event.target.value = '';
+            };
+            reader.readAsText(f);
+        };
+
+        window.completeTimelineTask = (taskId, e) => {
+            if (e) e.stopPropagation();
+            if (window._isTogglingTask) return;
+            window._isTogglingTask = true;
+            const card = e?.currentTarget?.closest('.timeline-card');
+            if (card) {
+                card.style.transition = 'all 0.25s ease';
+                card.style.transform = 'translateY(-10px) scale(0.97)';
+                card.style.opacity = '0.4';
+            }
+            setTimeout(() => {
+                window.toggleTask(taskId);
+                if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+                window._isTogglingTask = false;
+            }, 250);
+        };
+
+        window.addTimelineTask = () => {
+            const { time: startStr } = getNowInputStrs();
+            const later = new Date(window.getNow().getTime() + 1800000), endStr = `${pad(later.getHours())}:${pad(later.getMinutes())}`;
+            const newId = 't_' + Date.now();
+            dailyScheduleData.push({ id: newId, start: startStr, end: endStr, title: '新動態任務', content: '點擊編輯...', note: '', group: '', subSteps: [] });
+            safeSetLocal('work_cache_schedule', dailyScheduleData); syncConfig('schedule', { tasks: dailyScheduleData }, true);
+            if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+            window.editTimelineTask(newId, true);
+        };
+
+        window.updateConveyorBelt = () => {
+            if ($('timelinePage').classList.contains('hidden') || window._isTogglingTask) return;
+            const now = window.getNow(); let prev = now, needReRender = false;
+            document.querySelectorAll('.active-task').forEach(w => {
+                const status = calculateTaskStatus(w.dataset.start, w.dataset.end); if (status.state !== 'active') { needReRender = true; return; }
+                const st = parseTime(w.dataset.start), et = parseTime(w.dataset.end), p = Math.min(1, Math.max(0, (now - st) / (et - st)));
+                const tEl = w.querySelector('.time-text'); if (tEl) tEl.innerHTML = `<span class="text-green-600 font-bold flex items-center"><svg class="w-3.5 h-3.5 mr-1.5 shrink-0 transform -rotate-90 drop-shadow-sm" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="none" stroke="#dcfce7" stroke-width="16"></circle><circle cx="50" cy="50" r="40" fill="none" stroke="#16a34a" stroke-width="16" stroke-dasharray="251.2" stroke-dashoffset="${251.2 * p}" stroke-linecap="round"></circle></svg>當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})</span>`;
+                prev = now;
+            });
+            if (needReRender) { window.renderTimeline(false); return; }
+            document.querySelectorAll('.conveyor-task').forEach(w => {
+                const status = calculateTaskStatus(w.dataset.start, w.dataset.end); if (status.state !== 'waiting') { needReRender = true; return; }
+                const st = parseTime(w.dataset.start); w.style.marginTop = `${8 + Math.min(Math.max(0, (st - prev) / 60000) * 1.5, 120)}px`;
+                const tEl = w.querySelector('.time-text'); if (tEl) tEl.innerHTML = `<span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ${status.text.replace('未開始 (', '還有 ').replace('後)', '')} 到來</span>`;
+                prev = st;
+            });
+            if (needReRender) { window.renderTimeline(true); return; }
+            try { lucide.createIcons(); } catch(e) {} window.updateCurrentTimeIndicator();
+        };
+
+        window.updateClockUI = () => {
+            const now = window.getNow(), timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+            const clockEl = $('tlBigClock'), dateEl = $('tlBigDate');
+            if (clockEl) clockEl.textContent = timeStr;
+            if (dateEl) dateEl.textContent = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
+            document.querySelectorAll('.sync-clock-display').forEach(el => el.textContent = timeStr);
+            document.querySelectorAll('.sim-restore-btn').forEach(b => b.classList.toggle('hidden', timeOffset === 0 && !isFastForwarding));
+            window.updateCurrentTimeIndicator();
+            if ($('currentTimeBadge')) $('currentTimeBadge').textContent = `現在時間：${pad(now.getHours())}:${pad(now.getMinutes())}`;
+        };
+
+        window.updateCurrentTimeIndicator = () => {
+            const ind = $('nowTimeMarker'); if (!ind || $('timelinePage').classList.contains('hidden')) return;
+            const tasks = [...dailyScheduleData].sort((a, b) => parseTime(a.start) - parseTime(b.start)); if (!tasks.length) { ind.style.display = 'none'; return; }
+            const nowMs = window.getNow().getTime();
+            const getCardY = (taskId, isBottom = false) => {
+                const w = $(`tl-task-wrapper-${taskId}`); if (!w) return null;
+                const card = w.querySelector('.timeline-card') || w, cardTop = w.offsetTop + card.offsetTop;
+                return isBottom ? (cardTop + card.offsetHeight / 2) : (cardTop + 18);
+            };
+            const firstStart = parseTime(tasks[0].start).getTime(); let currentY = null;
+            if (nowMs <= firstStart) { currentY = getCardY(tasks[0].id, false); }
+            else {
+                let lastStartedIdx = -1; for (let i = 0; i < tasks.length; i++) { if (nowMs >= parseTime(tasks[i].start).getTime()) lastStartedIdx = i; }
+                if (lastStartedIdx !== -1) {
+                    const curTask = tasks[lastStartedIdx], curStart = parseTime(curTask.start).getTime(), curY = getCardY(curTask.id, false);
+                    let nextTask = null; for (let i = lastStartedIdx + 1; i < tasks.length; i++) { if (parseTime(tasks[i].start).getTime() > curStart) { nextTask = tasks[i]; break; } }
+                    if (nextTask) { const nextStart = parseTime(nextTask.start).getTime(), nextY = getCardY(nextTask.id, false); if (curY !== null && nextY !== null) currentY = curY + (nextY - curY) * Math.min(1, Math.max(0, (nowMs - curStart) / (nextStart - curStart))); }
+                    else { const curEnd = parseTime(curTask.end).getTime(), bottomY = getCardY(curTask.id, true); if (curY !== null && bottomY !== null) { const ratio = curEnd > curStart ? Math.min(1, Math.max(0, (nowMs - curStart) / (curEnd - curStart))) : 1; currentY = curY + (bottomY - curY) * ratio; } }
+                }
+            }
+            if (currentY !== null && !isNaN(currentY)) { ind.style.display = 'flex'; ind.style.top = `${currentY}px`; } else { ind.style.display = 'none'; }
+        };
+
+        window.handleTimelineScroll = () => {
+            const page = $('timelinePage'), c = $('uncompleted-indicator-container'), cnt = $('uncompleted-count'), h = $('timelineStickyHeader');
+            if (!page || !c || !cnt) return; const thresh = h ? h.getBoundingClientRect().top + 60 : 60; let hidden = 0;
+            page.querySelectorAll('.timeline-wrapper').forEach(w => { if (!taskCompletionState[w.dataset.taskId]) { const card = w.querySelector('.timeline-card'); if (card && card.getBoundingClientRect().bottom < thresh) hidden++; } });
+            cnt.textContent = hidden; c.classList.toggle('opacity-0', hidden === 0); c.classList.toggle('pointer-events-none', hidden === 0); c.classList.toggle('-translate-y-2', hidden === 0);
+        };
+
+        window.scrollToTopUncompleted = (e) => {
+            if (e) e.stopPropagation(); const page = $('timelinePage');
+            for (let w of page.querySelectorAll('.timeline-wrapper')) { if (!taskCompletionState[w.dataset.taskId]) { const card = w.querySelector('.timeline-card'); if (card) { page.scrollTo({ top: Math.max(0, page.scrollTop + (card.getBoundingClientRect().top - page.getBoundingClientRect().top) - 75), behavior: 'smooth' }); break; } } }
+        };
+
+        window.switchTab = (tab) => {
+            const pages = { gallery: 'galleryPage', timeline: 'timelinePage', memo: 'memoPage', map: 'mapPage', coldRoom: 'coldRoomPage', closing: 'closingPage' };
+            const btns = { timeline: 'tabTimeline', memo: 'tabMemo', map: 'tabMap', gallery: 'tabGallery', coldRoom: 'tabColdRoom', closing: 'tabClosing' };
+            const actCls = "flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
+            const inactCls = "flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap";
+            Object.values(pages).forEach(id => { const el = $(id); if (el) { el.classList.add('hidden'); el.classList.remove('flex', 'block'); } });
+            Object.values(btns).forEach(id => { const el = $(id); if (el) el.className = inactCls; });
+            const targetPage = $(pages[tab]), targetBtn = $(btns[tab]);
+            if (targetPage) { targetPage.classList.remove('hidden'); targetPage.classList.add(['map', 'gallery', 'coldRoom', 'closing'].includes(tab) ? 'flex' : 'block'); }
+            if (targetBtn) targetBtn.className = actCls;
+            ({
+                gallery: window.renderGallery,
+                timeline: () => window.renderTimeline(true),
+                memo: window.renderMemos,
+                map: window.renderMap,
+                coldRoom: window.crRenderList,
+                closing: () => { window.searchStall?.(); }
+            })[tab]?.();
+            localStorage.setItem('activeTab', tab); window.applyTabVisibility();
+        };
+
+        window.renderTimeline = (scrollToCenter = false) => {
+            const container = $('timelineContainer'); if (!container) return; window.updateClockUI();
+            let tasks = [...dailyScheduleData].sort((a, b) => parseTime(a.start) - parseTime(b.start)), now = window.getNow().getTime();
+            if (!tasks.length) { container.innerHTML = '<div class="flex flex-col items-center justify-center pt-24 pb-32 text-slate-400"><i data-lucide="party-popper" class="w-16 h-16 mb-4 text-green-500 opacity-80"></i><span class="text-base font-black tracking-widest text-slate-600">目前沒有任何任務</span></div>'; lucide.createIcons(); return; }
+            let targetScrollId = null, minDiff = Infinity;
+            tasks.forEach(t => { const s = parseTime(t.start).getTime(), e = parseTime(t.end).getTime(); if (now >= s && now <= e) { targetScrollId = `tl-task-wrapper-${t.id}`; minDiff = -1; } else if (minDiff !== -1 && Math.min(Math.abs(s - now), Math.abs(e - now)) < minDiff) { minDiff = Math.min(Math.abs(s - now), Math.abs(e - now)); targetScrollId = `tl-task-wrapper-${t.id}`; } });
+            let html = '<div class="relative pt-[2vh] pb-[20vh] w-full max-w-[500px] mx-auto flex flex-col">';
+            html += `<div id="uncompleted-indicator-container" class="sticky top-[125px] z-[60] w-0 h-0 overflow-visible transition-all duration-300 opacity-0 pointer-events-none -translate-y-2"><button type="button" onclick="window.scrollToTopUncompleted(event)" class="absolute left-[13px] -translate-y-full pointer-events-auto bg-red-500 text-white border-2 border-white rounded-full pl-1.5 pr-2 py-1 flex items-center shadow-lg shadow-red-500/40 text-[10px] font-bold hover:bg-red-600 active:scale-95 transition-all whitespace-nowrap"><i data-lucide="arrow-up" class="w-3.5 h-3.5 mr-0.5"></i><span id="uncompleted-count">0</span></button></div>`;
+            html += `<div id="nowTimeMarker" class="absolute left-0 right-0 z-0 flex items-center pointer-events-none -translate-y-1/2 transition-all duration-500" style="top:0px; display:none;"><span class="text-blue-600 text-lg font-black shrink-0 -ml-1 drop-shadow-md select-none leading-none">➤</span><div class="flex-1 h-[2px] bg-blue-500/80 shadow-[0_0_8px_rgba(59,130,246,0.8)] border-t border-b border-blue-300"></div></div>`;
+            let lastWasStacked = false, prevGapTime = window.getNow();
+            tasks.forEach((t, index) => {
+                const done = taskCompletionState[t.id], status = calculateTaskStatus(t.start, t.end), isLast = index === tasks.length - 1;
+                let wStyle = `max-height: 250px; z-index: ${index + 1};`, wClass = 'timeline-wrapper mb-1 relative transition-all duration-500 ease-out';
+                let cClass = '', dotClass = '', tText = '', checkBtn = '', activeLine = '';
+                const grpBadge = t.group ? `<span class="text-[10px] px-1.5 py-0.5 rounded border font-bold mr-1.5 inline-flex items-center justify-center shadow-sm shrink-0 ${window.getGroupColor(t.group)}">${t.group}組</span>` : '';
+                if (done) {
+                    if (lastWasStacked) wStyle += ' margin-top: 10px;'; lastWasStacked = false; cClass = 'opacity-60 scale-[0.92] border-slate-200 bg-slate-100 grayscale-[0.5]';
+                    dotClass = 'bg-slate-300 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]'; tText = `<div class="time-text text-[11px] mt-1.5 tracking-widest"><span class="text-slate-500 font-bold">✔ 已完成</span></div>`;
+                    checkBtn = `<button onclick="event.stopPropagation(); window.completeTimelineTask('${t.id}', event)" class="w-10 h-10 rounded-full bg-slate-200 text-white flex items-center justify-center shadow-inner z-10 relative hover:bg-slate-300 transition-colors active:scale-90 cursor-pointer" title="點擊取消"><i data-lucide="check" class="w-5 h-5 pointer-events-none"></i></button>`;
+                } else if (status.state === 'overdue') {
+                    if (lastWasStacked) wStyle += ` margin-top: -45px;`; lastWasStacked = true; cClass = 'opacity-90 scale-[0.95] border-[#d6d0c4] bg-[#fdfbf7] shadow-sm hover:translate-y-[-10px] hover:shadow-xl transition-all duration-300';
+                    dotClass = 'bg-red-400 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]'; tText = `<div class="time-text text-[11px] mt-1.5 tracking-widest"><span class="text-red-500 font-bold opacity-80">🔴 已逾時 (${status.text.replace('已結束 (超時 ', '').replace(')', '')})</span></div>`;
+                    checkBtn = `<button onclick="event.stopPropagation(); window.completeTimelineTask('${t.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative"><i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i></button>`;
+                } else if (status.state === 'active') {
+                    if (lastWasStacked) wStyle += ' margin-top: 15px;'; lastWasStacked = false; wClass += ' active-task';
+                    cClass = 'border-blue-400 border-[2px] shadow-xl bg-blue-50 z-20 opacity-100'; dotClass = 'bg-green-500 w-6 h-6 left-[14px] border-[4px] border-[#fdfbf7] shadow-md';
+                    const p = Math.min(1, Math.max(0, (now - parseTime(t.start)) / (parseTime(t.end) - parseTime(t.start))));
+                    tText = `<div class="time-text text-[11px] mt-1.5 tracking-widest"><span class="text-green-600 font-bold flex items-center"><svg class="w-3.5 h-3.5 mr-1.5 shrink-0 transform -rotate-90 drop-shadow-sm" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="none" stroke="#dcfce7" stroke-width="16"></circle><circle cx="50" cy="50" r="40" fill="none" stroke="#16a34a" stroke-width="16" stroke-dasharray="251.2" stroke-dashoffset="${251.2 * p}" stroke-linecap="round"></circle></svg>當前任務 (${status.text.replace('進行中 (', '').replace(')', '')})</span></div>`;
+                    prevGapTime = window.getNow();
+                    checkBtn = `<button onclick="event.stopPropagation(); window.completeTimelineTask('${t.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-blue-200 text-blue-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-90 group cursor-pointer z-10 relative"><i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i></button>`;
+                    activeLine = `<div class="absolute left-[-15px] right-[-15px] top-1/2 -translate-y-1/2 h-[2px] bg-green-400 shadow-[0_0_12px_rgba(74,222,128,0.8)] z-0 pointer-events-none rounded-full flex justify-between items-center px-1"><div class="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(74,222,128,1)]"></div><div class="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(74,222,128,1)]"></div></div>`;
+                } else {
+                    wClass = 'timeline-wrapper relative transition-all duration-1000 ease-linear conveyor-task';
+                    wStyle += ` margin-top: ${8 + Math.min(Math.max(0, (parseTime(t.start) - prevGapTime) / 60000) * 1.5, 120)}px;`;
+                    lastWasStacked = false; cClass = 'opacity-85 scale-[0.92] border-[#d6d0c4] bg-white'; dotClass = 'bg-amber-400 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]';
+                    tText = `<div class="time-text text-[11px] mt-1.5 tracking-widest"><span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ${status.text.replace('未開始 (', '還有 ').replace('後)', '')} 到來</span></div>`;
+                    prevGapTime = parseTime(t.start);
+                    checkBtn = `<button onclick="event.stopPropagation(); window.completeTimelineTask('${t.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-95 group cursor-pointer z-10 relative"><i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i></button>`;
+                }
+                html += `<div id="tl-task-wrapper-${t.id}" class="${wClass}" style="${wStyle}" data-task-id="${t.id}" data-start="${t.start}" data-end="${t.end}">${isLast ? '' : '<div class="absolute left-[24px] w-[4px] bg-[#d6d0c4] top-1/2 -bottom-[150px] z-0 rounded-full"></div>'}${activeLine}<div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div><div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[44px] mr-[10px] ${cClass} overflow-hidden cursor-pointer group/card hover:shadow-md transition-all duration-300" ondblclick="window.editTimelineTask('${t.id}', event)" title="點擊修改"><div class="flex flex-col items-center justify-center shrink-0 w-[60px] bg-slate-100/50 border-r border-slate-200/60 p-2 text-center" onclick="window.editTimelineTask('${t.id}', event)"><span class="font-black text-[15px] text-slate-700 tracking-tighter ${done ? 'opacity-50 line-through decoration-slate-400' : ''}">${t.start}</span><span class="text-[9px] text-slate-400 font-bold mt-0.5">${t.end}</span></div><div class="flex-1 p-3 min-w-0 flex flex-col justify-center select-none" onclick="window.editTimelineTask('${t.id}', event)"><div class="flex items-center pr-1">${grpBadge}<h3 class="font-bold text-slate-800 text-[14px] truncate flex-1 min-w-0 ${done ? 'opacity-50 line-through decoration-slate-400' : ''}" title="${t.title}">${t.title}</h3></div>${tText}</div><div class="shrink-0 flex items-center justify-center pr-3 pl-1">${checkBtn}</div></div></div>`;
+            });
+            html += '</div>'; container.innerHTML = html; lucide.createIcons();
+            const page = $('timelinePage');
+            if (page && !page.dataset.hasScrollListener) { page.addEventListener('scroll', window.handleTimelineScroll); page.dataset.hasScrollListener = "true"; }
+            window.handleTimelineScroll();
+            if (scrollToCenter && targetScrollId) { setTimeout(() => { const el = $(targetScrollId); if (el && page) page.scrollTo({ top: page.scrollTop + (el.getBoundingClientRect().top - page.getBoundingClientRect().top) - (page.getBoundingClientRect().height / 2) + (el.getBoundingClientRect().height / 2) - 40, behavior: 'smooth' }); }, 150); }
+            if (timelineUpdateInterval) clearInterval(timelineUpdateInterval); if (window.conveyorInterval) clearInterval(window.conveyorInterval);
+            window.conveyorInterval = setInterval(() => { if (!isFastForwarding) window.updateConveyorBelt(); }, 1000);
+            setTimeout(window.updateCurrentTimeIndicator, 100);
+        };
+
+        window.promptChangeTime = () => {
+            const modalHtml = `<div id="dynamicTimeModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();"><div class="bg-white rounded-2xl p-5 w-full max-w-[280px] shadow-2xl relative" onclick="event.stopPropagation()"><h3 class="font-bold text-lg mb-2 text-slate-800 flex items-center"><i data-lucide="clock" class="w-5 h-5 mr-2 text-blue-500"></i>時間跳躍</h3><p class="text-[11px] text-slate-500 mb-4 text-center">設定穿越時間後，時間將從該點繼續流逝。</p><div class="space-y-4"><input type="time" id="dyJumpTime" class="w-full border border-slate-300 rounded-xl p-3 h-14 text-xl focus:border-blue-500 focus:outline-none font-mono font-black text-center shadow-inner text-slate-700"></div><div class="mt-5 flex justify-end space-x-2 border-t border-slate-100 pt-4"><button onclick="document.getElementById('dynamicTimeModal').remove()" class="px-4 py-2.5 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold">取消</button><button onclick="window.confirmChangeTime()" class="px-4 py-2.5 bg-blue-500 text-white rounded-lg text-sm font-bold shadow-sm flex items-center"><i data-lucide="zap" class="w-4 h-4 mr-1"></i>穿越</button></div></div></div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml); lucide.createIcons(); $('dyJumpTime').value = getNowInputStrs().time;
+        };
+
+        window.confirmChangeTime = () => {
+            const input = $('dyJumpTime').value;
+            if (input) {
+                const [h, m] = input.split(':').map(Number);
+                if (!isNaN(h) && !isNaN(m)) {
+                    const target = new Date(); target.setHours(h, m, 0, 0); timeOffset = target.getTime() - Date.now();
+                    $('dynamicTimeModal').remove(); window.showToast(`🕒 時間已跳躍至 ${input}`);
+                    window.updateClockUI();
+                    if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
+                    if (!$('mapPage').classList.contains('hidden')) window.updateMapSimulation();
+                    if (!$('coldRoomPage').classList.contains('hidden')) window.crRenderList();
+                    if (!$('memoPage').classList.contains('hidden')) window.updateMemoCountdowns();
+                    if (!$('closingPage')?.classList.contains('hidden')) window.searchStall();
+                    window.checkColdRoomOverdueAlerts(); window.checkMemoAlerts();
+                }
+            }
+        };
+
+        window.editTimelineTask = (taskId, eventOrIsNew) => {
+            const isNew = eventOrIsNew === true, task = dailyScheduleData.find(t => t.id === taskId); if (!task) return;
+            const cancelAct = isNew ? `window.cancelNewTimelineTask('${taskId}')` : `document.getElementById('dynamicEditModal')?.remove()`;
+            const modalHtml = `<div id="dynamicEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) { ${cancelAct}; }"><div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onclick="event.stopPropagation()"><h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i>${isNew ? '新增動態任務' : '編輯任務'}</h3><div class="space-y-4"><div><label class="text-[11px] font-bold text-slate-500 mb-1 block">任務標題</label><input type="text" id="dyEditTitle" value="${task.title}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 shadow-inner text-center"></div><div class="flex gap-3"><div class="flex-1 relative"><label class="text-[11px] font-bold text-slate-500 mb-1 block">開始時間</label><input type="time" id="dyEditStart" value="${task.start}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner text-center"></div><div class="flex-1 relative"><label class="text-[11px] font-bold text-slate-500 mb-1 block">結束時間</label><input type="time" id="dyEditEnd" value="${task.end}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner text-center"></div></div><div class="mt-3"><label class="text-[11px] font-bold text-slate-500 mb-1 block">任務分組 (選填)</label><div class="flex gap-2">${['', 'A', 'B', 'C'].map(g => `<label class="flex-1 text-center cursor-pointer active:scale-95 transition-transform"><input type="radio" name="dyEditGroup" value="${g}" ${task.group === g || (!task.group && g === '') ? 'checked' : ''} class="sr-only peer"><div class="py-1.5 rounded-lg border border-slate-200 text-slate-500 text-xs font-bold peer-checked:bg-blue-50 peer-checked:text-blue-600 peer-checked:border-blue-300 peer-checked:shadow-sm transition-all">${g ? g + '組' : '無'}</div></label>`).join('')}</div></div></div><div class="mt-6 flex justify-between items-center border-t border-slate-100 pt-4"><button onclick="window.deleteTimelineTask('${taskId}')" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-2.5 rounded-lg text-sm font-bold flex items-center shadow-sm"><i data-lucide="trash-2" class="w-4 h-4 mr-1"></i>刪除</button><div class="space-x-2 flex"><button onclick="${cancelAct}" class="px-3 py-2.5 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold">取消</button><button onclick="window.saveTimelineTask('${taskId}')" class="px-4 py-2.5 bg-blue-500 text-white rounded-lg text-sm font-bold shadow-sm">儲存</button></div></div></div></div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml); lucide.createIcons();
+            if (isNew) { const tInp = $('dyEditTitle'); if (tInp) { tInp.focus(); tInp.select(); } }
+        };
+
+        window.cancelNewTimelineTask = (taskId) => {
+            $('dynamicEditModal')?.remove(); dailyScheduleData = dailyScheduleData.filter(t => t.id !== taskId);
+            syncConfig('schedule', { tasks: dailyScheduleData }); if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+        };
+
+        window.saveTimelineTask = (taskId) => {
+            const title = $('dyEditTitle').value.trim(), start = $('dyEditStart').value, end = $('dyEditEnd').value;
+            const group = document.querySelector('input[name="dyEditGroup"]:checked')?.value || '', task = dailyScheduleData.find(t => t.id === taskId);
+            if (task && title) {
+                task.title = title; task.start = start; task.end = end; task.group = group;
+                syncConfig('schedule', { tasks: dailyScheduleData }, true); $('dynamicEditModal')?.remove();
+                window.showToast("已儲存"); if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+            }
+        };
+
+        window.deleteTimelineTask = (taskId) => { window.showConfirm('刪除確認', '確定要永久刪除這張任務卡片嗎？', () => { $('dynamicEditModal')?.remove(); window.deleteTaskCard(taskId); }); };
+
+        window.toggleSimulation = () => {
+            isFastForwarding = !isFastForwarding;
+            document.querySelectorAll('.sim-toggle-btn').forEach(b => {
+                b.classList.toggle('bg-white', !isFastForwarding); b.classList.toggle('text-slate-600', !isFastForwarding);
+                b.classList.toggle('bg-amber-500', isFastForwarding); b.classList.toggle('text-white', isFastForwarding); b.classList.toggle('animate-pulse', isFastForwarding);
+            });
+            if (isFastForwarding) {
+                window.showToast("🚀 時間加速中"); document.querySelectorAll('.sim-restore-btn').forEach(b => b.classList.remove('hidden'));
+                simInterval = setInterval(() => {
+                    timeOffset += 60000; window.updateClockUI();
+                    if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+                    if (!$('mapPage').classList.contains('hidden')) window.updateMapSimulation();
+                    if (!$('coldRoomPage').classList.contains('hidden')) window.crRenderList();
+                    if (!$('memoPage').classList.contains('hidden')) window.updateMemoCountdowns();
+                    if (!$('closingPage')?.classList.contains('hidden')) window.searchStall();
+                    window.checkColdRoomOverdueAlerts(); window.checkMemoAlerts();
+                }, 200);
+            } else { clearInterval(simInterval); window.showToast("⏸️ 暫停加速"); }
+        };
+
+        window.restoreRealTime = () => {
+            isFastForwarding = false; clearInterval(simInterval); timeOffset = 0;
+            document.querySelectorAll('.sim-toggle-btn').forEach(b => { b.classList.remove('bg-amber-500', 'text-white', 'border-transparent', 'animate-pulse'); b.classList.add('bg-white', 'text-slate-600', 'border-slate-200'); });
+            document.querySelectorAll('.sim-restore-btn').forEach(b => b.classList.add('hidden'));
+            window.showToast("🌍 已回到現實時間"); window.updateClockUI();
+            if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
+            if (!$('mapPage').classList.contains('hidden')) window.updateMapSimulation();
+            if (!$('coldRoomPage').classList.contains('hidden')) window.crRenderList();
+            if (!$('memoPage').classList.contains('hidden')) window.updateMemoCountdowns();
+            if (!$('closingPage')?.classList.contains('hidden')) window.searchStall();
+            window.checkColdRoomOverdueAlerts(); window.checkMemoAlerts();
+        };
+
+        window.promptResetOptions = () => {
+            const modalHtml = `<div id="resetOptionsModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();"><div class="bg-white rounded-2xl p-5 w-full max-w-[280px] shadow-2xl relative" onclick="event.stopPropagation()"><h3 class="font-bold text-lg mb-2 text-slate-800 flex items-center"><i data-lucide="list-restart" class="w-5 h-5 mr-2 text-red-500"></i>狀態還原</h3><p class="text-[11px] text-slate-500 mb-4 text-center">選擇您要執行的還原動作。</p><div class="space-y-3"><button onclick="window.undoLastAction()" class="w-full flex items-center justify-center p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold"><i data-lucide="undo-2" class="w-4 h-4 mr-2 text-slate-500"></i>還原上一步 (Undo)</button><button onclick="window.resetToNewDay()" class="w-full flex items-center justify-center p-3 rounded-xl border-2 border-red-100 bg-red-50 hover:bg-red-100 text-red-600 font-bold"><i data-lucide="sun" class="w-4 h-4 mr-2 text-red-500"></i>清除狀態 (新的一天)</button></div><div class="mt-4 pt-3 border-t border-slate-100"><button onclick="document.getElementById('resetOptionsModal').remove()" class="w-full p-2.5 bg-white border border-slate-200 text-slate-500 rounded-xl text-sm font-bold">取消</button></div></div></div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml); lucide.createIcons();
+        };
+
+        window.undoLastAction = () => {
+            if (actionHistory.length > 0) {
+                const prev = actionHistory.pop(); taskCompletionState = prev.tasks || {}; subTaskCompletionState = prev.subtasks || {};
+                syncConfig('task_states', { states: taskCompletionState }); syncConfig('subtask_states', { states: subTaskCompletionState });
+                safeSetLocal('work_cache_task_states', taskCompletionState); safeSetLocal('work_cache_subtask_states', subTaskCompletionState);
+                $('resetOptionsModal')?.remove(); window.showToast("↩️ 已還原");
+                if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+            } else window.showToast("已經是最初狀態", true);
+        };
+
+        window.resetToNewDay = () => {
+            window.saveStateSnapshot(); taskCompletionState = {}; subTaskCompletionState = {};
+            safeSetLocal('work_cache_task_states', taskCompletionState); safeSetLocal('work_cache_subtask_states', subTaskCompletionState);
+            syncConfig('task_states', { states: {} }); syncConfig('subtask_states', { states: {} });
+            $('resetOptionsModal')?.remove(); window.showToast("🌅 新的一天開始！");
+            if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
+        };
+
+        setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
+        setInterval(() => {
+            checkAndResetDailySchedule();
+            if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+            if (!$('memoPage')?.classList.contains('hidden')) window.updateMemoCountdowns();
+            if (!$('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
+            if (!$('closingPage')?.classList.contains('hidden')) {
+                const input = $('stallQueryInput');
+                if (input && input.value.trim()) window.searchStall();
+            }
+            window.checkColdRoomOverdueAlerts(); window.checkMemoAlerts();
+        }, 60000);
+
+        window.renderMemos = () => {
+            const container = $('memoContainer'); if (!container) return; window.crUpdateNotificationBtn();
+            let sorted = [...futureMemos].sort((a, b) => new Date(`${a.date}T${a.time || '00:00'}`) - new Date(`${b.date}T${b.time || '00:00'}`));
+            if (!sorted.length) { container.innerHTML = '<div class="flex flex-col items-center justify-center py-20 text-slate-400"><i data-lucide="inbox" class="w-12 h-12 mb-3 opacity-30"></i><span class="text-xs font-bold tracking-widest text-center">目前沒有未來的備忘任務</span></div>'; lucide.createIcons(); return; }
+            container.innerHTML = sorted.map(m => `<div onclick="window.openMemoEditorForEdit('${m.id}')" title="點擊修改" class="memo-card bg-white rounded-xl p-4 border border-slate-200 shadow-sm relative overflow-hidden cursor-pointer hover:border-blue-300 transition-colors" data-datetime="${m.date}T${m.time || '00:00'}"><div class="absolute left-0 top-0 bottom-0 w-1.5 bg-indigo-400 opacity-80"></div><div class="flex justify-between items-start pl-2"><div class="flex-1"><h3 class="text-sm font-bold text-slate-800 mb-1">${m.title}</h3><p class="text-xs text-slate-600 leading-relaxed mb-3 break-words whitespace-pre-wrap">${m.content || ''}</p><div class="inline-flex items-center bg-indigo-50 text-indigo-600 px-2 py-1 rounded text-[10px] font-bold border border-indigo-100"><i data-lucide="calendar" class="w-3 h-3 mr-1"></i> ${m.date} ${m.time || ''}</div></div><div class="flex flex-col items-end shrink-0 ml-3"><button onclick="window.deleteMemo('${m.id}'); event.stopPropagation();" class="text-slate-400 hover:text-red-500 p-1.5 rounded active:scale-95 bg-slate-50 hover:bg-red-50"><i data-lucide="trash-2" class="w-4 h-4"></i></button><div class="memo-countdown text-[11px] font-bold text-amber-600 mt-3 text-right whitespace-nowrap">計算中...</div></div></div></div>`).join('');
+            lucide.createIcons(); window.updateMemoCountdowns();
+        };
+
+        window.updateMemoCountdowns = () => {
+            const now = window.getNow();
+            document.querySelectorAll('.memo-card').forEach(card => {
+                const diff = new Date(card.dataset.datetime) - now, cdEl = card.querySelector('.memo-countdown'); if (!cdEl) return;
+                if (diff <= 0) { cdEl.textContent = '已過期 / 進行中'; cdEl.className = 'memo-countdown text-[11px] font-bold text-red-500 mt-3 text-right animate-pulse whitespace-nowrap'; }
+                else { const d = Math.floor(diff / 86400000), h = Math.floor((diff % 86400000) / 3600000), m = Math.floor((diff % 3600000) / 60000); cdEl.textContent = `⏳ ${d > 0 ? d + '天 ' : ''}${h}小時 ${m}分`; }
+            });
+        };
+
+        window.openMemoEditor = () => {
+            const { date, time } = getNowInputStrs();
+            const modalHtml = `<div id="memoEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();"><div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onclick="event.stopPropagation()"><h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="calendar-plus" class="w-5 h-5 mr-2 text-blue-500"></i>新增備忘錄</h3><div class="space-y-3"><div><label class="text-[11px] font-bold text-slate-500 block mb-1">任務標題</label><input type="text" id="memoTitle" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none text-center"></div><div><label class="text-[11px] font-bold text-slate-500 block mb-1">詳細內容 (選填)</label><textarea id="memoContent" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none h-20 resize-none"></textarea></div><div class="flex gap-2"><div class="flex-1"><label class="text-[11px] font-bold text-slate-500 block mb-1">日期</label><input type="date" id="memoDate" value="${date}" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs focus:border-blue-500 focus:outline-none text-center"></div><div class="flex-1"><label class="text-[11px] font-bold text-slate-500 block mb-1">時間</label><input type="time" id="memoTime" value="${time}" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none text-center"></div></div></div><div class="mt-5 flex justify-end space-x-2 border-t border-slate-100 pt-4"><button onclick="document.getElementById('memoEditModal').remove()" class="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold">取消</button><button onclick="window.saveMemo()" class="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-bold shadow-sm">儲存</button></div></div></div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml); lucide.createIcons();
+        };
+
+        window.openMemoEditorForEdit = (id) => {
+            const m = futureMemos.find(x => x.id === id); if (!m) return;
+            const modalHtml = `<div id="memoEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();"><div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onclick="event.stopPropagation()"><h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i>修改備忘錄</h3><div class="space-y-3"><div><label class="text-[11px] font-bold text-slate-500 block mb-1">任務標題</label><input type="text" id="memoTitle" value="${m.title}" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none text-center font-bold"></div><div><label class="text-[11px] font-bold text-slate-500 block mb-1">詳細內容 (選填)</label><textarea id="memoContent" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none h-20 resize-none">${m.content || ''}</textarea></div><div class="flex gap-2"><div class="flex-1"><label class="text-[11px] font-bold text-slate-500 block mb-1">日期</label><input type="date" id="memoDate" value="${m.date}" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none text-center"></div><div class="flex-1"><label class="text-[11px] font-bold text-slate-500 block mb-1">時間</label><input type="time" id="memoTime" value="${m.time || '09:00'}" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none text-center"></div></div></div><div class="mt-5 flex justify-between items-center border-t border-slate-100 pt-4"><button onclick="window.deleteMemo('${m.id}'); document.getElementById('memoEditModal').remove();" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-2 rounded-lg text-xs font-bold">刪除</button><div class="space-x-2 flex"><button onclick="document.getElementById('memoEditModal').remove()" class="px-3 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">取消</button><button onclick="window.saveEditMemo('${m.id}')" class="px-4 py-2 bg-blue-500 text-white rounded-lg text-xs font-bold shadow-sm">儲存</button></div></div></div></div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml); lucide.createIcons();
+        };
+
+        window.saveMemo = () => {
+            const title = $('memoTitle').value.trim(), content = $('memoContent').value.trim();
+            const date = $('memoDate').value, time = $('memoTime').value;
+            if (!title || !date) return window.showToast('請填寫標題與日期', true);
+            futureMemos.push({ id: 'm_' + Date.now(), title, content, date, time }); syncConfig('future_memos', { memos: futureMemos });
+            $('memoEditModal')?.remove(); window.renderMemos(); window.showToast('已新增備忘'); window.checkMemoAlerts();
+        };
+
+        window.saveEditMemo = (id) => {
+            const m = futureMemos.find(x => x.id === id); if (!m) return;
+            const title = $('memoTitle').value.trim(), content = $('memoContent').value.trim();
+            const date = $('memoDate').value, time = $('memoTime').value;
+            if (!title || !date) return window.showToast('請填寫標題與日期', true);
+            m.title = title; m.content = content; m.date = date; m.time = time; syncConfig('future_memos', { memos: futureMemos });
+            $('memoEditModal')?.remove(); window.renderMemos(); window.showToast('已更新備忘'); window.checkMemoAlerts();
+        };
+
+        window.deleteMemo = (id) => {
+            window.showConfirm('刪除備忘', '確定要刪除這筆未來備忘任務嗎？', () => { futureMemos = futureMemos.filter(m => m.id !== id); syncConfig('future_memos', { memos: futureMemos }); window.renderMemos(); });
+        };
+
+        // --- 收工查核模組邏輯 ---
+        const RAW_DATA = [
+            {
+                floor: "地下",
+                list: "002/07:00-14:00, 003/13:00-19:00, 004/07:30-12:30、15:30-19:30, 005/08:00-18:00, 006/08:30-18:00, 007/07:00-14:00, 008/07:00-13:00, 009/09:00-18:00, 010/07:00-14:00, 012/08:00-12:30、15:00-18:30, 013/08:30-12:30、15:00-18:30/琴記, 014/08:00-19:30, 017/07:30-13:30, 018/09:00-12:00、15:00-18:00, 019/08:00-18:30, 020/08:00-15:00, 021/08:00-13:00、15:00-19:00, 023/08:00-12:00、15:00-18:00, 024/07:30-14:00, 025/08:00-12:30、15:00-18:30, 026/08:00-12:00、15:00-19:00, 027/08:00-12:00、15:30-19:00, 028/08:00-12:00、15:30-19:00, 029/12:00-19:00/芳記海鮮, 030/08:30-13:00、15:30-19:00/聯仔魚檔, 031/09:00-15:00/旺仔標魚檔, 032/08:30-12:00、15:00-18:30/肥強, 033/08:30-12:00、15:00-18:30, 034/07:30-11:30、15:00-18:00/明記魚檔, 035/08:30-12:30、15:30-19:30/暖暖魚檔, 037/09:00-12:30、16:00-19:00/四哥魚檔, 039/08:00-15:00/華強, 040/08:00-14:00/友記海鮮魚檔, 042/07:00-13:30/亮仔記, 043/07:00-13:00/財源海鮮, 044/08:30-13:00、16:00-18:30/英記海鮮, 045/08:00-12:00、15:30-19:00/榮記生魚檔, 046/12:00-19:00/輝記, 050/07:00-13:00/芳記, 051/08:00-15:00/銘珍海鮮, 053/07:00-14:00/財記魚檔, 054/08:00-12:00、14:00-18:00/強記, 055/09:30-13:30、15:30-18:00, 057/07:00-13:00/小恩恩魚檔, 058/07:00-12:00、14:00-19:00/帶娣魚蝦蟹, 059/08:00-12:00、15:00-18:00/展明, 060/08:00-13:00、15:00-18:00/三十號, 061/08:00-18:00/培仔魚檔, 062/09:00-12:00、16:00-19:00, 063/08:00-13:00、15:00-18:00/三十三號魚檔, 064/07:30-18:30/牛仔魚檔, 065/07:00-11:00、14:30-18:00/克仔魚檔, 066/07:00-13:00, 067/07:00-13:00、15:00-19:30/玉記海鮮, 069/08:00-13:00、16:00-19:00/添記, 070/10:00-13:00、16:00-19:00, 071/07:00-13:00/水記, 072/07:00-13:00, 073/07:00-13:00, 074/09:00-12:00、15:30-18:30/大蝦魚檔, 076/08:00-19:00/輝源, 078/08:00-12:00、15:00-18:00/祥友誠, 079/08:00-12:00、16:00-19:00/海記水產, 080/09:30-12:30、15:00-18:30/海記水產, 081/08:00-15:00/長記魚檔, 082/07:00-13:00/大英海鮮, 085/08:00-12:00、15:00-19:00/玉鳳魚檔, 086/08:00-11:30、15:30-18:30, 087/08:30-12:30、15:00-18:30/明記海鮮檔"
+            },
+            {
+                floor: "花園仔",
+                list: "002/08:00-19:00, 003/08:00-18:00/斌記海味雜貨, 004/08:00-19:00/豐記海味什貨, 005/08:00-17:00, 007/08:30-12:30、13:00-18:30/朗記, 008/07:30-19:00/金桃豆腐, 009/08:00-19:00/森記, 012/09:00-14:00、16:00-19:00, 013/08:00-13:00、14:00-19:00/聰記, 014/09:30-17:30/黃記, 015/08:30-19:30/蘭芝瓜菜, 016/09:00-18:00/東記雜貨, 017/09:00-18:00/廣茜雜貨, 018/07:30-19:00/忠記, 020/08:00-17:00/阿輝記, 021/08:00-17:00/同輝記, 022/08:00-17:30/芹記, 024/08:00-15:00, 025/07:30-11:30、14:30-16:30, 026/09:00-12:00、15:00-18:00, 029/08:00-19:00/芳記, 030/08:30-12:30、15:30-18:00/強記豆腐檔, 031/08:00-12:00、15:00-18:00/強記豆腐檔"
+            },
+            {
+                floor: "一樓",
+                list: "001/07:00-16:00/大成, 002/07:00-13:00/祐華, 003/07:00-18:30/祥合興記, 005/07:00-14:00/大生, 006/07:00-18:00/聯成, 010/07:00-16:00/永記, 013/07:00-18:30/良記, 014/07:30-12:30、14:00-18:00/洪記, 015/07:00-19:00/李記棧, 018/07:00-13:00/開記鮮牛肉, 019/07:30-18:00/公平, 020/07:00-13:00/晃記棧, 021/07:00-13:00、15:00-19:00/黃晃記, 023/07:00-13:00/金益棧, 024/07:00-13:00/福仁棧, 026/07:00-13:00/波記"
+            }
+        ];
+
+        const parseRawData = () => {
+            let idCount = 1;
+            return RAW_DATA.flatMap(group => {
+                if (!group?.list) return [];
+                return group.list.split(',').map(rawItem => {
+                    const parts = rawItem.trim().split('/');
+                    return {
+                        id: String(idCount++),
+                        floor: group.floor,
+                        code: (parts[0] || '').trim(),
+                        hours: (parts[1] || '').trim(),
+                        name: (parts[2] || '').trim()
+                    };
+                });
+            });
+        };
+
+        const STALL_STORAGE_KEY = 'stall_db_stable_v1';
+        window.stallList = getLocal(STALL_STORAGE_KEY, null);
+        if (!window.stallList || !window.stallList.length) {
+            window.stallList = parseRawData();
+            safeSetLocal(STALL_STORAGE_KEY, window.stallList);
+        }
+
+        const saveStallDatabase = () => {
+            safeSetLocal(STALL_STORAGE_KEY, window.stallList);
+        };
+
+        const getClosingTime = (hoursStr) => {
+            if (!hoursStr) return "18:00";
+            const matches = hoursStr.match(/\d{1,2}:\d{2}/g);
+            return matches ? matches[matches.length - 1] : "18:00";
+        };
+
+        const getDiffMinutes = (targetTimeStr, curTimeStr) => {
+            if (!targetTimeStr || !curTimeStr) return 0;
+            const [th, tm] = targetTimeStr.split(':').map(Number);
+            const [ch, cm] = curTimeStr.split(':').map(Number);
+            return (th * 60 + tm) - (ch * 60 + cm);
+        };
+
+        window.searchStall = () => {
+            const inputEl = $('stallQueryInput');
+            const query = inputEl ? inputEl.value.trim().replace(/^#/, '') : '';
+            const now = window.getNow();
+            const nowTime = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+            if ($('currentTimeBadge')) $('currentTimeBadge').textContent = `現在時間：${nowTime}`;
+
+            const resultList = $('stallResultList');
+            const placeholderInfo = $('placeholderInfo');
+            if (!resultList || !placeholderInfo) return;
+
+            if (!query) {
+                placeholderInfo.classList.remove('hidden');
+                resultList.classList.add('hidden');
+                resultList.innerHTML = '';
+                lucide.createIcons();
+                return;
+            }
+
+            placeholderInfo.classList.add('hidden');
+            resultList.classList.remove('hidden');
+
+            const matched = (window.stallList || []).filter(s => {
+                const codeStr = String(s.code || '');
+                const cleanCode = codeStr.replace(/^0+/, '');
+                const nameStr = String(s.name || '');
+                return codeStr.includes(query) || cleanCode === query || nameStr.includes(query);
+            });
+
+            if (!matched.length) {
+                resultList.innerHTML = `
+                    <div class="p-4 text-center text-slate-400 bg-white border border-slate-200 rounded-2xl shadow-xs">
+                        <i data-lucide="alert-circle" class="w-5 h-5 mx-auto mb-1 opacity-50 text-amber-500"></i>
+                        <p class="text-xs font-bold text-slate-600">查無任何與「${query}」相關的攤位</p>
+                    </div>`;
+                lucide.createIcons();
+                return;
+            }
+
+            resultList.innerHTML = matched.map(stall => {
+                const closingTime = getClosingTime(stall.hours);
+                const diffMin = getDiffMinutes(closingTime, nowTime);
+                const isEarly = diffMin > 0;
+
+                return `
+                <div class="bg-white border border-slate-200 rounded-2xl p-3 shadow-xs flex flex-col space-y-1.5 animate-pop-in">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <div class="flex items-center space-x-1.5">
+                                <span class="bg-slate-100 text-slate-700 text-[10px] font-mono font-black px-1.5 py-0.5 rounded border border-slate-200">${stall.floor}</span>
+                                <span class="text-xs font-mono font-bold text-slate-500">${stall.code} 號檔</span>
+                                ${stall.name ? `<span class="text-sm font-black text-slate-800 ml-1 tracking-wide">${stall.name}</span>` : ''}
+                            </div>
+                            <div class="text-[11px] text-slate-500 mt-1 flex items-center">
+                                <i data-lucide="clock" class="w-3 h-3 mr-1 text-slate-400"></i>
+                                營業時間：<span class="font-mono font-medium text-slate-700 ml-1">${stall.hours}</span>
+                                <span class="text-slate-400 ml-1 text-[9.5px] font-bold">(${closingTime} 收工)</span>
+                            </div>
+                        </div>
+
+                        <div class="text-right shrink-0">
+                            ${isEarly ? `
+                                <span class="bg-red-50 text-red-600 border border-red-200 text-[10.5px] font-black px-2 py-0.5 rounded-full flex items-center shadow-xs">
+                                    <i data-lucide="alert-triangle" class="w-3 h-3 mr-1 text-red-500"></i>提早 ${diffMin} 分鐘
+                                </span>
+                            ` : `
+                                <span class="bg-emerald-50 text-emerald-600 border border-emerald-200 text-[10.5px] font-black px-2 py-0.5 rounded-full flex items-center shadow-xs">
+                                    <i data-lucide="check-circle-2" class="w-3 h-3 mr-1 text-emerald-500"></i>正常收工
+                                </span>
+                            `}
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+
+            lucide.createIcons();
+        };
+
+        window.toggleDatabaseModal = (show) => {
+            const modal = $('dbModal');
+            if (!modal) return;
+            modal.classList.toggle('hidden', !show);
+            modal.classList.toggle('flex', show);
+            if (show) renderDatabaseTable();
+            else window.searchStall();
+        };
+
+        const renderDatabaseTable = () => {
+            if ($('dbTotalCount')) $('dbTotalCount').textContent = (window.stallList || []).length;
+            const tbody = $('dbTableBody');
+            if (!tbody) return;
+
+            tbody.innerHTML = (window.stallList || []).map((item, index) => `
+                <tr class="border-b border-slate-100 text-[11px] hover:bg-slate-50">
+                    <td class="p-1.5 font-bold text-slate-700">${item.floor}</td>
+                    <td class="p-1.5 font-mono font-bold">${item.code}</td>
+                    <td class="p-1.5 font-bold text-slate-800">${item.name || '<span class="text-slate-300">無</span>'}</td>
+                    <td class="p-1.5 font-mono text-[10px] text-slate-600">${item.hours}</td>
+                    <td class="p-1.5 text-right">
+                        <button type="button" onclick="window.deleteStall(${index})" class="text-red-400 hover:text-red-600 p-0.5"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                    </td>
+                </tr>
+            `).join('');
+
+            lucide.createIcons();
+        };
+
+        window.addNewStall = () => {
+            const floor = $('newFloor')?.value.trim();
+            const code = $('newCode')?.value.trim().replace(/^#/, '');
+            const name = $('newName')?.value.trim() || '';
+            const hours = $('newHours')?.value.trim();
+
+            if (!floor || !code || !hours) {
+                return window.showToast('請填寫完整樓層、檔號與營業時間！', true);
+            }
+
+            window.stallList.unshift({ id: Date.now().toString(), floor, code, hours, name });
+            saveStallDatabase();
+            renderDatabaseTable();
+
+            if ($('newCode')) $('newCode').value = '';
+            if ($('newName')) $('newName').value = '';
+            if ($('newHours')) $('newHours').value = '';
+            window.showToast('已新增攤位');
+        };
+
+        window.deleteStall = (index) => {
+            window.showConfirm('刪除攤位', '確定要刪除此筆攤位資料嗎？', () => {
+                window.stallList.splice(index, 1);
+                saveStallDatabase();
+                renderDatabaseTable();
+                window.showToast('已刪除攤位');
+            });
+        };
+
+        window.resetTo108Stalls = () => {
             window.showConfirm('還原數據', '確定要還原為初始 108 筆數據嗎？', () => {
                 window.stallList = parseRawData();
                 saveStallDatabase();
