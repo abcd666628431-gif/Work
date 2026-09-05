@@ -45,8 +45,6 @@
         .animate-float-a { animation: room-walk-a 14s linear infinite; will-change: transform; }
         .animate-float-b { animation: room-walk-b 16s linear infinite; will-change: transform; }
         .animate-float-c { animation: room-walk-c 12s linear infinite; will-change: transform; }
-
-        /* 相片疊加收攏卡片群動態樣式 */
         .photo-deck-container { position: relative; height: 170px; width: 100%; display: flex; align-items: center; justify-content: center; margin-bottom: 0.75rem; }
         .deck-card { position: absolute; width: 220px; height: 150px; border-radius: 1rem; border: 3px solid #ffffff; box-shadow: 0 10px 20px -3px rgba(0,0,0,0.25); overflow: hidden; transition: all 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); background: #0f172a; }
         .deck-card:nth-child(1) { transform: translate3d(0, 0, 0) rotate(0deg); z-index: 10; }
@@ -60,7 +58,7 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const CONFIG = { maxDim: 1000, quality: 0.6 };
+        const CONFIG = { maxDim: 1200, quality: 0.6 };
         const firebaseConfig = {
             apiKey: "AIzaSyBsdBYBeJYqgeDDxF39lZ0pr785SMnwvJs",
             authDomain: "work-eb62f.firebaseapp.com",
@@ -118,6 +116,41 @@
             });
         };
 
+        const dataURLToBlob = (dataURL) => {
+            try {
+                if (!dataURL.includes(';base64,')) return null;
+                const arr = dataURL.split(',');
+                const mime = arr[0].match(/:(.*?);/)[1];
+                const bstr = atob(arr[1]);
+                let n = bstr.length;
+                const u8arr = new Uint8Array(n);
+                while (n--) u8arr[n] = bstr.charCodeAt(n);
+                return new Blob([u8arr], { type: mime });
+            } catch (e) {
+                return null;
+            }
+        };
+
+        const saveDirHandleToIDB = async (handle) => {
+            const dbInstance = await openIDB();
+            return new Promise((res) => {
+                const tx = dbInstance.transaction(IDB_STORE, 'readwrite');
+                tx.objectStore(IDB_STORE).put(handle, '_cached_export_dir_handle_');
+                tx.oncomplete = () => res(true);
+                tx.onerror = () => res(false);
+            });
+        };
+
+        const getDirHandleFromIDB = async () => {
+            const dbInstance = await openIDB();
+            return new Promise((res) => {
+                const tx = dbInstance.transaction(IDB_STORE, 'readonly');
+                const req = tx.objectStore(IDB_STORE).get('_cached_export_dir_handle_');
+                req.onsuccess = () => res(req.result);
+                req.onerror = () => res(null);
+            });
+        };
+
         let dailyScheduleData = [], taskCompletionState = {}, subTaskCompletionState = {};
         let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
         let galleryItems = getLocal('work_cache_gallery_items', []);
@@ -129,7 +162,6 @@
 
         const defaultTabVisibility = { timeline: true, memo: true, map: true, gallery: true, coldRoom: true, closing: true };
         let tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility);
-
         const defaultTabOrder = ['timeline', 'memo', 'map', 'gallery', 'coldRoom', 'closing'];
         let tabOrderList = getLocal('work_tab_order_ids', defaultTabOrder);
 
@@ -145,7 +177,6 @@
         window.applyTabVisibility = () => {
             const container = $('tabBarContainer');
             if (!container) return;
-
             const curActive = localStorage.getItem('activeTab') || 'timeline';
 
             container.innerHTML = tabOrderList.map(tabKey => {
@@ -155,15 +186,12 @@
                 const isCurrent = curActive === tabKey;
                 const actCls = "flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
                 const inactCls = "flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap";
-
                 return `<button id="${meta.btnId}" onclick="window.switchTab('${tabKey}')" style="${isVisible ? '' : 'display:none;'}" class="${isCurrent ? actCls : inactCls} ${isVisible ? '' : 'hidden'}">${meta.name}</button>`;
             }).join('');
 
             if (tabVisibilityState[curActive] === false) {
                 const firstVisible = tabOrderList.find(k => tabVisibilityState[k] !== false);
-                if (firstVisible) {
-                    window.switchTab(firstVisible);
-                }
+                if (firstVisible) window.switchTab(firstVisible);
             }
         };
 
@@ -235,7 +263,6 @@
 
             tabVisibilityState = newState;
             tabOrderList = [...window.tempModalTabOrder];
-
             safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
             safeSetLocal('work_tab_order_ids', tabOrderList);
 
@@ -271,7 +298,7 @@
             { bg: 'bg-pink-100', text: 'text-pink-700', border: 'border-pink-300', activeBg: 'bg-pink-500' },
             { bg: 'bg-lime-100', text: 'text-lime-800', border: 'border-lime-300', activeBg: 'bg-lime-500' },
             { bg: 'bg-cyan-100', text: 'text-cyan-800', border: 'border-cyan-300', activeBg: 'bg-cyan-500' },
-            { bg: 'bg-fuchsia-100', text: 'text-fuchsia-700', border: 'border-fuchsia-300', activeBg: 'bg-fuchsia-500' }
+            { bg: 'fuchsia-100', text: 'text-fuchsia-700', border: 'border-fuchsia-300', activeBg: 'bg-fuchsia-500' }
         ];
 
         window.getMemberColorClass = (name) => {
@@ -306,7 +333,7 @@
             return { state: 'overdue', text: `已結束 (超時 ${fmt(Math.floor((now - e) / 60000))})` };
         }
 
-        window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notified') || '[]'));
+window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notified') || '[]'));
         window.memoNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_memo_notified') || '[]'));
         let crAudioCtx = null, crSoundIntervalId = null, crBannerTimeoutId = null;
 
@@ -453,7 +480,7 @@
             $('confirmModalTitle').innerHTML = `<i data-lucide="alert-triangle" class="w-5 h-5 mr-2 text-amber-500"></i> ${title}`;
             $('confirmModalMessage').innerHTML = message;
             const cancelBtn = $('confirmBtnCancel'), okBtn = $('confirmBtnOk');
-            cancelBtn.onclick = () => { modal.classList.replace('flex', 'hidden'); };
+            cancelBtn.onclick = () => modal.classList.replace('flex', 'hidden');
             okBtn.onclick = () => {
                 modal.classList.replace('flex', 'hidden');
                 if (typeof onConfirm === 'function') onConfirm();
@@ -481,8 +508,7 @@
                     let { width: w, height: h } = img;
                     if (w > maxDim || h > maxDim) {
                         const scale = maxDim / Math.max(w, h);
-                        w = Math.round(w * scale);
-                        h = Math.round(h * scale);
+                        w = Math.round(w * scale); h = Math.round(h * scale);
                     }
                     const canvas = document.createElement('canvas');
                     canvas.width = w; canvas.height = h;
@@ -494,7 +520,7 @@
                         const curH = (i === 3) ? (h - chunkHeight * 3) : chunkHeight;
                         sub.width = w; sub.height = curH;
                         sub.getContext('2d').drawImage(canvas, 0, i * chunkHeight, w, curH, 0, 0, w, curH);
-                        return sub.toDataURL('image/webp', quality);
+                        return sub.toDataURL('image/png', quality);
                     });
                     img.src = '';
                     resolve({ chunks, width: w, height: h });
@@ -526,7 +552,7 @@
                 ctx.drawImage(im, 0, curY);
                 curY += im.naturalHeight;
             });
-            return canvas.toDataURL('image/webp', CONFIG.quality);
+            return canvas.toDataURL('image/png', CONFIG.quality);
         };
 
         const getFullImageUrlAsync = async (item) => {
@@ -534,15 +560,8 @@
             if (memoryImageCache.has(id)) return memoryImageCache.get(id);
 
             const idbCached = await idbGet(id);
-            if (idbCached) {
-                memoryImageCache.set(id, idbCached);
-                return idbCached;
-            }
-
-            if (item.src) {
-                memoryImageCache.set(id, item.src);
-                return item.src;
-            }
+            if (idbCached) { memoryImageCache.set(id, idbCached); return idbCached; }
+            if (item.src) { memoryImageCache.set(id, item.src); return item.src; }
 
             if (currentUser && db) {
                 try {
@@ -557,9 +576,7 @@
                         await idbSet(id, mergedUrl);
                         return mergedUrl;
                     }
-                } catch (e) {
-                    console.error("雲端載入失敗:", e);
-                }
+                } catch (e) {}
             }
             return '';
         };
@@ -567,7 +584,7 @@
         window.handleGalleryUpload = async (input) => {
             if (window.isUploading) {
                 input.value = '';
-                return window.showToast("⚠️ 上傳正在進行中，請等待完成後再選取！", true);
+                return window.showToast("⚠️ 上傳進行中，請稍候再試", true);
             }
             const files = Array.from(input.files || []);
             if (!files.length) return;
@@ -581,20 +598,17 @@
                     const { chunks } = await splitImageTo4ChunksAsync(files[i]);
                     const tempId = `img_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`;
                     const previewSrc = await merge4ChunksAsync(chunks);
-
                     window.pendingUploadImages.push({
                         tempId, chunks, src: previewSrc,
-                        prefix: "", code: "", title: "", time, category: defaultCat
+                        prefix: "", code: "", markStatus: "", title: "", time, category: defaultCat
                     });
                 } catch (e) {}
-
                 const percent = (((i + 1) / files.length) * 100).toFixed(1);
                 window.setUploadProgress(percent, `處理中：${i + 1} / ${files.length} (${percent}%)`);
             }
 
             window.setUploadProgress(-1, "");
             input.value = '';
-
             if (window.pendingUploadImages.length) window.openUploadBatchModal();
             else window.showToast("無法讀取圖片", true);
         };
@@ -680,70 +694,26 @@
             window.showToast("已刪除圖片");
         };
 
-        const dataURLToBlob = (dataURL) => {
-            try {
-                if (!dataURL.includes(';base64,')) return null;
-                const arr = dataURL.split(',');
-                const mime = arr[0].match(/:(.*?);/)[1];
-                const bstr = atob(arr[1]);
-                let n = bstr.length;
-                const u8arr = new Uint8Array(n);
-                while (n--) {
-                    u8arr[n] = bstr.charCodeAt(n);
-                }
-                return new Blob([u8arr], { type: mime });
-            } catch (e) {
-                return null;
-            }
-        };
-
-        const saveDirHandleToIDB = async (handle) => {
-            const dbInstance = await openIDB();
-            return new Promise((res) => {
-                const tx = dbInstance.transaction(IDB_STORE, 'readwrite');
-                tx.objectStore(IDB_STORE).put(handle, '_cached_export_dir_handle_');
-                tx.oncomplete = () => res(true);
-                tx.onerror = () => res(false);
-            });
-        };
-
-        const getDirHandleFromIDB = async () => {
-            const dbInstance = await openIDB();
-            return new Promise((res) => {
-                const tx = dbInstance.transaction(IDB_STORE, 'readonly');
-                const req = tx.objectStore(IDB_STORE).get('_cached_export_dir_handle_');
-                req.onsuccess = () => res(req.result);
-                req.onerror = () => res(null);
-            });
-        };
-
         window.exportAllGalleryImages = async () => {
             if (!galleryItems?.length) return window.showToast('圖庫內沒有圖片可導出', true);
-
-            if (!window.showDirectoryPicker) {
-                return window.showToast('您的瀏覽器不支援自選資料夾功能', true);
-            }
+            if (!window.showDirectoryPicker) return window.showToast('瀏覽器不支援自選資料夾功能', true);
 
             try {
                 const cachedHandle = await getDirHandleFromIDB();
                 const pickerOptions = { mode: 'readwrite' };
-                
                 if (cachedHandle) {
                     try {
                         const permission = await cachedHandle.queryPermission({ mode: 'readwrite' });
-                        if (permission === 'granted' || permission === 'prompt') {
-                            pickerOptions.startIn = cachedHandle;
-                        }
+                        if (permission === 'granted' || permission === 'prompt') pickerOptions.startIn = cachedHandle;
                     } catch (e) {}
                 }
 
-                window.showToast('請確認或選擇導出目標資料夾...');
+                window.showToast('請確認或選擇目標資料夾...');
                 const dirHandle = await window.showDirectoryPicker(pickerOptions);
-
                 if (!dirHandle) return;
                 await saveDirHandleToIDB(dirHandle);
 
-                window.showToast(`準備導出共 ${galleryItems.length} 張圖片，請稍候...`);
+                window.showToast(`準備導出共 ${galleryItems.length} 張圖片...`);
                 let successCount = 0;
 
                 for (let i = 0; i < galleryItems.length; i++) {
@@ -752,66 +722,47 @@
                         const fullSrc = await getFullImageUrlAsync(item);
                         if (!fullSrc) continue;
 
-                        let blob;
-                        if (fullSrc.startsWith('data:')) {
-                            blob = dataURLToBlob(fullSrc);
-                        }
-                        if (!blob) {
-                            const res = await fetch(fullSrc);
-                            blob = await res.blob();
-                        }
+                        let blob = fullSrc.startsWith('data:') ? dataURLToBlob(fullSrc) : await (await fetch(fullSrc)).blob();
                         if (!blob) continue;
 
                         let safeName = (item.title?.trim() || `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
-                        let fileName = `${safeName}.webp`;
-                        let uniqueIdx = 1;
+let fileName = `${safeName}.png`, uniqueIdx = 1; // 更改副檔名為 .png
+try {
+    while (await dirHandle.getFileHandle(fileName)) { fileName = `${safeName}_${uniqueIdx++}.png`; }
+} catch (e) {}
 
-                        try {
-                            while (await dirHandle.getFileHandle(fileName)) {
-                                fileName = `${safeName}_${uniqueIdx++}.webp`;
-                            }
-                        } catch (e) {}
-
-                        const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
                         const writable = await fileHandle.createWritable();
                         await writable.write(blob);
                         await writable.close();
-
                         successCount++;
-                        await new Promise(r => setTimeout(r, 250));
-                    } catch (singleErr) {
-                        console.error(`第 ${i + 1} 張圖片寫入失敗:`, singleErr);
-                    }
+                        await new Promise(r => setTimeout(r, 200));
+                    } catch (singleErr) {}
                 }
-
-                if (successCount > 0) {
-                    window.showToast(`✅ 成功導出 ${successCount} / ${galleryItems.length} 張圖片！`);
-                } else {
-                    window.showToast(`❌ 導出失敗`, true);
-                }
+                window.showToast(`✅ 成功導出 ${successCount} / ${galleryItems.length} 張圖片！`);
             } catch (err) {
-                if (err.name === 'AbortError') {
-                    return window.showToast('已取消導出', true);
-                }
-                console.error('資料夾選擇錯誤:', err);
-                window.showToast(`❌ 無法存取資料夾`, true);
+                if (err.name !== 'AbortError') window.showToast(`❌ 無法存取資料夾`, true);
             }
         };
 
-        window.isBatchMergedView = false;
-        window.mergedBatchForm = {
-            prefix: "",
-            code: "",
-            category: "未分類",
-            time: ""
+        const formatStallCode = (codeVal, hasPrefix) => {
+            let str = (codeVal || '').trim();
+            if (!str) return '';
+            if (hasPrefix && /^\d+$/.test(str)) {
+                const clean = str.replace(/^0+/, '') || '0';
+                return clean.padStart(2, '0');
+            }
+            return str;
         };
+
+        window.isBatchMergedView = false;
+        window.mergedBatchForm = { prefix: "", code: "", markStatus: "", category: "未分類", time: "" };
 
         window.openUploadBatchModal = () => { 
             window.isBatchMergedView = window.pendingUploadImages.length > 1;
             const { time } = getNowInputStrs();
             window.mergedBatchForm = {
-                prefix: "",
-                code: "",
+                prefix: "", code: "", markStatus: "",
                 category: currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory,
                 time: time
             };
@@ -838,35 +789,77 @@
 
         window.setMergedPrefix = (val) => {
             window.mergedBatchForm.prefix = (window.mergedBatchForm.prefix === val) ? "" : val;
+            if (window.mergedBatchForm.prefix) {
+                window.mergedBatchForm.code = formatStallCode(window.mergedBatchForm.code, true);
+                const inputEl = $('mergedCodeInput');
+                if (inputEl) inputEl.value = window.mergedBatchForm.code;
+            }
             ['1-0', 'R-0', 'J-0'].forEach(p => {
                 const btn = $(`merged-prefix-${p}`);
-                if (btn) {
-                    btn.className = (window.mergedBatchForm.prefix === p)
-                        ? "w-full py-1 rounded-lg text-xs font-bold bg-blue-600 text-white border border-blue-600 shadow-xs"
-                        : "w-full py-1 rounded-lg text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-100";
-                }
+                if (btn) btn.className = (window.mergedBatchForm.prefix === p)
+                    ? "w-full py-1 rounded-lg text-xs font-bold bg-blue-600 text-white border border-blue-600 shadow-xs"
+                    : "w-full py-1 rounded-lg text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-100";
             });
+        };
+
+        window.setMergedSuffix = (val) => {
+            window.mergedBatchForm.markStatus = (window.mergedBatchForm.markStatus === val) ? "" : val;
+            ['收工', '清潔'].forEach(s => {
+                const btn = $(`merged-suffix-${s}`);
+                if (btn) btn.className = (window.mergedBatchForm.markStatus === s)
+                    ? "w-full py-2.5 rounded-lg text-xs font-bold bg-amber-500 text-white border border-amber-500 shadow-xs"
+                    : "w-full py-2.5 rounded-lg text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-100";
+            });
+        };
+
+        window.onMergedCodeChange = (el, isBlur = false) => {
+            let val = el.value.trim();
+            if (isBlur && window.mergedBatchForm.prefix) {
+                val = formatStallCode(val, true);
+                el.value = val;
+            }
+            window.mergedBatchForm.code = val;
         };
 
         window.selectPrefixOption = (tempId, prefixVal) => {
             const item = window.pendingUploadImages.find(x => x.tempId === tempId);
             if (!item) return;
             item.prefix = (item.prefix === prefixVal) ? "" : prefixVal;
+            if (item.prefix && item.code) {
+                item.code = formatStallCode(item.code, true);
+                const inputEl = $(`input-code-${tempId}`);
+                if (inputEl) inputEl.value = item.code;
+            }
             item.title = `${item.prefix || ''}${item.code || ''}`.trim();
             ['1-0', 'R-0', 'J-0'].forEach(val => {
                 const btn = $(`btn-prefix-${tempId}-${val}`);
-                if (btn) {
-                    btn.className = (item.prefix === val)
-                        ? "w-full py-1 rounded text-[10px] font-bold bg-blue-600 text-white border border-blue-600"
-                        : "w-full py-1 rounded text-[10px] font-bold bg-white hover:bg-slate-100 text-slate-600 border border-slate-200";
-                }
+                if (btn) btn.className = (item.prefix === val)
+                    ? "w-full py-1 rounded text-[10px] font-bold bg-blue-600 text-white border border-blue-600"
+                    : "w-full py-1 rounded text-[10px] font-bold bg-white hover:bg-slate-100 text-slate-600 border border-slate-200";
             });
         };
 
-        window.updatePendingCode = (tempId, val) => {
+        window.selectSuffixOption = (tempId, statusVal) => {
             const item = window.pendingUploadImages.find(x => x.tempId === tempId);
             if (!item) return;
-            item.code = val.trim();
+            item.markStatus = (item.markStatus === statusVal) ? "" : statusVal;
+            ['收工', '清潔'].forEach(val => {
+                const btn = $(`btn-suffix-${tempId}-${val}`);
+                if (btn) btn.className = (item.markStatus === val)
+                    ? "w-full py-2.5 rounded text-[10px] font-bold bg-amber-500 text-white border border-amber-500 shadow-xs"
+                    : "w-full py-2.5 rounded text-[10px] font-bold bg-white hover:bg-slate-100 text-slate-600 border border-slate-200";
+            });
+        };
+
+        window.onPendingCodeChange = (tempId, el, isBlur = false) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
+            if (!item) return;
+            let val = el.value.trim();
+            if (isBlur && item.prefix) {
+                val = formatStallCode(val, true);
+                el.value = val;
+            }
+            item.code = val;
             item.title = `${item.prefix || ''}${item.code || ''}`.trim();
         };
 
@@ -921,8 +914,8 @@
                             </select>
                         </div>
 
-                        <div class="flex items-center justify-center space-x-2">
-                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-xl px-2 py-2 shadow-inner shrink-0">
+                        <div class="flex items-center justify-center space-x-1.5">
+                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-xl px-1.5 py-2 shadow-inner shrink-0">
                                 <select onchange="window.updateMergedTimePart('h', this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
                                     ${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
                                 </select>
@@ -932,13 +925,18 @@
                                 </select>
                             </div>
 
-                            <div class="w-14 flex flex-col space-y-1 shrink-0">
+                            <div class="w-12 flex flex-col space-y-1 shrink-0">
                                 <button type="button" id="merged-prefix-1-0" onclick="window.setMergedPrefix('1-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${window.mergedBatchForm.prefix === '1-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">一樓</button>
                                 <button type="button" id="merged-prefix-R-0" onclick="window.setMergedPrefix('R-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${window.mergedBatchForm.prefix === 'R-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">魚檔</button>
                                 <button type="button" id="merged-prefix-J-0" onclick="window.setMergedPrefix('J-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${window.mergedBatchForm.prefix === 'J-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">雞檔</button>
                             </div>
 
-                            <textarea id="mergedCodeInput" oninput="window.mergedBatchForm.code = this.value.trim()" placeholder="輸入統一檔號 (例如: 012)" class="flex-1 h-[76px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${window.mergedBatchForm.code || ''}</textarea>
+                            <textarea id="mergedCodeInput" oninput="window.onMergedCodeChange(this, false)" onblur="window.onMergedCodeChange(this, true)" placeholder="輸入檔號" class="flex-1 h-[76px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${window.mergedBatchForm.code || ''}</textarea>
+
+                            <div class="w-12 flex flex-col space-y-1 shrink-0">
+                                <button type="button" id="merged-suffix-收工" onclick="window.setMergedSuffix('收工')" class="w-full py-2.5 rounded-lg text-xs font-bold border ${window.mergedBatchForm.markStatus === '收工' ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">收工</button>
+                                <button type="button" id="merged-suffix-清潔" onclick="window.setMergedSuffix('清潔')" class="w-full py-2.5 rounded-lg text-xs font-bold border ${window.mergedBatchForm.markStatus === '清潔' ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">清潔</button>
+                            </div>
                         </div>
                     </div>
                 </div>`;
@@ -960,8 +958,8 @@
                             </select>
                         </div>
 
-                        <div class="flex items-center justify-center space-x-2">
-                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-xl px-2 py-2 shadow-inner shrink-0">
+                        <div class="flex items-center justify-center space-x-1.5">
+                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-xl px-1.5 py-2 shadow-inner shrink-0">
                                 <select onchange="window.updateTimePart('${item.tempId}','h',this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
                                     ${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
                                 </select>
@@ -971,13 +969,18 @@
                                 </select>
                             </div>
 
-                            <div class="w-14 flex flex-col space-y-1 shrink-0">
+                            <div class="w-12 flex flex-col space-y-1 shrink-0">
                                 <button type="button" id="btn-prefix-${item.tempId}-1-0" onclick="window.selectPrefixOption('${item.tempId}', '1-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${item.prefix === '1-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">一樓</button>
                                 <button type="button" id="btn-prefix-${item.tempId}-R-0" onclick="window.selectPrefixOption('${item.tempId}', 'R-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${item.prefix === 'R-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">魚檔</button>
                                 <button type="button" id="btn-prefix-${item.tempId}-J-0" onclick="window.selectPrefixOption('${item.tempId}', 'J-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${item.prefix === 'J-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">雞檔</button>
                             </div>
 
-                            <textarea oninput="window.updatePendingCode('${item.tempId}', this.value)" placeholder="輸入檔號" class="flex-1 h-[76px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${item.code || ''}</textarea>
+                            <textarea id="input-code-${item.tempId}" oninput="window.onPendingCodeChange('${item.tempId}', this, false)" onblur="window.onPendingCodeChange('${item.tempId}', this, true)" placeholder="輸入檔號" class="flex-1 h-[76px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${item.code || ''}</textarea>
+
+                            <div class="w-12 flex flex-col space-y-1 shrink-0">
+                                <button type="button" id="btn-suffix-${item.tempId}-收工" onclick="window.selectSuffixOption('${item.tempId}', '收工')" class="w-full py-2.5 rounded text-[10px] font-bold border ${item.markStatus === '收工' ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">收工</button>
+                                <button type="button" id="btn-suffix-${item.tempId}-清潔" onclick="window.selectSuffixOption('${item.tempId}', '清潔')" class="w-full py-2.5 rounded text-[10px] font-bold border ${item.markStatus === '清潔' ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">清潔</button>
+                            </div>
                         </div>
                     </div>`;
                 }).join('');
@@ -990,11 +993,13 @@
             if (!items.length || window.isUploading) return;
 
             if (window.isBatchMergedView) {
-                const fullTitle = `${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`.trim();
+                const codeFormatted = formatStallCode(window.mergedBatchForm.code, !!window.mergedBatchForm.prefix);
+                const cleanTitle = `${window.mergedBatchForm.prefix || ''}${codeFormatted || ''}`.trim();
                 items.forEach(it => {
                     it.prefix = window.mergedBatchForm.prefix;
-                    it.code = window.mergedBatchForm.code;
-                    it.title = fullTitle || '無標題';
+                    it.code = codeFormatted;
+                    it.markStatus = window.mergedBatchForm.markStatus || "";
+                    it.title = cleanTitle || '無標題';
                     it.category = window.mergedBatchForm.category || '未分類';
                     it.time = window.mergedBatchForm.time || '12:00';
                 });
@@ -1013,9 +1018,13 @@
                     memoryImageCache.set(docId, item.src);
 
                     const mainDocData = {
-                        id: docId, chunkCount: item.chunks.length,
-                        title: item.title || '無標題', category: item.category || '未分類',
-                        time: item.time || '12:00', createdAt: Date.now()
+                        id: docId, 
+                        chunkCount: item.chunks.length,
+                        title: item.title || '無標題',
+                        markStatus: item.markStatus || '',
+                        category: item.category || '未分類',
+                        time: item.time || '12:00', 
+                        createdAt: Date.now()
                     };
 
                     const singleBatch = writeBatch(db);
@@ -1078,7 +1087,7 @@
             window.openCategoryManager(); window.renderGallery();
         };
 
-function loadLocalFastCache() {
+        function loadLocalFastCache() {
             dailyScheduleData = getLocal('work_cache_schedule', []);
             taskCompletionState = getLocal('work_cache_task_states', {});
             subTaskCompletionState = getLocal('work_cache_subtask_states', {});
@@ -1157,7 +1166,7 @@ function loadLocalFastCache() {
             }, console.error);
         }
 
-        window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML = ''; window.updateMapSimulation(); };
+window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML = ''; window.updateMapSimulation(); };
 
         window.updateMapSimulation = () => {
             if ($('mapPage')?.classList.contains('hidden')) return;
@@ -1990,7 +1999,8 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                 const input = $('stallQueryInput');
                 if (input && input.value.trim()) window.searchStall();
             }
-            window.checkColdRoomOverdueAlerts(); window.checkMemoAlerts();
+            window.checkColdRoomOverdueAlerts();
+            window.checkMemoAlerts();
         }, 60000);
 
         window.renderMemos = () => {
@@ -2043,7 +2053,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
             window.showConfirm('刪除備忘', '確定要刪除這筆未來備忘任務嗎？', () => { futureMemos = futureMemos.filter(m => m.id !== id); syncConfig('future_memos', { memos: futureMemos }); window.renderMemos(); });
         };
 
-        // --- 收工查核模組邏輯 ---
         const RAW_DATA = [
             {
                 floor: "地下",
@@ -2127,13 +2136,8 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                 const cleanCode = codeStr.replace(/^0+/, '');
                 const nameStr = String(s.name || '').trim();
                 const cleanQuery = query.replace(/^0+/, '');
-
-                // 檔號必須「完全相等」（支援輸入完整格式如 "001" 或去掉前導零的 "1"）
                 const isCodeMatch = (codeStr === query) || (cleanCode === cleanQuery);
-                
-                // 寶號（店名）則維持模糊包含搜尋，方便直接搜店名
                 const isNameMatch = nameStr.includes(query);
-
                 return isCodeMatch || isNameMatch;
             });
 
@@ -2466,7 +2470,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         </main>
     </div>
 
-    <!-- 彈窗：調整分頁顯示 (支援上下鍵重排與顯示切換) -->
     <div id="tabVisibilityModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] hidden flex-col items-center justify-center p-4">
         <div class="bg-white rounded-2xl p-4 w-full max-w-[320px] shadow-2xl relative scrollbar-hide flex flex-col" onclick="event.stopPropagation()">
             <header class="flex justify-between items-center pb-2.5 mb-3 border-b border-slate-100">
@@ -2481,7 +2484,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         </div>
     </div>
 
-    <!-- 彈窗：確認上傳圖片（支援拍立得疊加與批量合併命名） -->
     <div id="uploadBatchModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[260] hidden flex-col items-center justify-center p-3 sm:p-4">
         <div class="bg-white rounded-2xl p-4 w-full max-w-[400px] shadow-2xl relative max-h-[86vh] flex flex-col" onclick="event.stopPropagation()">
             <header class="flex justify-between items-center pb-2.5 mb-2 border-b border-slate-100 shrink-0">
@@ -2508,7 +2510,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         </div>
     </div>
 
-    <!-- 全螢幕圖片檢視器 -->
     <div id="imageViewer" class="fixed inset-0 bg-black/95 z-[350] hidden flex-col items-center justify-center p-4" onclick="window.closeFullscreenImg()">
         <button type="button" onclick="window.closeFullscreenImg()" class="absolute top-5 right-5 text-white bg-slate-800/80 p-2 rounded-full active:scale-95 shadow-lg border border-slate-600 hover:bg-red-600 transition-colors z-10">
             <i data-lucide="x" class="w-5 h-5"></i>
@@ -2516,7 +2517,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         <img id="imageViewerImg" src="" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl border border-slate-700" onclick="event.stopPropagation()" />
     </div>
 
-    <!-- 分類管理彈窗 -->
     <div id="categoryManageModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
         <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-full max-w-[320px] flex flex-col overflow-hidden relative">
             <header class="p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50">
@@ -2527,7 +2527,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         </div>
     </div>
 
-    <!-- 通用確認對話框 -->
     <div id="customConfirmModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10000] hidden flex-col items-center justify-center p-4">
         <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-full max-w-[300px] flex flex-col overflow-hidden relative">
             <header class="p-4 border-b border-slate-100 flex items-center bg-slate-50"><h2 id="confirmModalTitle" class="text-slate-800 font-bold text-base flex items-center"><i data-lucide="alert-triangle" class="w-5 h-5 mr-2 text-amber-500"></i> 確認</h2></header>
@@ -2539,7 +2538,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         </div>
     </div>
 
-    <!-- 成員排班表彈窗 -->
     <div id="scheduleManageModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-2 sm:p-4 overflow-y-auto">
         <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-fit min-w-[96vw] max-w-[98vw] flex flex-col overflow-hidden relative">
             <header class="p-2.5 sm:p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50"><h2 class="text-slate-800 font-bold text-sm flex items-center"><i data-lucide="users-round" class="w-4 h-4 mr-2 text-blue-500"></i> 成員排班表</h2><button onclick="window.closeScheduleManager()" class="text-slate-400 p-1.5 rounded-full"><i data-lucide="x" class="w-5 h-5"></i></button></header>
@@ -2547,7 +2545,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         </div>
     </div>
 
-    <!-- 雪房新增存放彈窗 -->
     <div id="crAddModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
         <div class="bg-white rounded-2xl p-4 w-full max-w-[300px] shadow-2xl relative max-h-[85vh] overflow-y-auto scrollbar-hide">
             <h3 class="font-bold text-base mb-3 text-slate-800 flex items-center border-b pb-2"><i data-lucide="package-plus" class="w-4 h-4 mr-2 text-blue-500"></i> 新增存放</h3>
@@ -2575,7 +2572,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         </div>
     </div>
 
-    <!-- 雪房取出貨物彈窗 -->
     <div id="crWithdrawModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
         <div class="bg-white rounded-2xl p-4 w-full max-w-[300px] shadow-2xl relative scrollbar-hide">
             <h3 class="font-bold text-base mb-3 text-slate-800 flex items-center border-b pb-2"><i data-lucide="package-minus" class="w-4 h-4 mr-2 text-amber-500"></i> 取出貨物</h3>
@@ -2598,7 +2594,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         </div>
     </div>
 
-    <!-- 攤位數據庫管理 Modal -->
     <div id="dbModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[1200] hidden flex-col items-center justify-center p-3">
         <div class="bg-white rounded-2xl p-4 w-full max-w-[390px] h-[82vh] shadow-2xl flex flex-col" onclick="event.stopPropagation()">
             <header class="flex justify-between items-center pb-2.5 border-b border-slate-100 shrink-0">
