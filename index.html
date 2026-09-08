@@ -694,8 +694,63 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             window.showToast("已刪除圖片");
         };
 
+        // ====== 1. 多選狀態與輔助函式 ======
+        window.isGallerySelectMode = false;
+        window.selectedGalleryIds = new Set();
+
+        window.toggleGallerySelectMode = () => {
+            window.isGallerySelectMode = !window.isGallerySelectMode;
+            window.selectedGalleryIds.clear();
+            window.renderGallery();
+        };
+
+        window.toggleSelectGalleryItem = (id, e) => {
+            if (e) e.stopPropagation();
+            if (window.selectedGalleryIds.has(id)) {
+                window.selectedGalleryIds.delete(id);
+            } else {
+                window.selectedGalleryIds.add(id);
+            }
+            window.updateGallerySelectionUI();
+        };
+
+        window.toggleSelectAllGallery = () => {
+            const query = ($('gallerySearchInput')?.value || '').trim().toLowerCase();
+            const currentItems = galleryItems.filter(item => 
+                (currentGalleryCategory === '全部' || item.category === currentGalleryCategory) && 
+                (!query || item.title?.toLowerCase().includes(query) || item.time?.toLowerCase().includes(query))
+            );
+            if (window.selectedGalleryIds.size === currentItems.length) {
+                window.selectedGalleryIds.clear();
+            } else {
+                currentItems.forEach(i => window.selectedGalleryIds.add(i.id));
+            }
+            window.renderGallery();
+        };
+
+        window.updateGallerySelectionUI = () => {
+            const countEl = $('selectedCountText');
+            if (countEl) countEl.textContent = window.selectedGalleryIds.size;
+            document.querySelectorAll('.gallery-item-card').forEach(card => {
+                const id = card.dataset.id;
+                const isChecked = window.selectedGalleryIds.has(id);
+                const chkBox = card.querySelector('.gallery-chk-box');
+                if (chkBox) chkBox.checked = isChecked;
+                card.classList.toggle('ring-2', isChecked);
+                card.classList.toggle('ring-blue-500', isChecked);
+            });
+        };
+
+        // ====== 2. 勾選導出為 PNG ======
         window.exportAllGalleryImages = async () => {
-            if (!galleryItems?.length) return window.showToast('圖庫內沒有圖片可導出', true);
+            let targetItems = [];
+            if (window.isGallerySelectMode && window.selectedGalleryIds.size > 0) {
+                targetItems = galleryItems.filter(i => window.selectedGalleryIds.has(i.id));
+            } else {
+                targetItems = galleryItems;
+            }
+
+            if (!targetItems?.length) return window.showToast('沒有選取任何圖片可導出', true);
             if (!window.showDirectoryPicker) return window.showToast('瀏覽器不支援自選資料夾功能', true);
 
             try {
@@ -713,36 +768,125 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 if (!dirHandle) return;
                 await saveDirHandleToIDB(dirHandle);
 
-                window.showToast(`準備導出共 ${galleryItems.length} 張圖片...`);
+                window.showToast(`準備導出共 ${targetItems.length} 張 PNG 圖片...`);
                 let successCount = 0;
 
-                for (let i = 0; i < galleryItems.length; i++) {
-                    const item = galleryItems[i];
+                for (let i = 0; i < targetItems.length; i++) {
+                    const item = targetItems[i];
                     try {
                         const fullSrc = await getFullImageUrlAsync(item);
                         if (!fullSrc) continue;
 
-                        let blob = fullSrc.startsWith('data:') ? dataURLToBlob(fullSrc) : await (await fetch(fullSrc)).blob();
-                        if (!blob) continue;
+                        const pngBlob = await new Promise((res) => {
+                            const img = new Image();
+                            img.onload = () => {
+                                const cvs = document.createElement('canvas');
+                                cvs.width = img.naturalWidth || img.width;
+                                cvs.height = img.naturalHeight || img.height;
+                                const ctx = cvs.getContext('2d');
+                                ctx.drawImage(img, 0, 0);
+                                cvs.toBlob(b => res(b), 'image/png');
+                            };
+                            img.onerror = () => res(null);
+                            img.src = fullSrc;
+                        });
+
+                        if (!pngBlob) continue;
 
                         let safeName = (item.title?.trim() || `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
-let fileName = `${safeName}.png`, uniqueIdx = 1; // 更改副檔名為 .png
-try {
-    while (await dirHandle.getFileHandle(fileName)) { fileName = `${safeName}_${uniqueIdx++}.png`; }
-} catch (e) {}
+                        let fileName = `${safeName}.png`, uniqueIdx = 1;
+                        try {
+                            while (await dirHandle.getFileHandle(fileName)) { fileName = `${safeName}_${uniqueIdx++}.png`; }
+                        } catch (e) {}
 
-const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+                        const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
                         const writable = await fileHandle.createWritable();
-                        await writable.write(blob);
+                        await writable.write(pngBlob);
                         await writable.close();
                         successCount++;
-                        await new Promise(r => setTimeout(r, 200));
+                        await new Promise(r => setTimeout(r, 120));
                     } catch (singleErr) {}
                 }
-                window.showToast(`✅ 成功導出 ${successCount} / ${galleryItems.length} 張圖片！`);
+                window.showToast(`✅ 成功導出 ${successCount} / ${targetItems.length} 張 PNG 圖片！`);
+                if (window.isGallerySelectMode) {
+                    window.toggleGallerySelectMode();
+                }
             } catch (err) {
                 if (err.name !== 'AbortError') window.showToast(`❌ 無法存取資料夾`, true);
             }
+        };
+
+        // ====== 3. 渲染圖庫列表 ======
+        window.renderGallery = async () => {
+            const sidebar = $('gallerySidebar'), grid = $('galleryGrid');
+            if (!sidebar || !grid) return;
+            const query = ($('gallerySearchInput')?.value || '').trim().toLowerCase();
+
+            sidebar.innerHTML = `
+                <div class="p-2 border-b border-slate-200 w-full flex justify-between items-center bg-slate-100">
+                    <span class="text-[10px] font-bold text-slate-500">分類</span>
+                    <button onclick="window.openCategoryManager()" class="text-slate-400 hover:text-blue-500 p-0.5"><i data-lucide="settings" class="w-3 h-3"></i></button>
+                </div>
+                ${galleryCategories.map(cat => `<button onclick="window.setGalleryCategory('${cat}')" class="w-full text-center py-2 px-1 text-[11px] font-bold rounded-md transition-colors truncate ${currentGalleryCategory === cat ? 'bg-blue-500 text-white' : 'text-slate-600 hover:bg-slate-200'}">${cat}</button>`).join('')}`;
+
+            const filtered = galleryItems.filter(item => 
+                (currentGalleryCategory === '全部' || item.category === currentGalleryCategory) && 
+                (!query || item.title?.toLowerCase().includes(query) || item.time?.toLowerCase().includes(query))
+            );
+
+            const cameraSlotHtml = window.isGallerySelectMode ? '' : `
+                <label class="relative group bg-white/80 hover:bg-blue-50/60 border-2 border-dashed border-blue-300 hover:border-blue-500 rounded-xl overflow-hidden shadow-xs flex flex-col items-center justify-center cursor-pointer min-h-[125px] h-full active:scale-95 transition-all p-1">
+                    <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+                        <i data-lucide="camera" class="w-4 h-4"></i>
+                    </div>
+                    <span class="text-[11px] font-black text-slate-700">拍照記錄</span>
+                    <input type="file" accept="image/*" capture="environment" class="hidden" onchange="window.handleGalleryUpload(this)">
+                </label>`;
+
+            const renderedCards = await Promise.all(filtered.map(async (i) => {
+                const fullSrc = await getFullImageUrlAsync(i);
+                const safeTitleEscaped = (i.title || '圖片').replace(/'/g, "\\'");
+                const isSelected = window.selectedGalleryIds.has(i.id);
+                return `
+                    <div data-id="${i.id}" class="gallery-item-card relative group bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs flex flex-col transition-all ${isSelected ? 'ring-2 ring-blue-500' : ''}">
+                        <div class="px-1.5 py-0.5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+                            ${window.isGallerySelectMode ? `
+                                <input type="checkbox" class="gallery-chk-box w-3.5 h-3.5 rounded text-blue-600 cursor-pointer" ${isSelected ? 'checked' : ''} onclick="window.toggleSelectGalleryItem('${i.id}', event)">
+                            ` : `
+                                <span class="text-[8px] font-bold text-blue-600 bg-blue-50 px-1 py-0.2 rounded border border-blue-100 truncate max-w-[55px]">${i.category || '未分類'}</span>
+                            `}
+                            ${window.isGallerySelectMode ? `
+                                <span class="text-[8px] text-slate-400 font-bold truncate max-w-[55px]">${i.category || '未分類'}</span>
+                            ` : `
+                                <button onclick="window.deleteGalleryItem('${i.id}')" class="text-slate-400 hover:text-red-500 p-0.5 rounded transition-colors active:scale-95"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
+                            `}
+                        </div>
+                        <div class="w-full h-20 sm:h-24 bg-slate-100 overflow-hidden cursor-pointer relative" onclick="${window.isGallerySelectMode ? `window.toggleSelectGalleryItem('${i.id}', event)` : `window.openFullscreenImg('${fullSrc}')`}">
+                            <img src="${fullSrc}" 
+                                 loading="lazy" 
+                                 draggable="${!window.isGallerySelectMode}" 
+                                 ondragstart="window.handleImageDragStart(event, '${safeTitleEscaped}', '${fullSrc}')" 
+                                 class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
+                                 alt="${i.title || '圖片'}">
+                        </div>
+                        <div class="p-1 flex justify-between items-center bg-white border-t border-slate-100 text-xs gap-0.5">
+                            <span class="text-[9px] text-slate-500 font-mono font-bold shrink-0">${i.time || '12:00'}</span>
+                            <span onclick="${window.isGallerySelectMode ? `window.toggleSelectGalleryItem('${i.id}', event)` : `window.editGalleryItemTitle('${i.id}', event)`}" class="text-[9.5px] font-bold text-slate-800 truncate text-right flex-1 cursor-pointer hover:text-blue-600">${i.title || '無標題'}</span>
+                        </div>
+                    </div>`;
+            }));
+
+            grid.innerHTML = `<div class="grid grid-cols-3 gap-1.5">${cameraSlotHtml}${renderedCards.join('')}</div>`;
+            lucide.createIcons();
+            const selBtn = $('gallerySelectModeBtn');
+            if (selBtn) {
+                selBtn.className = window.isGallerySelectMode 
+                    ? "bg-blue-600 text-white border border-blue-600 px-2 py-1.5 rounded-lg flex items-center justify-center active:scale-95 text-xs font-bold transition-all shadow-xs shrink-0"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200 px-2 py-1.5 rounded-lg flex items-center justify-center active:scale-95 text-xs font-bold transition-all shadow-xs shrink-0";
+            }
+            const bar = $('gallerySelectionBar');
+            if (bar) bar.classList.toggle('hidden', !window.isGallerySelectMode);
+            window.updateGallerySelectionUI();
         };
 
         const formatStallCode = (codeVal, hasPrefix) => {
@@ -2381,18 +2525,28 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
             </div>
 
             <div class="flex-1 min-h-0 flex flex-col w-full h-full relative z-10 bg-[#fdfbf7]">
-                <div class="p-2.5 border-b border-[#e6e2d6] flex items-center justify-between bg-white shrink-0 shadow-xs z-20 gap-2">
+                <!-- 工具列：加入「選取」按鈕 -->
+                <div class="p-2.5 border-b border-[#e6e2d6] flex items-center justify-between bg-white shrink-0 shadow-xs z-20 gap-1.5">
                     <div class="relative flex-1">
                         <i data-lucide="search" class="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400"></i>
-                        <input type="text" id="gallerySearchInput" placeholder="搜尋圖片..." oninput="window.renderGallery()" class="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-700 placeholder-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none tracking-wide text-center">
+                        <input type="text" id="gallerySearchInput" placeholder="搜尋圖片..." oninput="window.renderGallery()" class="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-2 py-1.5 text-xs text-slate-700 placeholder-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none tracking-wide text-center">
                     </div>
-                    <button type="button" onclick="window.exportAllGalleryImages()" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1.5 rounded-lg flex items-center justify-center active:scale-95 text-xs font-bold transition-all shadow-xs shrink-0" title="導出全部">
+                    <button type="button" id="gallerySelectModeBtn" onclick="window.toggleGallerySelectMode()" class="bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200 px-2 py-1.5 rounded-lg flex items-center justify-center active:scale-95 text-xs font-bold transition-all shadow-xs shrink-0">
+                        <i data-lucide="check-square" class="w-3.5 h-3.5 mr-1"></i> 選取
+                    </button>
+                    <button type="button" onclick="window.exportAllGalleryImages()" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 px-2 py-1.5 rounded-lg flex items-center justify-center active:scale-95 text-xs font-bold transition-all shadow-xs shrink-0" title="導出">
                         <i data-lucide="download" class="w-3.5 h-3.5 mr-1"></i> 導出
                     </button>
-                    <label class="bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold shadow-xs shrink-0">
+                    <label class="bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 px-2 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold shadow-xs shrink-0">
                         <i data-lucide="upload" class="w-3.5 h-3.5 mr-1"></i> 上傳
                         <input type="file" accept="image/*" multiple class="hidden" onchange="window.handleGalleryUpload(this)">
                     </label>
+                </div>
+
+                <!-- 選取模式提示列 -->
+                <div id="gallerySelectionBar" class="hidden px-3 py-1.5 bg-blue-50 border-b border-blue-200 flex justify-between items-center text-xs font-bold shrink-0">
+                    <span class="text-blue-800">已選取 <span id="selectedCountText" class="font-black text-blue-600">0</span> 張</span>
+                    <button type="button" onclick="window.toggleSelectAllGallery()" class="px-2 py-0.5 bg-white border border-blue-300 text-blue-600 rounded text-[11px] hover:bg-blue-100 active:scale-95">全選 / 取消全選</button>
                 </div>
 
                 <div class="flex flex-1 min-h-0 overflow-hidden relative z-10">
