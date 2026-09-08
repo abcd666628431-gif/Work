@@ -152,7 +152,8 @@
         };
 
         let dailyScheduleData = [], taskCompletionState = {}, subTaskCompletionState = {};
-        let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
+        // 預設分類改為：全部、收工、清潔、營業相、雞相
+        let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '收工', '清潔', '營業相', '雞相']);
         let galleryItems = getLocal('work_cache_gallery_items', []);
         let memoryImageCache = new Map();
         let currentGalleryCategory = '全部';
@@ -591,7 +592,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             window.pendingUploadImages = [];
 
             const { time } = getNowInputStrs();
-            const defaultCat = currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory;
+            const defaultCat = currentGalleryCategory === '全部' ? '收工' : currentGalleryCategory;
 
             for (let i = 0; i < files.length; i++) {
                 try {
@@ -665,18 +666,107 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         window.openFullscreenImg = (src) => { $('imageViewerImg').src = src; $('imageViewer')?.classList.replace('hidden', 'flex'); };
         window.closeFullscreenImg = () => $('imageViewer')?.classList.replace('flex', 'hidden');
 
-        window.editGalleryItemTitle = (id, e) => {
+        // ====== 點擊預覽圖修改圖片內容 (標題、分類、時間) ======
+        window.openEditGalleryModal = (id, e) => {
             if (e) e.stopPropagation();
             const item = galleryItems.find(x => x.id === id);
             if (!item) return;
-            const newTitle = prompt('請輸入新的圖片名稱：', item.title || '');
-            if (newTitle !== null && newTitle.trim()) {
-                item.title = newTitle.trim();
-                safeSetLocal('work_cache_gallery_items', galleryItems);
-                if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), item, { merge: true });
-                window.renderGallery();
-                window.showToast('圖片名稱已更新');
+
+            const catList = ['收工', '清潔', '營業相', '雞相'];
+            const curCat = item.category || '收工';
+            const curTime = item.time || '12:00';
+
+            const modalHtml = `
+            <div id="galleryItemEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();">
+                <div class="bg-white rounded-2xl p-4 w-full max-w-[320px] shadow-2xl relative animate-pop-in" onclick="event.stopPropagation()">
+                    <header class="flex justify-between items-center pb-2.5 mb-3 border-b border-slate-100">
+                        <h3 class="font-bold text-sm text-slate-800 flex items-center">
+                            <i data-lucide="edit-3" class="w-4 h-4 mr-1.5 text-blue-500"></i> 修改圖片內容
+                        </h3>
+                        <button onclick="document.getElementById('galleryItemEditModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </header>
+
+                    <div class="space-y-3">
+                        <!-- 分類選擇 -->
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">分類</label>
+                            <div class="grid grid-cols-4 gap-1.5" id="editModalCatGroup">
+                                ${catList.map(cat => `
+                                    <button type="button" onclick="window.setModalEditCat('${cat}')" data-cat="${cat}" 
+                                        class="modal-cat-btn py-1.5 rounded-lg text-xs font-bold border transition-all ${curCat === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
+                                        ${cat}
+                                    </button>
+                                `).join('')}
+                            </div>
+                            <input type="hidden" id="editModalCatInput" value="${curCat}">
+                        </div>
+
+                        <!-- 標題/檔號 -->
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">標題 / 檔號</label>
+                            <input type="text" id="editModalTitleInput" value="${item.title || ''}" placeholder="例如: 1-002 或 魚檔" 
+                                class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500 text-center shadow-inner">
+                        </div>
+
+                        <!-- 時間 -->
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">時間</label>
+                            <input type="time" id="editModalTimeInput" value="${curTime}" 
+                                class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-blue-500 text-center shadow-inner">
+                        </div>
+                    </div>
+
+                    <div class="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center">
+                        <button onclick="window.deleteGalleryItem('${id}'); document.getElementById('galleryItemEditModal')?.remove();" 
+                            class="text-red-500 hover:bg-red-50 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5 mr-1"></i>刪除
+                        </button>
+                        <div class="space-x-1.5">
+                            <button onclick="document.getElementById('galleryItemEditModal')?.remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">取消</button>
+                            <button onclick="window.saveGalleryItemEdit('${id}')" class="px-3.5 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-bold shadow-xs">儲存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            lucide.createIcons();
+        };
+
+        window.setModalEditCat = (cat) => {
+            const input = $('editModalCatInput');
+            if (input) input.value = cat;
+            document.querySelectorAll('.modal-cat-btn').forEach(btn => {
+                const isActive = btn.dataset.cat === cat;
+                btn.className = `modal-cat-btn py-1.5 rounded-lg text-xs font-bold border transition-all ${isActive ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}`;
+            });
+        };
+
+        window.saveGalleryItemEdit = (id) => {
+            const item = galleryItems.find(x => x.id === id);
+            if (!item) return;
+
+            const newTitle = $('editModalTitleInput')?.value.trim() || '無標題';
+            const newCat = $('editModalCatInput')?.value || '收工';
+            const newTime = $('editModalTimeInput')?.value || '12:00';
+
+            item.title = newTitle;
+            item.category = newCat;
+            item.time = newTime;
+
+            safeSetLocal('work_cache_gallery_items', galleryItems);
+            if (currentUser) {
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), {
+                    title: newTitle,
+                    category: newCat,
+                    time: newTime
+                }, { merge: true });
             }
+
+            $('galleryItemEditModal')?.remove();
+            window.renderGallery();
+            window.showToast('✅ 圖片內容已更新！');
         };
 
         window.deleteGalleryItem = async (id) => {
@@ -816,7 +906,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             }
         };
 
-        // ====== 3. 渲染圖庫列表 ======
+        // ====== 3. 渲染圖庫列表 (點圖修改，附放大鏡) ======
         window.renderGallery = async () => {
             const sidebar = $('gallerySidebar'), grid = $('galleryGrid');
             if (!sidebar || !grid) return;
@@ -853,15 +943,20 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                             ${window.isGallerySelectMode ? `
                                 <input type="checkbox" class="gallery-chk-box w-3.5 h-3.5 rounded text-blue-600 cursor-pointer" ${isSelected ? 'checked' : ''} onclick="window.toggleSelectGalleryItem('${i.id}', event)">
                             ` : `
-                                <span class="text-[8px] font-bold text-blue-600 bg-blue-50 px-1 py-0.2 rounded border border-blue-100 truncate max-w-[55px]">${i.category || '未分類'}</span>
+                                <span class="text-[8px] font-bold text-amber-600 bg-amber-50 px-1 py-0.2 rounded border border-amber-200 truncate max-w-[55px]">${i.category || '收工'}</span>
                             `}
                             ${window.isGallerySelectMode ? `
-                                <span class="text-[8px] text-slate-400 font-bold truncate max-w-[55px]">${i.category || '未分類'}</span>
+                                <span class="text-[8px] text-slate-400 font-bold truncate max-w-[55px]">${i.category || '收工'}</span>
                             ` : `
-                                <button onclick="window.deleteGalleryItem('${i.id}')" class="text-slate-400 hover:text-red-500 p-0.5 rounded transition-colors active:scale-95"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
+                                <button type="button" onclick="window.openFullscreenImg('${fullSrc}'); event.stopPropagation();" title="放大檢視" class="text-slate-400 hover:text-blue-500 p-0.5 rounded transition-colors active:scale-95">
+                                    <i data-lucide="zoom-in" class="w-3.5 h-3.5"></i>
+                                </button>
                             `}
                         </div>
-                        <div class="w-full h-20 sm:h-24 bg-slate-100 overflow-hidden cursor-pointer relative" onclick="${window.isGallerySelectMode ? `window.toggleSelectGalleryItem('${i.id}', event)` : `window.openFullscreenImg('${fullSrc}')`}">
+
+                        <!-- 點擊圖片彈出修改視窗 (多選模式下為勾選) -->
+                        <div class="w-full h-20 sm:h-24 bg-slate-100 overflow-hidden cursor-pointer relative" 
+                             onclick="${window.isGallerySelectMode ? `window.toggleSelectGalleryItem('${i.id}', event)` : `window.openEditGalleryModal('${i.id}', event)`}">
                             <img src="${fullSrc}" 
                                  loading="lazy" 
                                  draggable="${!window.isGallerySelectMode}" 
@@ -869,9 +964,12 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                                  class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
                                  alt="${i.title || '圖片'}">
                         </div>
-                        <div class="p-1 flex justify-between items-center bg-white border-t border-slate-100 text-xs gap-0.5">
-                            <span class="text-[9px] text-slate-500 font-mono font-bold shrink-0">${i.time || '12:00'}</span>
-                            <span onclick="${window.isGallerySelectMode ? `window.toggleSelectGalleryItem('${i.id}', event)` : `window.editGalleryItemTitle('${i.id}', event)`}" class="text-[9.5px] font-bold text-slate-800 truncate text-right flex-1 cursor-pointer hover:text-blue-600">${i.title || '無標題'}</span>
+
+                        <!-- 時間改為 10px、檔號改為 10.5px (各加大 1px) -->
+                        <div class="p-1 flex justify-between items-center bg-white border-t border-slate-100 text-xs gap-0.5 cursor-pointer"
+                             onclick="${window.isGallerySelectMode ? `window.toggleSelectGalleryItem('${i.id}', event)` : `window.openEditGalleryModal('${i.id}', event)`}">
+                            <span class="text-[10px] text-slate-500 font-mono font-bold shrink-0">${i.time || '12:00'}</span>
+                            <span class="text-[10.5px] font-bold text-slate-800 truncate text-right flex-1 hover:text-blue-600">${i.title || '無標題'}</span>
                         </div>
                     </div>`;
             }));
@@ -907,7 +1005,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             const { time } = getNowInputStrs();
             window.mergedBatchForm = {
                 prefix: "", code: "", markStatus: "",
-                category: currentGalleryCategory === '全部' ? '未分類' : currentGalleryCategory,
+                category: currentGalleryCategory === '全部' ? '收工' : currentGalleryCategory,
                 time: time
             };
             window.renderUploadBatchList(); 
@@ -946,13 +1044,27 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             });
         };
 
-        window.setMergedSuffix = (val) => {
-            window.mergedBatchForm.markStatus = (window.mergedBatchForm.markStatus === val) ? "" : val;
-            ['收工', '清潔'].forEach(s => {
-                const btn = $(`merged-suffix-${s}`);
-                if (btn) btn.className = (window.mergedBatchForm.markStatus === s)
-                    ? "w-full py-2.5 rounded-lg text-xs font-bold bg-amber-500 text-white border border-amber-500 shadow-xs"
-                    : "w-full py-2.5 rounded-lg text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-100";
+        // 選擇上方分類鍵 (合併視圖)
+        window.setMergedCategory = (cat) => {
+            window.mergedBatchForm.category = cat;
+            ['收工', '清潔', '營業相', '雞相'].forEach(c => {
+                const btn = $(`merged-cat-btn-${c}`);
+                if (btn) btn.className = (window.mergedBatchForm.category === c)
+                    ? "flex-1 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-white border border-amber-500 shadow-xs active:scale-95 transition-all"
+                    : "flex-1 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 active:scale-95 transition-all";
+            });
+        };
+
+        // 選擇上方分類鍵 (展開分開視圖)
+        window.setPendingItemCategory = (tempId, cat) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
+            if (!item) return;
+            item.category = cat;
+            ['收工', '清潔', '營業相', '雞相'].forEach(c => {
+                const btn = $(`btn-cat-${tempId}-${c}`);
+                if (btn) btn.className = (item.category === c)
+                    ? "flex-1 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-white border border-amber-500 shadow-xs active:scale-95 transition-all"
+                    : "flex-1 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 active:scale-95 transition-all";
             });
         };
 
@@ -980,18 +1092,6 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 if (btn) btn.className = (item.prefix === val)
                     ? "w-full py-1 rounded text-[10px] font-bold bg-blue-600 text-white border border-blue-600"
                     : "w-full py-1 rounded text-[10px] font-bold bg-white hover:bg-slate-100 text-slate-600 border border-slate-200";
-            });
-        };
-
-        window.selectSuffixOption = (tempId, statusVal) => {
-            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
-            if (!item) return;
-            item.markStatus = (item.markStatus === statusVal) ? "" : statusVal;
-            ['收工', '清潔'].forEach(val => {
-                const btn = $(`btn-suffix-${tempId}-${val}`);
-                if (btn) btn.className = (item.markStatus === val)
-                    ? "w-full py-2.5 rounded text-[10px] font-bold bg-amber-500 text-white border border-amber-500 shadow-xs"
-                    : "w-full py-2.5 rounded text-[10px] font-bold bg-white hover:bg-slate-100 text-slate-600 border border-slate-200";
             });
         };
 
@@ -1034,7 +1134,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     : `<i data-lucide="layers" class="w-3.5 h-3.5 mr-1"></i>合併疊加`;
             }
 
-            const selectableCats = galleryCategories.filter(c => c !== '全部');
+            const catList = ['收工', '清潔', '營業相', '雞相'];
 
             if (window.isBatchMergedView) {
                 const [hStr, mStr] = (window.mergedBatchForm.time || '00:00').split(':');
@@ -1051,15 +1151,20 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                         </div>
                     </div>
 
-                    <div class="w-full bg-slate-50 border-2 border-indigo-200/80 rounded-2xl p-3 shadow-xs space-y-2.5 mt-2">
-                        <div class="flex items-center justify-center">
-                            <select id="mergedCatInput" onchange="window.mergedBatchForm.category = this.value" class="w-fit max-w-[130px] bg-white border border-slate-300 rounded-xl px-3 py-1 text-xs font-bold text-slate-700 shadow-inner focus:outline-none focus:border-blue-500 text-center">
-                                ${selectableCats.map(cat => `<option value="${cat}" ${window.mergedBatchForm.category === cat ? 'selected' : ''}>${cat}</option>`).join('')}
-                            </select>
+                    <div class="w-full bg-slate-50 border-2 border-indigo-200/80 rounded-2xl p-3 shadow-xs space-y-2 mt-2">
+                        <!-- 上方橫排 4 個分類鍵 -->
+                        <div class="flex items-center gap-1.5 w-full">
+                            ${catList.map(cat => `
+                                <button type="button" id="merged-cat-btn-${cat}" onclick="window.setMergedCategory('${cat}')" 
+                                    class="flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all active:scale-95 ${window.mergedBatchForm.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
+                                    ${cat}
+                                </button>
+                            `).join('')}
                         </div>
 
-                        <div class="flex items-center justify-center space-x-1.5">
-                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-xl px-1.5 py-2 shadow-inner shrink-0">
+                        <!-- 時間、前綴按鈕、檔號輸入框 (右側不再放鍵) -->
+                        <div class="flex items-stretch space-x-1.5">
+                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-xl px-1.5 shadow-inner shrink-0">
                                 <select onchange="window.updateMergedTimePart('h', this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
                                     ${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
                                 </select>
@@ -1076,11 +1181,6 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                             </div>
 
                             <textarea id="mergedCodeInput" oninput="window.onMergedCodeChange(this, false)" onblur="window.onMergedCodeChange(this, true)" placeholder="輸入檔號" class="flex-1 h-[76px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${window.mergedBatchForm.code || ''}</textarea>
-
-                            <div class="w-12 flex flex-col space-y-1 shrink-0">
-                                <button type="button" id="merged-suffix-收工" onclick="window.setMergedSuffix('收工')" class="w-full py-2.5 rounded-lg text-xs font-bold border ${window.mergedBatchForm.markStatus === '收工' ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">收工</button>
-                                <button type="button" id="merged-suffix-清潔" onclick="window.setMergedSuffix('清潔')" class="w-full py-2.5 rounded-lg text-xs font-bold border ${window.mergedBatchForm.markStatus === '清潔' ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">清潔</button>
-                            </div>
                         </div>
                     </div>
                 </div>`;
@@ -1088,7 +1188,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 list.innerHTML = window.pendingUploadImages.map(item => {
                     const [hStr, mStr] = (item.time || '00:00').split(':');
                     return `
-                    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 flex flex-col space-y-2.5 shadow-xs">
+                    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 flex flex-col space-y-2 shadow-xs">
                         <div class="relative w-fit max-w-full mx-auto rounded-xl overflow-hidden cursor-zoom-in group border border-slate-300 shadow-sm" onclick="window.openFullscreenImg('${item.src}')">
                             <img src="${item.src}" class="max-h-48 w-auto object-contain rounded-xl block">
                             <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1.5 right-1.5 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md active:scale-95 transition-all">
@@ -1096,14 +1196,18 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                             </button>
                         </div>
 
-                        <div class="flex items-center justify-center">
-                            <select onchange="window.pendingUploadImages.find(x=>x.tempId==='${item.tempId}').category=this.value" class="w-fit max-w-[130px] bg-white border border-slate-300 rounded-xl px-3 py-1 text-xs font-bold text-slate-700 shadow-inner focus:outline-none focus:border-blue-500 text-center">
-                                ${selectableCats.map(cat => `<option value="${cat}" ${item.category === cat ? 'selected' : ''}>${cat}</option>`).join('')}
-                            </select>
+                        <!-- 上方橫排 4 個分類鍵 -->
+                        <div class="flex items-center gap-1.5 w-full">
+                            ${catList.map(cat => `
+                                <button type="button" id="btn-cat-${item.tempId}-${cat}" onclick="window.setPendingItemCategory('${item.tempId}', '${cat}')" 
+                                    class="flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all active:scale-95 ${item.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
+                                    ${cat}
+                                </button>
+                            `).join('')}
                         </div>
 
-                        <div class="flex items-center justify-center space-x-1.5">
-                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-xl px-1.5 py-2 shadow-inner shrink-0">
+                        <div class="flex items-stretch space-x-1.5">
+                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-xl px-1.5 shadow-inner shrink-0">
                                 <select onchange="window.updateTimePart('${item.tempId}','h',this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
                                     ${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
                                 </select>
@@ -1120,11 +1224,6 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                             </div>
 
                             <textarea id="input-code-${item.tempId}" oninput="window.onPendingCodeChange('${item.tempId}', this, false)" onblur="window.onPendingCodeChange('${item.tempId}', this, true)" placeholder="輸入檔號" class="flex-1 h-[76px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${item.code || ''}</textarea>
-
-                            <div class="w-12 flex flex-col space-y-1 shrink-0">
-                                <button type="button" id="btn-suffix-${item.tempId}-收工" onclick="window.selectSuffixOption('${item.tempId}', '收工')" class="w-full py-2.5 rounded text-[10px] font-bold border ${item.markStatus === '收工' ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">收工</button>
-                                <button type="button" id="btn-suffix-${item.tempId}-清潔" onclick="window.selectSuffixOption('${item.tempId}', '清潔')" class="w-full py-2.5 rounded text-[10px] font-bold border ${item.markStatus === '清潔' ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">清潔</button>
-                            </div>
                         </div>
                     </div>`;
                 }).join('');
@@ -1144,7 +1243,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     it.code = codeFormatted;
                     it.markStatus = window.mergedBatchForm.markStatus || "";
                     it.title = cleanTitle || '無標題';
-                    it.category = window.mergedBatchForm.category || '未分類';
+                    it.category = window.mergedBatchForm.category || '收工';
                     it.time = window.mergedBatchForm.time || '12:00';
                 });
             }
@@ -1166,7 +1265,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                         chunkCount: item.chunks.length,
                         title: item.title || '無標題',
                         markStatus: item.markStatus || '',
-                        category: item.category || '未分類',
+                        category: item.category || '收工',
                         time: item.time || '12:00', 
                         createdAt: Date.now()
                     };
@@ -1208,7 +1307,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 </div>
                 <div class="space-y-1">${galleryCategories.map((c, idx) => `
                     <div class="flex justify-between items-center p-1.5 bg-white rounded-lg border border-slate-200 text-xs font-bold text-slate-700">
-                        <span>${c}</span>${!['全部', '任務附件', '未分類'].includes(c) ? `<button onclick="window.removeCategoryAction(${idx})" class="text-slate-400 hover:text-red-500"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>` : '<span class="text-[9px] text-slate-400">預設</span>'}
+                        <span>${c}</span>${c !== '全部' ? `<button onclick="window.removeCategoryAction(${idx})" class="text-slate-400 hover:text-red-500"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>` : '<span class="text-[9px] text-slate-400">預設</span>'}
                     </div>`).join('')}</div>`;
             $('categoryManageModal')?.classList.replace('hidden', 'flex');
             lucide.createIcons();
@@ -1231,11 +1330,16 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             window.openCategoryManager(); window.renderGallery();
         };
 
+
         function loadLocalFastCache() {
             dailyScheduleData = getLocal('work_cache_schedule', []);
             taskCompletionState = getLocal('work_cache_task_states', {});
             subTaskCompletionState = getLocal('work_cache_subtask_states', {});
-            galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '任務附件', '未分類', '街市檔口', '鮮風機', '價格表', '其他']);
+            galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '收工', '清潔', '營業相', '雞相']);
+            // 自動清理歷史快取中殘留的「未分類」與「任務附件」
+            galleryCategories = galleryCategories.filter(c => c !== '未分類' && c !== '任務附件');
+            safeSetLocal('work_cache_gallery_categories', galleryCategories);
+
             galleryItems = getLocal('work_cache_gallery_items', []);
             splitHoursState = getLocal('work_cache_split_hours', {});
             futureMemos = getLocal('work_cache_future_memos', []);
@@ -1244,7 +1348,6 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             crRecords = getLocal('coldRoomRecords', []);
             crItemTypes = getLocal('coldRoomTypes', ['海鮮', '肉類', '蔬果', '包裝冰', '其他']);
             if (!crItemTypes.includes('包裝冰')) crItemTypes.push('包裝冰');
-            if (!galleryCategories.includes('任務附件')) galleryCategories.push('任務附件');
 
             if (!mapData.points || Object.keys(mapData.points).length === 0) mapData.points = JSON.parse(JSON.stringify(defaultMapPoints));
             else Object.keys(defaultMapPoints).forEach(k => { if (mapData.points[k]) { mapData.points[k].x = defaultMapPoints[k].x; mapData.points[k].y = defaultMapPoints[k].y; } });
@@ -1272,7 +1375,10 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             bindSync('schedule', 'work_cache_schedule', d => { if (d.tasks) { dailyScheduleData = d.tasks; if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false); } });
             bindSync('task_states', 'work_cache_task_states', d => { if (d.states) { taskCompletionState = d.states; if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false); } });
             bindSync('subtask_states', 'work_cache_subtask_states', d => { if (d.states) { subTaskCompletionState = d.states; if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false); } });
-            bindSync('gallery_categories', 'work_cache_gallery_categories', d => { galleryCategories = d.categories || galleryCategories; if (!galleryCategories.includes('任務附件')) galleryCategories.push('任務附件'); window.renderGallery(); });
+            bindSync('gallery_categories', 'work_cache_gallery_categories', d => { 
+                galleryCategories = (d.categories || galleryCategories).filter(c => c !== '未分類' && c !== '任務附件'); 
+                window.renderGallery(); 
+            });
             bindSync('future_memos', 'work_cache_future_memos', d => { futureMemos = d.memos || []; if (!$('memoPage')?.classList.contains('hidden')) window.renderMemos(); window.checkMemoAlerts(); });
             bindSync('team_members', 'work_cache_team_members', d => { teamMembers = d.members || []; if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager(); });
             bindSync('member_schedules', 'work_cache_member_schedules', d => {
@@ -1826,7 +1932,9 @@ window.crSaveData = () => {
                     galleryItems = imp.galleryItems || galleryItems; tabVisibilityState = imp.tabVisibilityState || tabVisibilityState;
                     crRecords = imp.crRecords || crRecords; crItemTypes = imp.crItemTypes || crItemTypes;
                     if (imp.stallList && Array.isArray(imp.stallList)) { window.stallList = imp.stallList; saveStallDatabase(); }
-                    if (!galleryCategories.includes('任務附件')) galleryCategories.push('任務附件');
+                    
+                    galleryCategories = (imp.galleryCategories || galleryCategories).filter(c => c !== '未分類' && c !== '任務附件');
+                    
                     safeSetLocal('work_cache_schedule', dailyScheduleData); safeSetLocal('work_cache_task_states', taskCompletionState);
                     safeSetLocal('work_cache_subtask_states', subTaskCompletionState); safeSetLocal('work_cache_gallery_categories', galleryCategories);
                     safeSetLocal('work_cache_gallery_items', galleryItems); safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
