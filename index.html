@@ -23,6 +23,14 @@
         @keyframes pop-fade-in { 0% { opacity: 0; transform: scale(0.95); } 100% { opacity: 1; transform: scale(1); } }
         .animate-pop-in { animation: pop-fade-in 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
         @keyframes sky-time-glow { 0%, 100% { box-shadow: 0 0 8px rgba(56, 189, 248, 0.55), inset 0 0 4px rgba(56, 189, 248, 0.25); border-color: #38bdf8; } 50% { box-shadow: 0 0 14px rgba(125, 211, 252, 0.85), inset 0 0 8px rgba(125, 211, 252, 0.4); border-color: #7dd3fc; } }
+        
+        /* ====== 新增的動態漸層邊框影格動畫 ====== */
+        @keyframes border-gradient-move {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
         .now-glowing-slot, .now-glowing-header { animation: sky-time-glow 2.8s infinite ease-in-out; border-left: 2px solid #38bdf8 !important; border-right: 2px solid #38bdf8 !important; position: relative; }
         .now-glowing-slot { z-index: 15; } .now-glowing-header { z-index: 25; border-top: 2px solid #38bdf8 !important; }
         .now-glowing-sub { box-shadow: 0 0 8px rgba(56, 189, 248, 0.5) inset; border: 1.5px solid #38bdf8 !important; border-radius: 4px; }
@@ -342,22 +350,30 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             try {
                 const AudioCtx = window.AudioContext || window.webkitAudioContext;
                 if (!AudioCtx) return;
-                if (crSoundIntervalId) { clearInterval(crSoundIntervalId); crSoundIntervalId = null; }
-                const ctx = new AudioCtx(); crAudioCtx = ctx;
-                const playDualBeep = () => {
-                    if (!ctx || ctx.state === 'closed') return;
-                    const now = ctx.currentTime;
-                    const o1 = ctx.createOscillator(), g1 = ctx.createGain();
-                    o1.type = 'sine'; o1.frequency.setValueAtTime(880, now);
-                    g1.gain.setValueAtTime(0.3, now); g1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-                    o1.connect(g1); g1.connect(ctx.destination); o1.start(now); o1.stop(now + 0.18);
-                    const o2 = ctx.createOscillator(), g2 = ctx.createGain();
-                    o2.type = 'sine'; o2.frequency.setValueAtTime(1174.66, now + 0.22);
-                    g2.gain.setValueAtTime(0.3, now + 0.22); g2.gain.exponentialRampToValueAtTime(0.001, now + 0.48);
-                    o2.connect(g2); g2.connect(ctx.destination); o2.start(now + 0.22); o2.stop(now + 0.48);
-                };
-                playDualBeep(); crSoundIntervalId = setInterval(playDualBeep, 1200);
-                setTimeout(() => { if (crSoundIntervalId) { clearInterval(crSoundIntervalId); crSoundIntervalId = null; } }, 10000);
+                const ctx = new AudioCtx();
+                if (ctx.state === 'suspended') { ctx.resume(); }
+
+                const now = ctx.currentTime;
+                
+                // 高質感單次清脆提示音 (柔和悅耳的「叮」一聲)
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+
+                osc.type = 'sine';
+                // 頻率：從高音平順滑落，製造清脆響亮的提示感
+                osc.frequency.setValueAtTime(1046.50, now); // C6
+                osc.frequency.exponentialRampToValueAtTime(1318.51, now + 0.12); // E6
+
+                gain.gain.setValueAtTime(0.25, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+
+                osc.start(now);
+                osc.stop(now + 0.4);
+
+                setTimeout(() => { if (ctx.state !== 'closed') ctx.close(); }, 600);
             } catch (e) {}
         };
 
@@ -582,14 +598,13 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             return '';
         };
 
-        // ====== 輕量高清縮圖 (提升至 360px、品質 0.75，文字清楚且不卡頓) ======
+        // ====== 輕量高清縮圖 (360px、品質 0.75，視網膜清晰度且不卡頓) ======
         let thumbImageCache = new Map();
 
         const getLowResThumbUrlAsync = async (item) => {
             const id = item.id;
             if (thumbImageCache.has(id)) return thumbImageCache.get(id);
 
-            // 使用 v2 快取鍵，避免讀到上一版太模糊的快取
             const idbThumb = await idbGet(`thumb_v2_${id}`);
             if (idbThumb) {
                 thumbImageCache.set(id, idbThumb);
@@ -602,7 +617,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             return new Promise((resolve) => {
                 const img = new Image();
                 img.onload = async () => {
-                    const maxDim = 360; // 從 150px 提高到 360px (完全足夠高清顯示)
+                    const maxDim = 360;
                     let { width: w, height: h } = img;
                     const scale = maxDim / Math.max(w, h);
                     w = Math.round(w * scale);
@@ -613,10 +628,10 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     cvs.height = h;
                     const ctx = cvs.getContext('2d');
                     ctx.imageSmoothingEnabled = true;
-                    ctx.imageSmoothingQuality = 'high'; // 開啟平滑抗鋸齒
+                    ctx.imageSmoothingQuality = 'high';
                     ctx.drawImage(img, 0, 0, w, h);
 
-                    const lowResUrl = cvs.toDataURL('image/jpeg', 0.75); // 品質提高到 0.75 (清晰銳利)
+                    const lowResUrl = cvs.toDataURL('image/jpeg', 0.75);
                     thumbImageCache.set(id, lowResUrl);
                     await idbSet(`thumb_v2_${id}`, lowResUrl);
                     resolve(lowResUrl);
@@ -626,21 +641,21 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             });
         };
 
-        window.handleGalleryUpload = async (input) => {
+        // ====== 支援直接傳入 File 陣列處理上傳 (點選與拖放共用) ======
+        window.processImageFilesUpload = async (files) => {
             if (window.isUploading) {
-                input.value = '';
                 return window.showToast("⚠️ 上傳進行中，請稍候再試", true);
             }
-            const files = Array.from(input.files || []);
-            if (!files.length) return;
-            window.pendingUploadImages = [];
+            const validFiles = Array.from(files || []).filter(f => f.type.startsWith('image/'));
+            if (!validFiles.length) return window.showToast("請選擇或拖入有效圖片檔案", true);
 
+            window.pendingUploadImages = [];
             const { time } = getNowInputStrs();
             const defaultCat = currentGalleryCategory === '全部' ? '提早收工' : currentGalleryCategory;
 
-            for (let i = 0; i < files.length; i++) {
+            for (let i = 0; i < validFiles.length; i++) {
                 try {
-                    const { chunks } = await splitImageTo4ChunksAsync(files[i]);
+                    const { chunks } = await splitImageTo4ChunksAsync(validFiles[i]);
                     const tempId = `img_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`;
                     const previewSrc = await merge4ChunksAsync(chunks);
                     window.pendingUploadImages.push({
@@ -648,21 +663,99 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                         prefix: "", code: "", markStatus: "", title: "", time, category: defaultCat
                     });
                 } catch (e) {}
-                const percent = (((i + 1) / files.length) * 100).toFixed(1);
-                window.setUploadProgress(percent, `處理中：${i + 1} / ${files.length} (${percent}%)`);
+                const percent = (((i + 1) / validFiles.length) * 100).toFixed(1);
+                window.setUploadProgress(percent, `處理中：${i + 1} / ${validFiles.length} (${percent}%)`);
             }
 
             window.setUploadProgress(-1, "");
-            input.value = '';
             if (window.pendingUploadImages.length) window.openUploadBatchModal();
             else window.showToast("無法讀取圖片", true);
+        };
+
+        // ====== 全視窗拖曳監聽 (只要在圖庫分頁，拖到任何位置都出遮罩) ======
+        // ====== 全視窗拖曳監聽 (修復語法錯誤版) ======
+        window.setupGalleryDragAndDrop = () => {
+            if (window._globalDragInitialized) return;
+            window._globalDragInitialized = true;
+
+            let dragCounter = 0;
+
+            const isGalleryActive = () => {
+                const page = $('galleryPage');
+                return page && !page.classList.contains('hidden');
+            };
+
+            // 阻止瀏覽器預設開啟圖片行為
+            window.addEventListener('dragover', (e) => e.preventDefault(), false);
+            window.addEventListener('drop', (e) => e.preventDefault(), false);
+
+            window.addEventListener('dragenter', (e) => {
+                e.preventDefault();
+                if (!isGalleryActive()) return;
+
+                dragCounter++;
+                const overlay = $('galleryDragOverlay');
+                if (overlay && e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
+                    overlay.classList.remove('hidden');
+                    overlay.classList.add('flex');
+                    try { lucide.createIcons({ root: overlay }); } catch (err) {}
+                }
+            });
+
+            window.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                if (!isGalleryActive()) return;
+                if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+            });
+
+            window.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                if (!isGalleryActive()) return;
+
+                dragCounter--;
+                if (dragCounter <= 0) {
+                    dragCounter = 0;
+                    const overlay = $('galleryDragOverlay');
+                    if (overlay) {
+                        overlay.classList.add('hidden');
+                        overlay.classList.remove('flex');
+                    }
+                }
+            });
+
+            window.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                if (!isGalleryActive()) return;
+
+                dragCounter = 0;
+                const overlay = $('galleryDragOverlay');
+                if (overlay) {
+                    overlay.classList.add('hidden');
+                    overlay.classList.remove('flex');
+                }
+
+                const files = e.dataTransfer?.files;
+                if (files && files.length > 0) {
+                    await window.processImageFilesUpload(files);
+                }
+            });
+        };
+
+        // 啟動時自動掛載全域監聽
+        window.setupGalleryDragAndDrop();
+
+        window.handleGalleryUpload = async (input) => {
+            const files = Array.from(input.files || []);
+            input.value = '';
+            if (!files.length) return;
+            await window.processImageFilesUpload(files);
         };
 
         window.setGalleryCategory = (c) => { currentGalleryCategory = c; window.renderGallery(); };
         window.openFullscreenImg = (src) => { $('imageViewerImg').src = src; $('imageViewer')?.classList.replace('hidden', 'flex'); };
         window.closeFullscreenImg = () => $('imageViewer')?.classList.replace('flex', 'hidden');
 
-        // ====== 放大鏡專屬全域函式 (修復點擊沒反應問題) ======
+        // ====== 放大鏡專屬全域函式 ======
         window.viewHdImage = async (id, e) => {
             if (e) e.stopPropagation();
             const item = galleryItems.find(x => x.id === id);
@@ -675,7 +768,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             }
         };
 
-        // ====== 刪除單張圖庫圖片 (修復版：立即關閉彈窗 + 重置指紋) ======
+        // ====== 刪除單張圖庫圖片 (強制重置指紋與清理縮圖快取) ======
         window.deleteGalleryItem = async (id, e) => {
             if (e) e.stopPropagation();
             $('galleryItemEditModal')?.remove();
@@ -908,7 +1001,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             window.renderGallery();
         };
 
-        // ====== 選取模式：批次刪除所選圖片 ======
+        // ====== 選取模式：批次刪除所選圖片（完成後自動取消選取狀態） ======
         window.deleteSelectedGalleryItems = () => {
             const count = window.selectedGalleryIds.size;
             if (!count) return window.showToast("尚未選取任何圖片", true);
@@ -929,6 +1022,8 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     }
                 }
 
+                // 自動取消選取狀態並關閉選取模式
+                window.isGallerySelectMode = false;
                 window.selectedGalleryIds.clear();
                 window._lastRenderFingerprint = '';
                 window.renderGallery();
@@ -949,7 +1044,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             });
         };
 
-        // ====== 勾選導出為 PNG ======
+        // ====== 勾選導出為 PNG（完成後自動取消選取狀態） ======
         window.exportAllGalleryImages = async () => {
             let targetItems = [];
             if (window.isGallerySelectMode && window.selectedGalleryIds.size > 0) {
@@ -1016,9 +1111,13 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     } catch (singleErr) {}
                 }
                 window.showToast(`✅ 成功導出 ${successCount} / ${targetItems.length} 張 PNG 圖片！`);
-                if (window.isGallerySelectMode) {
-                    window.toggleGallerySelectMode();
-                }
+                
+                // 自動取消選取狀態並關閉選取模式
+                window.isGallerySelectMode = false;
+                window.selectedGalleryIds.clear();
+                window._lastRenderFingerprint = '';
+                window.renderGallery();
+
             } catch (err) {
                 if (err.name !== 'AbortError') window.showToast(`❌ 無法存取資料夾`, true);
             }
@@ -1027,7 +1126,23 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         window._lastRenderFingerprint = '';
         window._lastRenderCategory = '';
 
-        // ====== 渲染圖庫列表 (整張卡片皆可點選、頂部可選取) ======
+        // ====== 圖庫分類標籤色彩設定 (高對比度 + 清晰字體) ======
+        window.getGalleryCategoryBadgeClass = (cat) => {
+            switch (cat) {
+                case '提早收工':
+                case '收工':
+                    return 'bg-yellow-100 text-yellow-900 border-yellow-400'; // 鮮亮黃
+                case '清潔':
+                    return 'bg-sky-100 text-sky-800 border-sky-400';         // 明亮天藍
+                case '營業相':
+                    return 'bg-emerald-100 text-emerald-800 border-emerald-400'; // 清晰淺綠
+                case '雞相':
+                    return 'bg-purple-100 text-purple-800 border-purple-400';   // 淺紫粉
+                default:
+                    return 'bg-slate-100 text-slate-700 border-slate-300';
+            }
+        };
+
         window.renderGallery = async () => {
             const sidebar = $('gallerySidebar'), grid = $('galleryGrid');
             if (!sidebar || !grid) return;
@@ -1075,6 +1190,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 const safeTitleEscaped = (i.title || '圖片').replace(/'/g, "\\'");
                 const isSelected = window.selectedGalleryIds.has(i.id);
                 const displayCat = (i.category === '收工' ? '提早收工' : i.category) || '提早收工';
+                const catColorClass = window.getGalleryCategoryBadgeClass(displayCat);
 
                 return `
                     <div data-id="${i.id}" 
@@ -1086,17 +1202,16 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                              onclick="${window.isGallerySelectMode ? `window.toggleSelectGalleryItem('${i.id}', event)` : ''}">
                             ${window.isGallerySelectMode ? `
                                 <input type="checkbox" class="gallery-chk-box w-3.5 h-3.5 rounded text-blue-600 cursor-pointer pointer-events-none" ${isSelected ? 'checked' : ''}>
-                                <span class="text-[8px] text-slate-500 font-bold truncate max-w-[65px] ml-auto">${displayCat}</span>
+                                <span class="text-[10px] font-black truncate max-w-[65px] ml-auto px-1.5 py-0.5 rounded-md border leading-none ${catColorClass}">${displayCat}</span>
                             ` : `
-                                <span class="text-[8px] font-bold text-amber-600 bg-amber-50 px-1 py-0.2 rounded border border-amber-200 truncate max-w-[65px]">${displayCat}</span>
-                                <!-- 就是這裡：放大鏡按鈕改成調用 window.viewHdImage -->
+                                <span class="text-[10px] font-black px-1.5 py-0.5 rounded-md border truncate max-w-[65px] leading-none ${catColorClass}">${displayCat}</span>
                                 <button type="button" onclick="window.viewHdImage('${i.id}', event)" title="放大檢視" class="text-slate-400 hover:text-blue-500 p-0.5 rounded transition-colors active:scale-95">
                                     <i data-lucide="zoom-in" class="w-3.5 h-3.5"></i>
                                 </button>
                             `}
                         </div>
 
-                        <!-- 圖片本體：載入低清小圖 -->
+                        <!-- 圖片本體 -->
                         <div class="w-full h-20 sm:h-24 bg-slate-100 overflow-hidden relative" 
                              onclick="${!window.isGallerySelectMode ? `window.openEditGalleryModal('${i.id}', event)` : ''}">
                             <img src="${thumbSrc}" 
@@ -1108,16 +1223,25 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                                  alt="${i.title || '圖片'}">
                         </div>
 
-                        <!-- 底部文字欄 -->
-                        <div class="p-1 flex justify-between items-center bg-white border-t border-slate-100 text-xs gap-0.5"
+                        <!-- 底部文字欄：時間帶底色膠囊標籤，與右側檔號強烈區隔 -->
+                        <div class="p-1.5 flex justify-between items-center bg-white border-t border-slate-100 text-xs gap-1.5"
                              onclick="${!window.isGallerySelectMode ? `window.openEditGalleryModal('${i.id}', event)` : ''}">
-                            <span class="text-[10px] text-slate-500 font-mono font-bold shrink-0">${i.time || '12:00'}</span>
-                            <span class="text-[10.5px] font-bold text-slate-800 truncate text-right flex-1 hover:text-blue-600">${i.title || '無標題'}</span>
+                            <span class="text-[11px] font-mono font-black text-slate-700 bg-slate-100 border border-slate-200/90 px-1.5 py-0.5 rounded-md shrink-0 shadow-2xs tracking-tight">${i.time || '12:00'}</span>
+                            <span class="text-xs font-black text-slate-800 truncate text-right flex-1 hover:text-blue-600 tracking-wide">${i.title || '無標題'}</span>
                         </div>
                     </div>`;
             }));
 
-            grid.innerHTML = `<div class="grid grid-cols-3 gap-1.5">${cameraSlotHtml}${renderedCards.join('')}</div>`;
+            // 包含中央區域的藍色虛線框
+            const overlayHtml = `
+                <div id="galleryDragOverlay" class="hidden absolute inset-2 z-30 bg-blue-50/85 border-2 border-dashed border-blue-500 rounded-2xl flex-col items-center justify-center pointer-events-none transition-all duration-200">
+                    <div class="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mb-1.5 shadow-xs">
+                        <i data-lucide="upload-cloud" class="w-5 h-5"></i>
+                    </div>
+                    <span class="text-xs font-black text-blue-700 tracking-wide">放開即可上傳圖片</span>
+                </div>`;
+
+            grid.innerHTML = `${overlayHtml}<div class="grid grid-cols-3 gap-1.5">${cameraSlotHtml}${renderedCards.join('')}</div>`;
             lucide.createIcons();
 
             const selBtn = $('gallerySelectModeBtn');
@@ -1141,7 +1265,186 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             return str;
         };
 
-        // ====== 根據「收工查核」自動判定：提早收工 / 清潔 (無寬限期) ======
+        // ====== 點擊預覽圖修改圖片內容 (內建刪除鍵、判定卡片與手動鎖定) ======
+        window.openEditGalleryModal = (id, e) => {
+            if (e) e.stopPropagation();
+            const item = galleryItems.find(x => x.id === id);
+            if (!item) return;
+
+            const catList = ['提早收工', '清潔', '營業相', '雞相'];
+            const curCat = (item.category === '收工' ? '提早收工' : item.category) || '提早收工';
+            const curTime = item.time || '12:00';
+
+            window._modalUserOverridden = false;
+
+            const modalHtml = `
+            <div id="galleryItemEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();">
+                <div class="bg-white rounded-2xl p-4 w-full max-w-[330px] shadow-2xl relative animate-pop-in" onclick="event.stopPropagation()">
+                    <header class="flex justify-between items-center pb-2.5 mb-2.5 border-b border-slate-100">
+                        <h3 class="font-bold text-sm text-slate-800 flex items-center">
+                            <i data-lucide="edit-3" class="w-4 h-4 mr-1.5 text-blue-500"></i> 修改圖片內容
+                        </h3>
+                        <button type="button" onclick="document.getElementById('galleryItemEditModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </header>
+
+                    <!-- 介面內提示框 -->
+                    <div id="editModalAutoHint" class="hidden mb-2.5 p-2 rounded-xl text-[11px] font-bold border transition-all flex items-center"></div>
+
+                    <div class="space-y-3">
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">分類</label>
+                            <div class="grid grid-cols-4 gap-1.5" id="editModalCatGroup">
+                                ${catList.map(cat => `
+                                    <button type="button" onclick="window.setModalEditCat('${cat}', true)" data-cat="${cat}" 
+                                        class="modal-cat-btn py-1.5 rounded-lg text-xs font-bold border transition-all ${curCat === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
+                                        ${cat}
+                                    </button>
+                                `).join('')}
+                            </div>
+                            <input type="hidden" id="editModalCatInput" value="${curCat}">
+                        </div>
+
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">標題 / 檔號</label>
+                            <input type="text" id="editModalTitleInput" value="${item.title || ''}" placeholder="例如: 1-002 或 R-061" 
+                                oninput="window.runModalAutoDetect(false)"
+                                class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500 text-center shadow-inner">
+                        </div>
+
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">時間</label>
+                            <input type="time" id="editModalTimeInput" value="${curTime}" 
+                                onchange="window.runModalAutoDetect(false)"
+                                class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-blue-500 text-center shadow-inner">
+                        </div>
+                    </div>
+
+                    <div class="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center">
+                        <button type="button" onclick="window.deleteGalleryItem('${id}', event)" 
+                            class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center active:scale-95 shadow-2xs">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5 mr-1"></i>刪除
+                        </button>
+                        <div class="space-x-1.5">
+                            <button type="button" onclick="document.getElementById('galleryItemEditModal')?.remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold">取消</button>
+                            <button type="button" onclick="window.saveGalleryItemEdit('${id}')" class="px-3.5 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95">儲存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            lucide.createIcons();
+            window.runModalAutoDetect(false);
+        };
+
+        window.runModalAutoDetect = (force = false) => {
+            if (window._modalUserOverridden && !force) return;
+
+            const titleVal = $('editModalTitleInput')?.value.trim() || '';
+            const timeVal = $('editModalTimeInput')?.value || '12:00';
+            const hintBox = $('editModalAutoHint');
+            if (!hintBox) return;
+
+            if (!titleVal || !window.stallList || !window.stallList.length) {
+                hintBox.className = 'hidden';
+                return;
+            }
+
+            let prefix = '', pureCode = titleVal;
+            if (/^1-0?/i.test(pureCode)) { prefix = '一樓'; pureCode = pureCode.replace(/^1-0?/i, ''); }
+            else if (/^R-0?/i.test(pureCode)) { prefix = '地下'; pureCode = pureCode.replace(/^R-0?/i, ''); }
+            else if (/^J-0?/i.test(pureCode)) { prefix = '花園仔'; pureCode = pureCode.replace(/^J-0?/i, ''); }
+            const cleanCode = pureCode.replace(/^0+/, '') || '0';
+
+            const matched = window.stallList.find(s => {
+                const sClean = String(s.code || '').replace(/^0+/, '');
+                if (sClean !== cleanCode) return false;
+                if (prefix) return s.floor.includes(prefix);
+                return true;
+            });
+
+            if (!matched || !matched.hours) {
+                hintBox.className = 'hidden';
+                return;
+            }
+
+            const closingTime = getClosingTime(matched.hours);
+            const [ch, cm] = closingTime.split(':').map(Number);
+            const [th, tm] = timeVal.split(':').map(Number);
+            const closeMins = ch * 60 + cm;
+            const targetMins = th * 60 + tm;
+            const diff = closeMins - targetMins;
+
+            hintBox.classList.remove('hidden');
+            // 提早大於 30 分鐘才算提早收工；30分鐘內寬限期算清潔
+            if (diff > 30) {
+                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col gap-0.5 animate-pop-in';
+                hintBox.innerHTML = `
+                    <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
+                    <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (超過 30 分寬限)</div>`;
+                window.setModalEditCat('提早收工', false);
+            } else {
+                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
+                const statusDetail = diff > 0 
+                    ? `[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (在 30 分鐘寬限期內)` 
+                    : `[${matched.floor} ${matched.code}] 表定 ${closingTime}，已過打烊時間`;
+                hintBox.innerHTML = `
+                    <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
+                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">${statusDetail}</div>`;
+                window.setModalEditCat('清潔', false);
+            }
+            lucide.createIcons({ root: hintBox });
+        };
+
+        window.setModalEditCat = (cat, isUserClick = false) => {
+            const input = $('editModalCatInput');
+            if (input) input.value = cat;
+
+            if (isUserClick) {
+                window._modalUserOverridden = true;
+                const hintBox = $('editModalAutoHint');
+                if (hintBox) {
+                    hintBox.classList.remove('hidden');
+                    hintBox.className = 'mb-2.5 p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between';
+                    hintBox.innerHTML = `<span>✋ 已手動鎖定為「${cat}」</span><button type="button" onclick="window._modalUserOverridden=false; window.runModalAutoDetect(true);" class="text-[10px] text-blue-600 underline ml-2">重置自動判定</button>`;
+                }
+            }
+
+            document.querySelectorAll('.modal-cat-btn').forEach(btn => {
+                const isActive = btn.dataset.cat === cat;
+                btn.className = `modal-cat-btn py-1.5 rounded-lg text-xs font-bold border transition-all ${isActive ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}`;
+            });
+        };
+
+        window.saveGalleryItemEdit = (id) => {
+            const item = galleryItems.find(x => x.id === id);
+            if (!item) return;
+
+            const newTitle = $('editModalTitleInput')?.value.trim() || '無標題';
+            const newCat = $('editModalCatInput')?.value || '提早收工';
+            const newTime = $('editModalTimeInput')?.value || '12:00';
+
+            item.title = newTitle;
+            item.category = newCat;
+            item.time = newTime;
+
+            safeSetLocal('work_cache_gallery_items', galleryItems);
+            if (currentUser) {
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), {
+                    title: newTitle,
+                    category: newCat,
+                    time: newTime
+                }, { merge: true });
+            }
+
+            $('galleryItemEditModal')?.remove();
+            window._lastRenderFingerprint = '';
+            window.renderGallery();
+            window.showToast(`✅ 已儲存！分類確定為「${newCat}」`);
+        };
+
+        // ====== 根據「收工查核」自動判定：提早收工 / 清潔 (含 30 分鐘寬限期) ======
         window.autoDetectStallCategory = (codeRaw, timeStr, fallbackCat) => {
             if (!codeRaw || !window.stallList || !window.stallList.length) return fallbackCat;
 
@@ -1167,8 +1470,9 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
             const closingMins = ch * 60 + cm;
             const targetMins = th * 60 + tm;
+            const diff = closingMins - targetMins;
 
-            if (targetMins < closingMins) {
+            if (diff > 30) {
                 if (!galleryCategories.includes('提早收工')) {
                     galleryCategories.push('提早收工');
                     safeSetLocal('work_cache_gallery_categories', galleryCategories);
@@ -1246,22 +1550,48 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             const diff = closeMins - targetMins;
 
             hintBox.classList.remove('hidden');
-            if (targetMins < closeMins) {
+            if (diff > 30) {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
                     <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
-                    <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘打烊</div>`;
+                    <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (超過 30 分寬限)</div>`;
                 if (isMerged) window.setMergedCategory('提早收工', false);
                 else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             } else {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
+                const statusDetail = diff > 0 
+                    ? `[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (在 30 分鐘寬限期內)` 
+                    : `[${matched.floor} ${matched.code}] 表定 ${closingTime}，已過打烊時間`;
                 hintBox.innerHTML = `
                     <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
-                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，已過打烊時間</div>`;
+                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">${statusDetail}</div>`;
                 if (isMerged) window.setMergedCategory('清潔', false);
                 else if (tempId) window.setPendingItemCategory(tempId, '清潔', false);
             }
             lucide.createIcons({ root: hintBox });
+        };
+
+        // ====== 完整修復：前綴按鈕點擊與數字自動補齊邏輯 ======
+        window.selectPrefixOption = (tempId, prefixVal) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
+            if (!item) return;
+            item.prefix = (item.prefix === prefixVal) ? "" : prefixVal;
+            if (item.prefix && item.code) {
+                item.code = formatStallCode(item.code, true);
+                const inputEl = $(`input-code-${tempId}`);
+                if (inputEl) inputEl.value = item.code;
+            }
+            item.title = `${item.prefix || ''}${item.code || ''}`.trim();
+            ['1-0', 'R-0', 'J-0'].forEach(pKey => {
+                const btn = $(`btn-prefix-${tempId}-${pKey}`);
+                if (btn) {
+                    btn.className = (item.prefix === pKey)
+                        ? "w-full py-1.5 rounded-lg text-xs font-black bg-blue-600 text-white border border-blue-600 shadow-xs"
+                        : "w-full py-1.5 rounded-lg text-xs font-black bg-white hover:bg-slate-100 text-slate-700 border border-slate-200";
+                }
+            });
+
+            window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
         };
 
         window.setMergedPrefix = (val) => {
@@ -1271,11 +1601,13 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 const inputEl = $('mergedCodeInput');
                 if (inputEl) inputEl.value = window.mergedBatchForm.code;
             }
-            ['1-0', 'R-0', 'J-0'].forEach(p => {
-                const btn = $(`merged-prefix-${p}`);
-                if (btn) btn.className = (window.mergedBatchForm.prefix === p)
-                    ? "w-full py-1 rounded-lg text-xs font-bold bg-blue-600 text-white border border-blue-600 shadow-xs"
-                    : "w-full py-1 rounded-lg text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-100";
+            ['1-0', 'R-0', 'J-0'].forEach(pKey => {
+                const btn = $(`merged-prefix-${pKey}`);
+                if (btn) {
+                    btn.className = (window.mergedBatchForm.prefix === pKey)
+                        ? "w-full py-1.5 rounded-lg text-xs font-black bg-blue-600 text-white border border-blue-600 shadow-xs"
+                        : "w-full py-1.5 rounded-lg text-xs font-black bg-white text-slate-700 border border-slate-200 hover:bg-slate-100";
+                }
             });
 
             const fullCode = `${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`;
@@ -1318,38 +1650,6 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     ? "flex-1 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-white border border-amber-500 shadow-xs active:scale-95 transition-all"
                     : "flex-1 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 active:scale-95 transition-all";
             });
-        };
-
-        window.onMergedCodeChange = (el, isBlur = false) => {
-            let val = el.value.trim();
-            if (isBlur && window.mergedBatchForm.prefix) {
-                val = formatStallCode(val, true);
-                el.value = val;
-            }
-            window.mergedBatchForm.code = val;
-
-            const fullCode = `${window.mergedBatchForm.prefix || ''}${val}`;
-            window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
-        };
-
-        window.selectPrefixOption = (tempId, prefixVal) => {
-            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
-            if (!item) return;
-            item.prefix = (item.prefix === prefixVal) ? "" : prefixVal;
-            if (item.prefix && item.code) {
-                item.code = formatStallCode(item.code, true);
-                const inputEl = $(`input-code-${tempId}`);
-                if (inputEl) inputEl.value = item.code;
-            }
-            item.title = `${item.prefix || ''}${item.code || ''}`.trim();
-            ['1-0', 'R-0', 'J-0'].forEach(val => {
-                const btn = $(`btn-prefix-${tempId}-${val}`);
-                if (btn) btn.className = (item.prefix === val)
-                    ? "w-full py-1 rounded text-[10px] font-bold bg-blue-600 text-white border border-blue-600"
-                    : "w-full py-1 rounded text-[10px] font-bold bg-white hover:bg-slate-100 text-slate-600 border border-slate-200";
-            });
-
-            window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
         };
 
         window.onPendingCodeChange = (tempId, el, isBlur = false) => {
@@ -1441,13 +1741,13 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                                 </select>
                             </div>
 
-                            <div class="w-12 flex flex-col space-y-1 shrink-0">
-                                <button type="button" id="merged-prefix-1-0" onclick="window.setMergedPrefix('1-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${window.mergedBatchForm.prefix === '1-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">一樓</button>
-                                <button type="button" id="merged-prefix-R-0" onclick="window.setMergedPrefix('R-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${window.mergedBatchForm.prefix === 'R-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">魚檔</button>
-                                <button type="button" id="merged-prefix-J-0" onclick="window.setMergedPrefix('J-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${window.mergedBatchForm.prefix === 'J-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">雞檔</button>
+                            <div class="w-16 flex flex-col space-y-1 shrink-0">
+                                <button type="button" id="merged-prefix-1-0" onclick="window.setMergedPrefix('1-0')" class="w-full py-1.5 rounded-lg text-xs font-black border ${window.mergedBatchForm.prefix === '1-0' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+                                <button type="button" id="merged-prefix-R-0" onclick="window.setMergedPrefix('R-0')" class="w-full py-1.5 rounded-lg text-xs font-black border ${window.mergedBatchForm.prefix === 'R-0' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+                                <button type="button" id="merged-prefix-J-0" onclick="window.setMergedPrefix('J-0')" class="w-full py-1.5 rounded-lg text-xs font-black border ${window.mergedBatchForm.prefix === 'J-0' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
                             </div>
 
-                            <textarea id="mergedCodeInput" oninput="window.onMergedCodeChange(this, false)" onblur="window.onMergedCodeChange(this, true)" placeholder="輸入檔號" class="flex-1 h-[76px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${window.mergedBatchForm.code || ''}</textarea>
+                            <textarea id="mergedCodeInput" oninput="window.onMergedCodeChange(this, false)" onblur="window.onMergedCodeChange(this, true)" placeholder="輸入檔號" class="flex-1 h-[90px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${window.mergedBatchForm.code || ''}</textarea>
                         </div>
                     </div>
                 </div>`;
@@ -1488,13 +1788,13 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                                 </select>
                             </div>
 
-                            <div class="w-12 flex flex-col space-y-1 shrink-0">
-                                <button type="button" id="btn-prefix-${item.tempId}-1-0" onclick="window.selectPrefixOption('${item.tempId}', '1-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${item.prefix === '1-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">一樓</button>
-                                <button type="button" id="btn-prefix-${item.tempId}-R-0" onclick="window.selectPrefixOption('${item.tempId}', 'R-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${item.prefix === 'R-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">魚檔</button>
-                                <button type="button" id="btn-prefix-${item.tempId}-J-0" onclick="window.selectPrefixOption('${item.tempId}', 'J-0')" class="w-full py-1 rounded-lg text-xs font-bold border ${item.prefix === 'J-0' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}">雞檔</button>
+                            <div class="w-16 flex flex-col space-y-1 shrink-0">
+                                <button type="button" id="btn-prefix-${item.tempId}-1-0" onclick="window.selectPrefixOption('${item.tempId}', '1-0')" class="w-full py-1.5 rounded-lg text-xs font-black border ${item.prefix === '1-0' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-R-0" onclick="window.selectPrefixOption('${item.tempId}', 'R-0')" class="w-full py-1.5 rounded-lg text-xs font-black border ${item.prefix === 'R-0' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-J-0" onclick="window.selectPrefixOption('${item.tempId}', 'J-0')" class="w-full py-1.5 rounded-lg text-xs font-black border ${item.prefix === 'J-0' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
                             </div>
 
-                            <textarea id="input-code-${item.tempId}" oninput="window.onPendingCodeChange('${item.tempId}', this, false)" onblur="window.onPendingCodeChange('${item.tempId}', this, true)" placeholder="輸入檔號" class="flex-1 h-[76px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${item.code || ''}</textarea>
+                            <textarea id="input-code-${item.tempId}" oninput="window.onPendingCodeChange('${item.tempId}', this, false)" onblur="window.onPendingCodeChange('${item.tempId}', this, true)" placeholder="輸入檔號" class="flex-1 h-[90px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${item.code || ''}</textarea>
                         </div>
                     </div>`;
                 }).join('');
@@ -1568,6 +1868,11 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 safeSetLocal('work_cache_gallery_items', galleryItems);
                 window._lastRenderFingerprint = '';
                 await window.renderGallery();
+                
+                // ====== 這裡就是觸發音效與頂部累積通知的關鍵點 ======
+                window.playAlertSound();
+                window.showGalleryTopNotification(newDocs.length);
+
                 window.showToast(`✅ 成功發布 ${newDocs.length} 張圖片！`);
             } catch (err) {
                 window.setUploadProgress(-1, "");
@@ -2683,7 +2988,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
 
             resultList.innerHTML = matched.map(stall => {
                 const closingTime = getClosingTime(stall.hours);
-                // 取得開始營業時間 (例如 "08:00-18:00" 取 "08:00")
                 const openTime = (stall.hours.match(/\d{1,2}:\d{2}/) || ['07:00'])[0];
                 
                 const [oh, om] = openTime.split(':').map(Number);
@@ -2702,18 +3006,20 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                         <span class="bg-slate-100 text-slate-500 border border-slate-200 text-[10.5px] font-bold px-2 py-0.5 rounded-full flex items-center shadow-xs">
                             <i data-lucide="moon" class="w-3 h-3 mr-1 text-slate-400"></i>未營業 (表定 ${openTime} 開)
                         </span>`;
-                } else if (curMins < closeMins) {
-                    // 已開門，但還沒到收工時間 (提早打烊)
+                } else if ((closeMins - curMins) > 30) {
+                    // 提早超過 30 分鐘打烊才算提早收工
                     const diffMin = closeMins - curMins;
                     statusBadgeHtml = `
                         <span class="bg-red-50 text-red-600 border border-red-200 text-[10.5px] font-black px-2 py-0.5 rounded-full flex items-center shadow-xs">
                             <i data-lucide="alert-triangle" class="w-3 h-3 mr-1 text-red-500"></i>提早 ${diffMin} 分鐘
                         </span>`;
                 } else {
-                    // 已過收工時間
+                    // 提早 30 分鐘以內或已過收工時間，皆視為正常清潔打烊
+                    const diffMin = closeMins - curMins;
+                    const cleanText = diffMin > 0 ? `清潔 (${diffMin}分寬限)` : `正常收工`;
                     statusBadgeHtml = `
                         <span class="bg-emerald-50 text-emerald-600 border border-emerald-200 text-[10.5px] font-black px-2 py-0.5 rounded-full flex items-center shadow-xs">
-                            <i data-lucide="check-circle-2" class="w-3 h-3 mr-1 text-emerald-500"></i>正常收工
+                            <i data-lucide="check-circle-2" class="w-3 h-3 mr-1 text-emerald-500"></i>${cleanText}
                         </span>`;
                 }
 
@@ -2822,6 +3128,91 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
             if (user) { dot?.classList.replace('bg-red-500', 'bg-green-500'); if (st) st.textContent = '系統已連線並同步'; setupPureRealtimeSync(); }
             else { dot?.classList.replace('bg-green-500', 'bg-red-500'); if (st) st.textContent = '連線中...'; }
         });
+
+        // ====== 頂部累積疊加通知橫幅與音效管理 ======
+        window._galleryNewCount = 0;
+        window._galleryNotifyTimeout = null;
+        window._galleryNewItemsQueue = []; // 用來累積存放所有新上傳的圖片資訊
+
+        window.showGalleryTopNotification = async (count) => {
+            window._galleryNewCount = (window._galleryNewCount || 0) + count;
+            
+            // 優先從當前上傳暫存取資料，若無則從圖庫最新項目取
+            const rawItems = window.pendingUploadImages.length > 0 
+                ? [...window.pendingUploadImages] 
+                : galleryItems.slice(0, count);
+
+            // 非同步取得每張圖的合法縮圖，確保絕對不破圖
+            const newlyAdded = await Promise.all(rawItems.map(async (it) => {
+                let imgUrl = it.src || '';
+                if (!imgUrl && it.id) {
+                    imgUrl = await getLowResThumbUrlAsync(it);
+                }
+                return {
+                    src: imgUrl,
+                    title: it.title || '無標題',
+                    time: it.time || '12:00'
+                };
+            }));
+            
+            // 將新圖片依序加入佇列，最多保留最近 4 筆
+            window._galleryNewItemsQueue = [...newlyAdded, ...window._galleryNewItemsQueue].slice(0, 4);
+
+            let banner = $('galleryTopNotificationBanner');
+            
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'galleryTopNotificationBanner';
+                banner.className = 'fixed inset-0 z-[11000] pointer-events-none flex items-center justify-center p-4 transition-all duration-300';
+                document.body.appendChild(banner);
+            }
+
+            // 產生所有累積新圖片的詳細資訊清單
+            const itemsListHtml = window._galleryNewItemsQueue.map((item) => `
+                <div class="flex items-center space-x-2.5 bg-slate-50 border border-slate-200/80 p-2 rounded-xl">
+                    <div class="w-10 h-10 rounded-lg bg-slate-200 overflow-hidden shrink-0 border border-slate-300 flex items-center justify-center">
+                        ${item.src ? `<img src="${item.src}" class="w-full h-full object-cover">` : `<i data-lucide="image" class="w-4 h-4 text-slate-400"></i>`}
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="text-[11px] font-mono font-bold text-blue-600">${item.time || '12:00'}</div>
+                        <div class="text-xs font-black text-slate-800 truncate">${item.title || '無標題'}</div>
+                    </div>
+                </div>
+            `).join('');
+
+            // 動態邊框 + 完整資訊清單 UI
+            banner.innerHTML = `
+                <div class="relative p-[2px] rounded-2xl shadow-2xl w-full max-w-[340px] animate-pop-in pointer-events-auto cursor-pointer overflow-hidden group" style="background: linear-gradient(60deg, #38bdf8, #6366f1, #ec4899, #38bdf8); background-size: 300% 300%; animation: border-gradient-move 4s ease infinite;" onclick="window._galleryNewCount = 0; window._galleryNewItemsQueue = []; document.getElementById('galleryTopNotificationBanner')?.remove(); window.switchTab('gallery');">
+                    
+                    <div class="bg-white/95 text-slate-800 p-4 rounded-[14px] flex flex-col backdrop-blur-md space-y-3">
+                        
+                        <!-- 標題與總計數 -->
+                        <div class="flex justify-between items-center border-b border-slate-100 pb-2">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-xs font-black text-slate-900 tracking-wide">新相片已成功上傳</span>
+                                <span class="bg-blue-600 text-white text-[10px] font-black px-2 py-0.2 rounded-full shadow-xs">+${window._galleryNewCount} 張</span>
+                            </div>
+                            <button onclick="event.stopPropagation(); window._galleryNewCount=0; window._galleryNewItemsQueue=[]; document.getElementById('galleryTopNotificationBanner')?.remove();" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors">
+                                <i data-lucide="x" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+
+                        <!-- 每一筆新圖片的詳細資訊疊加列表 -->
+                        <div class="space-y-1.5 max-h-[190px] overflow-y-auto scrollbar-hide pr-0.5">
+                            ${itemsListHtml}
+                        </div>
+
+                        <!-- 底部點擊提示 -->
+                        <div class="text-center text-[10px] font-bold text-blue-600 pt-1 border-t border-slate-100">
+                            點擊此處立即前往圖庫檢視
+                        </div>
+                    </div>
+                </div>`;
+
+            banner.style.opacity = '1';
+            banner.classList.remove('hidden');
+            try { lucide.createIcons({ root: banner }); } catch (e) {}
+        };
 
         loadLocalFastCache(); 
         initAuth();
@@ -2934,7 +3325,7 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
             </div>
 
             <div class="flex-1 min-h-0 flex flex-col w-full h-full relative z-10 bg-[#fdfbf7]">
-                <!-- 工具列：加入「選取」按鈕 -->
+                <!-- 工具列：上傳在前，導出在後 -->
                 <div class="p-2.5 border-b border-[#e6e2d6] flex items-center justify-between bg-white shrink-0 shadow-xs z-20 gap-1.5">
                     <div class="relative flex-1">
                         <i data-lucide="search" class="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400"></i>
@@ -2943,29 +3334,42 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                     <button type="button" id="gallerySelectModeBtn" onclick="window.toggleGallerySelectMode()" class="bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200 px-2 py-1.5 rounded-lg flex items-center justify-center active:scale-95 text-xs font-bold transition-all shadow-xs shrink-0">
                         <i data-lucide="check-square" class="w-3.5 h-3.5 mr-1"></i> 選取
                     </button>
+                    <!-- 上傳鍵在前 -->
                     <label class="bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 px-2 py-1.5 rounded-lg flex items-center justify-center cursor-pointer active:scale-95 text-xs font-bold shadow-xs shrink-0">
-    <i data-lucide="upload" class="w-3.5 h-3.5 mr-1"></i> 上傳
-    <input type="file" accept="image/*" multiple class="hidden" onchange="window.handleGalleryUpload(this)">
-</label>
-<button type="button" onclick="window.exportAllGalleryImages()" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 px-2 py-1.5 rounded-lg flex items-center justify-center active:scale-95 text-xs font-bold transition-all shadow-xs shrink-0" title="導出">
-    <i data-lucide="download" class="w-3.5 h-3.5 mr-1"></i> 導出
-</button>
+                        <i data-lucide="upload" class="w-3.5 h-3.5 mr-1"></i> 上傳
+                        <input type="file" accept="image/*" multiple class="hidden" onchange="window.handleGalleryUpload(this)">
+                    </label>
+                    <!-- 導出鍵在後 -->
+                    <button type="button" onclick="window.exportAllGalleryImages()" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 px-2 py-1.5 rounded-lg flex items-center justify-center active:scale-95 text-xs font-bold transition-all shadow-xs shrink-0" title="導出">
+                        <i data-lucide="download" class="w-3.5 h-3.5 mr-1"></i> 導出
+                    </button>
                 </div>
 
-                <!-- 選取模式提示列 (已加入刪除按鈕) -->
+                <!-- 選取模式提示列 -->
                 <div id="gallerySelectionBar" class="hidden px-2.5 py-1.5 bg-blue-50 border-b border-blue-200 flex justify-between items-center text-xs font-bold shrink-0">
                     <span class="text-blue-800">已選取 <span id="selectedCountText" class="font-black text-blue-600">0</span> 張</span>
                     <div class="flex items-center space-x-1.5">
                         <button type="button" onclick="window.toggleSelectAllGallery()" class="px-2 py-1 bg-white border border-blue-300 text-blue-600 rounded-lg text-[11px] font-bold hover:bg-blue-50 active:scale-95 transition-all">全選</button>
                         <button type="button" onclick="window.deleteSelectedGalleryItems()" class="px-2 py-1 bg-red-500 hover:bg-red-600 text-white rounded-lg text-[11px] font-bold flex items-center active:scale-95 transition-all shadow-xs">
-                            <i data-lucide="trash-2" class="w-3 h-3 mr-1"></i>刪除
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5 mr-1"></i>刪除
                         </button>
                     </div>
                 </div>
 
                 <div class="flex flex-1 min-h-0 overflow-hidden relative z-10">
+                    <!-- 側邊欄分類 (不會被遮蓋) -->
                     <div class="w-[70px] shrink-0 border-r border-[#e6e2d6] bg-[#f4f1eb] overflow-y-auto flex flex-col items-center space-y-1.5 scrollbar-hide" id="gallerySidebar"></div>
-                    <div class="flex-1 p-2 overflow-y-auto bg-[#fdfbf7] relative scrollbar-hide" id="galleryGrid"></div>
+                    
+                    <!-- 中央照片區域 (僅此區域顯示藍色虛線框) -->
+                    <div class="flex-1 p-2 overflow-y-auto bg-[#fdfbf7] relative scrollbar-hide" id="galleryGrid">
+                        <!-- 拖曳懸停時僅在中央出現的藍色虛線提示框 -->
+                        <div id="galleryDragOverlay" class="hidden absolute inset-2 z-30 bg-blue-50/85 border-2 border-dashed border-blue-500 rounded-2xl flex-col items-center justify-center pointer-events-none transition-all duration-200">
+                            <div class="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mb-1.5 shadow-xs">
+                                <i data-lucide="upload-cloud" class="w-5 h-5"></i>
+                            </div>
+                            <span class="text-xs font-black text-blue-700 tracking-wide">放開即可上傳圖片</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </main>
