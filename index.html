@@ -651,7 +651,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
             window.pendingUploadImages = [];
             const { time } = getNowInputStrs();
-            const defaultCat = currentGalleryCategory === '全部' ? '提早收工' : currentGalleryCategory;
+            const defaultCat = '未分類';
 
             for (let i = 0; i < validFiles.length; i++) {
                 try {
@@ -1484,14 +1484,14 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         };
 
         window.isBatchMergedView = false;
-        window.mergedBatchForm = { prefix: "", code: "", markStatus: "", category: "提早收工", time: "" };
+        window.mergedBatchForm = { prefix: "", code: "", markStatus: "", category: "未分類", time: "" };
 
         window.openUploadBatchModal = () => { 
             window.isBatchMergedView = window.pendingUploadImages.length > 1;
             const { time } = getNowInputStrs();
             window.mergedBatchForm = {
                 prefix: "", code: "", markStatus: "",
-                category: currentGalleryCategory === '全部' ? '提早收工' : currentGalleryCategory,
+                category: "未分類",
                 time: time
             };
             window.renderUploadBatchList(); 
@@ -1515,6 +1515,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             window.renderUploadBatchList();
         };
 
+        // ====== 第 3 處：自動判定僅顯示提示，不擅自幫你點選分類 ======
         window.updateBatchAutoHintUI = (codeRaw, timeStr, hintBoxId, isMerged = true, tempId = null) => {
             const hintBox = $(hintBoxId);
             if (!hintBox) return;
@@ -1553,20 +1554,16 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             if (diff > 30) {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
-                    <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
+                    <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 建議判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
                     <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (超過 30 分寬限)</div>`;
-                if (isMerged) window.setMergedCategory('提早收工', false);
-                else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             } else {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
                 const statusDetail = diff > 0 
                     ? `[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (在 30 分鐘寬限期內)` 
                     : `[${matched.floor} ${matched.code}] 表定 ${closingTime}，已過打烊時間`;
                 hintBox.innerHTML = `
-                    <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
+                    <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 建議判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
                     <div class="text-[10px] text-emerald-600 font-medium pl-4.5">${statusDetail}</div>`;
-                if (isMerged) window.setMergedCategory('清潔', false);
-                else if (tempId) window.setPendingItemCategory(tempId, '清潔', false);
             }
             lucide.createIcons({ root: hintBox });
         };
@@ -1806,6 +1803,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             lucide.createIcons();
         };
 
+        // ====== 第 4 處：確認送出時，未選者一律設為「未分類」 ======
         window.confirmBatchUpload = async () => {
             const items = [...window.pendingUploadImages];
             if (!items.length || window.isUploading) return;
@@ -1820,7 +1818,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     it.code = codeFormatted;
                     it.markStatus = window.mergedBatchForm.markStatus || "";
                     it.title = cleanTitle || '無標題';
-                    it.category = window.mergedBatchForm.category || '提早收工';
+                    it.category = window.mergedBatchForm.category || '未分類';
                     it.time = curTime;
                 });
             }
@@ -1842,7 +1840,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                         chunkCount: item.chunks.length,
                         title: item.title || '無標題',
                         markStatus: item.markStatus || '',
-                        category: item.category || '提早收工',
+                        category: item.category || '未分類',
                         time: item.time || '12:00', 
                         createdAt: Date.now()
                     };
@@ -1869,7 +1867,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 window._lastRenderFingerprint = '';
                 await window.renderGallery();
                 
-                // ====== 這裡就是觸發音效與頂部累積通知的關鍵點 ======
+                // 觸發音效與頂部通知
                 window.playAlertSound();
                 window.showGalleryTopNotification(newDocs.length);
 
@@ -1899,11 +1897,39 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         window.closeCategoryManager = () => $('categoryManageModal')?.classList.replace('flex', 'hidden');
         window.addCategoryAction = () => {
             const val = $('newCatInput')?.value.trim();
-            if (!val || galleryCategories.includes(val)) return;
+            if (!val) return window.showToast('請輸入分類名稱', true);
+            if (galleryCategories.includes(val)) return window.showToast('分類已存在', true);
+            
             galleryCategories.push(val);
             safeSetLocal('work_cache_gallery_categories', galleryCategories);
             if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
-            window.openCategoryManager(); window.renderGallery();
+            
+            // 強制重置側邊欄與圖庫渲染指紋，確保即時刷新
+            window._lastRenderCategory = '';
+            window._lastRenderFingerprint = '';
+            
+            window.openCategoryManager(); 
+            window.renderGallery();
+            window.showToast(`✅ 已新增分類「${val}」！`);
+        };
+
+        window.removeCategoryAction = (idx) => {
+            const removed = galleryCategories.splice(idx, 1)[0];
+            safeSetLocal('work_cache_gallery_categories', galleryCategories);
+            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
+            
+            // 強制重置側邊欄與圖庫渲染指紋，確保即時刷新
+            window._lastRenderCategory = '';
+            window._lastRenderFingerprint = '';
+            
+            // 若刪除的是當前正處於的分類，退回「全部」
+            if (currentGalleryCategory === removed) {
+                currentGalleryCategory = '全部';
+            }
+
+            window.openCategoryManager(); 
+            window.renderGallery();
+            window.showToast(`已刪除分類「${removed}」`);
         };
 
         window.removeCategoryAction = (idx) => {
@@ -2538,15 +2564,55 @@ window.crSaveData = () => {
             if (e) e.stopPropagation();
             if (window._isTogglingTask) return;
             window._isTogglingTask = true;
-            const card = e?.currentTarget?.closest('.timeline-card');
-            if (card) {
-                card.style.transition = 'all 0.25s ease';
-                card.style.transform = 'translateY(-10px) scale(0.97)';
-                card.style.opacity = '0.4';
+
+            const clickedBtn = e?.currentTarget;
+            const card = clickedBtn?.closest('.timeline-card');
+            const page = $('timelinePage');
+            
+            // 記錄按鈕相對於可視視窗的 Y 軸座標
+            const origClientY = clickedBtn ? clickedBtn.getBoundingClientRect().top : null;
+
+            // 尋找清單中的下一張任務卡片
+            const currentWrapper = clickedBtn?.closest('.timeline-wrapper');
+            let nextTaskId = null;
+            if (currentWrapper) {
+                let nextWrapper = currentWrapper.nextElementSibling;
+                while (nextWrapper) {
+                    if (nextWrapper.classList.contains('timeline-wrapper')) {
+                        nextTaskId = nextWrapper.dataset.taskId;
+                        break;
+                    }
+                    nextWrapper = nextWrapper.nextElementSibling;
+                }
             }
+
+            // 柔和淡出縮放動畫
+            if (card) {
+                card.style.transition = 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)';
+                card.style.transform = 'translateY(-4px) scale(0.98)';
+                card.style.opacity = '0.5';
+            }
+
             setTimeout(() => {
                 window.toggleTask(taskId);
-                if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+                if (page && !page.classList.contains('hidden')) {
+                    window.renderTimeline(false);
+
+                    // 使用 smooth 緩慢平滑滑動對齊，不再瞬間跳動
+                    if (nextTaskId && origClientY !== null) {
+                        requestAnimationFrame(() => {
+                            const nextBtn = document.querySelector(`#tl-task-wrapper-${nextTaskId} button`);
+                            if (nextBtn) {
+                                const newClientY = nextBtn.getBoundingClientRect().top;
+                                const diffY = newClientY - origClientY;
+                                page.scrollBy({
+                                    top: diffY,
+                                    behavior: 'smooth'
+                                });
+                            }
+                        });
+                    }
+                }
                 window._isTogglingTask = false;
             }, 250);
         };
@@ -2683,7 +2749,9 @@ window.crSaveData = () => {
                 const done = taskCompletionState[t.id], status = calculateTaskStatus(t.start, t.end), isLast = index === tasks.length - 1;
                 let wStyle = `max-height: 250px; z-index: ${index + 1};`, wClass = 'timeline-wrapper mb-1 relative transition-all duration-500 ease-out';
                 let cClass = '', dotClass = '', tText = '', checkBtn = '', activeLine = '';
-                const grpBadge = t.group ? `<span class="text-[10px] px-1.5 py-0.5 rounded border font-bold mr-1.5 inline-flex items-center justify-center shadow-sm shrink-0 ${window.getGroupColor(t.group)}">${t.group}組</span>` : '';
+                
+                const grpBadge = t.group ? `<span class="text-[10px] px-1 py-0.5 rounded border font-bold mr-1 inline-flex items-center justify-center shadow-xs shrink-0 ${window.getGroupColor(t.group)}">${t.group}組</span>` : '';
+                
                 if (done) {
                     if (lastWasStacked) wStyle += ' margin-top: 10px;'; lastWasStacked = false; cClass = 'opacity-60 scale-[0.92] border-slate-200 bg-slate-100 grayscale-[0.5]';
                     dotClass = 'bg-slate-300 w-4 h-4 left-[18px] border-[3px] border-[#fdfbf7]'; tText = `<div class="time-text text-[11px] mt-1.5 tracking-widest"><span class="text-slate-500 font-bold">✔ 已完成</span></div>`;
@@ -2708,7 +2776,11 @@ window.crSaveData = () => {
                     prevGapTime = parseTime(t.start);
                     checkBtn = `<button onclick="event.stopPropagation(); window.completeTimelineTask('${t.id}', event)" class="w-10 h-10 rounded-full bg-white border-2 border-[#d6d0c4] text-slate-400 hover:bg-green-500 hover:text-white hover:border-green-500 transition-all duration-300 flex items-center justify-center shadow-sm active:scale-95 group cursor-pointer z-10 relative"><i data-lucide="check" class="w-5 h-5 pointer-events-none group-hover:scale-110 transition-transform"></i></button>`;
                 }
-                html += `<div id="tl-task-wrapper-${t.id}" class="${wClass}" style="${wStyle}" data-task-id="${t.id}" data-start="${t.start}" data-end="${t.end}">${isLast ? '' : '<div class="absolute left-[24px] w-[4px] bg-[#d6d0c4] top-1/2 -bottom-[150px] z-0 rounded-full"></div>'}${activeLine}<div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div><div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[44px] mr-[10px] ${cClass} overflow-hidden cursor-pointer group/card hover:shadow-md transition-all duration-300" ondblclick="window.editTimelineTask('${t.id}', event)" title="點擊修改"><div class="flex flex-col items-center justify-center shrink-0 w-[60px] bg-slate-100/50 border-r border-slate-200/60 p-2 text-center" onclick="window.editTimelineTask('${t.id}', event)"><span class="font-black text-[15px] text-slate-700 tracking-tighter ${done ? 'opacity-50 line-through decoration-slate-400' : ''}">${t.start}</span><span class="text-[9px] text-slate-400 font-bold mt-0.5">${t.end}</span></div><div class="flex-1 p-3 min-w-0 flex flex-col justify-center select-none" onclick="window.editTimelineTask('${t.id}', event)"><div class="flex items-center pr-1">${grpBadge}<h3 class="font-bold text-slate-800 text-[14px] truncate flex-1 min-w-0 ${done ? 'opacity-50 line-through decoration-slate-400' : ''}" title="${t.title}">${t.title}</h3></div>${tText}</div><div class="shrink-0 flex items-center justify-center pr-3 pl-1">${checkBtn}</div></div></div>`;
+                
+                // 1. 左側時間欄：維持圖 1 原版 p-2 與 mt-0.5，移除 leading-none，恢復原汁原味的垂直距離與自然分佈，寬度僅適度收整為 52px
+                // 2. 右側剔號容器：pr-2 pl-0，將剔號平移靠右
+                // 3. 中間標題：flex-1 p-3 寬度充裕，長標題不再提早截斷
+                html += `<div id="tl-task-wrapper-${t.id}" class="${wClass}" style="${wStyle}" data-task-id="${t.id}" data-start="${t.start}" data-end="${t.end}">${isLast ? '' : '<div class="absolute left-[24px] w-[4px] bg-[#d6d0c4] top-1/2 -bottom-[150px] z-0 rounded-full"></div>'}${activeLine}<div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div><div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[42px] mr-[3px] ${cClass} overflow-hidden cursor-pointer group/card hover:shadow-md transition-all duration-300" ondblclick="window.editTimelineTask('${t.id}', event)" title="點擊修改"><div class="flex flex-col items-center justify-center shrink-0 w-[52px] bg-slate-100/50 border-r border-slate-200/60 p-2 text-center select-none" onclick="window.editTimelineTask('${t.id}', event)"><span class="font-black text-[15px] text-slate-700 tracking-tighter ${done ? 'opacity-50 line-through decoration-slate-400' : ''}">${t.start}</span><span class="text-[9px] text-slate-400 font-bold mt-0.5 tracking-tighter">${t.end}</span></div><div class="flex-1 p-3 min-w-0 flex flex-col justify-center select-none" onclick="window.editTimelineTask('${t.id}', event)"><div class="flex items-center"><h3 class="font-bold text-slate-800 text-[14px] truncate flex-1 min-w-0 tracking-tight ${done ? 'opacity-50 line-through decoration-slate-400' : ''}" title="${t.title}">${grpBadge}${t.title}</h3></div>${tText}</div><div class="shrink-0 flex items-center justify-center pr-2 pl-0">${checkBtn}</div></div></div>`;
             });
             html += '</div>'; container.innerHTML = html; lucide.createIcons();
             const page = $('timelinePage');
