@@ -1899,16 +1899,18 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             const val = $('newCatInput')?.value.trim();
             if (!val) return window.showToast('請輸入分類名稱', true);
             if (galleryCategories.includes(val)) return window.showToast('分類已存在', true);
-            
+
             galleryCategories.push(val);
             safeSetLocal('work_cache_gallery_categories', galleryCategories);
-            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
             
-            // 強制重置側邊欄與圖庫渲染指紋，確保即時刷新
+            // 修正：使用全域一致的 cfgDoc('gallery_categories') 確保路徑完全吻合
+            syncConfig('gallery_categories', { categories: galleryCategories });
+
+            // 重置渲染指紋，強制立即更新左側欄
             window._lastRenderCategory = '';
             window._lastRenderFingerprint = '';
-            
-            window.openCategoryManager(); 
+
+            window.openCategoryManager();
             window.renderGallery();
             window.showToast(`✅ 已新增分類「${val}」！`);
         };
@@ -1916,18 +1918,18 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         window.removeCategoryAction = (idx) => {
             const removed = galleryCategories.splice(idx, 1)[0];
             safeSetLocal('work_cache_gallery_categories', galleryCategories);
-            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
             
-            // 強制重置側邊欄與圖庫渲染指紋，確保即時刷新
+            // 修正：使用全域一致的 cfgDoc('gallery_categories') 確保路徑完全吻合
+            syncConfig('gallery_categories', { categories: galleryCategories });
+
             window._lastRenderCategory = '';
             window._lastRenderFingerprint = '';
-            
-            // 若刪除的是當前正處於的分類，退回「全部」
+
             if (currentGalleryCategory === removed) {
                 currentGalleryCategory = '全部';
             }
 
-            window.openCategoryManager(); 
+            window.openCategoryManager();
             window.renderGallery();
             window.showToast(`已刪除分類「${removed}」`);
         };
@@ -1945,8 +1947,10 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             taskCompletionState = getLocal('work_cache_task_states', {});
             subTaskCompletionState = getLocal('work_cache_subtask_states', {});
             galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '提早收工', '清潔', '營業相', '雞相']);
-// 自動清理歷史快取中殘留的「收工」、「未分類」與「任務附件」
-galleryCategories = galleryCategories.map(c => c === '收工' ? '提早收工' : c).filter(c => c !== '未分類' && c !== '任務附件');
+            // 自動將舊的「收工」統一轉為「提早收工」
+            galleryCategories = galleryCategories.map(c => c === '收工' ? '提早收工' : c);
+            // 確保不重複
+            galleryCategories = Array.from(new Set(galleryCategories));
             safeSetLocal('work_cache_gallery_categories', galleryCategories);
 
             galleryItems = getLocal('work_cache_gallery_items', []);
@@ -1985,7 +1989,10 @@ galleryCategories = galleryCategories.map(c => c === '收工' ? '提早收工' :
             bindSync('task_states', 'work_cache_task_states', d => { if (d.states) { taskCompletionState = d.states; if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false); } });
             bindSync('subtask_states', 'work_cache_subtask_states', d => { if (d.states) { subTaskCompletionState = d.states; if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false); } });
             bindSync('gallery_categories', 'work_cache_gallery_categories', d => { 
-                galleryCategories = (d.categories || galleryCategories).filter(c => c !== '未分類' && c !== '任務附件'); 
+                if (d.categories && Array.isArray(d.categories)) {
+                    galleryCategories = d.categories;
+                    safeSetLocal('work_cache_gallery_categories', galleryCategories);
+                }
                 window.renderGallery(); 
             });
             bindSync('future_memos', 'work_cache_future_memos', d => { futureMemos = d.memos || []; if (!$('memoPage')?.classList.contains('hidden')) window.renderMemos(); window.checkMemoAlerts(); });
@@ -2039,15 +2046,43 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     activeMembers[sched.name] = sched.locationId;
                     const [endH, endM] = sched.end.split(':').map(Number);
                     const remainMins = (endH * 60 + endM) - curMins;
+
+                    // 當前班次剩餘 10 分鐘內，檢查下一班接替者
                     if (remainMins > 0 && remainMins <= 10) {
                         const nextSched = memberSchedules.find(ns => ns.locationId === sched.locationId && ns.name !== sched.name && ns.start === sched.end);
-                        if (nextSched) { incomingMembers[sched.locationId] = incomingMembers[sched.locationId] || []; if (!incomingMembers[sched.locationId].includes(nextSched.name)) incomingMembers[sched.locationId].push(nextSched.name); }
+                        if (nextSched) { 
+                            incomingMembers[sched.locationId] = incomingMembers[sched.locationId] || []; 
+                            if (!incomingMembers[sched.locationId].includes(nextSched.name)) incomingMembers[sched.locationId].push(nextSched.name); 
+                        }
+                    }
+
+                    // ====== 新增：若此人當前在其他地方，但下一個時段排定前往「客服室 (pt_1)」，提早 15 分鐘在客服室標示「待:」======
+                    if (sched.locationId !== 'pt_1') {
+                        const nextDuty = memberSchedules.find(ns => ns.name === sched.name && ns.start === sched.end && ns.locationId === 'pt_1');
+                        if (nextDuty && remainMins > 0 && remainMins <= 15) {
+                            incomingMembers['pt_1'] = incomingMembers['pt_1'] || [];
+                            if (!incomingMembers['pt_1'].includes(sched.name)) incomingMembers['pt_1'].push(sched.name);
+                        }
                     }
                 }
+
+                // 若剛上班或從休息中即將前往客服室 (提早 15 分鐘進待派)
+                if (sched.locationId === 'pt_1') {
+                    const [sH, sM] = sched.start.split(':').map(Number);
+                    const diffToStart = (sH * 60 + sM) - curMins;
+                    if (diffToStart > 0 && diffToStart <= 15) {
+                        incomingMembers['pt_1'] = incomingMembers['pt_1'] || [];
+                        if (!incomingMembers['pt_1'].includes(sched.name)) incomingMembers['pt_1'].push(sched.name);
+                    }
+                }
+
                 if (sched.locationId === 'pt_7') {
                     const [sH, sM] = sched.start.split(':').map(Number);
                     const diffToRest = (sH * 60 + sM) - curMins;
-                    if (diffToRest > 0 && diffToRest <= 15) { incomingMembers['pt_7'] = incomingMembers['pt_7'] || []; if (!incomingMembers['pt_7'].includes(sched.name)) incomingMembers['pt_7'].push(sched.name); }
+                    if (diffToRest > 0 && diffToRest <= 15) { 
+                        incomingMembers['pt_7'] = incomingMembers['pt_7'] || []; 
+                        if (!incomingMembers['pt_7'].includes(sched.name)) incomingMembers['pt_7'].push(sched.name); 
+                    }
                 }
             });
 
@@ -2098,9 +2133,13 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             }
 
             document.querySelectorAll('.member-dynamic-marker').forEach(el => el.dataset.active = "false");
-            Object.entries(locGroups).forEach(([locId, names]) => {
+            
+            // 處理地圖各主要點位（含 pt_1 客服室、pt_3 花園仔、pt_4 魚檔、pt_5 整體巡邏）的當前與待命人員
+            const allLocKeys = Array.from(new Set([...Object.keys(locGroups), ...Object.keys(incomingMembers)]));
+            allLocKeys.forEach(locId => {
                 if (['pt_2', 'pt_6', 'pt_7'].includes(locId) || !mapData.points[locId]) return;
-                const loc = mapData.points[locId], incoming = incomingMembers[locId] || [];
+                const loc = mapData.points[locId], names = locGroups[locId] || [], incoming = incomingMembers[locId] || [];
+
                 names.forEach((name, idx) => {
                     let marker = $(`dyn-marker-${name}-${locId}-current`) || document.createElement('div');
                     marker.id = `dyn-marker-${name}-${locId}-current`;
@@ -2112,6 +2151,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 pointer-events-none z-40 drop-shadow-xl ${['animate-float-a', 'animate-float-b', 'animate-float-c'][seed % 3]}`;
                     marker.style.animationDelay = `${(seed % 5) * -3}s`; marker.dataset.active = "true";
                 });
+
                 incoming.forEach((name, idx) => {
                     let marker = $(`dyn-marker-${name}-${locId}-incoming`) || document.createElement('div');
                     marker.id = `dyn-marker-${name}-${locId}-incoming`;
@@ -2119,7 +2159,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     if (marker.parentNode !== container) container.appendChild(marker);
                     const off = incoming.length > 1 ? (idx - (incoming.length - 1) / 2) * 55 : 0;
                     marker.style.left = `calc(${loc.x}% + ${off}px - 35px)`;
-                    let topOff = locId === 'pt_1' ? '-45px' : (locId === 'pt_3' || locId === 'pt_4' ? '-90px' : '-70px');
+                    let topOff = locId === 'pt_1' ? '-65px' : (locId === 'pt_3' || locId === 'pt_4' ? '-90px' : '-70px');
                     marker.style.top = `calc(${loc.y}% + ${topOff})`;
                     marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 pointer-events-none z-20 drop-shadow-xl animate-flag-in`;
                     marker.dataset.active = "true";
