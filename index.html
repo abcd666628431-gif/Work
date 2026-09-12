@@ -1639,9 +1639,10 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
         };
 
+        // ====== 修正：疊加模式切換前綴按鈕時，自動重新計算判定 ======
         window.setMergedPrefix = (val) => {
             window.mergedBatchForm.prefix = (window.mergedBatchForm.prefix === val) ? "" : val;
-            if (window.mergedBatchForm.prefix) {
+            if (window.mergedBatchForm.prefix && window.mergedBatchForm.code) {
                 window.mergedBatchForm.code = formatStallCode(window.mergedBatchForm.code, true);
                 const inputEl = $('mergedCodeInput');
                 if (inputEl) inputEl.value = window.mergedBatchForm.code;
@@ -1655,7 +1656,20 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 }
             });
 
-            const fullCode = `${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`;
+            const fullCode = `${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`.trim();
+            window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
+        };
+
+        // ====== 補齊：疊加模式檔號輸入監聽與即時自動判定 ======
+        window.onMergedCodeChange = (el, isBlur = false) => {
+            let val = el.value.trim();
+            if (isBlur && window.mergedBatchForm.prefix) {
+                val = formatStallCode(val, true);
+                el.value = val;
+            }
+            window.mergedBatchForm.code = val;
+
+            const fullCode = `${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`.trim();
             window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
         };
 
@@ -1715,16 +1729,6 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
         };
 
         window.updateTimePart = (id, part, val) => {
-            const item = window.pendingUploadImages.find(x => x.tempId === id);
-            if (!item) return;
-            let [h, m] = (item.time || '00:00').split(':');
-            if (part === 'h') h = val; else m = val;
-            item.time = `${h}:${m}`;
-
-            window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${id}`, false, id);
-        };
-
-        window.updateMergedTimePart = (part, val) => {
             let [h, m] = (window.mergedBatchForm.time || '00:00').split(':');
             if (part === 'h') h = val; else m = val;
             window.mergedBatchForm.time = `${h}:${m}`;
