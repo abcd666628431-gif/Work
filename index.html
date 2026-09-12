@@ -884,6 +884,9 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             else if (/^J-0?/i.test(pureCode)) { prefix = '花園仔'; pureCode = pureCode.replace(/^J-0?/i, ''); }
             const cleanCode = pureCode.replace(/^0+/, '') || '0';
 
+            // 判斷是否為雞檔 / 花園仔
+            const isChickenStall = prefix === '花園仔' || /^J-0?/i.test(titleVal);
+
             const matched = window.stallList.find(s => {
                 const sClean = String(s.code || '').replace(/^0+/, '');
                 if (sClean !== cleanCode) return false;
@@ -904,17 +907,28 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             const diff = closeMins - targetMins;
 
             hintBox.classList.remove('hidden');
-            if (targetMins < closeMins) {
-                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col gap-0.5 animate-pop-in';
-                hintBox.innerHTML = `
-                    <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
-                    <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘打烊</div>`;
-                window.setModalEditCat('提早收工', false);
-            } else {
+
+            // 雞檔固定判定為清潔，不設提早收工
+            if (isChickenStall) {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
                     <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
-                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，已過打烊時間</div>`;
+                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 雞檔無提早收工，固定判定為清潔</div>`;
+                window.setModalEditCat('清潔', false);
+            } else if (diff > 30) {
+                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col gap-0.5 animate-pop-in';
+                hintBox.innerHTML = `
+                    <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
+                    <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (超過 30 分寬限)</div>`;
+                window.setModalEditCat('提早收工', false);
+            } else {
+                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
+                const statusDetail = diff > 0 
+                    ? `[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (在 30 分鐘寬限期內)` 
+                    : `[${matched.floor} ${matched.code}] 表定 ${closingTime}，已過打烊時間`;
+                hintBox.innerHTML = `
+                    <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
+                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">${statusDetail}</div>`;
                 window.setModalEditCat('清潔', false);
             }
             lucide.createIcons({ root: hintBox });
@@ -1383,7 +1397,8 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 hintBox.innerHTML = `
                     <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
                     <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (超過 30 分寬限)</div>`;
-                window.setModalEditCat('提早收工', false);
+                if (isMerged) window.setMergedCategory('提早收工', false);
+else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             } else {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
                 const statusDetail = diff > 0 
@@ -1485,15 +1500,18 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
         window.isBatchMergedView = false;
         window.mergedBatchForm = { prefix: "", code: "", markStatus: "", category: "未分類", time: "" };
+        window._batchCategoryLocked = false;
 
         window.openUploadBatchModal = () => { 
             window.isBatchMergedView = window.pendingUploadImages.length > 1;
             const { time } = getNowInputStrs();
+            window._batchCategoryLocked = false;
             window.mergedBatchForm = {
                 prefix: "", code: "", markStatus: "",
                 category: "未分類",
                 time: time
             };
+            window.pendingUploadImages.forEach(it => it._categoryLocked = false);
             window.renderUploadBatchList(); 
             $('uploadBatchModal')?.classList.replace('hidden', 'flex'); 
             lucide.createIcons(); 
@@ -1515,10 +1533,19 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             window.renderUploadBatchList();
         };
 
-        // ====== 第 3 處：自動判定僅顯示提示，不擅自幫你點選分類 ======
         window.updateBatchAutoHintUI = (codeRaw, timeStr, hintBoxId, isMerged = true, tempId = null) => {
             const hintBox = $(hintBoxId);
             if (!hintBox) return;
+
+            // 若使用者已手動點選了「營業相」或「雞相」，不被判定跳轉覆蓋
+            const isLocked = isMerged 
+                ? (window._batchCategoryLocked || window.mergedBatchForm.category === '營業相' || window.mergedBatchForm.category === '雞相')
+                : (() => {
+                    const item = window.pendingUploadImages.find(x => x.tempId === tempId);
+                    return item && (item._categoryLocked || item.category === '營業相' || item.category === '雞相');
+                })();
+
+            if (isLocked) return;
 
             if (!codeRaw || !window.stallList || !window.stallList.length) {
                 hintBox.className = 'hidden';
@@ -1530,6 +1557,9 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             else if (/^R-0?/i.test(pureCode)) { prefix = '地下'; pureCode = pureCode.replace(/^R-0?/i, ''); }
             else if (/^J-0?/i.test(pureCode)) { prefix = '花園仔'; pureCode = pureCode.replace(/^J-0?/i, ''); }
             const cleanCode = pureCode.replace(/^0+/, '') || '0';
+
+            // 判斷是否屬於雞檔 / 花園仔（修復：使用 codeRaw，避免報錯）
+            const isChickenStall = prefix === '花園仔' || /^J-0?/i.test(codeRaw.trim());
 
             const matched = window.stallList.find(s => {
                 const sClean = String(s.code || '').replace(/^0+/, '');
@@ -1551,13 +1581,19 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             const diff = closeMins - targetMins;
 
             hintBox.classList.remove('hidden');
-            if (diff > 30) {
+
+            if (isChickenStall) {
+                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
+                hintBox.innerHTML = `
+                    <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
+                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 雞檔無提早收工，固定判定為清潔</div>`;
+                if (isMerged) window.setMergedCategory('清潔', false);
+                else if (tempId) window.setPendingItemCategory(tempId, '清潔', false);
+            } else if (diff > 30) {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
                     <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
                     <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (超過 30 分寬限)</div>`;
-                
-                // 自動幫你選取「提早收工」
                 if (isMerged) window.setMergedCategory('提早收工', false);
                 else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             } else {
@@ -1569,7 +1605,6 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
                     <div class="text-[10px] text-emerald-600 font-medium pl-4.5">${statusDetail}</div>`;
                 
-                // 自動幫你選取「清潔」
                 if (isMerged) window.setMergedCategory('清潔', false);
                 else if (tempId) window.setPendingItemCategory(tempId, '清潔', false);
             }
@@ -1622,11 +1657,13 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         window.setMergedCategory = (cat, isUserClick = false) => {
             window.mergedBatchForm.category = cat;
             if (isUserClick) {
+                // 手動選擇了任何分類（特別是營業相、雞相），鎖定不被自動判定覆蓋
+                window._batchCategoryLocked = (cat === '營業相' || cat === '雞相');
                 const hintBox = $('batchMergedAutoHint');
                 if (hintBox) {
                     hintBox.classList.remove('hidden');
                     hintBox.className = 'mb-2.5 p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between';
-                    hintBox.innerHTML = `<span>✋ 已手動鎖定為「${cat}」</span><button type="button" onclick="window.updateBatchAutoHintUI('${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}', '${window.mergedBatchForm.time || '12:00'}', 'batchMergedAutoHint', true);" class="text-[10px] text-blue-600 underline ml-2">重置自動判定</button>`;
+                    hintBox.innerHTML = `<span>✋ 已手動選擇「${cat}」</span><button type="button" onclick="window._batchCategoryLocked=false; window.updateBatchAutoHintUI('${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}', '${window.mergedBatchForm.time || '12:00'}', 'batchMergedAutoHint', true);" class="text-[10px] text-blue-600 underline ml-2">重新判定</button>`;
                 }
             }
             ['提早收工', '清潔', '營業相', '雞相'].forEach(c => {
@@ -1642,11 +1679,12 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             if (!item) return;
             item.category = cat;
             if (isUserClick) {
+                item._categoryLocked = (cat === '營業相' || cat === '雞相');
                 const hintBox = $(`hint-pending-${tempId}`);
                 if (hintBox) {
                     hintBox.classList.remove('hidden');
                     hintBox.className = 'p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between';
-                    hintBox.innerHTML = `<span>✋ 已手動鎖定為「${cat}」</span><button type="button" onclick="window.updateBatchAutoHintUI('${item.title}', '${item.time}', 'hint-pending-${tempId}', false, '${tempId}');" class="text-[10px] text-blue-600 underline ml-2">重置自動判定</button>`;
+                    hintBox.innerHTML = `<span>✋ 已手動選擇「${cat}」</span><button type="button" onclick="const it = window.pendingUploadImages.find(x => x.tempId === '${tempId}'); if(it) it._categoryLocked = false; window.updateBatchAutoHintUI('${item.title}', '${item.time}', 'hint-pending-${tempId}', false, '${tempId}');" class="text-[10px] text-blue-600 underline ml-2">重新判定</button>`;
                 }
             }
             ['提早收工', '清潔', '營業相', '雞相'].forEach(c => {
@@ -1942,13 +1980,6 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             window.showToast(`已刪除分類「${removed}」`);
         };
 
-        window.removeCategoryAction = (idx) => {
-            galleryCategories.splice(idx, 1);
-            safeSetLocal('work_cache_gallery_categories', galleryCategories);
-            if (currentUser) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'gallery_categories'), { categories: galleryCategories });
-            window.openCategoryManager(); window.renderGallery();
-        };
-
 
         function loadLocalFastCache() {
             dailyScheduleData = getLocal('work_cache_schedule', []);
@@ -2170,7 +2201,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     if (locId === 'pt_1') {
                         const offX = idx * 65 + 45; // 往右推到對應的右側區域
                         marker.style.left = `calc(${loc.x}% + ${offX}px)`;
-                        marker.style.top = `calc(${loc.y}% + 18px);`; // 垂直置於與客服室方框右側齊平的高度
+                        marker.style.top = `calc(${loc.y}% + 18px)`;
                     } else {
                         const off = incoming.length > 1 ? (idx - (incoming.length - 1) / 2) * 55 : 0;
                         marker.style.left = `calc(${loc.x}% + ${off}px - 35px)`;
