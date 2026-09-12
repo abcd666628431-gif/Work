@@ -81,6 +81,8 @@
         const db = getFirestore(app);
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         let currentUser = null;
+        // 產生唯一的瀏覽器工作階段 ID，用來區分「自己」與「其他人」
+        const clientSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
 
         const $ = id => document.getElementById(id);
         const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
@@ -110,6 +112,7 @@
         const syncConfig = (key, data, merge = false) => { if (currentUser) setDoc(cfgDoc(key), data, { merge }); };
         const pad = (n) => String(n).padStart(2, '0');
 
+        // 只保留這唯一的一組
         const IDB_STORE = 'hd_full_images';
         const openIDB = () => new Promise((res, rej) => {
             const req = indexedDB.open('QuadChunk_Gallery_DB_V2', 1);
@@ -117,6 +120,7 @@
             req.onsuccess = () => res(req.result);
             req.onerror = () => rej(req.error);
         });
+
         const idbSet = async (key, val) => {
             const dbInstance = await openIDB();
             return new Promise((res, rej) => {
@@ -2068,14 +2072,15 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                     memoryImageCache.set(docId, item.src);
 
                     const mainDocData = {
-                        id: docId,
-                        chunkCount: item.chunks.length,
-                        title: item.title || '無標題',
-                        markStatus: item.markStatus || '',
-                        category: item.category || '未分類',
-                        time: item.time || '12:00',
-                        createdAt: Date.now()
-                    };
+                    id: docId,
+                    chunkCount: item.chunks.length,
+                    title: item.title || '無標題',
+                    markStatus: item.markStatus || '',
+                    category: item.category || '未分類',
+                    time: item.time || '12:00',
+                    createdAt: Date.now(),
+                    sessionId: clientSessionId // 記錄是由哪一個瀏覽器上傳的
+                };
 
                     const singleBatch = writeBatch(db);
                     singleBatch.set(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId), mainDocData);
@@ -2104,6 +2109,10 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 window._lastRenderFingerprint = '';
                 await window.renderGallery();
                 window.playAlertSound();
+                
+                // 補回：呼叫頂部累積疊加通知橫幅
+                window.showGalleryTopNotification(total);
+
                 window.showToast(`✅ 全部圖片（共 ${total} 張）已成功發布！`);
 
             } catch (err) {
@@ -2275,37 +2284,51 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
 
             onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snap) => {
                 const map = new Map();
-                // 先保留本地目前記憶體中已標記為垃圾桶的項目
                 const currentLocalDeleted = new Map();
                 galleryItems.forEach(it => { if (it?.isDeleted) currentLocalDeleted.set(it.id, it); });
+
+                let newIncomingCount = 0;
 
                 snap.forEach(d => { 
                     const it = d.data(); 
                     if (it?.id) {
-                        // 雲端為 true，或本地目前暫存為 true，都認定為在垃圾桶內
                         if (it.isDeleted || currentLocalDeleted.has(it.id)) {
                             it.isDeleted = true;
                             it.deletedAt = it.deletedAt || currentLocalDeleted.get(it.id)?.deletedAt || Date.now();
                         } else {
                             it.isDeleted = false;
                         }
+
+                        // 判斷是否為「其他人」在 15 秒內新上傳且非本機已有的圖片
+                        const isBrandNew = (Date.now() - (it.createdAt || 0)) < 15000;
+                        const isNotMe = it.sessionId && it.sessionId !== clientSessionId;
+                        const alreadyExistsLocally = galleryItems.some(existing => existing.id === it.id);
+
+                        if (isBrandNew && isNotMe && !alreadyExistsLocally && !it.isDeleted) {
+                            newIncomingCount++;
+                        }
+
                         map.set(it.id, it); 
                     }
                 });
 
                 galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
-                // 替換這行：改用防爆安全儲存
                 saveGalleryItemsSafe(galleryItems);
                 
                 window._lastRenderFingerprint = '';
                 if (!$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
-                // 若垃圾桶彈窗開著，同步刷新
+                
                 if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
                     window.renderTrashList();
                 }
-            }, console.error);
-        }
 
+                // 如果偵測到是其他人上傳的新圖片，播放音效並彈出頂部通知橫幅！
+                if (newIncomingCount > 0) {
+                    window.playAlertSound();
+                    window.showGalleryTopNotification(newIncomingCount);
+                }
+            }, console.error);
+}
 window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML = ''; window.updateMapSimulation(); };
 
         window.updateMapSimulation = () => {
@@ -2720,7 +2743,22 @@ window.crSaveData = () => {
 
         window.crRenderTypesInModal = () => {
             const c = $('crTypeContainer'); if (!c) return;
-            c.innerHTML = crItemTypes.length ? crItemTypes.map((t, i) => `<div class="relative inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors cursor-pointer ${crCurrentSelectedType === t ? 'bg-blue-100 border-blue-400 text-blue-700 shadow-sm' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}" onclick="window.crSelectType('${t}')">${t}<button onclick="event.stopPropagation(); window.crDeleteType(${i})" class="ml-1 -mr-0.5 text-slate-400 hover:text-red-500 p-0.5 rounded-full hover:bg-red-50 transition-colors"><i data-lucide="x" class="w-2.5 h-2.5 pointer-events-none"></i></button></div>`).join('') : '<span class="text-[10px] text-slate-400 py-0.5">尚無類型，請新增</span>';
+            
+            // 防呆保底：如果類別陣列意外變空，自動恢復預設類型
+            if (!Array.isArray(crItemTypes) || crItemTypes.length === 0) {
+                crItemTypes = ['魚', '散冰', '魚+冰', '包裝冰'];
+                try { safeSetLocal('coldRoomTypes', crItemTypes); } catch (e) {}
+            }
+
+            c.innerHTML = crItemTypes.map((t, i) => `
+                <div class="relative inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors cursor-pointer ${crCurrentSelectedType === t ? 'bg-blue-100 border-blue-400 text-blue-700 shadow-sm' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}" onclick="window.crSelectType('${t}')">
+                    ${t}
+                    <button onclick="event.stopPropagation(); window.crDeleteType(${i})" class="ml-1 -mr-0.5 text-slate-400 hover:text-red-500 p-0.5 rounded-full hover:bg-red-50 transition-colors">
+                        <i data-lucide="x" class="w-2.5 h-2.5 pointer-events-none"></i>
+                    </button>
+                </div>
+            `).join('');
+            
             lucide.createIcons({ root: c });
         };
 
@@ -3618,9 +3656,9 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         }
     </script>
 </head>
-<body class="flex justify-center items-center min-h-screen p-0 sm:py-6 bg-[#f0ebe1]">
-    <div class="w-full max-w-[430px] h-[910px] max-h-[100vh] sm:max-h-[96vh] bg-[#fdfbf7] sm:rounded-[2.5rem] shadow-2xl sm:border-[6px] border-[#d6d0c4] overflow-hidden relative flex flex-col mx-auto my-auto">
-        <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-30 border-b border-[#e5dfd3] px-3 pt-1.5 pb-1.5 shadow-xs shrink-0">
+<body class="flex justify-center items-center min-h-screen p-0 sm:py-2 bg-[#f0ebe1]">
+    <div class="w-full max-w-[430px] h-full sm:h-[910px] min-h-[100vh] sm:min-h-[880px] bg-[#fdfbf7] sm:rounded-[2.5rem] shadow-2xl sm:border-[6px] border-[#d6d0c4] overflow-hidden relative flex flex-col mx-auto my-auto">
+        <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-30 border-b border-[#e5dfd3] px-3 pt-1 pb-1 shadow-xs shrink-0">
             <div class="flex items-center justify-between relative">
                 <div class="w-8"></div>
                 <div class="flex items-center justify-center space-x-2 shrink-0">
