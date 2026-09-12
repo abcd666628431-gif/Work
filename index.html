@@ -826,35 +826,55 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             window.showToast("🗑️ 圖片已移至垃圾桶");
         };
 
-        // ====== 選取模式：批次刪除所選圖片（完成後自動取消選取狀態） ======
-        window.deleteSelectedGalleryItems = () => {
-            const count = window.selectedGalleryIds.size;
-            if (!count) return window.showToast("尚未選取任何圖片", true);
+        // ====== 批次移至還原清單（軟刪除） ======
+window.deleteSelectedGalleryItems = () => {
+    const count = window.selectedGalleryIds.size;
+    if (!count) return window.showToast("尚未選取任何圖片", true);
 
-            window.showConfirm("批次刪除", `確定要永久刪除已選取的 ${count} 張圖片嗎？`, async () => {
-                const idsToDelete = Array.from(window.selectedGalleryIds);
-                galleryItems = galleryItems.filter(i => !window.selectedGalleryIds.has(i.id));
-                safeSetLocal('work_cache_gallery_items', galleryItems);
-                
-                for (const id of idsToDelete) {
-                    memoryImageCache.delete(id);
-                    await idbDel(id);
-                    if (currentUser && db) {
-                        deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id));
-                        getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id, 'chunks'))
-                            .then(snap => snap.forEach(d => deleteDoc(d.ref)))
-                            .catch(() => {});
-                    }
-                }
+    window.showConfirm("移至還原清單", `確定要將已選取的 ${count} 張圖片移入還原清單嗎？`, async () => {
+        const now = Date.now();
+        const idsToDelete = Array.from(window.selectedGalleryIds).map(String);
 
-                // 自動取消選取狀態並關閉選取模式
-                window.isGallerySelectMode = false;
-                window.selectedGalleryIds.clear();
-                window._lastRenderFingerprint = '';
-                window.renderGallery();
-                window.showToast(`✅ 已成功刪除 ${count} 張圖片！`);
-            });
-        };
+        // 1. 本地資料只標記 isDeleted，絕不能用 filter 刪除
+        galleryItems.forEach(i => {
+            if (idsToDelete.includes(String(i.id))) {
+                i.isDeleted = true;
+                i.deletedAt = now;
+            }
+        });
+        await saveGalleryItemsSafe(galleryItems);
+
+        // 2. 雲端批次軟更新（不調用 deleteDoc）
+        if (currentUser && db) {
+            try {
+                const batch = writeBatch(db);
+                idsToDelete.forEach(id => {
+                    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id);
+                    batch.set(ref, {
+                        isDeleted: true,
+                        deletedAt: now
+                    }, { merge: true });
+                });
+                await batch.commit();
+            } catch (err) {
+                console.error("批次刪除同步失敗:", err);
+            }
+        }
+
+        // 3. 重置選取模式並刷新畫面
+        window.isGallerySelectMode = false;
+        window.selectedGalleryIds.clear();
+        window._lastRenderFingerprint = '';
+        await window.renderGallery();
+
+        // 4. 若還原彈窗目前開啟中，同步刷新清單
+        if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
+            window.renderTrashList();
+        }
+
+        window.showToast(`🗑️ 已將 ${count} 張圖片移入還原清單！`);
+    });
+};
 
         // ====== 單張還原 ======
         window.restoreGalleryItem = async (id) => {
