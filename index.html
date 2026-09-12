@@ -1537,15 +1537,13 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             const hintBox = $(hintBoxId);
             if (!hintBox) return;
 
-            // 若使用者已手動點選了「營業相」或「雞相」，不被判定跳轉覆蓋
-            const isLocked = isMerged 
-                ? (window._batchCategoryLocked || window.mergedBatchForm.category === '營業相' || window.mergedBatchForm.category === '雞相')
-                : (() => {
-                    const item = window.pendingUploadImages.find(x => x.tempId === tempId);
-                    return item && (item._categoryLocked || item.category === '營業相' || item.category === '雞相');
-                })();
-
-            if (isLocked) return;
+            // 嚴格檢查：只有使用者明確手動選了「營業相」或「雞相」才跳過自動判定
+            const curCat = isMerged ? window.mergedBatchForm.category : window.pendingUploadImages.find(x => x.tempId === tempId)?.category;
+            const isUserLocked = isMerged ? window._batchCategoryLocked : window.pendingUploadImages.find(x => x.tempId === tempId)?._categoryLocked;
+            
+            if (isUserLocked && (curCat === '營業相' || curCat === '雞相')) {
+                return; // 使用者要傳營業相或雞相，不干擾
+            }
 
             if (!codeRaw || !window.stallList || !window.stallList.length) {
                 hintBox.className = 'hidden';
@@ -1558,7 +1556,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             else if (/^J-0?/i.test(pureCode)) { prefix = '花園仔'; pureCode = pureCode.replace(/^J-0?/i, ''); }
             const cleanCode = pureCode.replace(/^0+/, '') || '0';
 
-            // 判斷是否屬於雞檔 / 花園仔（修復：使用 codeRaw，避免報錯）
+            // 判斷是否屬於雞檔 / 花園仔
             const isChickenStall = prefix === '花園仔' || /^J-0?/i.test(codeRaw.trim());
 
             const matched = window.stallList.find(s => {
@@ -1582,21 +1580,28 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
 
             hintBox.classList.remove('hidden');
 
+            // 1. 雞檔專屬規則：無提早收工，一律自動點亮「清潔」
             if (isChickenStall) {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
                     <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
-                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 雞檔無提早收工，固定判定為清潔</div>`;
+                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 雞檔固定判定為清潔</div>`;
+                
                 if (isMerged) window.setMergedCategory('清潔', false);
                 else if (tempId) window.setPendingItemCategory(tempId, '清潔', false);
-            } else if (diff > 30) {
+            } 
+            // 2. 一般檔位：提早大於 30 分鐘，自動點亮「提早收工」
+            else if (diff > 30) {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
                     <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
                     <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (超過 30 分寬限)</div>`;
+                
                 if (isMerged) window.setMergedCategory('提早收工', false);
                 else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
-            } else {
+            } 
+            // 3. 一般檔位：30 分鐘寬限期內或已過收工時間，自動點亮「清潔」
+            else {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
                 const statusDetail = diff > 0 
                     ? `[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (在 30 分鐘寬限期內)` 
