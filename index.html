@@ -81,8 +81,13 @@
         const db = getFirestore(app);
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         let currentUser = null;
-        // 產生唯一的瀏覽器工作階段 ID，用來區分「自己」與「其他人」
-        const clientSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+        
+        // 確保每台裝置/瀏覽器擁有一個永久固定的唯一識別碼
+        let clientSessionId = localStorage.getItem('work_client_device_id');
+        if (!clientSessionId) {
+            clientSessionId = 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+            localStorage.setItem('work_client_device_id', clientSessionId);
+        }
 
         const $ = id => document.getElementById(id);
         const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
@@ -2299,11 +2304,12 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                             it.isDeleted = false;
                         }
 
-                        // 判斷是否為「其他人」在 15 秒內新上傳且非本機已有的圖片
-                        const isBrandNew = (Date.now() - (it.createdAt || 0)) < 15000;
-                        const isNotMe = it.sessionId && it.sessionId !== clientSessionId;
+                        // 判斷是否為「其他人」在 30 秒內新上傳且非本機已有的圖片
+                        const isBrandNew = (Date.now() - (it.createdAt || 0)) < 30000;
+                        const isNotMe = !it.sessionId || it.sessionId !== clientSessionId;
                         const alreadyExistsLocally = galleryItems.some(existing => existing.id === it.id);
 
+                        // 確保只有其他人上傳、本機還沒有、且不是被刪除的圖片才計入新通知
                         if (isBrandNew && isNotMe && !alreadyExistsLocally && !it.isDeleted) {
                             newIncomingCount++;
                         }
