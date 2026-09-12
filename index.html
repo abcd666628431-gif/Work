@@ -1849,7 +1849,99 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             lucide.createIcons();
         };
 
-        // ====== 第 4 處：確認送出時，未選者一律設為「未分類」 ======
+        // ====== 斷點續傳與後台防中斷管理 ======
+        window._uploadQueue = [];
+        window._uploadWakeLock = null;
+
+        const requestWakeLock = async () => {
+            try {
+                if ('wakeLock' in navigator && !window._uploadWakeLock) {
+                    window._uploadWakeLock = await navigator.wakeLock.request('screen');
+                }
+            } catch (e) {}
+        };
+
+        const releaseWakeLock = () => {
+            if (window._uploadWakeLock) {
+                window._uploadWakeLock.release().catch(() => {});
+                window._uploadWakeLock = null;
+            }
+        };
+
+        // 監聽解鎖/重新點亮螢幕：若發現還有沒傳完的，自動接著繼續上傳
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && window._uploadQueue.length > 0 && !window.isUploading) {
+                window.showToast("🔄 螢幕解鎖，自動接續未完成的上傳...");
+                window.resumeBatchUploadQueue();
+            }
+        });
+
+        window.resumeBatchUploadQueue = async () => {
+            if (window.isUploading || !window._uploadQueue.length) return;
+            window.isUploading = true;
+            await requestWakeLock();
+
+            const total = window._totalUploadCount || window._uploadQueue.length;
+
+            try {
+                if (!currentUser || !db) throw new Error("授權未就緒，正在重新連線...");
+
+                while (window._uploadQueue.length > 0) {
+                    const item = window._uploadQueue[0];
+                    const docId = item.tempId;
+
+                    await idbSet(docId, item.src);
+                    memoryImageCache.set(docId, item.src);
+
+                    const mainDocData = {
+                        id: docId,
+                        chunkCount: item.chunks.length,
+                        title: item.title || '無標題',
+                        markStatus: item.markStatus || '',
+                        category: item.category || '未分類',
+                        time: item.time || '12:00',
+                        createdAt: Date.now()
+                    };
+
+                    const singleBatch = writeBatch(db);
+                    singleBatch.set(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId), mainDocData);
+                    item.chunks.forEach((chunkStr, idx) => {
+                        const chunkRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId, 'chunks', `part_${idx}`);
+                        singleBatch.set(chunkRef, { index: idx, data: chunkStr });
+                    });
+
+                    await singleBatch.commit();
+
+                    // 上傳成功一張就從佇列移除一張（確保不會重複傳送）
+                    window._uploadQueue.shift();
+
+                    // 記錄到本機圖庫
+                    const map = new Map();
+                    [mainDocData, ...galleryItems].forEach(x => { if (x?.id) map.set(x.id, x); });
+                    galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+                    safeSetLocal('work_cache_gallery_items', galleryItems);
+
+                    const finishedCount = total - window._uploadQueue.length;
+                    const currentPercent = ((finishedCount / total) * 100).toFixed(1);
+                    window.setUploadProgress(currentPercent, `上傳中：${finishedCount} / ${total} (${currentPercent}%)`);
+                }
+
+                window.setUploadProgress(-1, "");
+                window._lastRenderFingerprint = '';
+                await window.renderGallery();
+                window.playAlertSound();
+                window.showToast(`✅ 全部圖片（共 ${total} 張）已成功發布！`);
+
+            } catch (err) {
+                // 鎖機中斷或網路斷線時保留進度，待解鎖時接關
+                window.setUploadProgress(-1, "");
+                window.showToast(`⚠️ 上傳暫停，解鎖螢幕後將自動繼續`, true);
+            } finally {
+                window.isUploading = false;
+                if (!window._uploadQueue.length) releaseWakeLock();
+            }
+        };
+
         window.confirmBatchUpload = async () => {
             const items = [...window.pendingUploadImages];
             if (!items.length || window.isUploading) return;
@@ -1869,61 +1961,12 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 });
             }
 
-            window.isUploading = true;
+            // 初始化任務佇列與計數
+            window._uploadQueue = [...items];
+            window._totalUploadCount = items.length;
+
             window.closeUploadBatchModal();
-
-            try {
-                if (!currentUser || !db) throw new Error("授權未就緒，請重新整理");
-                const total = items.length, newDocs = [];
-
-                for (let i = 0; i < total; i++) {
-                    const item = items[i], docId = item.tempId;
-                    await idbSet(docId, item.src);
-                    memoryImageCache.set(docId, item.src);
-
-                    const mainDocData = {
-                        id: docId, 
-                        chunkCount: item.chunks.length,
-                        title: item.title || '無標題',
-                        markStatus: item.markStatus || '',
-                        category: item.category || '未分類',
-                        time: item.time || '12:00', 
-                        createdAt: Date.now()
-                    };
-
-                    const singleBatch = writeBatch(db);
-                    singleBatch.set(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId), mainDocData);
-                    item.chunks.forEach((chunkStr, idx) => {
-                        const chunkRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId, 'chunks', `part_${idx}`);
-                        singleBatch.set(chunkRef, { index: idx, data: chunkStr });
-                    });
-
-                    await singleBatch.commit();
-                    newDocs.push(mainDocData);
-                    const currentPercent = (((i + 1) / total) * 100).toFixed(1);
-                    window.setUploadProgress(currentPercent, `上傳中：${i + 1} / ${total} (${currentPercent}%)`);
-                }
-
-                window.setUploadProgress(-1, "");
-                const map = new Map();
-                [...newDocs, ...galleryItems].forEach(x => { if (x?.id) map.set(x.id, x); });
-                galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
-
-                safeSetLocal('work_cache_gallery_items', galleryItems);
-                window._lastRenderFingerprint = '';
-                await window.renderGallery();
-                
-                // 觸發音效，上傳者本人不彈出通知介面
-                window.playAlertSound();
-                // window.showGalleryTopNotification(newDocs.length); // 上傳者自己不彈出
-
-                window.showToast(`✅ 成功發布 ${newDocs.length} 張圖片！`);
-            } catch (err) {
-                window.setUploadProgress(-1, "");
-                window.showToast(`❌ 上傳失敗：${err.message}`, true);
-            } finally {
-                window.isUploading = false;
-            }
+            window.resumeBatchUploadQueue();
         };
 
         window.openCategoryManager = () => {
