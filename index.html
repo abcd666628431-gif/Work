@@ -3144,7 +3144,7 @@ window.crSaveData = () => {
                 const tEl = w.querySelector('.time-text'); if (tEl) tEl.innerHTML = `<span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ${status.text.replace('未開始 (', '還有 ').replace('後)', '')} 到來</span>`;
                 prev = st;
             });
-            if (needReRender) { window.renderTimeline(true); return; }
+            if (needReRender) { window.renderTimeline(false); return; }
             try { lucide.createIcons(); } catch(e) {} window.updateCurrentTimeIndicator();
         };
 
@@ -3287,7 +3287,21 @@ window.crSaveData = () => {
             const page = $('timelinePage');
             if (page && !page.dataset.hasScrollListener) { page.addEventListener('scroll', window.handleTimelineScroll); page.dataset.hasScrollListener = "true"; }
             window.handleTimelineScroll();
-            if (scrollToCenter && targetScrollId) { setTimeout(() => { const el = $(targetScrollId); if (el && page) page.scrollTo({ top: page.scrollTop + (el.getBoundingClientRect().top - page.getBoundingClientRect().top) - (page.getBoundingClientRect().height / 2) + (el.getBoundingClientRect().height / 2) - 40, behavior: 'smooth' }); }, 150); }
+            if (scrollToCenter && targetScrollId) {
+                setTimeout(() => {
+                    const el = $(targetScrollId);
+                    const page = $('timelinePage');
+                    if (el && page) {
+                        const pageRect = page.getBoundingClientRect();
+                        const elRect = el.getBoundingClientRect();
+                        const targetTop = page.scrollTop + (elRect.top - pageRect.top) - (pageRect.height / 2) + (elRect.height / 2);
+                        page.scrollTo({
+                            top: Math.max(0, targetTop),
+                            behavior: 'smooth'
+                        });
+                    }
+                }, 100);
+            }
             if (timelineUpdateInterval) clearInterval(timelineUpdateInterval); if (window.conveyorInterval) clearInterval(window.conveyorInterval);
             window.conveyorInterval = setInterval(() => { if (!isFastForwarding) window.updateConveyorBelt(); }, 1000);
             setTimeout(window.updateCurrentTimeIndicator, 100);
