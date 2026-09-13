@@ -284,6 +284,20 @@
         };
 
         let dailyScheduleData = [], taskCompletionState = {}, subTaskCompletionState = {};
+        
+        // ====== 全域統一的檔號格式化函式 (確保三位數補零) ======
+       window.formatStallCode = (codeVal) => {
+            if (!codeVal) return '';
+            // 只抓取輸入內容中的數字
+            const clean = String(codeVal).trim().replace(/^#/, '');
+            const numMatch = clean.match(/\d+/);
+            if (numMatch) {
+                return numMatch[0].padStart(3, '0'); // 例如 2 變成 002
+            }
+            return clean;
+        };
+        const formatStallCode = window.formatStallCode;
+
         // 預設分類改為：全部、收工、清潔、營業相、雞相
         let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '提早收工', '清潔', '營業相', '雞相']);
         let galleryItems = getLocal('work_cache_gallery_items', []);
@@ -1554,19 +1568,29 @@ window.deleteSelectedGalleryItems = () => {
             window.updateGallerySelectionUI();
         };
 
-       const formatStallCode = (codeVal, hasPrefix) => {
-            let clean = (codeVal || '').trim().replace(/^#/, '');
-            if (!clean) return '';
+       window.selectPrefixOption = (tempId, prefixVal) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
+            if (!item) return;
             
-            // 如果輸入的數字本身已經包含前綴的一部分，先將其純數字化
-            // 例如把 02, 002, 2 統一轉成純數字
-            const numMatch = clean.match(/\d+/);
-            if (numMatch) {
-                const numStr = numMatch[0];
-                const paddedNum = numStr.padStart(3, '0'); // 補齊為 3 位數（如 002）
-                return paddedNum;
-            }
-            return clean;
+            // 點擊同一個就取消，點新的就切換
+            item.prefix = (item.prefix === prefixVal) ? "" : prefixVal;
+            
+            // 組合最終標題：前綴 + 三位數檔號
+            const basePrefix = item.prefix || '';
+            const codePart = item.code || '';
+            item.title = `${basePrefix}${codePart}`.trim();
+
+            // 更新按鈕樣式
+            ['1-', 'R-', 'J-'].forEach(pKey => {
+                const btn = $(`btn-prefix-${tempId}-${pKey}`);
+                if (btn) {
+                    btn.className = (item.prefix === pKey)
+                        ? "w-full py-0.5 rounded-lg text-[11px] font-black bg-blue-600 text-white border border-blue-600 shadow-xs"
+                        : "w-full py-0.5 rounded-lg text-[11px] font-black bg-white hover:bg-slate-100 text-slate-700 border border-slate-200";
+                }
+            });
+
+            window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
         };
 
         // ====== 點擊預覽圖修改圖片內容 (內建刪除鍵、判定卡片與手動鎖定) ======
@@ -1919,61 +1943,27 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             lucide.createIcons({ root: hintBox });
         };
 
-        // ====== 完整修復：前綴按鈕點擊與數字自動補齊邏輯 ======
-        window.selectPrefixOption = (tempId, prefixVal) => {
-            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
-            if (!item) return;
-            item.prefix = (item.prefix === prefixVal) ? "" : prefixVal;
-            if (item.prefix && item.code) {
-                item.code = formatStallCode(item.code, true);
-                const inputEl = $(`input-code-${tempId}`);
-                if (inputEl) inputEl.value = item.code;
-            }
-            item.title = `${item.prefix || ''}${item.code || ''}`.trim();
-            ['1-', 'R-', 'J-'].forEach(pKey => {
-                const btn = $(`btn-prefix-${tempId}-${pKey}`);
-                if (btn) {
-                    // 這裡改為 py-0.5 text-[11px]，保持窄版
-                    btn.className = (item.prefix === pKey)
-                        ? "w-full py-0.5 rounded-lg text-[11px] font-black bg-blue-600 text-white border border-blue-600 shadow-xs"
-                        : "w-full py-0.5 rounded-lg text-[11px] font-black bg-white hover:bg-slate-100 text-slate-700 border border-slate-200";
-                }
-            });
-
-            window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
-        };
-
+       
         window.setMergedPrefix = (val) => {
             window.mergedBatchForm.prefix = (window.mergedBatchForm.prefix === val) ? "" : val;
-            if (window.mergedBatchForm.prefix && window.mergedBatchForm.code) {
+            
+            if (window.mergedBatchForm.code) {
                 window.mergedBatchForm.code = formatStallCode(window.mergedBatchForm.code, true);
                 const inputEl = $('mergedCodeInput');
                 if (inputEl) inputEl.value = window.mergedBatchForm.code;
             }
+
             ['1-', 'R-', 'J-'].forEach(pKey => {
                 const btn = $(`merged-prefix-${pKey}`);
                 if (btn) {
-                    // 這裡改為 py-0.5 text-[11px]，保持窄版
                     btn.className = (window.mergedBatchForm.prefix === pKey)
                         ? "w-full py-0.5 rounded-lg text-[11px] font-black bg-blue-600 text-white border border-blue-600 shadow-xs"
                         : "w-full py-0.5 rounded-lg text-[11px] font-black bg-white text-slate-700 border border-slate-200 hover:bg-slate-100";
                 }
             });
 
-            const fullCode = `${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`.trim();
-            window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
-        };
-
-        // ====== 補齊：疊加模式檔號輸入監聽與即時自動判定 ======
-        window.onMergedCodeChange = (el, isBlur = false) => {
-            let val = el.value.trim();
-            if (isBlur && window.mergedBatchForm.prefix) {
-                val = formatStallCode(val, true);
-                el.value = val;
-            }
-            window.mergedBatchForm.code = val;
-
-            const fullCode = `${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`.trim();
+            const basePrefix = window.mergedBatchForm.prefix ? window.mergedBatchForm.prefix.replace(/-$/, '') + '-' : '';
+            const fullCode = `${basePrefix}${window.mergedBatchForm.code || ''}`.trim();
             window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
         };
 
@@ -2022,12 +2012,16 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             const item = window.pendingUploadImages.find(x => x.tempId === tempId);
             if (!item) return;
             let val = el.value.trim();
-            if (isBlur && item.prefix) {
-                val = formatStallCode(val, true);
+            
+            if (isBlur && val) {
+                val = formatStallCode(val);
                 el.value = val;
             }
             item.code = val;
-            item.title = `${item.prefix || ''}${item.code || ''}`.trim();
+            
+            // 組合標題：前綴 + 檔號
+            const basePrefix = item.prefix || '';
+            item.title = `${basePrefix}${item.code || ''}`.trim();
 
             window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
         };
@@ -2098,10 +2092,10 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                             </div>
 
                             <div class="w-12 flex flex-col space-y-1 shrink-0">
-                                <button type="button" id="merged-prefix-1-" onclick="window.setMergedPrefix('1-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${window.mergedBatchForm.prefix === '1-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
-                                <button type="button" id="merged-prefix-R-" onclick="window.setMergedPrefix('R-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${window.mergedBatchForm.prefix === 'R-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
-                                <button type="button" id="merged-prefix-J-" onclick="window.setMergedPrefix('J-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${window.mergedBatchForm.prefix === 'J-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
-                            </div>
+    <button type="button" id="merged-prefix-1-" onclick="window.setMergedPrefix('1-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${window.mergedBatchForm.prefix === '1-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+    <button type="button" id="merged-prefix-R-" onclick="window.setMergedPrefix('R-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${window.mergedBatchForm.prefix === 'R-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+    <button type="button" id="merged-prefix-J-" onclick="window.setMergedPrefix('J-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${window.mergedBatchForm.prefix === 'J-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
+</div>
 
                             <textarea id="mergedCodeInput" oninput="window.onMergedCodeChange(this, false)" onblur="window.onMergedCodeChange(this, true)" placeholder="輸入檔號" class="flex-1 h-[50px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${window.mergedBatchForm.code || ''}</textarea>
                         </div>
@@ -2146,10 +2140,10 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                             </div>
 
                             <div class="w-12 flex flex-col space-y-1 shrink-0">
-                                <button type="button" id="btn-prefix-${item.tempId}-1-" onclick="window.selectPrefixOption('${item.tempId}', '1-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${item.prefix === '1-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
-                                <button type="button" id="btn-prefix-${item.tempId}-R-" onclick="window.selectPrefixOption('${item.tempId}', 'R-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${item.prefix === 'R-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
-                                <button type="button" id="btn-prefix-${item.tempId}-J-" onclick="window.selectPrefixOption('${item.tempId}', 'J-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${item.prefix === 'J-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
-                            </div>
+    <button type="button" id="btn-prefix-${item.tempId}-1-" onclick="window.selectPrefixOption('${item.tempId}', '1-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${item.prefix === '1-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+    <button type="button" id="btn-prefix-${item.tempId}-R-" onclick="window.selectPrefixOption('${item.tempId}', 'R-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${item.prefix === 'R-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+    <button type="button" id="btn-prefix-${item.tempId}-J-" onclick="window.selectPrefixOption('${item.tempId}', 'J-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${item.prefix === 'J-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
+</div>
 
                             <textarea id="input-code-${item.tempId}" oninput="window.onPendingCodeChange('${item.tempId}', this, false)" onblur="window.onPendingCodeChange('${item.tempId}', this, true)" placeholder="輸入檔號" class="flex-1 h-[50px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${item.code || ''}</textarea>
                         </div>
@@ -2268,17 +2262,34 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             if (!items.length || window.isUploading) return;
 
             if (window.isBatchMergedView) {
+                const prefixClean = (window.mergedBatchForm.prefix || '').replace(/-$/, '') + '-';
                 const codeFormatted = formatStallCode(window.mergedBatchForm.code, !!window.mergedBatchForm.prefix);
-                const cleanTitle = `${window.mergedBatchForm.prefix || ''}${codeFormatted || ''}`.trim();
+                const cleanTitle = `${prefixClean}${codeFormatted || ''}`.trim();
                 const curTime = window.mergedBatchForm.time || '12:00';
 
                 items.forEach(it => {
-                    it.prefix = window.mergedBatchForm.prefix;
+                    it.prefix = prefixClean;
                     it.code = codeFormatted;
                     it.markStatus = window.mergedBatchForm.markStatus || "";
                     it.title = cleanTitle || '無標題';
                     it.category = window.mergedBatchForm.category || '未分類';
-                    it.time = curTime;
+                    it.time = curTime; // 確保強制寫入合併模式下修改的時間
+                });
+            } else {
+                // 展開分開模式：同步抓取每張圖在介面上被個別修改的時間與檔號
+                items.forEach(it => {
+                    const timeSelectH = document.querySelector(`select[onchange*="updateTimePart('${it.tempId}','h'"]`)?.value;
+                    const timeSelectM = document.querySelector(`select[onchange*="updateTimePart('${it.tempId}','m'"]`)?.value;
+                    if (timeSelectH && timeSelectM) {
+                        it.time = `${timeSelectH}:${timeSelectM}`;
+                    }
+                    const codeInput = $(`input-code-${it.tempId}`);
+                    if (codeInput) {
+                        const codeVal = formatStallCode(codeInput.value, !!it.prefix);
+                        const prefixClean = (it.prefix || '').replace(/-$/, '') + '-';
+                        it.code = codeVal;
+                        it.title = `${prefixClean}${codeVal}`.trim();
+                    }
                 });
             }
 
@@ -2465,7 +2476,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 // 如果偵測到是其他人上傳的新圖片，播放音效並彈出頂部通知橫幅！
                 if (newIncomingCount > 0) {
                     window.playAlertSound();
-                    window.showGalleryTopNotification(newIncomingCount);
+                    window.showGalleryTopNotification(newIncomingCount, it.sessionId);
                 }
             }, console.error);
 
@@ -3734,15 +3745,18 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         window._galleryNotifyTimeout = null;
         window._galleryNewItemsQueue = []; // 用來累積存放所有新上傳的圖片資訊
 
-        window.showGalleryTopNotification = async (count) => {
+        window.showGalleryTopNotification = async (count, uploaderSessionId = '') => {
+            // 如果上傳者的 session ID 和自己的相同，直接阻擋不彈窗
+            if (uploaderSessionId && uploaderSessionId === clientSessionId) {
+                return;
+            }
+
             window._galleryNewCount = (window._galleryNewCount || 0) + count;
             
-            // 優先從當前上傳暫存取資料，若無則從圖庫最新項目取
             const rawItems = window.pendingUploadImages.length > 0 
                 ? [...window.pendingUploadImages] 
                 : galleryItems.slice(0, count);
 
-            // 非同步取得每張圖的合法縮圖，確保絕對不破圖
             const newlyAdded = await Promise.all(rawItems.map(async (it) => {
                 let imgUrl = it.src || '';
                 if (!imgUrl && it.id) {
@@ -3755,7 +3769,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                 };
             }));
             
-            // 將新圖片依序加入佇列，最多保留最近 4 筆
             window._galleryNewItemsQueue = [...newlyAdded, ...window._galleryNewItemsQueue].slice(0, 4);
 
             let banner = $('galleryTopNotificationBanner');
@@ -3767,7 +3780,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                 document.body.appendChild(banner);
             }
 
-            // 產生所有累積新圖片的詳細資訊清單（時間在左、檔號在右同一水平行）
             const itemsListHtml = window._galleryNewItemsQueue.map((item) => `
                 <div class="flex items-center space-x-2.5 bg-slate-50 border border-slate-200/80 p-2 rounded-xl">
                     <div class="w-10 h-10 rounded-lg bg-slate-200 overflow-hidden shrink-0 border border-slate-300 flex items-center justify-center">
@@ -3780,13 +3792,9 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                 </div>
             `).join('');
 
-            // 動態邊框 + 完整資訊清單 UI
             banner.innerHTML = `
                 <div class="relative p-[2px] rounded-2xl shadow-2xl w-full max-w-[340px] animate-pop-in pointer-events-auto cursor-pointer overflow-hidden group" style="background: linear-gradient(60deg, #38bdf8, #6366f1, #ec4899, #38bdf8); background-size: 300% 300%; animation: border-gradient-move 4s ease infinite;" onclick="window._galleryNewCount = 0; window._galleryNewItemsQueue = []; document.getElementById('galleryTopNotificationBanner')?.remove(); window.switchTab('gallery');">
-                    
                     <div class="bg-white/95 text-slate-800 p-4 rounded-[14px] flex flex-col backdrop-blur-md space-y-3">
-                        
-                        <!-- 標題與總計數 -->
                         <div class="flex justify-between items-center border-b border-slate-100 pb-2">
                             <div class="flex items-center space-x-2">
                                 <span class="text-xs font-black text-slate-900 tracking-wide">新相片已成功上傳</span>
@@ -3796,13 +3804,9 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                                 <i data-lucide="x" class="w-4 h-4"></i>
                             </button>
                         </div>
-
-                        <!-- 每一筆新圖片的詳細資訊疊加列表 -->
                         <div class="space-y-1.5 max-h-[190px] overflow-y-auto scrollbar-hide pr-0.5">
                             ${itemsListHtml}
                         </div>
-
-                        <!-- 底部點擊提示 -->
                         <div class="text-center text-[10px] font-bold text-blue-600 pt-1 border-t border-slate-100">
                             點擊此處立即前往圖庫檢視
                         </div>
