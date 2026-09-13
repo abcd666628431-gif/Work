@@ -915,8 +915,8 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 }
             }
 
-            // 👇【在這裡加上這一行寫入日誌】
-            window.writeGalleryLog('還原圖片', item.title || item.id, `自垃圾桶還原`);
+            // 👇【第一個地方：寫入「移至垃圾桶」】
+            window.writeGalleryLog('移至垃圾桶', item.title || item.id, `分類: ${item.category || '未分類'}`);
 
             window._lastRenderFingerprint = '';
             await window.renderGallery();
@@ -989,7 +989,7 @@ window.deleteSelectedGalleryItems = () => {
                 }, { merge: true }).catch(() => {});
             }
 
-            // 👇【在這裡加上這一行寫入日誌】
+            // 👇【第二個地方：保持「還原圖片」】
             window.writeGalleryLog('還原圖片', item.title || item.id, `自垃圾桶還原`);
 
             window._lastRenderFingerprint = '';
@@ -3224,9 +3224,10 @@ window.crSaveData = () => {
             }
             if (targetBtn) targetBtn.className = actCls;
 
+            // 👇 就在這裡！
             ({
                 gallery: window.renderGallery,
-                timeline: () => window.renderTimeline(true),
+                timeline: () => window.renderTimeline(true), // 👈 這裡已經傳入 true 了！
                 memo: window.renderMemos,
                 map: window.renderMap,
                 coldRoom: window.crRenderList,
@@ -3292,15 +3293,19 @@ window.crSaveData = () => {
                     const el = $(targetScrollId);
                     const page = $('timelinePage');
                     if (el && page) {
+                        const card = el.querySelector('.timeline-card') || el;
                         const pageRect = page.getBoundingClientRect();
-                        const elRect = el.getBoundingClientRect();
-                        const targetTop = page.scrollTop + (elRect.top - pageRect.top) - (pageRect.height / 2) + (elRect.height / 2);
+                        const cardRect = card.getBoundingClientRect();
+                        // 精準計算卡片中心點相對於滾動容器的中心點，並扣除頂部 sticky 標頭的遮擋
+                        const offsetDiff = cardRect.top - pageRect.top;
+                        const targetScrollTop = page.scrollTop + offsetDiff - (page.clientHeight / 2) + (card.clientHeight / 2) + 20;
+
                         page.scrollTo({
-                            top: Math.max(0, targetTop),
+                            top: Math.max(0, targetScrollTop),
                             behavior: 'smooth'
                         });
                     }
-                }, 100);
+                }, 150);
             }
             if (timelineUpdateInterval) clearInterval(timelineUpdateInterval); if (window.conveyorInterval) clearInterval(window.conveyorInterval);
             window.conveyorInterval = setInterval(() => { if (!isFastForwarding) window.updateConveyorBelt(); }, 1000);
@@ -3843,7 +3848,7 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
             <div id="tabBarContainer" class="mt-1.5 flex bg-[#f0ebe1] rounded-lg p-0.5 shadow-inner border border-[#e5dfd3] relative z-20 overflow-x-auto scrollbar-hide w-full box-border">
         </header>
 
-        <main id="timelinePage" class="hidden flex-1 min-h-0 overflow-y-auto overflow-x-hidden relative z-10 bg-[#fdfbf7] scrollbar-hide" style="touch-action: pan-y; -webkit-overflow-scrolling: touch;">
+        <main id="timelinePage" class="hidden flex-1 min-h-0 overflow-y-auto overflow-x-hidden relative z-10 bg-[#fdfbf7] scrollbar-hide scroll-smooth" style="touch-action: pan-y; -webkit-overflow-scrolling: touch;">
             <div id="timelineStickyHeader" class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-2 pb-2 px-4 flex flex-col items-center justify-center pointer-events-none transition-all">
                 <div class="flex items-center justify-center gap-2 w-full max-w-[500px]">
                     <div class="flex items-center gap-1.5 justify-end flex-1">
