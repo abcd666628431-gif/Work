@@ -9,8 +9,15 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
-        * { -ms-overflow-style: none !important; scrollbar-width: none !important; }
-        html, body { font-family: 'Inter', 'Noto Sans TC', sans-serif; background-color: #f0ebe1 !important; color: #334155; overflow-x: hidden; width: 100%; min-height: 100%; margin: 0; padding: 0; }
+        * { -ms-overflow-style: none !important; scrollbar-width: none !important; -webkit-tap-highlight-color: transparent; }
+        html, body { font-family: 'Inter', 'Noto Sans TC', sans-serif; background-color: #f0ebe1 !important; color: #334155; overflow-x: hidden; width: 100%; min-height: 100%; margin: 0; padding: 0; -webkit-overflow-scrolling: touch; }
+        
+        /* 強化動態分頁的容器捲動流暢度 */
+        #timelinePage {
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            touch-action: pan-y !important;
+        }
         .hud-ring { transition: stroke-dashoffset 1s cubic-bezier(0.4, 0, 0.2, 1); }
         .tape-strip { position: absolute; top: -6px; left: 50%; transform: translateX(-50%); width: 35px; height: 12px; border: 1px solid rgba(255,255,255,0.8); box-shadow: 0 1px 2px rgba(0,0,0,0.05); backdrop-filter: blur(2px); z-index: 5; border-radius: 1px; }
         .tape-strip-blue { background-color: rgba(186, 230, 253, 0.5); }
@@ -64,7 +71,7 @@
     <script type="module">
         import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, onSnapshot, writeBatch, addDoc, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const CONFIG = { maxDim: 1200, quality: 0.6 };
         const firebaseConfig = {
@@ -81,7 +88,99 @@
         const db = getFirestore(app);
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         let currentUser = null;
-        
+
+// ====== 圖庫操作日誌核心邏輯 ======
+        let sysUserName = localStorage.getItem('gallery_user_name') || '成員_' + Math.floor(Math.random() * 900 + 100);
+        let sysUserColor = localStorage.getItem('gallery_user_color') || '#38bdf8';
+        let galleryLogsStore = [];
+
+        window.writeGalleryLog = async (action, targetName, detail = '') => {
+            if (!currentUser || !db) return;
+            try {
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs'), {
+                    timestamp: Date.now(),
+                    user: sysUserName,
+                    color: sysUserColor,
+                    action: action,
+                    targetName: targetName || '無標題',
+                    detail: detail || ''
+                });
+            } catch(e) {}
+        };
+
+        window.openLogsModal = () => {
+            window.renderGalleryLogs();
+            $('galleryLogsModal')?.classList.replace('hidden', 'flex');
+            lucide.createIcons();
+        };
+        window.closeLogsModal = () => $('galleryLogsModal')?.classList.replace('flex', 'hidden');
+
+        window.renderGalleryLogs = () => {
+            const container = $('galleryLogsList');
+            const userTag = $('currentLogUserDisplay');
+            if (userTag) {
+                userTag.innerText = sysUserName;
+                userTag.style.color = sysUserColor;
+            }
+            if (!container) return;
+
+            if (!galleryLogsStore.length) {
+                container.innerHTML = `
+                    <div class="flex flex-col items-center justify-center py-16 text-slate-400">
+                        <i data-lucide="scroll-text" class="w-10 h-10 mb-2 opacity-30"></i>
+                        <span class="text-xs font-bold tracking-widest text-center">尚無任何圖庫操作記錄</span>
+                    </div>`;
+                lucide.createIcons({ root: container });
+                return;
+            }
+
+            container.innerHTML = galleryLogsStore.map(log => {
+                const d = new Date(log.timestamp);
+                const timeStr = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+                
+                let actionBadge = 'bg-blue-100 text-blue-700 border-blue-200';
+                if (log.action.includes('刪除') || log.action.includes('清空')) actionBadge = 'bg-rose-100 text-rose-700 border-rose-200';
+                else if (log.action.includes('還原')) actionBadge = 'bg-emerald-100 text-emerald-700 border-emerald-200';
+                else if (log.action.includes('發布') || log.action.includes('上傳')) actionBadge = 'bg-indigo-100 text-indigo-700 border-indigo-200';
+                else if (log.action.includes('修改')) actionBadge = 'bg-amber-100 text-amber-700 border-amber-200';
+
+                return `
+                <div class="flex items-start justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200/80 shadow-2xs">
+                    <div class="flex flex-col gap-1 min-w-0 flex-1">
+                        <div class="flex items-center space-x-1.5 flex-wrap">
+                            <span class="text-[10px] font-mono font-bold text-slate-400 shrink-0">${timeStr}</span>
+                            <span class="text-xs font-black shrink-0" style="color: ${log.color || '#38bdf8'}">${log.user || '未知'}</span>
+                            <span class="text-[9.5px] font-black px-1.5 py-0.2 rounded border shrink-0 ${actionBadge}">${log.action}</span>
+                            <span class="text-xs font-black text-slate-800 truncate">[${log.targetName}]</span>
+                        </div>
+                        ${log.detail ? `<div class="text-[11px] font-medium text-slate-500 pl-0.5">${log.detail}</div>` : ''}
+                    </div>
+                </div>`;
+            }).join('');
+            lucide.createIcons({ root: container });
+        };
+
+        window.openUserNameModal = () => {
+            const nameInput = document.getElementById('newUserNameInput');
+            const colorInput = document.getElementById('newUserColorInput');
+            if (nameInput) nameInput.value = sysUserName;
+            if (colorInput) colorInput.value = sysUserColor;
+            document.getElementById('userNameModal')?.classList.replace('hidden', 'flex');
+        };
+        window.closeUserNameModal = () => document.getElementById('userNameModal')?.classList.replace('flex', 'hidden');
+        window.saveUserName = () => {
+            const name = document.getElementById('newUserNameInput')?.value.trim();
+            const color = document.getElementById('newUserColorInput')?.value || '#38bdf8';
+            if (!name) return window.showToast("請輸入姓名/暱稱", true);
+            sysUserName = name;
+            sysUserColor = color;
+            localStorage.setItem('gallery_user_name', sysUserName);
+            localStorage.setItem('gallery_user_color', sysUserColor);
+            window.closeUserNameModal();
+            window.renderGalleryLogs();
+            window.showToast("✅ 已儲存操作者身分！");
+        };        
+
         // 確保每台裝置/瀏覽器擁有一個永久固定的唯一識別碼
         let clientSessionId = localStorage.getItem('work_client_device_id');
         if (!clientSessionId) {
@@ -821,6 +920,9 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 }
             }
 
+            // 👇【在這裡加上這一行寫入日誌】
+            window.writeGalleryLog('還原圖片', item.title || item.id, `自垃圾桶還原`);
+
             window._lastRenderFingerprint = '';
             await window.renderGallery();
             window.showToast("🗑️ 圖片已移至垃圾桶");
@@ -891,6 +993,9 @@ window.deleteSelectedGalleryItems = () => {
                     deletedAt: null
                 }, { merge: true }).catch(() => {});
             }
+
+            // 👇【在這裡加上這一行寫入日誌】
+            window.writeGalleryLog('還原圖片', item.title || item.id, `自垃圾桶還原`);
 
             window._lastRenderFingerprint = '';
             window.renderTrashList();
@@ -2354,6 +2459,20 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                     window.showGalleryTopNotification(newIncomingCount);
                 }
             }, console.error);
+
+// 即時同步日誌
+            try {
+                const logQuery = query(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs'), orderBy('timestamp', 'desc'), limit(100));
+                onSnapshot(logQuery, (snap) => {
+                    let list = [];
+                    snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+                    galleryLogsStore = list;
+                    if ($('galleryLogsModal') && !$('galleryLogsModal').classList.contains('hidden')) {
+                        window.renderGalleryLogs();
+                    }
+                }, () => {});
+            } catch(e) {}
+
 }
 window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML = ''; window.updateMapSimulation(); };
 
@@ -3685,8 +3804,8 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
 <body class="flex justify-center items-center min-h-screen p-0 sm:py-2 bg-[#f0ebe1]">
     <div class="w-full max-w-[430px] h-full sm:h-[910px] min-h-[100vh] sm:min-h-[880px] bg-[#fdfbf7] sm:rounded-[2.5rem] shadow-2xl sm:border-[6px] border-[#d6d0c4] overflow-hidden relative flex flex-col mx-auto my-auto">
         <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-30 border-b border-[#e5dfd3] px-3 pt-1 pb-1 shadow-xs shrink-0">
-            <div class="flex items-center justify-between relative">
-                <div class="w-8"></div>
+            <div class="flex items-center justify-between relative px-2">
+                <div class="w-12"></div>
                 <div class="flex items-center justify-center space-x-2 shrink-0">
                     <h1 class="text-lg text-slate-800 tracking-widest font-black">工作記錄本</h1>
                     <div class="flex items-center space-x-1 bg-white/70 px-2 py-0.5 rounded-full border border-slate-200 shadow-2xs">
@@ -3694,9 +3813,14 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                         <span id="connectionStatus" class="text-[8.5px] font-bold text-slate-500 tracking-wider">連線中...</span>
                     </div>
                 </div>
-                <div class="relative shrink-0">
+                <div class="relative shrink-0 mr-4">
                     <button id="settingsMenuBtn" type="button" onclick="window.toggleSettingsMenu(event)" class="w-7 h-7 rounded-full bg-slate-100 border border-slate-200 text-slate-600 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center transition-colors active:scale-95 shadow-2xs" title="設定"><i data-lucide="settings" class="w-3.5 h-3.5 pointer-events-none"></i></button>
+                    
+                    <!-- 👇 必須放在這個選單框框的內部頂端 -->
                     <div id="settingsDropdown" class="hidden absolute right-0 mt-1 w-48 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200 p-1.5 z-50 flex flex-col space-y-1 animate-flag-in">
+                        <button onclick="window.openLogsModal(); window.toggleSettingsMenu();" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left"><i data-lucide="scroll-text" class="w-3.5 h-3.5 mr-2 text-blue-500"></i> 圖庫操作日誌</button>
+                        <div class="border-t border-slate-100 my-1"></div>
+                        
                         <button onclick="window.openAsPopout(); window.toggleSettingsMenu();" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left"><i data-lucide="external-link" class="w-3.5 h-3.5 mr-2 text-slate-400"></i> 以獨立視窗開啟</button>
                         <button onclick="window.toggleDarkMode()" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left"><i id="darkModeIcon" data-lucide="moon" class="w-3.5 h-3.5 mr-2 text-slate-400"></i> 切換深色模式</button>
                         <button onclick="window.openTabVisibilityModal()" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left"><i data-lucide="layout-grid" class="w-3.5 h-3.5 mr-2 text-slate-400"></i> 調整分頁顯示</button>
@@ -3707,10 +3831,10 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                     </div>
                 </div>
             </div>
-            <div id="tabBarContainer" class="mt-1.5 flex bg-[#f0ebe1] rounded-lg p-0.5 shadow-inner border border-[#e5dfd3] relative z-20 overflow-x-auto scrollbar-hide"></div>
+            <div id="tabBarContainer" class="mt-1.5 flex bg-[#f0ebe1] rounded-lg p-0.5 shadow-inner border border-[#e5dfd3] relative z-20 overflow-x-auto scrollbar-hide w-full box-border">
         </header>
 
-        <main id="timelinePage" class="hidden flex-1 min-h-0 overflow-y-auto relative z-10 bg-[#fdfbf7] scrollbar-hide scroll-smooth">
+        <main id="timelinePage" class="hidden flex-1 min-h-0 overflow-y-auto relative z-10 bg-[#fdfbf7] scrollbar-hide scroll-smooth w-full max-w-[430px] overflow-x-hidden">
             <div id="timelineStickyHeader" class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-2 pb-2 px-4 flex flex-col items-center justify-center pointer-events-none transition-all">
                 <div class="flex items-center justify-center gap-2 w-full max-w-[500px]">
                     <div class="flex items-center gap-1.5 justify-end flex-1">
@@ -4100,6 +4224,53 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
 
             <div class="pt-2.5 border-t border-slate-100 flex justify-end shrink-0 mt-2">
                 <button type="button" onclick="window.closeTrashModal()" class="px-4 py-1.5 bg-slate-800 text-white rounded-xl text-xs font-bold active:scale-95 shadow-xs">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 操作日誌彈窗 -->
+    <div id="galleryLogsModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] hidden flex-col items-center justify-center p-3 sm:p-4">
+        <div class="bg-white rounded-2xl p-4 w-full max-w-[380px] shadow-2xl relative max-h-[82vh] flex flex-col" onclick="event.stopPropagation()">
+            <header class="flex justify-between items-center pb-2.5 mb-2 border-b border-slate-100 shrink-0">
+                <div class="flex items-center space-x-2">
+                    <div class="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center"><i data-lucide="scroll-text" class="w-4 h-4"></i></div>
+                    <h3 class="font-bold text-sm text-slate-800 tracking-wide">圖庫操作日誌</h3>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button type="button" onclick="window.openUserNameModal()" class="text-[10px] font-bold text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-lg border border-blue-200 transition-all">
+                        身分: <span id="currentLogUserDisplay">---</span>
+                    </button>
+                    <button type="button" onclick="window.closeLogsModal()" class="text-slate-400 hover:text-slate-600 p-1"><i data-lucide="x" class="w-4 h-4"></i></button>
+                </div>
+            </header>
+
+            <div id="galleryLogsList" class="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-hide"></div>
+
+            <div class="pt-2.5 border-t border-slate-100 flex justify-end shrink-0 mt-2">
+                <button type="button" onclick="window.closeLogsModal()" class="px-4 py-1.5 bg-slate-800 text-white rounded-xl text-xs font-bold active:scale-95 shadow-xs">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 設定操作者姓名與顏色 Modal -->
+    <div id="userNameModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] hidden flex-col items-center justify-center p-4" onclick="if(event.target === this) window.closeUserNameModal()">
+        <div class="bg-white rounded-2xl p-4 w-full max-w-[280px] shadow-2xl relative" onclick="event.stopPropagation()">
+            <h3 class="font-bold text-sm mb-3 text-slate-800 flex items-center border-b pb-2">
+                <i data-lucide="user-cog" class="w-4 h-4 mr-2 text-blue-500"></i> 設定操作者身分
+            </h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1">您的姓名 / 暱稱</label>
+                    <input type="text" id="newUserNameInput" placeholder="例如: 阿霆" class="w-full border border-slate-300 rounded-lg p-2 text-xs font-bold text-slate-700 bg-slate-50 text-center focus:border-blue-500 focus:outline-none">
+                </div>
+                <div class="flex items-center justify-between p-2 bg-slate-50 rounded-xl border border-slate-200">
+                    <label class="text-[11px] font-bold text-slate-700">日誌專屬辨識色</label>
+                    <input type="color" id="newUserColorInput" class="w-8 h-8 rounded border-none cursor-pointer bg-transparent">
+                </div>
+            </div>
+            <div class="mt-4 flex justify-end space-x-2 border-t border-slate-100 pt-3">
+                <button type="button" onclick="window.closeUserNameModal()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">取消</button>
+                <button type="button" onclick="window.saveUserName()" class="px-4 py-1.5 bg-blue-500 text-white rounded-lg text-xs font-bold shadow-xs active:scale-95">儲存</button>
             </div>
         </div>
     </div>
