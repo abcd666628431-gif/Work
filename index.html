@@ -62,14 +62,6 @@
         .deck-card:nth-child(3) { transform: translate3d(-6px, -8px, 0) rotate(-4deg); z-index: 8; opacity: 0.9; }
         .deck-card:nth-child(4) { transform: translate3d(12px, -12px, 0) rotate(6deg); z-index: 7; opacity: 0.85; }
         .deck-card:nth-child(n+5) { transform: translate3d(-10px, -14px, 0) rotate(-7deg); z-index: 6; opacity: 0.75; }
-
-       /* 確保動態頁面容器能夠完整接收滑鼠與滾輪事件 */
-        #timelinePage {
-            overflow-y: scroll !important;
-        }
-        #timelineContainer, #timelineContainer * {
-            pointer-events: auto !important;
-        }
     </style>
     <script type="module">
         import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -2073,8 +2065,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
         };
 
-        // 修正 1：合併模式與單張模式專用的時間更新函式
-        window.updateMergedTimePart = (part, val) => {
+        window.updateTimePart = (id, part, val) => {
             let [h, m] = (window.mergedBatchForm.time || '00:00').split(':');
             if (part === 'h') h = val; else m = val;
             window.mergedBatchForm.time = `${h}:${m}`;
@@ -2083,14 +2074,226 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
         };
 
-        window.updateTimePart = (tempId, part, val) => {
-            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
-            if (!item) return;
-            let [h, m] = (item.time || '00:00').split(':');
-            if (part === 'h') h = val; else m = val;
-            item.time = `${h}:${m}`;
+        window.renderUploadBatchList = () => {
+            const list = $('uploadBatchList');
+            const total = window.pendingUploadImages.length;
+            if ($('uploadBatchCount')) $('uploadBatchCount').textContent = total;
+            if (!total) return window.closeUploadBatchModal();
 
-            window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
+            const toggleBtn = $('toggleMergeViewBtn');
+            if (toggleBtn) {
+                toggleBtn.innerHTML = window.isBatchMergedView
+                    ? `<i data-lucide="layout-grid" class="w-3.5 h-3.5 mr-1"></i>展開分開`
+                    : `<i data-lucide="layers" class="w-3.5 h-3.5 mr-1"></i>合併疊加`;
+            }
+
+            const catList = ['提早收工', '清潔', '營業相', '開工-雞相'];
+
+            if (window.isBatchMergedView) {
+                const [hStr, mStr] = (window.mergedBatchForm.time || '00:00').split(':');
+                list.innerHTML = `
+                <div class="flex flex-col items-center animate-pop-in pt-1 pb-2">
+                    <div class="photo-deck-container cursor-pointer" onclick="window.openFullscreenImg('${window.pendingUploadImages[0]?.src}')" title="點擊放大預覽">
+                        ${window.pendingUploadImages.slice(0, 5).map((img) => `
+                            <div class="deck-card">
+                                <img src="${img.src}" class="w-full h-full object-contain p-1">
+                            </div>
+                        `).join('')}
+                        <div class="absolute -bottom-1.5 bg-slate-900/85 backdrop-blur-md text-white text-[11px] font-black px-3.5 py-1 rounded-full shadow-lg border border-white/40 flex items-center z-20">
+                            <i data-lucide="images" class="w-3.5 h-3.5 mr-1.5 text-blue-400"></i>共疊加收攏 ${total} 張相片
+                        </div>
+                    </div>
+
+                    <div class="w-full bg-slate-50 border-2 border-indigo-200/80 rounded-2xl p-3 shadow-xs space-y-2.5 mt-2">
+                        <!-- 上傳彈窗提示框 -->
+                        <div id="batchMergedAutoHint" class="hidden p-2.5 rounded-xl text-[11px] font-bold border transition-all flex items-center"></div>
+
+                        <!-- 上方橫排 4 個分類鍵 -->
+                        <div class="flex items-center gap-1.5 w-full">
+                            ${catList.map(cat => `
+                                <button type="button" id="merged-cat-btn-${cat}" onclick="window.setMergedCategory('${cat}', true)" 
+                                    class="flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all active:scale-95 ${window.mergedBatchForm.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
+                                    ${cat}
+                                </button>
+                            `).join('')}
+                        </div>
+
+                        <!-- 時間、前綴按鈕、檔號輸入框 (已收窄與降高) -->
+                        <div class="flex items-stretch space-x-1.5">
+                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-xl px-1.5 py-1 shadow-inner shrink-0 h-fit my-auto">
+                                <select onchange="window.updateMergedTimePart('h', this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
+                                    ${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
+                                </select>
+                                <span class="px-0.5">:</span>
+                                <select onchange="window.updateMergedTimePart('m', this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
+                                    ${Array.from({length: 60}, (_, i) => `<option value="${pad(i)}" ${pad(i) === mStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
+                                </select>
+                            </div>
+
+                            <div class="w-12 flex flex-col space-y-1 shrink-0">
+    <button type="button" id="merged-prefix-1-" onclick="window.setMergedPrefix('1-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${window.mergedBatchForm.prefix === '1-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+    <button type="button" id="merged-prefix-R-" onclick="window.setMergedPrefix('R-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${window.mergedBatchForm.prefix === 'R-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+    <button type="button" id="merged-prefix-J-" onclick="window.setMergedPrefix('J-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${window.mergedBatchForm.prefix === 'J-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
+</div>
+
+                            <textarea id="mergedCodeInput" oninput="window.onMergedCodeChange(this, false)" onblur="window.onMergedCodeChange(this, true)" placeholder="輸入檔號" class="flex-1 h-[50px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${window.mergedBatchForm.code || ''}</textarea>
+                        </div>
+                    </div>
+                </div>`;
+                window.updateBatchAutoHintUI(`${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
+            } else {
+                list.innerHTML = window.pendingUploadImages.map(item => {
+                    const [hStr, mStr] = (item.time || '00:00').split(':');
+                    return `
+                    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 flex flex-col space-y-2.5 shadow-xs">
+                        <div class="relative w-fit max-w-full mx-auto rounded-xl overflow-hidden cursor-zoom-in group border border-slate-300 shadow-sm" onclick="window.openFullscreenImg('${item.src}')">
+                            <img src="${item.src}" class="max-h-28 sm:max-h-32 w-auto object-contain rounded-xl block">
+                            <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1.5 right-1.5 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md active:scale-95 transition-all">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+
+                        <!-- 單張模式提示框 -->
+                        <div id="hint-pending-${item.tempId}" class="hidden p-2.5 rounded-xl text-[11px] font-bold border transition-all flex items-center"></div>
+
+                        <!-- 上方橫排 4 個分類鍵 -->
+                        <div class="flex items-center gap-1.5 w-full">
+                            ${catList.map(cat => `
+                                <button type="button" id="btn-cat-${item.tempId}-${cat}" onclick="window.setPendingItemCategory('${item.tempId}', '${cat}', true)" 
+                                    class="flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all active:scale-95 ${item.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
+                                    ${cat}
+                                </button>
+                            `).join('')}
+                        </div>
+
+                        <!-- 單張模式時間、前綴按鈕、檔號輸入框 (已收窄與降高) -->
+                        <div class="flex items-stretch space-x-1.5">
+                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-xl px-1.5 py-1 shadow-inner shrink-0 h-fit my-auto">
+                                <select onchange="window.updateTimePart('${item.tempId}','h',this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
+                                    ${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
+                                </select>
+                                <span class="px-0.5">:</span>
+                                <select onchange="window.updateTimePart('${item.tempId}','m',this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
+                                    ${Array.from({length: 60}, (_, i) => `<option value="${pad(i)}" ${pad(i) === mStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
+                                </select>
+                            </div>
+
+                            <div class="w-12 flex flex-col space-y-1 shrink-0">
+    <button type="button" id="btn-prefix-${item.tempId}-1-" onclick="window.selectPrefixOption('${item.tempId}', '1-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${item.prefix === '1-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+    <button type="button" id="btn-prefix-${item.tempId}-R-" onclick="window.selectPrefixOption('${item.tempId}', 'R-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${item.prefix === 'R-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+    <button type="button" id="btn-prefix-${item.tempId}-J-" onclick="window.selectPrefixOption('${item.tempId}', 'J-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${item.prefix === 'J-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
+</div>
+
+                            <textarea id="input-code-${item.tempId}" oninput="window.onPendingCodeChange('${item.tempId}', this, false)" onblur="window.onPendingCodeChange('${item.tempId}', this, true)" placeholder="輸入檔號" class="flex-1 h-[50px] bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 shadow-inner focus:outline-none focus:border-blue-500 resize-none leading-snug">${item.code || ''}</textarea>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                window.pendingUploadImages.forEach(it => {
+                    window.updateBatchAutoHintUI(it.title, it.time, `hint-pending-${it.tempId}`, false, it.tempId);
+                });
+            }
+            lucide.createIcons();
+        };
+
+        // ====== 斷點續傳與後台防中斷管理 ======
+        window._uploadQueue = [];
+        window._uploadWakeLock = null;
+
+        const requestWakeLock = async () => {
+            try {
+                if ('wakeLock' in navigator && !window._uploadWakeLock) {
+                    window._uploadWakeLock = await navigator.wakeLock.request('screen');
+                }
+            } catch (e) {}
+        };
+
+        const releaseWakeLock = () => {
+            if (window._uploadWakeLock) {
+                window._uploadWakeLock.release().catch(() => {});
+                window._uploadWakeLock = null;
+            }
+        };
+
+        // 監聽解鎖/重新點亮螢幕：若發現還有沒傳完的，自動接著繼續上傳
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && window._uploadQueue.length > 0 && !window.isUploading) {
+                window.showToast("🔄 螢幕解鎖，自動接續未完成的上傳...");
+                window.resumeBatchUploadQueue();
+            }
+        });
+
+        window.resumeBatchUploadQueue = async () => {
+            if (window.isUploading || !window._uploadQueue.length) return;
+            window.isUploading = true;
+            await requestWakeLock();
+
+            const total = window._totalUploadCount || window._uploadQueue.length;
+
+            try {
+                if (!currentUser || !db) throw new Error("授權未就緒，正在重新連線...");
+
+                while (window._uploadQueue.length > 0) {
+                    const item = window._uploadQueue[0];
+                    const docId = item.tempId;
+
+                    await idbSet(docId, item.src);
+                    memoryImageCache.set(docId, item.src);
+
+                    const mainDocData = {
+                    id: docId,
+                    chunkCount: item.chunks.length,
+                    title: item.title || '無標題',
+                    markStatus: item.markStatus || '',
+                    category: item.category || '未分類',
+                    time: item.time || '12:00',
+                    createdAt: Date.now(),
+                    sessionId: clientSessionId // 記錄是由哪一個瀏覽器上傳的
+                };
+
+                    const singleBatch = writeBatch(db);
+                    singleBatch.set(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId), mainDocData);
+                    item.chunks.forEach((chunkStr, idx) => {
+                        const chunkRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId, 'chunks', `part_${idx}`);
+                        singleBatch.set(chunkRef, { index: idx, data: chunkStr });
+                    });
+
+                    await singleBatch.commit();
+
+                    // 上傳成功一張就從佇列移除一張（確保不會重複傳送）
+                    window._uploadQueue.shift();
+
+                    // 記錄到本機圖庫 (採用防爆安全儲存)
+                    const map = new Map();
+                    [mainDocData, ...galleryItems].forEach(x => { if (x?.id) map.set(x.id, x); });
+                    galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+                    await saveGalleryItemsSafe(galleryItems);
+
+                    const finishedCount = total - window._uploadQueue.length;
+                    const currentPercent = ((finishedCount / total) * 100).toFixed(1);
+                    window.setUploadProgress(currentPercent, `上傳中：${finishedCount} / ${total} (${currentPercent}%)`);
+                }
+
+               window.setUploadProgress(-1, "");
+                window._lastRenderFingerprint = '';
+                await window.renderGallery();
+                window.playAlertSound();
+                
+                // 補回：呼叫頂部累積疊加通知橫幅
+                window.showGalleryTopNotification(total);
+
+                // 👇【在這裡加上這行寫入上傳日誌】
+                window.writeGalleryLog('發布圖片', `${total} 張相片`, `批次上傳成功`);
+
+                window.showToast(`✅ 全部圖片（共 ${total} 張）已成功發布！`);
+
+            } catch (err) {
+                window.setUploadProgress(-1, "");
+                window.showToast(`⚠️ 上傳暫停，解鎖螢幕後將自動繼續`, true);
+            } finally {
+                window.isUploading = false;
+                if (!window._uploadQueue.length) releaseWakeLock();
+            }
         };
 
         window.confirmBatchUpload = async () => {
@@ -2098,7 +2301,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             if (!items.length || window.isUploading) return;
 
             if (window.isBatchMergedView) {
-                // 合併模式：主動讀取當前數值與時間
+                // 發布前主動讀取輸入框當前數值，避免未觸發 blur 導致數值遺失
                 const inputEl = $('mergedCodeInput');
                 let codeRaw = inputEl ? inputEl.value.trim() : (window.mergedBatchForm.code || '');
                 const codeFormatted = formatStallCode(codeRaw);
@@ -2115,7 +2318,6 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                     it.time = curTime;
                 });
             } else {
-                // 修正 2：單張模式發布時，完整保留使用者在該張選取的時間
                 items.forEach(it => {
                     const inputEl = $(`input-code-${it.tempId}`);
                     let codeRaw = inputEl ? inputEl.value.trim() : (it.code || '');
@@ -2123,7 +2325,6 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                     const prefixClean = it.prefix || '';
                     it.code = codeFormatted;
                     it.title = `${prefixClean}${codeFormatted}`.trim() || '無標題';
-                    // it.time 已經由 updateTimePart 正確寫入，此處予以完整保留
                 });
             }
 
@@ -2567,70 +2768,23 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
         window.saveGridSchedule = () => {
             let newScheds = [], locKeys = Object.keys(mapData.points);
-
-            // 1. 讀取未切的整格 (div.grid-input-display)
-            document.querySelectorAll('td[onclick*="handleCellMobileClick"]').forEach(td => {
-                const loc = td.dataset.loc, start = td.dataset.start, end = td.dataset.end;
-                const displayDiv = td.querySelector('.grid-input-display');
-                const text = displayDiv ? displayDiv.textContent.trim() : '';
-                if (text && start && end) {
-                    text.split(/[\n\s]+/).forEach(r => {
-                        let clean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim();
-                        if (clean && !clean.includes('休')) {
-                            newScheds.push({
-                                id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5),
-                                name: clean,
-                                locationId: loc,
-                                start,
-                                end
-                            });
-                        }
-                    });
-                }
-            });
-
-            // 2. 讀取切半的半格 (textarea.grid-input)
-            document.querySelectorAll('textarea.grid-input').forEach(i => {
+            document.querySelectorAll('.grid-input').forEach(i => {
                 const { loc, start, end } = i.dataset, text = i.value.trim();
-                if (text && start && end) {
-                    text.split(/[\n\s]+/).forEach(r => {
-                        let clean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim();
-                        if (clean && !clean.includes('休')) {
-                            newScheds.push({
-                                id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5),
-                                name: clean,
-                                locationId: loc,
-                                start,
-                                end
-                            });
-                        }
-                    });
-                }
+                if (text && start && end) { text.split(/[\n\s]+/).forEach(r => { let clean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim(); if (clean && !clean.includes('休')) newScheds.push({ id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5), name: clean, locationId: loc, start, end }); }); }
             });
-
-            // 3. 連續時段合併
             let merged = [];
             locKeys.forEach(locId => {
                 teamMembers.forEach(name => {
                     let slots = newScheds.filter(s => s.locationId === locId && s.name === name).sort((a, b) => a.start.localeCompare(b.start));
                     let cur = null;
-                    slots.forEach(s => {
-                        if (!cur) cur = { ...s };
-                        else if (cur.end === s.start) cur.end = s.end;
-                        else { merged.push(cur); cur = { ...s }; }
-                    });
+                    slots.forEach(s => { if (!cur) cur = { ...s }; else if (cur.end === s.start) cur.end = s.end; else { merged.push(cur); cur = { ...s }; } });
                     if (cur) merged.push(cur);
                 });
             });
-
             memberSchedules = [...memberSchedules.filter(s => !s.id.startsWith('sch_grid_')), ...merged];
-            const todayStr = getNowInputStrs().date;
-            safeSetLocal('work_cache_schedule_date', todayStr);
-            safeSetLocal('work_cache_member_schedules', memberSchedules);
+            const todayStr = getNowInputStrs().date; safeSetLocal('work_cache_schedule_date', todayStr);
             syncConfig('member_schedules', { schedules: memberSchedules, date: todayStr });
-            window._tempGridValues = null;
-            window.showToast(`排班已儲存！共生效 ${merged.length} 筆時段。`);
-            window.closeScheduleManager();
+            window._tempGridValues = null; window.showToast(`排班已儲存！共生效 ${merged.length} 筆時段。`); window.closeScheduleManager();
         };
 
         window.clearAllSchedules = () => {
@@ -2988,19 +3142,7 @@ window.crSaveData = () => {
                     syncConfig('schedule', { tasks: dailyScheduleData }); syncConfig('task_states', { states: taskCompletionState });
                     syncConfig('subtask_states', { states: subTaskCompletionState }); syncConfig('gallery_categories', { categories: galleryCategories });
                     syncConfig('tab_visibility', { visibility: tabVisibilityState }); syncConfig('coldRoom', { records: crRecords, types: crItemTypes });
-                    window.applyTabVisibility(); 
-                    
-                    // 👇 確保匯入後全面刷新各分頁與畫面
-                    window._lastRenderFingerprint = '';
-                    if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
-                    if (!$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
-                    if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
-                    if (!$('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
-                    if (!$('memoPage')?.classList.contains('hidden')) window.renderMemos();
-
-                    window.showToast("導入成功！"); 
-                    window.checkColdRoomOverdueAlerts(); 
-                    window.checkMemoAlerts();
+                    window.applyTabVisibility(); window.showToast("導入成功！"); window.checkColdRoomOverdueAlerts(); window.checkMemoAlerts();
                     if (!$('closingPage')?.classList.contains('hidden')) window.searchStall();
                     $('settingsDropdown')?.classList.add('hidden');
                 } catch(err) { window.showToast("導入失敗", true); }
@@ -3191,7 +3333,7 @@ window.crSaveData = () => {
             if (!tasks.length) { container.innerHTML = '<div class="flex flex-col items-center justify-center pt-24 pb-32 text-slate-400"><i data-lucide="party-popper" class="w-16 h-16 mb-4 text-green-500 opacity-80"></i><span class="text-base font-black tracking-widest text-slate-600">目前沒有任何任務</span></div>'; lucide.createIcons(); return; }
             let targetScrollId = null, minDiff = Infinity;
             tasks.forEach(t => { const s = parseTime(t.start).getTime(), e = parseTime(t.end).getTime(); if (now >= s && now <= e) { targetScrollId = `tl-task-wrapper-${t.id}`; minDiff = -1; } else if (minDiff !== -1 && Math.min(Math.abs(s - now), Math.abs(e - now)) < minDiff) { minDiff = Math.min(Math.abs(s - now), Math.abs(e - now)); targetScrollId = `tl-task-wrapper-${t.id}`; } });
-            let html = '<div class="relative pt-2 pb-16 w-full max-w-full mx-auto flex flex-col overflow-visible">';
+            let html = '<div class="relative pt-2 pb-16 w-full max-w-full mx-auto flex flex-col overflow-hidden">';
             html += `<div id="uncompleted-indicator-container" class="sticky top-[125px] z-[60] w-0 h-0 overflow-visible transition-all duration-300 opacity-0 pointer-events-none -translate-y-2"><button type="button" onclick="window.scrollToTopUncompleted(event)" class="absolute left-[13px] -translate-y-full pointer-events-auto bg-red-500 text-white border-2 border-white rounded-full pl-1.5 pr-2 py-1 flex items-center shadow-lg shadow-red-500/40 text-[10px] font-bold hover:bg-red-600 active:scale-95 transition-all whitespace-nowrap"><i data-lucide="arrow-up" class="w-3.5 h-3.5 mr-0.5"></i><span id="uncompleted-count">0</span></button></div>`;
             html += `<div id="nowTimeMarker" class="absolute left-0 right-0 z-0 flex items-center pointer-events-none -translate-y-1/2 transition-all duration-500" style="top:0px; display:none;"><span class="text-blue-600 text-lg font-black shrink-0 -ml-1 drop-shadow-md select-none leading-none">➤</span><div class="flex-1 h-[2px] bg-blue-500/80 shadow-[0_0_8px_rgba(59,130,246,0.8)] border-t border-b border-blue-300"></div></div>`;
             let lastWasStacked = false, prevGapTime = window.getNow();
@@ -3783,7 +3925,7 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
             <div id="tabBarContainer" class="mt-1.5 flex bg-[#f0ebe1] rounded-lg p-0.5 shadow-inner border border-[#e5dfd3] relative z-20 overflow-x-auto scrollbar-hide w-full box-border">
         </header>
 
-       <main id="timelinePage" class="hidden absolute top-[88px] bottom-0 left-0 right-0 overflow-y-auto overflow-x-hidden z-10 bg-[#fdfbf7] scrollbar-hide pointer-events-auto" style="-webkit-overflow-scrolling: touch; overscroll-behavior-y: contain;">
+        <main id="timelinePage" class="hidden flex-1 min-h-0 overflow-y-scroll overflow-x-hidden relative z-10 bg-[#fdfbf7] scrollbar-hide" style="-webkit-overflow-scrolling: touch; overscroll-behavior-y: contain;">
             <div id="timelineStickyHeader" class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-2 pb-2 px-4 flex flex-col items-center justify-center pointer-events-none transition-all">
                 <div class="flex items-center justify-center gap-2 w-full max-w-[500px]">
                     <div class="flex items-center gap-1.5 justify-end flex-1">
