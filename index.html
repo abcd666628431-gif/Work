@@ -1121,7 +1121,7 @@ window.deleteSelectedGalleryItems = () => {
             const item = galleryItems.find(x => x.id === id);
             if (!item) return;
 
-            const catList = ['提早收工', '清潔', '營業相', '開工-雞相'];
+            const catList = ['提早收工', '營業相', '開工-雞相', '測溫相'];
             const curCat = (item.category === '收工' ? '提早收工' : item.category) || '提早收工';
             const curTime = item.time || '12:00';
 
@@ -1601,7 +1601,7 @@ window.deleteSelectedGalleryItems = () => {
             const item = galleryItems.find(x => x.id === id);
             if (!item) return;
 
-            const catList = ['提早收工', '清潔', '營業相', '開工-雞相'];
+            const catList = ['提早收工', '營業相', '開工-雞相', '測溫相'];;
             const curCat = (item.category === '收工' ? '提早收工' : item.category) || '提早收工';
             const curTime = item.time || '12:00';
 
@@ -2002,7 +2002,6 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             });
         };
 
-        // ====== 單張模式：分類切換與鎖定邏輯 ======
         window.setPendingItemCategory = (tempId, cat, isUserClick = false) => {
             const item = window.pendingUploadImages.find(x => x.tempId === tempId);
             if (!item) return;
@@ -2012,7 +2011,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 if (cat === '提早收工' || cat === '收工') {
                     item._categoryLocked = false;
                     window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
-                } else {
+                } else if (cat !== '測溫相') {
                     item._categoryLocked = true;
                     const hintBox = $(`hint-pending-${tempId}`);
                     if (hintBox) {
@@ -2065,13 +2064,25 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
         };
 
-        window.updateTimePart = (id, part, val) => {
+        // ====== 合併模式專用的時間更新函式 ======
+        window.updateMergedTimePart = (part, val) => {
             let [h, m] = (window.mergedBatchForm.time || '00:00').split(':');
             if (part === 'h') h = val; else m = val;
             window.mergedBatchForm.time = `${h}:${m}`;
 
             const fullCode = `${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`;
             window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
+        };
+
+        // ====== 單張模式專用的時間更新函式 ======
+        window.updateTimePart = (tempId, part, val) => {
+            const item = window.pendingUploadImages.find(x => x.tempId === tempId);
+            if (!item) return;
+            let [h, m] = (item.time || '00:00').split(':');
+            if (part === 'h') h = val; else m = val;
+            item.time = `${h}:${m}`;
+
+            window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
         };
 
         window.renderUploadBatchList = () => {
@@ -2087,7 +2098,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                     : `<i data-lucide="layers" class="w-3.5 h-3.5 mr-1"></i>合併疊加`;
             }
 
-            const catList = ['提早收工', '清潔', '營業相', '開工-雞相'];
+            const catList = ['提早收工', '營業相', '開工-雞相', '測溫相'];;
 
             if (window.isBatchMergedView) {
                 const [hStr, mStr] = (window.mergedBatchForm.time || '00:00').split(':');
@@ -2301,30 +2312,49 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             if (!items.length || window.isUploading) return;
 
             if (window.isBatchMergedView) {
-                // 發布前主動讀取輸入框當前數值，避免未觸發 blur 導致數值遺失
+                // 合併模式：主動讀取當前數值與時間
                 const inputEl = $('mergedCodeInput');
                 let codeRaw = inputEl ? inputEl.value.trim() : (window.mergedBatchForm.code || '');
-                const codeFormatted = formatStallCode(codeRaw);
+                let codeFormatted = formatStallCode(codeRaw);
                 const prefixClean = window.mergedBatchForm.prefix || '';
+                const curCategory = window.mergedBatchForm.category || '未分類';
+                const curTime = window.mergedBatchForm.time || '12:00'; // 抓取合併模式當前選取的時間
+
+                // 如果是「測溫相」，在背景默默加上「上午/下午測溫相」
+                if (curCategory === '測溫相') {
+                    const [h] = curTime.split(':').map(Number);
+                    const suffix = h < 12 ? '上午測溫相' : '下午測溫相';
+                    codeFormatted = codeFormatted ? `${codeFormatted} ${suffix}` : suffix;
+                }
+
                 const cleanTitle = `${prefixClean}${codeFormatted}`.trim();
-                const curTime = window.mergedBatchForm.time || '12:00';
 
                 items.forEach(it => {
                     it.prefix = prefixClean;
                     it.code = codeFormatted;
                     it.markStatus = window.mergedBatchForm.markStatus || "";
                     it.title = cleanTitle || '無標題';
-                    it.category = window.mergedBatchForm.category || '未分類';
-                    it.time = curTime;
+                    it.category = curCategory;
+                    it.time = curTime; // 確保將畫面上修改好的時間完整寫入每張圖片
                 });
             } else {
+                // 單張模式發布
                 items.forEach(it => {
                     const inputEl = $(`input-code-${it.tempId}`);
                     let codeRaw = inputEl ? inputEl.value.trim() : (it.code || '');
-                    const codeFormatted = formatStallCode(codeRaw);
+                    let codeFormatted = formatStallCode(codeRaw);
                     const prefixClean = it.prefix || '';
+                    
+                    // 如果是「測溫相」，在背景默默加上「上午/下午測溫相」
+                    if (it.category === '測溫相') {
+                        const [h] = (it.time || '12:00').split(':').map(Number);
+                        const suffix = h < 12 ? '上午測溫相' : '下午測溫相';
+                        codeFormatted = codeFormatted ? `${codeFormatted} ${suffix}` : suffix;
+                    }
+
                     it.code = codeFormatted;
                     it.title = `${prefixClean}${codeFormatted}`.trim() || '無標題';
+                    // 單張模式下，it.time 已經由 updateTimePart 綁定，會保留選好的時間
                 });
             }
 
@@ -3925,7 +3955,7 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
             <div id="tabBarContainer" class="mt-1.5 flex bg-[#f0ebe1] rounded-lg p-0.5 shadow-inner border border-[#e5dfd3] relative z-20 overflow-x-auto scrollbar-hide w-full box-border">
         </header>
 
-        <main id="timelinePage" class="hidden flex-1 min-h-0 overflow-y-scroll overflow-x-hidden relative z-10 bg-[#fdfbf7] scrollbar-hide" style="-webkit-overflow-scrolling: touch; overscroll-behavior-y: contain;">
+        <main id="timelinePage" class="hidden absolute inset-0 top-[88px] overflow-y-auto overflow-x-hidden z-10 bg-[#fdfbf7] scrollbar-hide pointer-events-auto" style="-webkit-overflow-scrolling: touch; overscroll-behavior-y: contain;">
             <div id="timelineStickyHeader" class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-2 pb-2 px-4 flex flex-col items-center justify-center pointer-events-none transition-all">
                 <div class="flex items-center justify-center gap-2 w-full max-w-[500px]">
                     <div class="flex items-center gap-1.5 justify-end flex-1">
