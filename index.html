@@ -1351,19 +1351,21 @@ window.deleteSelectedGalleryItems = () => {
             });
         };
 
-        // ====== 勾選導出為 PNG（完成後自動取消選取狀態） ======
-        // ====== 勾選導出為 PNG（檔名重複自動加上 (2), (3), (4)） ======
         window.exportAllGalleryImages = async () => {
             let targetItems = [];
             if (window.isGallerySelectMode && window.selectedGalleryIds.size > 0) {
                 // 選取模式下，只導出有被勾選且未被刪除的圖片
                 targetItems = galleryItems.filter(i => !i.isDeleted && window.selectedGalleryIds.has(i.id));
             } else {
-                // 一般模式下，過濾掉所有已移至垃圾桶（isDeleted 為 true）的圖片
-                targetItems = galleryItems.filter(i => !i.isDeleted);
+                // 一般模式下：如果當前有指定分類（非全部），則只導出該分類的圖片；否則導出全部未刪除圖片
+                targetItems = galleryItems.filter(i => {
+                    if (i.isDeleted) return false;
+                    if (currentGalleryCategory !== '全部' && i.category !== currentGalleryCategory) return false;
+                    return true;
+                });
             }
 
-            if (!targetItems?.length) return window.showToast('沒有選取任何圖片可導出', true);
+            if (!targetItems?.length) return window.showToast(`目前「${currentGalleryCategory}」分類下沒有可導出的圖片`, true);
             if (!window.showDirectoryPicker) return window.showToast('瀏覽器不支援自選資料夾功能', true);
 
             try {
