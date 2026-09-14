@@ -298,8 +298,8 @@
         };
         const formatStallCode = window.formatStallCode;
 
-        // 預設分類改為：全部、收工、清潔、營業相、雞相
-        let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '提早收工', '清潔', '營業相', '雞相']);
+        // 預設分類改為：全部、收工、清潔、營業相、開工-雞相
+        let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '提早收工', '清潔', '營業相', '開工-雞相']);
         let galleryItems = getLocal('work_cache_gallery_items', []);
         let memoryImageCache = new Map();
         let currentGalleryCategory = '全部';
@@ -1121,7 +1121,7 @@ window.deleteSelectedGalleryItems = () => {
             const item = galleryItems.find(x => x.id === id);
             if (!item) return;
 
-            const catList = ['提早收工', '清潔', '營業相', '雞相'];
+            const catList = ['提早收工', '清潔', '營業相', '開工-雞相'];
             const curCat = (item.category === '收工' ? '提早收工' : item.category) || '提早收工';
             const curTime = item.time || '12:00';
 
@@ -1447,7 +1447,7 @@ window.deleteSelectedGalleryItems = () => {
                     return 'bg-sky-100 text-sky-800 border-sky-400';
                 case '營業相':
                     return 'bg-emerald-100 text-emerald-800 border-emerald-400';
-                case '雞相':
+                case '開工-雞相':
                     return 'bg-purple-100 text-purple-800 border-purple-400';
                 default:
                     return 'bg-slate-100 text-slate-700 border-slate-300';
@@ -1599,7 +1599,7 @@ window.deleteSelectedGalleryItems = () => {
             const item = galleryItems.find(x => x.id === id);
             if (!item) return;
 
-            const catList = ['提早收工', '清潔', '營業相', '雞相'];
+            const catList = ['提早收工', '清潔', '營業相', '開工-雞相'];
             const curCat = (item.category === '收工' ? '提早收工' : item.category) || '提早收工';
             const curTime = item.time || '12:00';
 
@@ -1864,12 +1864,12 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             const hintBox = $(hintBoxId);
             if (!hintBox) return;
 
-            // 嚴格檢查：只有使用者明確手動選了「營業相」或「雞相」才跳過自動判定
             const curCat = isMerged ? window.mergedBatchForm.category : window.pendingUploadImages.find(x => x.tempId === tempId)?.category;
             const isUserLocked = isMerged ? window._batchCategoryLocked : window.pendingUploadImages.find(x => x.tempId === tempId)?._categoryLocked;
             
-            if (isUserLocked && (curCat === '營業相' || curCat === '雞相')) {
-                return; // 使用者要傳營業相或雞相，不干擾
+            // 👉 關鍵修改：只要使用者手動點了「非收工」按鍵（如開工、雞相、營業相等），一律直接退出，絕對不自動判定收工
+            if (isUserLocked && curCat !== '提早收工' && curCat !== '收工') {
+                return;
             }
 
             if (!codeRaw || !window.stallList || !window.stallList.length) {
@@ -1878,13 +1878,17 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             }
 
             let prefix = '', pureCode = codeRaw.trim();
-            if (/^1-?/i.test(pureCode)) { prefix = '一樓'; pureCode = pureCode.replace(/^1-?/i, ''); }
-            else if (/^R-?/i.test(pureCode)) { prefix = '地下'; pureCode = pureCode.replace(/^R-?/i, ''); }
-            else if (/^J-?/i.test(pureCode)) { prefix = '花園仔'; pureCode = pureCode.replace(/^J-?/i, ''); }
-            const cleanCode = pureCode.replace(/^0+/, '') || '0';
+            if (/^1-/i.test(pureCode)) { prefix = '一樓'; pureCode = pureCode.replace(/^1-/i, ''); }
+            else if (/^R-/i.test(pureCode)) { prefix = '地下'; pureCode = pureCode.replace(/^R-/i, ''); }
+            else if (/^J-/i.test(pureCode)) { prefix = '花園仔'; pureCode = pureCode.replace(/^J-/i, ''); }
 
-            // 判斷是否屬於雞檔 / 花園仔
-            const isChickenStall = prefix === '花園仔' || /^J-0?/i.test(codeRaw.trim());
+            const cleanCode = pureCode.replace(/\D/g, '').replace(/^0+/, '') || pureCode.replace(/\D/g, '');
+            if (!cleanCode) {
+                hintBox.className = 'hidden';
+                return;
+            }
+
+            const isChickenStall = prefix === '花園仔' || /^J-/i.test(codeRaw.trim());
 
             const matched = window.stallList.find(s => {
                 const sClean = String(s.code || '').replace(/^0+/, '');
@@ -1907,7 +1911,6 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
 
             hintBox.classList.remove('hidden');
 
-            // 1. 雞檔專屬規則：無提早收工，一律自動點亮「清潔」
             if (isChickenStall) {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
@@ -1916,22 +1919,18 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 
                 if (isMerged) window.setMergedCategory('清潔', false);
                 else if (tempId) window.setPendingItemCategory(tempId, '清潔', false);
-            } 
-            // 2. 一般檔位：提早大於 30 分鐘，自動點亮「提早收工」
-            else if (diff > 30) {
+            } else if (diff > 30) {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
                     <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
-                    <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (超過 30 分寬限)</div>`;
+                    <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘</div>`;
                 
                 if (isMerged) window.setMergedCategory('提早收工', false);
                 else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
-            } 
-            // 3. 一般檔位：30 分鐘寬限期內或已過收工時間，自動點亮「清潔」
-            else {
+            } else {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
                 const statusDetail = diff > 0 
-                    ? `[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (在 30 分鐘寬限期內)` 
+                    ? `[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (寬限期內)` 
                     : `[${matched.floor} ${matched.code}] 表定 ${closingTime}，已過打烊時間`;
                 hintBox.innerHTML = `
                     <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
@@ -1947,10 +1946,10 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
         window.setMergedPrefix = (val) => {
             window.mergedBatchForm.prefix = (window.mergedBatchForm.prefix === val) ? "" : val;
             
-            if (window.mergedBatchForm.code) {
-                window.mergedBatchForm.code = formatStallCode(window.mergedBatchForm.code, true);
-                const inputEl = $('mergedCodeInput');
-                if (inputEl) inputEl.value = window.mergedBatchForm.code;
+            const inputEl = $('mergedCodeInput');
+            if (inputEl && inputEl.value.trim()) {
+                window.mergedBatchForm.code = formatStallCode(inputEl.value.trim());
+                inputEl.value = window.mergedBatchForm.code;
             }
 
             ['1-', 'R-', 'J-'].forEach(pKey => {
@@ -1962,50 +1961,89 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 }
             });
 
-            const basePrefix = window.mergedBatchForm.prefix ? window.mergedBatchForm.prefix.replace(/-$/, '') + '-' : '';
-            const fullCode = `${basePrefix}${window.mergedBatchForm.code || ''}`.trim();
+            const fullCode = `${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || (inputEl ? inputEl.value.trim() : '')}`.trim();
             window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
         };
 
+        // ====== 合併模式：分類切換與鎖定邏輯 ======
         window.setMergedCategory = (cat, isUserClick = false) => {
             window.mergedBatchForm.category = cat;
+
             if (isUserClick) {
-                // 手動選擇了任何分類（特別是營業相、雞相），鎖定不被自動判定覆蓋
-                window._batchCategoryLocked = (cat === '營業相' || cat === '雞相');
-                const hintBox = $('batchMergedAutoHint');
-                if (hintBox) {
-                    hintBox.classList.remove('hidden');
-                    hintBox.className = 'mb-2.5 p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between';
-                    hintBox.innerHTML = `<span>✋ 已手動選擇「${cat}」</span><button type="button" onclick="window._batchCategoryLocked=false; window.updateBatchAutoHintUI('${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}', '${window.mergedBatchForm.time || '12:00'}', 'batchMergedAutoHint', true);" class="text-[10px] text-blue-600 underline ml-2">重新判定</button>`;
+                // 點擊「收工」或「提早收工」時解鎖，恢復時間自動判定；
+                // 點擊「開工」、「雞相」或其他分類時，鎖定不被時間判定覆蓋
+                if (cat === '提早收工' || cat === '收工') {
+                    window._batchCategoryLocked = false;
+                    const inputEl = $('mergedCodeInput');
+                    const code = inputEl ? inputEl.value.trim() : (window.mergedBatchForm.code || '');
+                    const fullCode = `${window.mergedBatchForm.prefix || ''}${code}`.trim();
+                    window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
+                } else {
+                    window._batchCategoryLocked = true;
+                    const hintBox = $('batchMergedAutoHint');
+                    if (hintBox) {
+                        hintBox.classList.remove('hidden');
+                        hintBox.className = 'mb-2.5 p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between';
+                        hintBox.innerHTML = `<span>✋ 已選取「${cat}」，不進行收工判定</span><button type="button" onclick="window.setMergedCategory('提早收工', true);" class="text-[10px] text-blue-600 underline ml-2">切回收工判定</button>`;
+                        lucide.createIcons({ root: hintBox });
+                    }
                 }
             }
-            ['提早收工', '清潔', '營業相', '雞相'].forEach(c => {
-                const btn = $(`merged-cat-btn-${c}`);
-                if (btn) btn.className = (window.mergedBatchForm.category === c)
-                    ? "flex-1 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-white border border-amber-500 shadow-xs active:scale-95 transition-all"
-                    : "flex-1 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 active:scale-95 transition-all";
+
+            // 更新合併模式按鈕高亮樣式
+            document.querySelectorAll('#mergedCatButtonsContainer button, .merged-cat-btn').forEach(btn => {
+                const btnCat = btn.getAttribute('data-cat') || btn.textContent.trim();
+                const isSelected = btnCat === cat;
+                btn.className = isSelected
+                    ? "flex-auto min-w-[68px] py-1.5 px-2 rounded-lg text-xs font-bold border transition-all active:scale-95 bg-amber-500 text-white border-amber-500 shadow-xs"
+                    : "flex-auto min-w-[68px] py-1.5 px-2 rounded-lg text-xs font-bold border transition-all active:scale-95 bg-white text-slate-600 border-slate-200 hover:bg-slate-100";
             });
         };
 
+        // ====== 單張模式：分類切換與鎖定邏輯 ======
         window.setPendingItemCategory = (tempId, cat, isUserClick = false) => {
             const item = window.pendingUploadImages.find(x => x.tempId === tempId);
             if (!item) return;
             item.category = cat;
+
             if (isUserClick) {
-                item._categoryLocked = (cat === '營業相' || cat === '雞相');
-                const hintBox = $(`hint-pending-${tempId}`);
-                if (hintBox) {
-                    hintBox.classList.remove('hidden');
-                    hintBox.className = 'p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between';
-                    hintBox.innerHTML = `<span>✋ 已手動選擇「${cat}」</span><button type="button" onclick="const it = window.pendingUploadImages.find(x => x.tempId === '${tempId}'); if(it) it._categoryLocked = false; window.updateBatchAutoHintUI('${item.title}', '${item.time}', 'hint-pending-${tempId}', false, '${tempId}');" class="text-[10px] text-blue-600 underline ml-2">重新判定</button>`;
+                if (cat === '提早收工' || cat === '收工') {
+                    item._categoryLocked = false;
+                    window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
+                } else {
+                    item._categoryLocked = true;
+                    const hintBox = $(`hint-pending-${tempId}`);
+                    if (hintBox) {
+                        hintBox.classList.remove('hidden');
+                        hintBox.className = 'p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between';
+                        hintBox.innerHTML = `<span>✋ 已選取「${cat}」，不進行收工判定</span><button type="button" onclick="window.setPendingItemCategory('${tempId}', '提早收工', true);" class="text-[10px] text-blue-600 underline ml-2">切回收工判定</button>`;
+                        lucide.createIcons({ root: hintBox });
+                    }
                 }
             }
-            ['提早收工', '清潔', '營業相', '雞相'].forEach(c => {
-                const btn = $(`btn-cat-${tempId}-${c}`);
-                if (btn) btn.className = (item.category === c)
-                    ? "flex-1 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-white border border-amber-500 shadow-xs active:scale-95 transition-all"
-                    : "flex-1 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 active:scale-95 transition-all";
-            });
+
+            const parentCard = $(`hint-pending-${tempId}`)?.closest('.bg-slate-50');
+            if (parentCard) {
+                parentCard.querySelectorAll('button[onclick*="setPendingItemCategory"]').forEach(btn => {
+                    const isSelected = btn.textContent.trim() === cat;
+                    btn.className = isSelected
+                        ? "flex-auto min-w-[68px] py-1.5 px-2 rounded-lg text-xs font-bold border transition-all active:scale-95 bg-amber-500 text-white border-amber-500 shadow-xs"
+                        : "flex-auto min-w-[68px] py-1.5 px-2 rounded-lg text-xs font-bold border transition-all active:scale-95 bg-white text-slate-600 border-slate-200 hover:bg-slate-100";
+                });
+            }
+        };
+
+        // ====== 輸入檔號監聽 (只抓數字補零，保留已選前綴) ======
+        window.onMergedCodeChange = (el, isBlur = false) => {
+            let val = el.value.trim();
+            if (isBlur && val) {
+                val = formatStallCode(val);
+                el.value = val;
+            }
+            window.mergedBatchForm.code = val;
+
+            const fullCode = `${window.mergedBatchForm.prefix || ''}${val}`.trim();
+            window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
         };
 
         window.onPendingCodeChange = (tempId, el, isBlur = false) => {
@@ -2019,7 +2057,6 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             }
             item.code = val;
             
-            // 組合標題：前綴 + 檔號
             const basePrefix = item.prefix || '';
             item.title = `${basePrefix}${item.code || ''}`.trim();
 
@@ -2048,7 +2085,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                     : `<i data-lucide="layers" class="w-3.5 h-3.5 mr-1"></i>合併疊加`;
             }
 
-            const catList = ['提早收工', '清潔', '營業相', '雞相'];
+            const catList = ['提早收工', '清潔', '營業相', '開工-雞相'];
 
             if (window.isBatchMergedView) {
                 const [hStr, mStr] = (window.mergedBatchForm.time || '00:00').split(':');
@@ -2262,9 +2299,12 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             if (!items.length || window.isUploading) return;
 
             if (window.isBatchMergedView) {
-                const prefixClean = (window.mergedBatchForm.prefix || '').replace(/-$/, '') + '-';
-                const codeFormatted = formatStallCode(window.mergedBatchForm.code, !!window.mergedBatchForm.prefix);
-                const cleanTitle = `${prefixClean}${codeFormatted || ''}`.trim();
+                // 發布前主動讀取輸入框當前數值，避免未觸發 blur 導致數值遺失
+                const inputEl = $('mergedCodeInput');
+                let codeRaw = inputEl ? inputEl.value.trim() : (window.mergedBatchForm.code || '');
+                const codeFormatted = formatStallCode(codeRaw);
+                const prefixClean = window.mergedBatchForm.prefix || '';
+                const cleanTitle = `${prefixClean}${codeFormatted}`.trim();
                 const curTime = window.mergedBatchForm.time || '12:00';
 
                 items.forEach(it => {
@@ -2273,23 +2313,16 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                     it.markStatus = window.mergedBatchForm.markStatus || "";
                     it.title = cleanTitle || '無標題';
                     it.category = window.mergedBatchForm.category || '未分類';
-                    it.time = curTime; // 確保強制寫入合併模式下修改的時間
+                    it.time = curTime;
                 });
             } else {
-                // 展開分開模式：同步抓取每張圖在介面上被個別修改的時間與檔號
                 items.forEach(it => {
-                    const timeSelectH = document.querySelector(`select[onchange*="updateTimePart('${it.tempId}','h'"]`)?.value;
-                    const timeSelectM = document.querySelector(`select[onchange*="updateTimePart('${it.tempId}','m'"]`)?.value;
-                    if (timeSelectH && timeSelectM) {
-                        it.time = `${timeSelectH}:${timeSelectM}`;
-                    }
-                    const codeInput = $(`input-code-${it.tempId}`);
-                    if (codeInput) {
-                        const codeVal = formatStallCode(codeInput.value, !!it.prefix);
-                        const prefixClean = (it.prefix || '').replace(/-$/, '') + '-';
-                        it.code = codeVal;
-                        it.title = `${prefixClean}${codeVal}`.trim();
-                    }
+                    const inputEl = $(`input-code-${it.tempId}`);
+                    let codeRaw = inputEl ? inputEl.value.trim() : (it.code || '');
+                    const codeFormatted = formatStallCode(codeRaw);
+                    const prefixClean = it.prefix || '';
+                    it.code = codeFormatted;
+                    it.title = `${prefixClean}${codeFormatted}`.trim() || '無標題';
                 });
             }
 
@@ -2353,7 +2386,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             dailyScheduleData = getLocal('work_cache_schedule', []);
             taskCompletionState = getLocal('work_cache_task_states', {});
             subTaskCompletionState = getLocal('work_cache_subtask_states', {});
-            galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '提早收工', '清潔', '營業相', '雞相']);
+            galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '提早收工', '清潔', '營業相', '開工-雞相']);
             galleryCategories = galleryCategories.map(c => c === '收工' ? '提早收工' : c);
             galleryCategories = Array.from(new Set(galleryCategories));
             safeSetLocal('work_cache_gallery_categories', galleryCategories);
