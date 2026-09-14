@@ -1523,9 +1523,9 @@ window.deleteSelectedGalleryItems = () => {
                             `}
                         </div>
 
-                        <!-- 圖片本體：點擊直接全螢幕放大檢視，支援破圖/空白自動重試補抓 -->
-                        <div class="w-full h-20 sm:h-24 bg-slate-100 overflow-hidden relative cursor-zoom-in" 
-                             onclick="${!window.isGallerySelectMode ? `window.viewHdImage('${i.id}', event)` : ''}">
+                        <!-- 圖片本體：點擊直接全螢幕放大檢視，游標維持一般指針/指標 -->
+<div class="w-full h-20 sm:h-24 bg-slate-100 overflow-hidden relative cursor-pointer" 
+     onclick="${!window.isGallerySelectMode ? `window.viewHdImage('${i.id}', event)` : ''}">
                             <img id="gallery-img-${i.id}"
                                  src="${thumbSrc || 'data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'100\' height=\'100\' fill=\'%23e2e8f0\'><rect width=\'100\' height=\'100\'/></svg>'}" 
                                  loading="lazy" 
@@ -2711,6 +2711,36 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             }
         };
 
+        // ====== 手機版專屬：點擊格子直接填入或清除排班名字 ======
+        window.handleCellMobileClick = (tdEl, locId, start, end) => {
+            if (!activeGridMember) {
+                window.showToast("請先在上方點選上方成員或橡皮擦！", true);
+                return;
+            }
+            
+            const displayDiv = tdEl.querySelector('.grid-input-display');
+            if (!displayDiv) return;
+
+            if (activeGridMember === 'ERASER') {
+                // 橡皮擦模式：直接清空
+                displayDiv.textContent = '';
+                window.showToast("🧹 已清除此格");
+            } else {
+                // 成員填入模式：點擊即寫入該成員名字
+                let currentText = displayDiv.textContent.trim();
+                let names = currentText ? currentText.split(/[\n\s]+/).filter(Boolean) : [];
+                
+                if (names.includes(activeGridMember)) {
+                    names = names.filter(n => n !== activeGridMember);
+                    window.showToast(`➖ 已從此格移除「${activeGridMember}」`);
+                } else {
+                    names.push(activeGridMember);
+                    window.showToast(`➕ 已指派「${activeGridMember}」`);
+                }
+                displayDiv.textContent = names.join('\n');
+            }
+        };
+
         window.startGridDrag = (el) => {
             if (!activeGridMember) return; el.blur(); isGridDragging = true;
             if (activeGridMember === 'ERASER') { gridDragAction = 'erase'; el.value = ''; }
@@ -2888,7 +2918,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                 }
                             }
                             const bgCol = val.split('\n')[0] ? window.getMemberColorClass(val.split('\n')[0]).bg : 'bg-white';
-                            rows += `<td class="p-0 ${cellSlotClass} ${bgCol} hover:opacity-90 transition-colors relative align-middle w-[40px] min-w-[40px]"><button type="button" onclick="window.toggleSplitHour('${locId}', '${tStart}')" class="absolute top-0 right-0 z-20 bg-slate-100 hover:bg-slate-200 text-slate-500 p-0.5 rounded-bl text-[8px] font-bold shadow-sm" title="切割半格">✂️</button><textarea class="grid-input w-full h-full p-0.5 text-[10px] resize-none focus:outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400 border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent text-center overflow-y-auto ${activeGridMember ? 'cursor-pointer select-none' : ''}" style="height: ${locId === 'pt_1' ? '72px' : '30px'}; min-height: ${locId === 'pt_1' ? '72px' : '30px'};" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}" placeholder="..." onmousedown="window.startGridDrag(this)" onmouseenter="window.onGridDragEnter(this)" ontouchstart="window.startGridDrag(this)">${val}</textarea></td>`;
+                            rows += `<td onclick="window.handleCellMobileClick(this, '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} ${bgCol} hover:opacity-90 transition-colors relative align-middle w-[40px] min-w-[40px] cursor-pointer select-none" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><button type="button" onclick="event.stopPropagation(); window.toggleSplitHour('${locId}', '${tStart}')" class="absolute top-0 right-0 z-20 bg-slate-100 hover:bg-slate-200 text-slate-500 p-0.5 rounded-bl text-[8px] font-bold shadow-sm" title="切割半格">✂️</button><div class="grid-input-display w-full flex items-center justify-center font-bold text-slate-800 text-[10px] leading-tight overflow-hidden p-0.5 pointer-events-none" style="height: ${locId === 'pt_1' ? '72px' : '30px'}; min-height: ${locId === 'pt_1' ? '72px' : '30px'}; white-space: pre-line;">${val}</div></td>`;
                         }
                     }
                 });
