@@ -1435,8 +1435,35 @@ window.deleteSelectedGalleryItems = () => {
             }
         };
 
-// ====== 專屬攤販提早收工 Excel (CSV) 導出函式（排除同日重複檔口） ======
+// ====== 專屬攤販提早收工 Excel (CSV) 導出函式（新增檔主姓名欄位） ======
         window.exportGalleryExcelCSV = () => {
+            // 108 檔全攤位檔主對照表 (由官方資料自動比對)
+            const STALL_OWNERS = {
+                "1_1": "鄭錫霖", "1_2": "余家昇", "1_3": "馮春育", "1_5": "張俠川", "1_6": "余偉強",
+                "1_10": "梁中", "1_13": "曾永洪", "1_14": "周笑崧", "1_15": "曾沃孝", "1_18": "何森寧",
+                "1_19": "歐陽燕", "1_20": "黃樹根", "1_21": "陳麗新", "1_23": "羅志友", "1_24": "邱其仁",
+                "1_26": "蘇海輝",
+                "R_2": "吳惠芬", "R_3": "高偉傑", "R_4": "吳國榮", "R_5": "吳國雄", "R_6": "周啓朗",
+                "R_7": "黎鳳好", "R_8": "黃傑球", "R_9": "周嘉傑", "R_10": "陳少萍", "R_12": "李秀英",
+                "R_13": "譚沛文", "R_14": "何桂英", "R_17": "梁惠蘭", "R_18": "高嘉文", "R_19": "李文輝",
+                "R_20": "許德榮", "R_21": "關偉銘", "R_23": "蕭永財", "R_24": "李興強", "R_25": "蕭柏豪",
+                "R_26": "樊美恩", "R_27": "唐善堅", "R_28": "梁帶娣", "R_29": "蔡明", "R_30": "周長梅",
+                "R_31": "吳錦培", "R_32": "何建金", "R_33": "何天就", "R_34": "葉沛鉛", "R_35": "吳美玲",
+                "R_37": "李志強", "R_39": "何笑玲", "R_40": "陳悅歡", "R_42": "陳錦蘭", "R_43": "林文健",
+                "R_44": "楊觀蓮", "R_45": "鍾銘賢", "R_46": "林惠珍", "R_50": "盧梅珍", "R_51": "吳仲輝",
+                "R_53": "鄭金海", "R_54": "梁轉好", "R_55": "羅連帶", "R_57": "林玉鳳", "R_58": "陳敏怡",
+                "R_59": "梁志明", "R_60": "梁展鵬", "R_61": "柯惠儀", "R_62": "黃少珍", "R_63": "歐仲良",
+                "R_64": "蘇麗影", "R_65": "冼嘉欣", "R_66": "彭海豐", "R_67": "陳添友", "R_69": "林耀新",
+                "R_70": "陳少珍", "R_71": "楊劍光", "R_72": "關棨豪", "R_73": "關超文", "R_74": "吳麗玲",
+                "R_76": "梁志偉", "R_78": "何玉卿", "R_79": "高建成", "R_80": "鍾添", "R_81": "李盧梅娟",
+                "R_82": "何鈿", "R_85": "梁日成", "R_86": "蘇麗珍", "R_87": "譚潤華",
+                "J_2": "盧錦棠", "J_3": "尹浩斌", "J_4": "梁慧敏", "J_5": "黃榮強", "J_7": "許榮新",
+                "J_8": "黃順金", "J_9": "歐陽結艷", "J_12": "李麗珍", "J_13": "黃志聰", "J_14": "黃秀萍",
+                "J_15": "黃玉蘭", "J_16": "梁碧兒", "J_17": "黃靜梅", "J_18": "甘林根", "J_20": "張文業",
+                "J_21": "李樹強", "J_22": "歐陽結環", "J_24": "黃景緒", "J_25": "高志遠", "J_26": "陳瑞霞",
+                "J_29": "甘容金", "J_30": "歐鏡榴", "J_31": "湯偉強"
+            };
+
             // 1. 只抓取未刪除且分類為「提早收工」或「收工」的圖片
             let targetItems = galleryItems.filter(i => !i.isDeleted && (i.category === '提早收工' || i.category === '收工'));
 
@@ -1447,20 +1474,18 @@ window.deleteSelectedGalleryItems = () => {
             // 2. 按照時間從早到晚排序
             targetItems.sort((a, b) => (a.time || '12:00').localeCompare(b.time || '12:00'));
 
+            // 標題列：右側新增「檔主」欄位
             const csvRows = [
-                ['日期', '樓層', '檔號', '收工時間']
+                ['日期', '樓層', '檔號', '收工時間', '檔主']
             ];
 
             let lastDateStr = '';
-            // 用來記錄「同一天已出現過的 樓層+檔號」，避免重複輸出
             const seenStalls = new Set();
 
             targetItems.forEach((item) => {
                 const d = item.createdAt ? new Date(item.createdAt) : window.getNow();
-                // 格式為 9/15
                 const currentDateStr = `${d.getMonth() + 1}/${d.getDate()}`;
 
-                // 拆解樓層與檔號
                 let rawTitle = (item.title || '').trim();
                 let floor = '';
                 let code = rawTitle;
@@ -1478,20 +1503,17 @@ window.deleteSelectedGalleryItems = () => {
                     floor = item.floor || '-';
                 }
 
-                // 清除可能殘留的後綴文字
                 code = code.replace(/(上午|下午)測溫相/g, '').trim();
 
-                // 移除前導 0（例如 002 轉為 2、085 轉為 85）
                 const numMatch = code.match(/\d+/);
                 if (numMatch) {
-                    code = String(parseInt(numMatch[0], 10));
+                    code = String(parseInt(numMatch[0], 10)); // 去除前導0，如 002 變 2
                 }
 
-                // 建立同日唯一標識 key：日期 + 樓層 + 檔號 (例如 "9/15_1_2")
+                // 同日同一檔口去重判斷
                 const stallKey = `${currentDateStr}_${floor}_${code}`;
                 if (seenStalls.has(stallKey)) {
-                    // 如果這一天這個檔口已經出現過，直接跳過不重複記錄
-                    return;
+                    return; // 當天重複檔口只留第一筆
                 }
                 seenStalls.add(stallKey);
 
@@ -1501,10 +1523,13 @@ window.deleteSelectedGalleryItems = () => {
 
                 const timeStr = item.time || '12:00';
 
-                csvRows.push([displayDate, floor, code, timeStr]);
+                // 比對檔主姓名
+                const ownerName = STALL_OWNERS[`${floor}_${code}`] || '';
+
+                csvRows.push([displayDate, floor, code, timeStr, ownerName]);
             });
 
-            // 加入 UTF-8 BOM 避免 Excel 開啟時中文亂碼
+            // 加入 UTF-8 BOM 避免 Excel 亂碼
             const csvContent = "\uFEFF" + csvRows.map(e => e.join(",")).join("\n");
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a");
@@ -1512,7 +1537,7 @@ window.deleteSelectedGalleryItems = () => {
             link.download = `攤販提早收工資料表_${new Date().toISOString().slice(0, 10)}.csv`;
             link.click();
 
-            window.showToast("✅ 已成功導出提早收工 Excel 資料表（已自動去重）！");
+            window.showToast("✅ 已成功導出含檔主名之 Excel 資料表！");
         };
 
         window._lastRenderFingerprint = '';
@@ -2053,13 +2078,11 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
         };
 
-        // ====== 合併模式：分類切換與鎖定邏輯 ======
+        // ====== 合併模式：分類切換與點擊即時亮燈修復 ======
         window.setMergedCategory = (cat, isUserClick = false) => {
             window.mergedBatchForm.category = cat;
 
             if (isUserClick) {
-                // 點擊「收工」或「提早收工」時解鎖，恢復時間自動判定；
-                // 點擊「開工」、「雞相」或其他分類時，鎖定不被時間判定覆蓋
                 if (cat === '提早收工' || cat === '收工') {
                     window._batchCategoryLocked = false;
                     const inputEl = $('mergedCodeInput');
@@ -2078,16 +2101,17 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 }
             }
 
-            // 更新合併模式按鈕高亮樣式
-            document.querySelectorAll('#mergedCatButtonsContainer button, .merged-cat-btn').forEach(btn => {
-                const btnCat = btn.getAttribute('data-cat') || btn.textContent.trim();
-                const isSelected = btnCat === cat;
-                btn.className = isSelected
-                    ? "flex-auto min-w-[68px] py-1.5 px-2 rounded-lg text-xs font-bold border transition-all active:scale-95 bg-amber-500 text-white border-amber-500 shadow-xs"
-                    : "flex-auto min-w-[68px] py-1.5 px-2 rounded-lg text-xs font-bold border transition-all active:scale-95 bg-white text-slate-600 border-slate-200 hover:bg-slate-100";
+            // 直接透過精準 id 立即亮起當前按鈕，其餘恢復白底
+            ['提早收工', '營業相', '開工-雞相', '測溫相'].forEach(c => {
+                const btn = $(`merged-cat-btn-${c}`);
+                if (btn) {
+                    const isSelected = (c === cat);
+                    btn.className = `flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all active:scale-95 ${isSelected ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}`;
+                }
             });
         };
 
+        // ====== 單張模式：分類切換與點擊即時亮燈修復 ======
         window.setPendingItemCategory = (tempId, cat, isUserClick = false) => {
             const item = window.pendingUploadImages.find(x => x.tempId === tempId);
             if (!item) return;
@@ -2109,15 +2133,14 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 }
             }
 
-            const parentCard = $(`hint-pending-${tempId}`)?.closest('.bg-slate-50');
-            if (parentCard) {
-                parentCard.querySelectorAll('button[onclick*="setPendingItemCategory"]').forEach(btn => {
-                    const isSelected = btn.textContent.trim() === cat;
-                    btn.className = isSelected
-                        ? "flex-auto min-w-[68px] py-1.5 px-2 rounded-lg text-xs font-bold border transition-all active:scale-95 bg-amber-500 text-white border-amber-500 shadow-xs"
-                        : "flex-auto min-w-[68px] py-1.5 px-2 rounded-lg text-xs font-bold border transition-all active:scale-95 bg-white text-slate-600 border-slate-200 hover:bg-slate-100";
-                });
-            }
+            // 單張模式下直接更新該卡片內對應的 4 個按鈕
+            ['提早收工', '營業相', '開工-雞相', '測溫相'].forEach(c => {
+                const btn = $(`btn-cat-${tempId}-${c}`);
+                if (btn) {
+                    const isSelected = (c === cat);
+                    btn.className = `flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all active:scale-95 ${isSelected ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}`;
+                }
+            });
         };
 
         // ====== 輸入檔號監聽 (只抓數字補零，保留已選前綴) ======
