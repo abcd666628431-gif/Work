@@ -2904,38 +2904,56 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     if (cur || row.length) { row.push(cur.trim()); rows.push(row); }
                     const validRows = rows.filter(r => r.length > 0 && r.some(Boolean));
                     if (validRows.length < 2) return window.showToast("匯入檔案內容格式不正確", true);
+                    
                     const headers = validRows[0].map(h => h.replace(/^"+|"+$/g, '').trim());
                     window._tempGridValues = window._tempGridValues || {};
                     const locMap = { '花園仔': 'pt_3', '魚檔': 'pt_4', '整體巡邏': 'pt_5', '客服室': 'pt_1', '一樓大清點': 'pt_2', '一樓': 'pt_2', '地面層大清點': 'pt_6', '地面層': 'pt_6', '休息中': 'pt_7', '人員休息中': 'pt_7', '休息': 'pt_7' };
-                    const isHalfHourFormat = headers.some(h => h.includes('07:30') || h.includes('08:30'));
+                    
                     for (let rowIdx = 1; rowIdx < validRows.length; rowIdx++) {
                         const cols = validRows[rowIdx]; if (!cols.length) continue;
                         const stationRaw = (cols[0] || '').replace(/\s+/g, '');
                         let matchedLocId = null; for (let [k, v] of Object.entries(locMap)) { if (stationRaw.includes(k)) { matchedLocId = v; break; } }
                         if (!matchedLocId) continue;
-                        if (isHalfHourFormat) {
-                            let halfCols = {};
-                            for (let c = 1; c < headers.length; c++) { const timeCol = headers[c]; if (!timeCol || !timeCol.includes('-')) continue; halfCols[timeCol] = cols[c] ? cols[c].replace(/^"+|"+$/g, '').trim() : ''; }
-                            for (let h = 7; h < 22; h++) {
-                                const hStr = pad(h), nextHStr = pad(h + 1);
-                                const t1 = `${hStr}:00-${hStr}:30`, t2 = `${hStr}:30-${nextHStr}:00`;
-                                const v1 = halfCols[t1] || '', v2 = halfCols[t2] || '';
-                                if (v1 && v1 === v2) {
-                                    splitHoursState[`${matchedLocId}_${hStr}:00`] = false; window._tempGridValues[`${matchedLocId}_${hStr}:00_${nextHStr}:00`] = v1;
-                                    delete window._tempGridValues[`${matchedLocId}_${hStr}:00_${hStr}:30`]; delete window._tempGridValues[`${matchedLocId}_${hStr}:30_${nextHStr}:00`];
-                                } else {
-                                    splitHoursState[`${matchedLocId}_${hStr}:00`] = !!(v1 || v2);
-                                    if (v1 || v2) { window._tempGridValues[`${matchedLocId}_${hStr}:00_${hStr}:30`] = v1; window._tempGridValues[`${matchedLocId}_${hStr}:30_${nextHStr}:00`] = v2; delete window._tempGridValues[`${matchedLocId}_${hStr}:00_${nextHStr}:00`]; }
-                                    else { window._tempGridValues[`${matchedLocId}_${hStr}:00_${nextHStr}:00`] = ''; delete window._tempGridValues[`${matchedLocId}_${hStr}:00_${hStr}:30`]; delete window._tempGridValues[`${matchedLocId}_${hStr}:30_${nextHStr}:00`]; }
-                                }
+
+                        // 逐欄位比對標題與內容
+                        for (let c = 1; c < headers.length; c++) {
+                            const timeCol = headers[c];
+                            const cellVal = cols[c] ? cols[c].replace(/^"+|"+$/g, '').trim() : '';
+                            if (!timeCol || !timeCol.includes('-')) continue;
+
+                            const [slotStart, slotEnd] = timeCol.split('-');
+                            if (!slotStart || !slotEnd) continue;
+
+                            // 判斷是整小時 (例如 07:00-08:00) 還是半小時 (例如 07:00-07:30)
+                            const [sH, sM] = slotStart.split(':').map(Number);
+                            const [eH, eM] = slotEnd.split(':').map(Number);
+                            const diffMins = (eH * 60 + eM) - (sH * 60 + sM);
+
+                            if (diffMins === 30) {
+                                // 半小時格子
+                                const hStr = pad(sH);
+                                const isFirstHalf = sM === 0;
+                                const baseStartHour = `${hStr}:00`;
+                                
+                                splitHoursState[`${matchedLocId}_${baseStartHour}`] = true;
+                                const halfKey = `${matchedLocId}_${slotStart}_${slotEnd}`;
+                                window._tempGridValues[halfKey] = cellVal;
+                            } else {
+                                // 整小時格子
+                                const hStr = pad(sH);
+                                splitHoursState[`${matchedLocId}_${hStr}:00`] = false;
+                                const fullKey = `${matchedLocId}_${slotStart}_${slotEnd}`;
+                                window._tempGridValues[fullKey] = cellVal;
                             }
-                        } else {
-                            const timeSlots = Array.from({length: 15}, (_, i) => `${pad(i + 7)}:00-${pad(i + 8)}:00`);
-                            for (let tIdx = 0; tIdx < 15; tIdx++) { const val = cols[tIdx + 1] ? cols[tIdx + 1].replace(/^"+|"+$/g, '').trim() : ''; const [sStart, sEnd] = timeSlots[tIdx].split('-'); window._tempGridValues[`${matchedLocId}_${sStart}_${sEnd}`] = val; }
                         }
                     }
-                    safeSetLocal('work_cache_split_hours', splitHoursState); window.renderScheduleManager(); window.showToast("已成功載入排班內容！");
-                } catch(err) { window.showToast("解析失敗", true); }
+
+                    safeSetLocal('work_cache_split_hours', splitHoursState); 
+                    window.renderScheduleManager(); 
+                    window.showToast("✅ 已成功完整匯入 Excel 排班內容！");
+                } catch(err) { 
+                    window.showToast("解析失敗", true); 
+                }
                 event.target.value = '';
             };
             reader.readAsText(file);
