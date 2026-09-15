@@ -1439,6 +1439,64 @@ window.deleteSelectedGalleryItems = () => {
             }
         };
 
+window.exportGalleryExcelCSV = () => {
+            // 只抓取未刪除且分類為「提早收工」或「收工」的圖片
+            let targetItems = galleryItems.filter(i => !i.isDeleted && (i.category === '提早收工' || i.category === '收工'));
+
+            if (!targetItems.length) {
+                return window.showToast('目前沒有任何「提早收工」的圖片資料可導出', true);
+            }
+
+            // 按照時間從早到晚排序
+            targetItems.sort((a, b) => (a.time || '12:00').localeCompare(b.time || '12:00'));
+
+            const csvRows = [
+                ['日期', '樓層', '檔號', '收工時間']
+            ];
+
+            let lastDateStr = '';
+
+            targetItems.forEach((item) => {
+                const d = item.createdAt ? new Date(item.createdAt) : window.getNow();
+                const currentDateStr = `${d.getMonth() + 1}/${d.getDate()}`;
+                
+                // 同一天只顯示一次日期，下方自動留白
+                const displayDate = currentDateStr !== lastDateStr ? currentDateStr : '';
+                lastDateStr = currentDateStr;
+
+                let rawTitle = (item.title || '').trim();
+                let floor = '';
+                let code = rawTitle;
+
+                if (/^1-?/i.test(rawTitle)) {
+                    floor = '1';
+                    code = rawTitle.replace(/^1-?/i, '');
+                } else if (/^R-?/i.test(rawTitle)) {
+                    floor = 'R';
+                    code = rawTitle.replace(/^R-?/i, '');
+                } else if (/^J-?/i.test(rawTitle)) {
+                    floor = 'J';
+                    code = rawTitle.replace(/^J-?/i, '');
+                } else {
+                    floor = item.floor || '-';
+                }
+
+                code = code.replace(/(上午|下午)測溫相/g, '').trim();
+                const timeStr = item.time || '12:00';
+
+                csvRows.push([displayDate, floor, code, timeStr]);
+            });
+
+            const csvContent = "\uFEFF" + csvRows.map(e => e.join(",")).join("\n");
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = `攤販提早收工資料表_${new Date().toISOString().slice(0, 10)}.csv`;
+            link.click();
+
+            window.showToast("✅ 已成功導出提早收工 Excel 資料表！");
+        };
+
         window._lastRenderFingerprint = '';
         window._lastRenderCategory = '';
 
@@ -4038,6 +4096,10 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                         <i data-lucide="search" class="absolute left-2.5 top-2 w-3.5 h-3.5 text-slate-400"></i>
                         <input type="text" id="gallerySearchInput" placeholder="搜尋圖片..." oninput="window.renderGallery()" class="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-2 py-1 text-xs text-slate-700 placeholder-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none tracking-wide text-center">
                     </div>
+                    <!-- Excel 導出按鈕 -->
+                    <button type="button" onclick="window.exportGalleryExcelCSV()" title="導出攤販提早收工資料表" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded-lg flex items-center justify-center active:scale-95 text-xs font-bold transition-all shadow-2xs shrink-0">
+                        <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5 mr-1"></i> Excel
+                    </button>
                     <!-- 還原按鈕 -->
                     <button type="button" onclick="window.openTrashModal()" title="還原已刪除圖片" class="bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600 border border-slate-200 px-2 py-1 rounded-lg flex items-center justify-center active:scale-95 text-xs font-bold transition-all shadow-2xs shrink-0">
                         <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 mr-1"></i> 還原
