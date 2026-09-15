@@ -1439,7 +1439,8 @@ window.deleteSelectedGalleryItems = () => {
             }
         };
 
-window.exportGalleryExcelCSV = () => {
+// ====== 專屬攤販提早收工 Excel (CSV) 導出函式（格式精簡版） ======
+        window.exportGalleryExcelCSV = () => {
             // 只抓取未刪除且分類為「提早收工」或「收工」的圖片
             let targetItems = galleryItems.filter(i => !i.isDeleted && (i.category === '提早收工' || i.category === '收工'));
 
@@ -1458,9 +1459,10 @@ window.exportGalleryExcelCSV = () => {
 
             targetItems.forEach((item) => {
                 const d = item.createdAt ? new Date(item.createdAt) : window.getNow();
+                // 產生 M/D 格式（例如 9/15）
                 const currentDateStr = `${d.getMonth() + 1}/${d.getDate()}`;
                 
-                // 同一天只顯示一次日期，下方自動留白
+                // 同一天只在首筆顯示日期，其餘留白
                 const displayDate = currentDateStr !== lastDateStr ? currentDateStr : '';
                 lastDateStr = currentDateStr;
 
@@ -1481,12 +1483,21 @@ window.exportGalleryExcelCSV = () => {
                     floor = item.floor || '-';
                 }
 
+                // 清除可能殘留的測溫相字樣
                 code = code.replace(/(上午|下午)測溫相/g, '').trim();
+
+                // 移除前導 0，例如 002 轉為 2、085 轉為 85
+                const numMatch = code.match(/\d+/);
+                if (numMatch) {
+                    code = String(parseInt(numMatch[0], 10));
+                }
+
                 const timeStr = item.time || '12:00';
 
                 csvRows.push([displayDate, floor, code, timeStr]);
             });
 
+            // 加入 UTF-8 BOM 避免 Excel 開啟時亂碼
             const csvContent = "\uFEFF" + csvRows.map(e => e.join(",")).join("\n");
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a");
