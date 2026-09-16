@@ -4046,6 +4046,1183 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
             document.body.classList.add('dark-mode');
             window.addEventListener('DOMContentLoaded', () => { const icon = $('darkModeIcon'); if (icon) { icon.setAttribute('data-lucide', 'sun'); lucide.createIcons(); } });
         }
+        // ====== 開會記錄彈窗控制 ======
+        window.openMeetingReportModal = () => {
+            const modal = document.getElementById('meetingReportModal');
+            const iframe = document.getElementById('meetingReportIframe');
+            if (modal && iframe) {
+                if (!iframe.srcdoc) {
+                    iframe.srcdoc = window.MEETING_REPORT_HTML_SRC;
+                }
+                modal.classList.replace('hidden', 'flex');
+                if (window.lucide) lucide.createIcons();
+            }
+        };
+
+        window.closeMeetingReportModal = () => {
+            document.getElementById('meetingReportModal')?.classList.replace('flex', 'hidden');
+        };
+
+        window.MEETING_REPORT_HTML_SRC = `<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>街市日常運營工作匯報表</title>
+  <script src="https://cdn.tailwindcss.com"><\/script>
+  <script>tailwind.config = { darkMode: 'class' };<\/script>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease; }
+    body:not(.dark), body:not(.dark) h1, body:not(.dark) h2, body:not(.dark) span, body:not(.dark) label, body:not(.dark) p, body:not(.dark) div { color: #000000; }
+    .expand-input { display: inline-block; min-width: 32px; max-width: 100%; border: none; border-bottom: 2px solid #3b82f6; background-color: rgba(239, 246, 255, 0.7); color: #000000; font-weight: 600; padding: 1px 6px; margin: 0 4px; border-radius: 4px 4px 0 0; outline: none; vertical-align: baseline; word-break: break-word; }
+    .expand-input.num-input { min-width: 24px; text-align: center; }
+    .expand-input.detail-input { min-width: 80px; }
+    .expand-input:focus { background-color: #dbeafe; border-bottom: 2.5px solid #1d4ed8; box-shadow: 0 2px 4px rgba(59, 130, 246, 0.15); }
+    .expand-input.has-text { color: #dc2626 !important; }
+    .pick-tag { display: inline-block; cursor: pointer; user-select: none; padding: 1px 5px; margin: 0 1px; border-radius: 4px; color: #000000; font-weight: 500; transition: all 0.15s ease; }
+    .pick-tag:hover { background-color: #f1f5f9; }
+    .pick-tag.selected { background-color: #fde047 !important; color: #000000 !important; font-weight: 700; box-shadow: 0 1px 3px rgba(234, 179, 8, 0.3); }
+    .dark body { background-color: #0f172a; color: #f8fafc; }
+    .dark .report-card { background-color: #1e293b !important; border-color: #334155 !important; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3); }
+    .dark .expand-input { background-color: rgba(30, 58, 138, 0.4); border-bottom: 2px solid #60a5fa; color: #ffffff; }
+    .dark .expand-input:focus { background-color: rgba(30, 58, 138, 0.7); border-bottom: 2.5px solid #93c5fd; }
+    .dark .expand-input.has-text { color: #f87171 !important; }
+    .dark .pick-tag { color: #ffffff; }
+    .dark .pick-tag:hover { background-color: #334155; }
+    .dark .pick-tag.selected { background-color: #eab308 !important; color: #000000 !important; font-weight: 700; box-shadow: 0 1px 4px rgba(234, 179, 8, 0.4); }
+    .bracket-group { opacity: 0.35; filter: grayscale(1); transition: opacity 0.25s ease, filter 0.25s ease; }
+    .bracket-group * { color: #94a3b8 !important; }
+    .bracket-group:not(.active) .expand-input { border-bottom-color: #cbd5e1 !important; background-color: rgba(241, 245, 249, 0.6) !important; color: #94a3b8 !important; }
+    .bracket-group.active { opacity: 1; filter: none; }
+    .bracket-group.active *:not(.pick-tag.selected):not(.expand-input.has-text) { color: #000000 !important; }
+    .dark .bracket-group * { color: #64748b !important; }
+    .dark .bracket-group:not(.active) .expand-input { border-bottom-color: #334155 !important; background-color: rgba(30, 41, 59, 0.5) !important; color: #64748b !important; }
+    .dark .bracket-group.active *:not(.pick-tag.selected):not(.expand-input.has-text) { color: #f1f5f9 !important; }
+    .toggle-btn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background-color: #e0f2fe; color: #0284c7; font-size: 14px; font-weight: 700; cursor: pointer; user-select: none; margin-left: 6px; vertical-align: middle; transition: all 0.15s ease; border: 1px solid #bae6fd; line-height: 1; }
+    .toggle-btn:hover { background-color: #0284c7; color: #ffffff; transform: scale(1.1); }
+    .toggle-btn.active { background-color: #fee2e2; color: #dc2626; border-color: #fca5a5; }
+    .toggle-btn.active:hover { background-color: #dc2626; color: #ffffff; }
+    .remark-box { display: none; align-items: baseline; }
+    .remark-box.open { display: inline-flex; }
+    .dark .toggle-btn { background-color: #1e3a8a; color: #93c5fd; border-color: #3b82f6; }
+    .dark .toggle-btn:hover { background-color: #3b82f6; color: #ffffff; }
+    .dark .toggle-btn.active { background-color: #7f1d1d; color: #fca5a5; border-color: #ef4444; }
+    .dark .toggle-btn.active:hover { background-color: #ef4444; color: #ffffff; }
+  </style>
+</head>
+<body class="min-h-screen py-4 px-3 sm:px-6 md:px-8 bg-[#f1f5f9] text-black">
+  <div class="max-w-4xl mx-auto mb-2.5">
+    <div class="report-card bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-200">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-700 pb-3">
+        <div>
+          <h1 class="text-xl sm:text-2xl font-bold text-black dark:text-white tracking-tight">街市日常運營工作匯報</h1>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btn-theme-toggle" class="px-3 py-1.5 text-xs sm:text-sm font-medium text-black dark:text-slate-200 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-xl transition-all flex items-center gap-1.5">
+            <span id="theme-icon">
+              <svg class="w-4 h-4 text-black dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
+            </span>
+            <span id="theme-text">深色模式</span>
+          </button>
+          <button id="btn-fill-sample" class="px-3 py-1.5 text-xs sm:text-sm font-medium text-black dark:text-slate-200 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-xl transition-all flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 text-black dark:text-slate-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+            填入範例
+          </button>
+          <button id="btn-clear" class="px-3 py-1.5 text-xs sm:text-sm font-medium text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/40 rounded-xl transition-all flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            重設清空
+          </button>
+        </div>
+      </div>
+      <div class="pt-2 text-sm flex items-center justify-between flex-wrap gap-y-2 border-t border-slate-100 dark:border-slate-700/60 mt-1">
+        <div class="flex items-center flex-wrap gap-y-1 relative">
+          <label class="text-xs font-semibold text-black dark:text-slate-400 mr-1.5">匯報日期：</label>
+          <span contenteditable="true" id="meta_year" class="expand-input num-input !min-w-[46px]"></span>
+          <span class="font-semibold text-black dark:text-slate-200 mr-1.5">年</span>
+          <span contenteditable="true" id="meta_month" class="expand-input num-input !min-w-[28px]"></span>
+          <span class="font-semibold text-black dark:text-slate-200 mr-1.5">月</span>
+          <span contenteditable="true" id="meta_day" class="expand-input num-input !min-w-[28px]"></span>
+          <span class="font-semibold text-black dark:text-slate-200 mr-2">日</span>
+          <button id="btn-toggle-calendar" type="button" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:text-blue-300 bg-blue-100/70 hover:bg-blue-200/80 dark:bg-blue-900/50 dark:hover:bg-blue-800/60 rounded-lg transition-colors mr-2.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+            <span>日曆選日</span>
+          </button>
+          <div id="calendar-popover" class="absolute top-full left-0 mt-2 z-50 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl p-3.5 w-72 sm:w-80 hidden">
+            <div class="flex items-center justify-between pb-2.5 mb-2 border-b border-slate-100 dark:border-slate-700">
+              <button id="cal-prev-month" type="button" class="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+              </button>
+              <span id="cal-month-title" class="font-bold text-sm text-black dark:text-white tracking-wide">2026年 9月</span>
+              <button id="cal-next-month" type="button" class="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+              </button>
+            </div>
+            <div class="grid grid-cols-7 text-center text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+              <span class="text-rose-500">日</span>
+              <span>一</span>
+              <span>二</span>
+              <span>三</span>
+              <span>四</span>
+              <span>五</span>
+              <span class="text-blue-500">六</span>
+            </div>
+            <div id="cal-days-grid" class="grid grid-cols-7 gap-1 text-xs"></div>
+            <div class="mt-3 pt-2 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+              <div class="flex items-center gap-1.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                <span>有存檔記錄</span>
+              </div>
+              <button id="cal-btn-cur-today" type="button" class="text-blue-600 dark:text-blue-400 hover:underline font-semibold">跳回今天</button>
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2.5">
+          <div id="save-status" class="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 font-medium">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span id="save-status-text">已自動保存</span>
+          </div>
+          <button id="btn-open-history" type="button" class="px-2.5 py-1 text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded-lg transition-colors flex items-center gap-1">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            歷史匯報 (<span id="history-badge-count">0</span>)
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <main class="max-w-4xl mx-auto space-y-2">
+    <!-- 1. 昨日運營狀況 -->
+    <section class="report-card bg-white rounded-2xl p-3.5 sm:p-4 shadow-sm border border-slate-200">
+      <div class="flex items-center gap-2 mb-2.5 border-b border-slate-100 dark:border-slate-700 pb-2">
+        <span class="w-6 h-6 rounded-lg bg-blue-100 dark:bg-blue-900/60 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-xs">1</span>
+        <h2 class="text-base font-bold text-black dark:text-white">昨日運營狀況</h2>
+      </div>
+      <div class="space-y-2 text-black dark:text-slate-300 leading-relaxed text-sm">
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="sec_cases">
+          <span class="font-bold text-black dark:text-slate-100">· 保安事件：</span>
+          <span contenteditable="true" id="sec_cases" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">起</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(</span>
+            <span class="pick-tag" data-tag="sec_dispute">糾紛</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="sec_theft">盜竊</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="sec_violation">違規</span>
+            <span class="font-semibold">)</span>
+          </span>
+          <span class="remark-box" id="box_sec_detail">
+            <span contenteditable="true" id="sec_detail" class="expand-input detail-input"></span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_sec_detail" title="添加/收回輸入框">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="clean_cases">
+          <span class="font-bold text-black dark:text-slate-100">· 清潔問題：</span>
+          <span contenteditable="true" id="clean_cases" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">處</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(</span>
+            <span class="pick-tag" data-tag="clean_smell">異味</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="clean_water">積水</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="clean_trash">垃圾堆積</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="clean_stain">地面頑固痕跡</span>
+            <span class="font-semibold">)</span>
+          </span>
+          <span class="remark-box" id="box_clean_detail">
+            <span contenteditable="true" id="clean_detail" class="expand-input detail-input"></span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_clean_detail" title="添加/收回輸入框">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="pest_count">
+          <span class="font-bold text-black dark:text-slate-100">· 蟲鼠狀況：</span>
+          <span contenteditable="true" id="pest_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">處</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(</span>
+            <span contenteditable="true" id="pest_loc" class="expand-input detail-input"></span>
+            <span class="text-black font-semibold">區域發現</span>
+            <span contenteditable="true" id="pest_type" class="expand-input detail-input ml-1"></span>
+            <span class="text-black font-semibold">類型)</span>
+            <span class="remark-box" id="box_pest_detail">
+              <span class="text-black font-semibold ml-1">備註：</span>
+              <span contenteditable="true" id="pest_detail" class="expand-input detail-input"></span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_pest_detail" title="添加/收回說明">+</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. 設施報修及設備狀況 -->
+    <section class="report-card bg-white rounded-2xl p-3.5 sm:p-4 shadow-sm border border-slate-200">
+      <div class="flex items-center gap-2 mb-2.5 border-b border-slate-100 dark:border-slate-700 pb-2">
+        <span class="w-6 h-6 rounded-lg bg-sky-100 dark:bg-sky-900/60 text-sky-600 dark:text-sky-400 flex items-center justify-center font-bold text-xs">2</span>
+        <h2 class="text-base font-bold text-black dark:text-white">設施報修及設備狀況</h2>
+      </div>
+      <div class="space-y-2 text-black dark:text-slate-300 leading-relaxed text-sm">
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="rep_comp_total">
+          <span class="font-bold text-black dark:text-slate-100">· 街市本公司負責設施報修：</span>
+          <span contenteditable="true" id="rep_comp_total" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">件</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(已處理</span>
+            <span contenteditable="true" id="rep_comp_done" class="expand-input num-input">0</span>
+            <span class="font-semibold">件，待跟進</span>
+            <span contenteditable="true" id="rep_comp_pending" class="expand-input num-input">0</span>
+            <span class="font-semibold">件)</span>
+          </span>
+          <span class="remark-box" id="box_rep_comp_desc">
+            <span contenteditable="true" id="rep_comp_desc" class="expand-input detail-input"></span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_rep_comp_desc" title="添加/收回輸入框">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="rep_vend_total">
+          <span class="font-bold text-black dark:text-slate-100">· 街市承建 或 保養商 設施報修：</span>
+          <span contenteditable="true" id="rep_vend_total" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">件</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(已處理</span>
+            <span contenteditable="true" id="rep_vend_done" class="expand-input num-input">0</span>
+            <span class="font-semibold">件，待跟進</span>
+            <span contenteditable="true" id="rep_vend_pending" class="expand-input num-input">0</span>
+            <span class="font-semibold">件)</span>
+          </span>
+          <span class="remark-box" id="box_rep_vend_desc">
+            <span contenteditable="true" id="rep_vend_desc" class="expand-input detail-input"></span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_rep_vend_desc" title="添加/收回輸入框">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="drain_count">
+          <span class="font-bold text-black dark:text-slate-100">· 渠道堵塞：</span>
+          <span contenteditable="true" id="drain_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">次</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(</span>
+            <span contenteditable="true" id="drain_loc" class="expand-input detail-input"></span>
+            <span class="text-black font-semibold">區域，已處理</span>
+            <span contenteditable="true" id="drain_done" class="expand-input num-input">0</span>
+            <span class="font-semibold">件，待跟進</span>
+            <span contenteditable="true" id="drain_pending" class="expand-input num-input">0</span>
+            <span class="font-semibold">件)</span>
+            <span class="remark-box" id="box_drain_desc">
+              <span class="text-black ml-1 font-semibold">備註：</span>
+              <span contenteditable="true" id="drain_desc" class="expand-input detail-input"></span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_drain_desc" title="添加/收回說明">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="clean_equip_count">
+          <span class="font-bold text-black dark:text-slate-100">· 清潔設備狀況：</span>
+          <span contenteditable="true" id="clean_equip_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">起</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(</span>
+            <span class="pick-tag" data-tag="eq_washer">高壓水槍</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="eq_sweeper">洗地機</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="eq_consumable">消耗清潔設備</span>
+            <span class="font-semibold">)</span>
+          </span>
+          <span class="remark-box" id="box_clean_equip">
+            <span contenteditable="true" id="clean_equip" class="expand-input detail-input"></span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_clean_equip" title="添加/收回輸入框">+</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. 客戶服務事件 -->
+    <section class="report-card bg-white rounded-2xl p-3.5 sm:p-4 shadow-sm border border-slate-200">
+      <div class="flex items-center gap-2 mb-2.5 border-b border-slate-100 dark:border-slate-700 pb-2">
+        <span class="w-6 h-6 rounded-lg bg-emerald-100 dark:bg-emerald-900/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs">3</span>
+        <h2 class="text-base font-bold text-black dark:text-white">客戶服務事件</h2>
+      </div>
+      <div class="space-y-2 text-black dark:text-slate-300 leading-relaxed text-sm">
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="cs_dispute_count">
+          <span class="font-bold text-black dark:text-slate-100">· 商戶糾紛：</span>
+          <span contenteditable="true" id="cs_dispute_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">起</span>
+          <span class="bracket-group">
+            <span class="remark-box" id="box_cs_dispute_desc">
+              <span class="text-black ml-1 font-semibold">(類型/處理結果：</span>
+              <span contenteditable="true" id="cs_dispute_desc" class="expand-input detail-input"></span>
+              <span class="text-black font-semibold">)</span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_cs_dispute_desc" title="添加/收回說明">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="cs_complaint_count">
+          <span class="font-bold text-black dark:text-slate-100">· 市民投訴：</span>
+          <span contenteditable="true" id="cs_complaint_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">件</span>
+          <span class="bracket-group">
+            <span class="remark-box" id="box_cs_complaint_desc">
+              <span class="text-black ml-1 font-semibold">(內容/解決進度：</span>
+              <span contenteditable="true" id="cs_complaint_desc" class="expand-input detail-input"></span>
+              <span class="text-black font-semibold">)</span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_cs_complaint_desc" title="添加/收回說明">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="cs_inquiry_count">
+          <span class="font-bold text-black dark:text-slate-100">· 諮詢協助：</span>
+          <span contenteditable="true" id="cs_inquiry_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">人次</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(</span>
+            <span class="pick-tag" data-tag="cs_find">尋物</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="cs_guide">指引</span>
+            <span class="font-semibold">)</span>
+          </span>
+          <span class="remark-box" id="box_cs_inquiry_desc_1"><span contenteditable="true" id="cs_inquiry_desc_1" class="expand-input detail-input"></span></span>
+          <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_1" title="添加/收回 1">+</button>
+          <span class="remark-box" id="box_cs_inquiry_desc_2"><span contenteditable="true" id="cs_inquiry_desc_2" class="expand-input detail-input"></span></span>
+          <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_2" title="添加/收回 2">+</button>
+          <span class="remark-box" id="box_cs_inquiry_desc_3"><span contenteditable="true" id="cs_inquiry_desc_3" class="expand-input detail-input"></span></span>
+          <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_3" title="添加/收回 3">+</button>
+          <span class="remark-box" id="box_cs_inquiry_desc_4"><span contenteditable="true" id="cs_inquiry_desc_4" class="expand-input detail-input"></span></span>
+          <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_4" title="添加/收回 4">+</button>
+          <span class="remark-box" id="box_cs_inquiry_desc_5"><span contenteditable="true" id="cs_inquiry_desc_5" class="expand-input detail-input"></span></span>
+          <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_5" title="添加/收回 5">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="cs_lost_count">
+          <span class="font-bold text-black dark:text-slate-100">· 失物發現：</span>
+          <span contenteditable="true" id="cs_lost_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">次</span>
+          <span class="bracket-group">
+            <span class="text-black font-semibold">，</span>
+            <span contenteditable="true" id="cs_lost_time" class="expand-input detail-input"></span>
+            <span class="text-black font-semibold">發現時間</span>
+            <span class="remark-box" id="box_cs_lost_desc">
+              <span contenteditable="true" id="cs_lost_desc" class="expand-input detail-input"></span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_cs_lost_desc" title="添加/收回說明">+</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. 政府稽查對接 -->
+    <section class="report-card bg-white rounded-2xl p-3.5 sm:p-4 shadow-sm border border-slate-200">
+      <div class="flex items-center gap-2 mb-2.5 border-b border-slate-100 dark:border-slate-700 pb-2">
+        <span class="w-6 h-6 rounded-lg bg-purple-100 dark:bg-purple-900/60 text-purple-600 dark:text-purple-400 flex items-center justify-center font-bold text-xs">4</span>
+        <h2 class="text-base font-bold text-black dark:text-white">政府稽查對接</h2>
+      </div>
+      <div class="space-y-2 text-black dark:text-slate-300 leading-relaxed text-sm">
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="gov_req_items">
+          <span class="font-bold text-black dark:text-slate-100">· 收到新要求：</span>
+          <span contenteditable="true" id="gov_req_items" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">項</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(需</span>
+            <span contenteditable="true" id="gov_req_deadline" class="expand-input num-input !min-w-[48px]"></span>
+            <span class="font-semibold">日前完成)</span>
+          </span>
+          <span class="remark-box" id="box_gov_req_detail">
+            <span contenteditable="true" id="gov_req_detail" class="expand-input detail-input"></span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_gov_req_detail" title="添加/收回說明">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="gov_doc_count">
+          <span class="font-bold text-black dark:text-slate-100">· 待提交文件：</span>
+          <span contenteditable="true" id="gov_doc_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">份</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(進度</span>
+            <span contenteditable="true" id="gov_doc_progress" class="expand-input num-input">0</span>
+            <span class="font-semibold">%)</span>
+          </span>
+          <span class="remark-box" id="box_gov_doc_desc">
+            <span contenteditable="true" id="gov_doc_desc" class="expand-input detail-input"></span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_gov_doc_desc" title="添加/收回輸入框">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="gov_inspect_count">
+          <span class="font-bold text-black dark:text-slate-100">· 稽查巡查：</span>
+          <span contenteditable="true" id="gov_inspect_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">次</span>
+          <span class="bracket-group">
+            <span class="remark-box" id="box_gov_inspect_desc">
+              <span class="text-black ml-1 font-semibold">(時間 / 有否點人頭：</span>
+              <span contenteditable="true" id="gov_inspect_desc" class="expand-input detail-input"></span>
+              <span class="text-black font-semibold">)</span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_gov_inspect_desc" title="添加/收回說明">+</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. 今日重點任務 -->
+    <section class="report-card bg-white rounded-2xl p-3.5 sm:p-4 shadow-sm border border-slate-200">
+      <div class="flex items-center gap-2 mb-2.5 border-b border-slate-100 dark:border-slate-700 pb-2">
+        <span class="w-6 h-6 rounded-lg bg-amber-100 dark:bg-amber-900/60 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold text-xs">5</span>
+        <h2 class="text-base font-bold text-black dark:text-white">今日重點任務</h2>
+      </div>
+      <div class="space-y-2 text-black dark:text-slate-300 leading-relaxed text-sm">
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="task_priority_count">
+          <span class="font-bold text-black dark:text-slate-100">· 優先處理：</span>
+          <span contenteditable="true" id="task_priority_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">項</span>
+          <span class="bracket-group">
+            <span class="text-slate-400 font-normal mr-0.5">(列 1-3 項緊急事項)</span>
+            <span class="remark-box" id="box_task_priority">
+              <span class="text-black ml-1 font-semibold">事項：</span>
+              <span contenteditable="true" id="task_priority" class="expand-input detail-input"></span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_task_priority" title="添加/收回說明">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="task_prevent_count">
+          <span class="font-bold text-black dark:text-slate-100">· 預防措施：</span>
+          <span contenteditable="true" id="task_prevent_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">項</span>
+          <span class="bracket-group">
+            <span class="text-black ml-0.5 font-semibold">(</span>
+            <span class="pick-tag" data-tag="prev_typhoon">颱風前檢查</span><span class="text-black font-semibold">/</span>
+            <span class="pick-tag" data-tag="prev_holiday">節日或特殊日前</span><span class="text-black font-semibold">/</span>
+            <span class="pick-tag" data-tag="prev_disinfect">官員巡查前消毒清潔</span>
+            <span class="text-black font-semibold">)</span>
+            <span class="remark-box" id="box_task_prevent">
+              <span class="text-black ml-1 font-semibold">措施：</span>
+              <span contenteditable="true" id="task_prevent" class="expand-input detail-input"></span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_task_prevent" title="添加/收回說明">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="task_hazard_count">
+          <span class="font-bold text-black dark:text-slate-100">· 安全隱患：</span>
+          <span contenteditable="true" id="task_hazard_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">處</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(已處理</span>
+            <span contenteditable="true" id="task_hazard_done" class="expand-input num-input">0</span>
+            <span class="font-semibold">件，待跟進</span>
+            <span contenteditable="true" id="task_hazard_pending" class="expand-input num-input">0</span>
+            <span class="font-semibold">件)</span>
+            <span class="remark-box" id="box_task_hazard_desc">
+              <span contenteditable="true" id="task_hazard_desc" class="expand-input detail-input"></span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_task_hazard_desc" title="添加/收回輸入框">+</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 特殊處理 -->
+    <section class="report-card bg-white rounded-2xl p-3.5 sm:p-4 shadow-sm border border-slate-200">
+      <div class="flex items-center gap-2 mb-2.5 border-b border-slate-100 dark:border-slate-700 pb-2">
+        <span class="w-6 h-6 rounded-lg bg-cyan-100 dark:cyan-900/60 text-cyan-600 dark:text-cyan-400 flex items-center justify-center font-bold text-xs">★</span>
+        <h2 class="text-base font-bold text-black dark:text-white">特殊處理</h2>
+      </div>
+      <div class="space-y-2 text-black dark:text-slate-300 leading-relaxed text-sm">
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="sp_weather_count">
+          <span class="font-bold text-black dark:text-slate-100">· 回南天 / 暴雨：</span>
+          <span contenteditable="true" id="sp_weather_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">次</span>
+          <span class="bracket-group">
+            <span class="remark-box" id="box_sp_weather">
+              <span contenteditable="true" id="sp_weather" class="expand-input detail-input"></span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_sp_weather" title="添加/收回說明">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="sp_leakage_count">
+          <span class="font-bold text-black dark:text-slate-100">· 防漏電預案：</span>
+          <span contenteditable="true" id="sp_leakage_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">次</span>
+          <span class="bracket-group">
+            <span class="remark-box" id="box_sp_leakage">
+              <span contenteditable="true" id="sp_leakage" class="expand-input detail-input"></span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_sp_leakage" title="添加/收回說明">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="sp_tour_count">
+          <span class="font-bold text-black dark:text-slate-100">· 學校/機構參觀：</span>
+          <span contenteditable="true" id="sp_tour_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">次</span>
+          <span class="bracket-group">
+            <span class="remark-box" id="box_sp_tour">
+              <span contenteditable="true" id="sp_tour_name" class="expand-input detail-input"></span>
+              <span class="text-black font-semibold">名稱</span>
+              <span contenteditable="true" id="sp_tour_purpose" class="expand-input detail-input ml-1"></span>
+              <span class="text-black font-semibold">目的</span>
+              <span contenteditable="true" id="sp_tour_extra" class="expand-input detail-input ml-1"></span>
+              <span class="text-black font-semibold">安排同事參與配合人：</span>
+              <span contenteditable="true" id="sp_tour_staff" class="expand-input num-input">0</span>
+              <span class="text-black font-semibold">名</span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_sp_tour" title="添加/收回說明">+</button>
+        </div>
+        <div class="pt-1.5 flex items-baseline flex-wrap gap-y-1 border-t border-slate-100 dark:border-slate-700" data-trigger="sp_councilor_count">
+          <span class="font-bold text-black dark:text-slate-100">· 議員巡查：</span>
+          <span contenteditable="true" id="sp_councilor_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">次</span>
+          <span class="bracket-group">
+            <span class="remark-box" id="box_sp_councilor_desc">
+              <span class="text-black ml-1 font-semibold">詳情：</span>
+              <span contenteditable="true" id="sp_councilor_desc" class="expand-input detail-input"></span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_sp_councilor_desc" title="添加/收回說明">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="sp_official_count">
+          <span class="font-bold text-black dark:text-slate-100">· 官員巡查：</span>
+          <span contenteditable="true" id="sp_official_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">次</span>
+          <span class="bracket-group">
+            <span class="remark-box" id="box_sp_official_desc">
+              <span class="text-black ml-1 font-semibold">詳情：</span>
+              <span contenteditable="true" id="sp_official_desc" class="expand-input detail-input"></span>
+            </span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_sp_official_desc" title="添加/收回說明">+</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. 其他情況 -->
+    <section class="report-card bg-white rounded-2xl p-3.5 sm:p-4 shadow-sm border border-slate-200">
+      <div class="flex items-center gap-2 mb-2.5 border-b border-slate-100 dark:border-slate-700 pb-2">
+        <span class="w-6 h-6 rounded-lg bg-indigo-100 dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-xs">6</span>
+        <h2 class="text-base font-bold text-black dark:text-white">其他情況</h2>
+      </div>
+      <div class="space-y-2 text-black dark:text-slate-300 leading-relaxed text-sm">
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="oth_incident_count">
+          <span class="font-bold text-black dark:text-slate-100">· 突發：</span>
+          <span contenteditable="true" id="oth_incident_count" class="expand-input num-input">0</span>
+          <span class="text-black font-semibold">起</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(</span>
+            <span class="pick-tag" data-tag="oth_police">報警</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="oth_hurt">受傷</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="oth_faint">暈厥</span>
+            <span class="font-semibold">)</span>
+          </span>
+          <span class="remark-box" id="box_oth_incident_desc">
+            <span class="text-black ml-1 font-semibold">處理結果：</span>
+            <span contenteditable="true" id="oth_incident_desc" class="expand-input detail-input"></span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_oth_incident_desc" title="添加/收回說明">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="oth_staff_count">
+          <span class="font-bold text-black dark:text-slate-100">· 同事情況：</span>
+          <span contenteditable="true" id="oth_staff_count" class="expand-input !min-w-[42px] text-center">正常</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(</span>
+            <span class="pick-tag" data-tag="staff_perf">工作表現</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="staff_argue">鬥嘴</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="staff_gossip">是非</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="staff_quarrel">吵架</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="staff_fight">打鬥</span>
+            <span class="font-semibold">)</span>
+          </span>
+          <span class="remark-box" id="box_oth_staff_behavior">
+            <span contenteditable="true" id="oth_staff_behavior" class="expand-input detail-input"></span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_oth_staff_behavior" title="添加/收回說明">+</button>
+        </div>
+        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="oth_attendance_count">
+          <span class="font-bold text-black dark:text-slate-100">· 上下班情況：</span>
+          <span contenteditable="true" id="oth_attendance_count" class="expand-input !min-w-[42px] text-center">正常</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(</span>
+            <span class="pick-tag" data-tag="att_late">遲到</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="att_sick">病假</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="att_absent">缺勤</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="att_early">早退</span>
+            <span class="font-semibold">)</span>
+          </span>
+          <span class="remark-box" id="box_oth_attendance">
+            <span contenteditable="true" id="oth_attendance" class="expand-input detail-input"></span>
+          </span>
+          <button type="button" class="toggle-btn" data-target="box_oth_attendance" title="添加/收回說明">+</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="fixed bottom-4 right-4 bg-slate-800 text-white px-3.5 py-2 rounded-xl shadow-lg text-xs sm:text-sm flex items-center gap-1.5 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none z-50">
+    <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+    <span id="toast-message">提示訊息</span>
+  </div>
+
+  <div id="history-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white dark:bg-slate-800 w-full max-w-lg rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 flex flex-col max-h-[85vh] overflow-hidden">
+      <div class="px-4 py-3 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+          <h3 class="font-bold text-sm sm:text-base text-black dark:text-white">過往日子匯報紀錄</h3>
+        </div>
+        <button id="btn-close-history" class="text-slate-400 hover:text-black dark:hover:text-white p-1 rounded-lg">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div id="history-list" class="p-3 overflow-y-auto space-y-2 flex-1 text-sm"></div>
+      <div class="p-3 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-100 dark:border-slate-700 flex justify-between items-center text-xs text-slate-500 dark:text-slate-400">
+        <span>系統按日期自動留存</span>
+        <button id="btn-backup-export" class="px-2.5 py-1 text-xs bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-black dark:text-white rounded-lg transition-colors">備份匯出 JSON</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const today = new Date();
+    const metaYear = document.getElementById('meta_year');
+    const metaMonth = document.getElementById('meta_month');
+    const metaDay = document.getElementById('meta_day');
+    if (metaYear && !metaYear.innerText.trim()) metaYear.innerText = today.getFullYear();
+    if (metaMonth && !metaMonth.innerText.trim()) metaMonth.innerText = String(today.getMonth() + 1).padStart(2, '0');
+    if (metaDay && !metaDay.innerText.trim()) metaDay.innerText = String(today.getDate()).padStart(2, '0');
+
+    const editableElements = document.querySelectorAll('.expand-input');
+    const pickTags = document.querySelectorAll('.pick-tag');
+    const toggleBtns = document.querySelectorAll('.toggle-btn');
+
+    function updateTextColor(el) {
+      const text = el.innerText.trim();
+      if (text.length > 0) el.classList.add('has-text');
+      else el.classList.remove('has-text');
+    }
+
+    function updateBracketStates() {
+      const isInactive = (text) => {
+        const val = text.trim();
+        return val === '' || val === '0' || val === '無' || val === '无' || val === '正常';
+      };
+
+      document.querySelectorAll('.bracket-group').forEach(bracketGroup => {
+        const row = bracketGroup.closest('[data-trigger]');
+        if (row) {
+          const triggerId = row.getAttribute('data-trigger');
+          const triggerEl = document.getElementById(triggerId);
+          if (triggerEl && isInactive(triggerEl.innerText)) {
+            bracketGroup.classList.remove('active');
+            return;
+          }
+          if (triggerEl && !isInactive(triggerEl.innerText)) {
+            bracketGroup.classList.add('active');
+            return;
+          }
+        }
+
+        const hasSelectedTag = bracketGroup.querySelector('.pick-tag.selected') !== null;
+        let hasActiveInnerInput = false;
+        bracketGroup.querySelectorAll('.expand-input').forEach(innerInput => {
+          if (!isInactive(innerInput.innerText)) hasActiveInnerInput = true;
+        });
+
+        if (hasSelectedTag || hasActiveInnerInput) bracketGroup.classList.add('active');
+        else bracketGroup.classList.remove('active');
+      });
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toast-message');
+      toastMsg.innerText = msg;
+      toast.classList.remove('translate-y-20', 'opacity-0');
+      setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 2500);
+    }
+
+    function setupToggleButtons() {
+      toggleBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const targetId = btn.getAttribute('data-target');
+          const box = document.getElementById(targetId);
+          if (!box) return;
+          const isOpen = box.classList.toggle('open');
+          if (isOpen) {
+            btn.classList.add('active');
+            btn.innerText = '－';
+            const input = box.querySelector('.expand-input');
+            if (input) setTimeout(() => input.focus(), 50);
+          } else {
+            btn.classList.remove('active');
+            btn.innerText = '＋';
+            box.querySelectorAll('.expand-input').forEach(input => {
+              input.innerText = '';
+              updateTextColor(input);
+            });
+          }
+          saveCurrentDayReport();
+        });
+      });
+    }
+    setupToggleButtons();
+
+    function getCurrentDateKey() {
+      const y = (metaYear.innerText.trim() || String(today.getFullYear())).padStart(4, '0');
+      const m = (metaMonth.innerText.trim() || String(today.getMonth() + 1)).padStart(2, '0');
+      const d = (metaDay.innerText.trim() || String(today.getDate())).padStart(2, '0');
+      return \`\${y}-\${m}-\${d}\`;
+    }
+
+    function updateSaveStatusIndicator() {
+      const statusEl = document.getElementById('save-status-text');
+      if (!statusEl) return;
+      const now = new Date();
+      statusEl.innerText = \`已於 \${String(now.getHours()).padStart(2, '0')}:\${String(now.getMinutes()).padStart(2, '0')}:\${String(now.getSeconds()).padStart(2, '0')} 自動保存\`;
+    }
+
+    function getArchiveIndex() {
+      try { return JSON.parse(localStorage.getItem('market_reports_index') || '[]'); }
+      catch (e) { return []; }
+    }
+
+    function updateHistoryCountBadge() {
+      const badge = document.getElementById('history-badge-count');
+      if (badge) badge.innerText = getArchiveIndex().length;
+    }
+
+    let autoSaveTimer = null;
+    function saveCurrentDayReport() {
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(() => {
+        const dateKey = getCurrentDateKey();
+        const data = {};
+        editableElements.forEach(el => { if (el.id) data[el.id] = el.innerText; });
+        const activeTags = [];
+        document.querySelectorAll('.pick-tag.selected').forEach(tag => activeTags.push(tag.getAttribute('data-tag')));
+        const openBoxes = [];
+        document.querySelectorAll('.remark-box.open').forEach(box => openBoxes.push(box.id));
+
+        const reportObject = { dateKey, updatedAt: new Date().toISOString(), data, tags: activeTags, boxes: openBoxes };
+        localStorage.setItem(\`market_report_\${dateKey}\`, JSON.stringify(reportObject));
+
+        let index = getArchiveIndex();
+        if (!index.includes(dateKey)) {
+          index.push(dateKey);
+          index.sort((a, b) => b.localeCompare(a));
+          localStorage.setItem('market_reports_index', JSON.stringify(index));
+        }
+
+        updateSaveStatusIndicator();
+        updateHistoryCountBadge();
+      }, 300);
+    }
+
+    function loadReportByDate(targetDateKey) {
+      const parts = targetDateKey.split('-');
+      if (parts.length === 3) {
+        metaYear.innerText = parts[0]; metaMonth.innerText = parts[1]; metaDay.innerText = parts[2];
+        updateTextColor(metaYear); updateTextColor(metaMonth); updateTextColor(metaDay);
+      }
+      const savedRaw = localStorage.getItem(\`market_report_\${targetDateKey}\`);
+      if (savedRaw) {
+        try {
+          const report = JSON.parse(savedRaw);
+          editableElements.forEach(el => {
+            if (el.id && el.id !== 'meta_year' && el.id !== 'meta_month' && el.id !== 'meta_day') {
+              el.innerText = report.data[el.id] !== undefined ? report.data[el.id] : '';
+              updateTextColor(el);
+            }
+          });
+          pickTags.forEach(tag => {
+            const id = tag.getAttribute('data-tag');
+            if (report.tags && report.tags.includes(id)) tag.classList.add('selected');
+            else tag.classList.remove('selected');
+          });
+          document.querySelectorAll('.remark-box').forEach(box => {
+            if (report.boxes && report.boxes.includes(box.id)) {
+              box.classList.add('open');
+              const btn = document.querySelector(\`.toggle-btn[data-target="\${box.id}"]\`);
+              if (btn) { btn.classList.add('active'); btn.innerText = '－'; }
+            } else {
+              box.classList.remove('open');
+              const btn = document.querySelector(\`.toggle-btn[data-target="\${box.id}"]\`);
+              if (btn) { btn.classList.remove('active'); btn.innerText = '＋'; }
+            }
+          });
+          updateBracketStates();
+          showToast(\`已載入 \${targetDateKey} 的匯報記錄\`);
+          return;
+        } catch (e) {}
+      }
+      resetFieldsWithoutDate();
+      updateBracketStates();
+      showToast(\`已切換至 \${targetDateKey} (新空白記錄)\`);
+    }
+
+    function resetFieldsWithoutDate() {
+      editableElements.forEach(el => {
+        if (el.id !== 'meta_year' && el.id !== 'meta_month' && el.id !== 'meta_day') {
+          if (el.id === 'oth_staff_count' || el.id === 'oth_attendance_count') el.innerText = '正常';
+          else if (el.classList.contains('num-input')) el.innerText = '0';
+          else el.innerText = '';
+          updateTextColor(el);
+        }
+      });
+      pickTags.forEach(tag => tag.classList.remove('selected'));
+      document.querySelectorAll('.remark-box').forEach(box => box.classList.remove('open'));
+      toggleBtns.forEach(btn => { btn.classList.remove('active'); btn.innerText = '＋'; });
+    }
+
+    const calPopover = document.getElementById('calendar-popover');
+    const btnToggleCal = document.getElementById('btn-toggle-calendar');
+    const calMonthTitle = document.getElementById('cal-month-title');
+    const calDaysGrid = document.getElementById('cal-days-grid');
+    const calPrevMonth = document.getElementById('cal-prev-month');
+    const calNextMonth = document.getElementById('cal-next-month');
+    const calBtnCurToday = document.getElementById('cal-btn-cur-today');
+
+    let calViewYear = today.getFullYear();
+    let calViewMonth = today.getMonth();
+
+    function renderCalendarGrid() {
+      calMonthTitle.innerText = \`\${calViewYear}年 \${calViewMonth + 1}月\`;
+      calDaysGrid.innerHTML = '';
+      const archiveIndex = getArchiveIndex();
+      const currentSelectedKey = getCurrentDateKey();
+      const todayStr = \`\${today.getFullYear()}-\${String(today.getMonth() + 1).padStart(2, '0')}-\${String(today.getDate()).padStart(2, '0')}\`;
+      const firstDayIndex = new Date(calViewYear, calViewMonth, 1).getDay();
+      const totalDaysInMonth = new Date(calViewYear, calViewMonth + 1, 0).getDate();
+
+      for (let i = 0; i < firstDayIndex; i++) {
+        const emptyCell = document.createElement('div');
+        emptyCell.className = 'h-8';
+        calDaysGrid.appendChild(emptyCell);
+      }
+
+      for (let day = 1; day <= totalDaysInMonth; day++) {
+        const dayStr = String(day).padStart(2, '0');
+        const monthStr = String(calViewMonth + 1).padStart(2, '0');
+        const cellDateKey = \`\${calViewYear}-\${monthStr}-\${dayStr}\`;
+        const isSelected = (cellDateKey === currentSelectedKey);
+        const isToday = (cellDateKey === todayStr);
+        const hasSavedRecord = archiveIndex.includes(cellDateKey);
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = \`h-8 w-full rounded-xl flex flex-col items-center justify-center relative font-medium transition-all \${
+          isSelected 
+            ? 'bg-blue-600 text-white font-bold shadow-md shadow-blue-500/20' 
+            : isToday
+              ? 'border border-blue-500 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'
+              : 'hover:bg-slate-100 dark:hover:bg-slate-700/60 text-slate-800 dark:text-slate-200'
+        }\`;
+        btn.innerHTML = \`<span class="text-xs leading-none">\${day}</span>\${hasSavedRecord ? \`<span class="w-1.5 h-1.5 rounded-full \${isSelected ? 'bg-amber-300' : 'bg-emerald-500'} absolute bottom-1"></span>\` : ''}\`;
+        btn.addEventListener('click', () => {
+          loadReportByDate(cellDateKey);
+          calPopover.classList.add('hidden');
+        });
+        calDaysGrid.appendChild(btn);
+      }
+    }
+
+    btnToggleCal.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (calPopover.classList.contains('hidden')) {
+        const curY = parseInt(metaYear.innerText.trim(), 10);
+        const curM = parseInt(metaMonth.innerText.trim(), 10);
+        if (!isNaN(curY)) calViewYear = curY;
+        if (!isNaN(curM) && curM >= 1 && curM <= 12) calViewMonth = curM - 1;
+        renderCalendarGrid();
+        calPopover.classList.remove('hidden');
+      } else {
+        calPopover.classList.add('hidden');
+      }
+    });
+
+    [metaYear, metaMonth, metaDay].forEach(el => {
+      el.addEventListener('click', () => {
+        if (calPopover.classList.contains('hidden')) btnToggleCal.click();
+      });
+    });
+
+    calPrevMonth.addEventListener('click', (e) => {
+      e.stopPropagation();
+      calViewMonth--;
+      if (calViewMonth < 0) { calViewMonth = 11; calViewYear--; }
+      renderCalendarGrid();
+    });
+
+    calNextMonth.addEventListener('click', (e) => {
+      e.stopPropagation();
+      calViewMonth++;
+      if (calViewMonth > 11) { calViewMonth = 0; calViewYear++; }
+      renderCalendarGrid();
+    });
+
+    calBtnCurToday.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const now = new Date();
+      calViewYear = now.getFullYear();
+      calViewMonth = now.getMonth();
+      const todayKey = \`\${calViewYear}-\${String(calViewMonth + 1).padStart(2, '0')}-\${String(now.getDate()).padStart(2, '0')}\`;
+      loadReportByDate(todayKey);
+      calPopover.classList.add('hidden');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!calPopover.contains(e.target) && e.target !== btnToggleCal) {
+        calPopover.classList.add('hidden');
+      }
+    });
+
+    [metaYear, metaMonth, metaDay].forEach(el => {
+      el.addEventListener('blur', () => {
+        const targetKey = getCurrentDateKey();
+        if (localStorage.getItem(\`market_report_\${targetKey}\`)) loadReportByDate(targetKey);
+        else saveCurrentDayReport();
+      });
+    });
+
+    const historyModal = document.getElementById('history-modal');
+    const historyList = document.getElementById('history-list');
+
+    function renderHistoryModal() {
+      const index = getArchiveIndex();
+      historyList.innerHTML = '';
+      if (index.length === 0) {
+        historyList.innerHTML = \`<div class="text-center py-8 text-slate-400">目前尚無過往儲存的匯報</div>\`;
+        return;
+      }
+      const currentKey = getCurrentDateKey();
+      index.forEach(dateKey => {
+        let summary = '無內容';
+        try {
+          const raw = localStorage.getItem(\`market_report_\${dateKey}\`);
+          if (raw) {
+            const obj = JSON.parse(raw);
+            summary = \`保安事件: \${obj.data.sec_cases || '0'} | 清潔問題: \${obj.data.clean_cases || '0'} | 報修: \${obj.data.rep_comp_total || '0'}\`;
+          }
+        } catch(e) {}
+
+        const item = document.createElement('div');
+        const isCurrent = (dateKey === currentKey);
+        item.className = \`p-3 rounded-xl border flex items-center justify-between gap-2 transition-all \${
+          isCurrent ? 'bg-blue-50/80 dark:bg-blue-950/40 border-blue-300 dark:border-blue-700' : 'bg-white dark:bg-slate-700/60 border-slate-200 dark:border-slate-600 hover:border-blue-300'
+        }\`;
+        item.innerHTML = \`
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-black dark:text-white">\${dateKey}</span>
+              \${isCurrent ? '<span class="text-[11px] px-1.5 py-0.5 rounded bg-blue-600 text-white font-medium">當前編輯</span>' : ''}
+            </div>
+            <div class="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">\${summary}</div>
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button class="btn-load-record px-2.5 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors" data-date="\${dateKey}">查看/編輯</button>
+            <button class="btn-del-record p-1 text-slate-400 hover:text-rose-600 transition-colors" title="刪除此日記錄" data-date="\${dateKey}">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            </button>
+          </div>
+        \`;
+        historyList.appendChild(item);
+      });
+
+      historyList.querySelectorAll('.btn-load-record').forEach(btn => {
+        btn.addEventListener('click', () => {
+          loadReportByDate(btn.getAttribute('data-date'));
+          historyModal.classList.add('hidden');
+        });
+      });
+
+      historyList.querySelectorAll('.btn-del-record').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const d = btn.getAttribute('data-date');
+          localStorage.removeItem(\`market_report_\${d}\`);
+          let idx = getArchiveIndex().filter(item => item !== d);
+          localStorage.setItem('market_reports_index', JSON.stringify(idx));
+          renderHistoryModal();
+          updateHistoryCountBadge();
+          showToast(\`已刪除 \${d} 的匯報記錄\`);
+        });
+      });
+    }
+
+    document.getElementById('btn-open-history').addEventListener('click', () => {
+      renderHistoryModal();
+      historyModal.classList.remove('hidden');
+    });
+
+    document.getElementById('btn-close-history').addEventListener('click', () => {
+      historyModal.classList.add('hidden');
+    });
+
+    historyModal.addEventListener('click', (e) => {
+      if (e.target === historyModal) historyModal.classList.add('hidden');
+    });
+
+    document.getElementById('btn-backup-export').addEventListener('click', () => {
+      const index = getArchiveIndex();
+      const allReports = {};
+      index.forEach(k => { allReports[k] = JSON.parse(localStorage.getItem(\`market_report_\${k}\`) || '{}'); });
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(allReports, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", \`街市匯報備份_\${getCurrentDateKey()}.json\`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      showToast('已匯出完整歷史備份檔案');
+    });
+
+    editableElements.forEach(el => {
+      el.addEventListener('input', () => {
+        updateTextColor(el);
+        updateBracketStates();
+        saveCurrentDayReport();
+      });
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          el.blur();
+        }
+      });
+      updateTextColor(el);
+    });
+
+    pickTags.forEach(tag => {
+      tag.addEventListener('click', () => {
+        tag.classList.toggle('selected');
+        updateBracketStates();
+        saveCurrentDayReport();
+      });
+    });
+
+    document.getElementById('btn-clear').addEventListener('click', () => {
+      resetFieldsWithoutDate();
+      saveCurrentDayReport();
+      updateBracketStates();
+      showToast('已重設當前日子的填寫內容');
+    });
+
+    document.getElementById('btn-fill-sample').addEventListener('click', () => {
+      const samples = {
+        'meta_year': String(today.getFullYear()),
+        'meta_month': String(today.getMonth() + 1).padStart(2, '0'),
+        'meta_day': String(today.getDate()).padStart(2, '0'),
+        'sec_cases': '1',
+        'sec_detail': '全日秩序良好，無違規記錄',
+        'clean_cases': '1',
+        'clean_detail': '海鮮檔外側通道微量積水，已即時安排清理刮乾',
+        'pest_count': '1',
+        'pest_loc': '垃圾房周邊',
+        'pest_type': '少量果蠅痕跡',
+        'pest_detail': '已補放誘捕板及藥劑',
+        'rep_comp_total': '2',
+        'rep_comp_done': '2',
+        'rep_comp_pending': '0',
+        'rep_comp_desc': '公廁沖水掣更換完畢',
+        'rep_vend_total': '1',
+        'rep_vend_done': '0',
+        'rep_vend_pending': '1',
+        'rep_vend_desc': '中央空調保養商預約今日下午到場',
+        'drain_count': '1',
+        'drain_loc': '活禽及鮮肉區排水渠',
+        'drain_done': '1',
+        'drain_pending': '0',
+        'drain_desc': '清出少量菜葉雜物，水流恢復通暢',
+        'clean_equip_count': '1',
+        'clean_equip': '高壓水槍運作正常 / 洗地機電池充足',
+        'cs_dispute_count': '0',
+        'cs_dispute_desc': '商戶關係和諧',
+        'cs_complaint_count': '1',
+        'cs_complaint_desc': '反映通道推車暫阻，已即時勸喻檔主騰空',
+        'cs_inquiry_count': '12',
+        'cs_inquiry_desc_1': '尋路與街市泊車諮詢',
+        'cs_lost_count': '1',
+        'cs_lost_time': '下午 14:30',
+        'cs_lost_desc': '拾獲八達通一張，已存服務台待領',
+        'gov_req_items': '1',
+        'gov_req_deadline': '本週五前',
+        'gov_req_detail': '更換公眾洗手液補充紀錄表',
+        'gov_doc_count': '1',
+        'gov_doc_progress': '80',
+        'gov_doc_desc': '消防月檢表整理中',
+        'gov_inspect_count': '1',
+        'gov_inspect_desc': '食環署巡視，有核對清潔點更表，合規',
+        'task_priority_count': '1',
+        'task_priority': '1. 冷氣排水檢修；2. 鮮肉區高壓沖洗',
+        'task_prevent_count': '1',
+        'task_prevent': '出入口預備防滑地墊，加強巡邏頻次',
+        'task_hazard_count': '1',
+        'task_hazard_done': '1',
+        'task_hazard_pending': '0',
+        'task_hazard_desc': '電線保護槽已固定',
+        'sp_weather_count': '1',
+        'sp_weather': '開啟各抽風機與除濕機，各出入口已放防滑黃地膠',
+        'sp_leakage_count': '0',
+        'sp_leakage': '各檔口防水插座日常巡檢完成，無跳閘或外露線路',
+        'sp_tour_count': '1',
+        'sp_tour_name': '社區小學環保教育團',
+        'sp_tour_purpose': '街市減廢與分類宣傳',
+        'sp_tour_staff': '2',
+        'sp_councilor_count': '0',
+        'sp_councilor_desc': '無',
+        'sp_official_count': '1',
+        'sp_official_desc': '食環署人員視察',
+        'oth_incident_count': '0',
+        'oth_incident_desc': '全日運作平穩，無突發事故',
+        'oth_staff_count': '正常',
+        'oth_staff_behavior': '',
+        'oth_attendance_count': '正常',
+        'oth_attendance': ''
+      };
+
+      Object.entries(samples).forEach(([id, text]) => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.innerText = text;
+          updateTextColor(el);
+          const parentBox = el.closest('.remark-box');
+          if (parentBox) {
+            parentBox.classList.add('open');
+            const toggleBtn = document.querySelector(\`.toggle-btn[data-target="\${parentBox.id}"]\`);
+            if (toggleBtn) { toggleBtn.classList.add('active'); toggleBtn.innerText = '－'; }
+          }
+        }
+      });
+
+      ['clean_water', 'eq_washer', 'eq_sweeper', 'cs_find'].forEach(tagId => {
+        const tagEl = document.querySelector(\`.pick-tag[data-tag="\${tagId}"]\`);
+        if (tagEl) tagEl.classList.add('selected');
+      });
+
+      updateBracketStates();
+      saveCurrentDayReport();
+      showToast('已填入標準範例數據並自動保存');
+    });
+
+    const htmlEl = document.documentElement;
+    const btnThemeToggle = document.getElementById('btn-theme-toggle');
+    const themeIcon = document.getElementById('theme-icon');
+    const themeText = document.getElementById('theme-text');
+
+    const sunIcon = \`<svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>\`;
+    const moonIcon = \`<svg class="w-4 h-4 text-slate-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>\`;
+
+    function applyTheme(isDark) {
+      if (isDark) {
+        htmlEl.classList.add('dark');
+        themeIcon.innerHTML = sunIcon;
+        themeText.innerText = '淺色模式';
+      } else {
+        htmlEl.classList.remove('dark');
+        themeIcon.innerHTML = moonIcon;
+        themeText.innerText = '深色模式';
+      }
+    }
+
+    const savedTheme = localStorage.getItem('market_theme');
+    if (savedTheme === 'dark') applyTheme(true);
+    else applyTheme(false);
+
+    btnThemeToggle.addEventListener('click', () => {
+      const isDark = htmlEl.classList.contains('dark');
+      applyTheme(!isDark);
+      localStorage.setItem('market_theme', !isDark ? 'dark' : 'light');
+    });
+
+    const initialKey = getCurrentDateKey();
+    loadReportByDate(initialKey);
+    updateHistoryCountBadge();
+    updateBracketStates();
+  <\/script>
+</body>
+</html>`;
     </script>
 </head>
 <body class="flex justify-center items-center min-h-screen p-0 sm:py-2 bg-[#f0ebe1]">
@@ -4065,6 +5242,7 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                     
                     <!-- 👇 必須放在這個選單框框的內部頂端 -->
                     <div id="settingsDropdown" class="hidden absolute right-0 mt-1 w-48 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200 p-1.5 z-50 flex flex-col space-y-1 animate-flag-in">
+                        <button onclick="window.openMeetingReportModal(); window.toggleSettingsMenu();" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-amber-50 hover:text-amber-700 rounded-xl transition-colors text-left"><i data-lucide="clipboard-pen-line" class="w-3.5 h-3.5 mr-2 text-amber-500"></i> 開會記錄</button>
                         <button onclick="window.openLogsModal(); window.toggleSettingsMenu();" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left"><i data-lucide="scroll-text" class="w-3.5 h-3.5 mr-2 text-blue-500"></i> 圖庫操作日誌</button>
                         <div class="border-t border-slate-100 my-1"></div>
                         
@@ -4523,6 +5701,23 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                 <button type="button" onclick="window.closeUserNameModal()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">取消</button>
                 <button type="button" onclick="window.saveUserName()" class="px-4 py-1.5 bg-blue-500 text-white rounded-lg text-xs font-bold shadow-xs active:scale-95">儲存</button>
             </div>
+        </div>
+    </div>
+<!-- 開會記錄全螢幕彈窗 -->
+    <div id="meetingReportModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[1500] hidden flex-col items-center justify-center p-1 sm:p-4">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-4xl h-[95vh] flex flex-col overflow-hidden border border-slate-200 dark:border-slate-700">
+            <!-- 頂部標題與關閉按鈕 -->
+            <div class="px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between shrink-0">
+                <div class="flex items-center space-x-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                    <span class="text-sm font-black text-slate-800 dark:text-white">開會記錄 (街市日常運營工作匯報)</span>
+                </div>
+                <button type="button" onclick="window.closeMeetingReportModal()" class="text-slate-400 hover:text-red-500 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <!-- 內嵌工作匯報表主體 -->
+            <iframe id="meetingReportIframe" class="w-full flex-1 border-none bg-[#f1f5f9] dark:bg-slate-900"></iframe>
         </div>
     </div>
 </body>
