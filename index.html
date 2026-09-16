@@ -327,8 +327,9 @@
                 if (!meta) return '';
                 const isVisible = tabVisibilityState[tabKey] !== false;
                 const isCurrent = curActive === tabKey;
-                const actCls = "flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
-                const inactCls = "flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap";
+                // 👇 鎖定高度為 h-full，並統一使用相同的字重與透明邊框，切換時分頁列絕不收縮抖動
+                const actCls = "flex-1 h-full flex items-center justify-center px-1 text-xs rounded-md bg-white text-blue-600 shadow-2xs border border-[#d6d0c4] font-bold tracking-widest text-center whitespace-nowrap select-none";
+                const inactCls = "flex-1 h-full flex items-center justify-center px-1 text-xs text-slate-500 hover:text-slate-700 border border-transparent font-bold tracking-widest text-center whitespace-nowrap select-none";
                 return `<button id="${meta.btnId}" onclick="window.switchTab('${tabKey}')" style="${isVisible ? '' : 'display:none;'}" class="${isCurrent ? actCls : inactCls} ${isVisible ? '' : 'hidden'}">${meta.name}</button>`;
             }).join('');
 
@@ -3450,8 +3451,8 @@ window.crSaveData = () => {
 
         window.switchTab = (tab) => {
             const pages = { gallery: 'galleryPage', timeline: 'timelinePage', memo: 'memoPage', map: 'mapPage', coldRoom: 'coldRoomPage', closing: 'closingPage' };
-            const actCls = "flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
-            const inactCls = "flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap";
+            const actCls = "flex-1 h-full flex items-center justify-center px-1 text-xs rounded-md bg-white text-blue-600 shadow-2xs border border-[#d6d0c4] font-bold tracking-widest text-center whitespace-nowrap select-none";
+const inactCls = "flex-1 h-full flex items-center justify-center px-1 text-xs text-slate-500 hover:text-slate-700 border border-transparent font-bold tracking-widest text-center whitespace-nowrap select-none";
             
             Object.values(pages).forEach(id => { 
                 const el = $(id); 
@@ -3466,7 +3467,7 @@ window.crSaveData = () => {
             const targetPage = $(pages[tab]), targetBtn = $(tabMetadataMap[tab]?.btnId);
             if (targetPage) { 
                 targetPage.classList.remove('hidden'); 
-                targetPage.classList.add(['map', 'gallery', 'coldRoom', 'closing'].includes(tab) ? 'flex' : 'block'); 
+                targetPage.classList.add('flex'); 
             }
             if (targetBtn) targetBtn.className = actCls;
 
@@ -3489,7 +3490,7 @@ window.crSaveData = () => {
             if (!tasks.length) { container.innerHTML = '<div class="flex flex-col items-center justify-center pt-24 pb-32 text-slate-400"><i data-lucide="party-popper" class="w-16 h-16 mb-4 text-green-500 opacity-80"></i><span class="text-base font-black tracking-widest text-slate-600">目前沒有任何任務</span></div>'; lucide.createIcons(); return; }
             let targetScrollId = null, minDiff = Infinity;
             tasks.forEach(t => { const s = parseTime(t.start).getTime(), e = parseTime(t.end).getTime(); if (now >= s && now <= e) { targetScrollId = `tl-task-wrapper-${t.id}`; minDiff = -1; } else if (minDiff !== -1 && Math.min(Math.abs(s - now), Math.abs(e - now)) < minDiff) { minDiff = Math.min(Math.abs(s - now), Math.abs(e - now)); targetScrollId = `tl-task-wrapper-${t.id}`; } });
-            let html = '<div class="relative pt-2 pb-16 w-full max-w-full mx-auto flex flex-col overflow-hidden">';
+            let html = '<div class="relative pt-1 pb-4 w-full max-w-full mx-auto flex flex-col overflow-hidden">';
             html += `<div id="uncompleted-indicator-container" class="sticky top-[125px] z-[60] w-0 h-0 overflow-visible transition-all duration-300 opacity-0 pointer-events-none -translate-y-2"><button type="button" onclick="window.scrollToTopUncompleted(event)" class="absolute left-[13px] -translate-y-full pointer-events-auto bg-red-500 text-white border-2 border-white rounded-full pl-1.5 pr-2 py-1 flex items-center shadow-lg shadow-red-500/40 text-[10px] font-bold hover:bg-red-600 active:scale-95 transition-all whitespace-nowrap"><i data-lucide="arrow-up" class="w-3.5 h-3.5 mr-0.5"></i><span id="uncompleted-count">0</span></button></div>`;
             html += `<div id="nowTimeMarker" class="absolute left-0 right-0 z-0 flex items-center pointer-events-none -translate-y-1/2 transition-all duration-500" style="top:0px; display:none;"><span class="text-blue-600 text-lg font-black shrink-0 -ml-1 drop-shadow-md select-none leading-none">➤</span><div class="flex-1 h-[2px] bg-blue-500/80 shadow-[0_0_8px_rgba(59,130,246,0.8)] border-t border-b border-blue-300"></div></div>`;
             let lastWasStacked = false, prevGapTime = window.getNow();
@@ -3535,15 +3536,35 @@ window.crSaveData = () => {
             if (page && !page.dataset.hasScrollListener) { page.addEventListener('scroll', window.handleTimelineScroll); page.dataset.hasScrollListener = "true"; }
             window.handleTimelineScroll();
             if (scrollToCenter && targetScrollId) {
-                // 給予手機端足夠的渲染時間 (250ms)，確保卡片高度與座標已完全建立
                 setTimeout(() => {
-                    const el = $(targetScrollId);
-                    if (el) {
-                        el.scrollIntoView({
-                            behavior: 'smooth',
-                            block: 'center',
-                            inline: 'nearest'
+                    const nowMarker = $('nowTimeMarker');
+                    const page = $('timelinePage');
+                    if (nowMarker && page && nowMarker.style.display !== 'none') {
+                        // 取得藍線相對於滾動容器的頂端座標
+                        const markerTop = nowMarker.offsetTop;
+                        const pageHeight = page.clientHeight;
+                        
+                        // 計算讓藍線停在畫面正中央的 scrollTop 位置
+                        const targetScrollTop = markerTop - (pageHeight / 2);
+
+                        page.scrollTo({
+                            top: Math.max(0, targetScrollTop),
+                            behavior: 'smooth'
                         });
+                    } else {
+                        // 如果找不到藍線，則退回原本對焦當前任務卡片的邏輯
+                        const el = $(targetScrollId);
+                        if (el && page) {
+                            const cardTop = el.offsetTop;
+                            const cardHeight = el.offsetHeight;
+                            const pageHeight = page.clientHeight;
+                            const targetScrollTop = cardTop - (pageHeight / 2) + (cardHeight / 2);
+
+                            page.scrollTo({
+                                top: Math.max(0, targetScrollTop),
+                                behavior: 'smooth'
+                            });
+                        }
                     }
                 }, 250);
             }
@@ -5226,8 +5247,7 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
     </script>
 </head>
 <body class="flex justify-center items-center min-h-screen p-0 sm:py-2 bg-[#f0ebe1]">
-    <div class="w-full max-w-[430px] h-full sm:h-[910px] min-h-[100vh] sm:min-h-[880px] bg-[#fdfbf7] sm:rounded-[2.5rem] shadow-2xl sm:border-[6px] border-[#d6d0c4] overflow-hidden relative flex flex-col mx-auto my-auto">
-        <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-30 border-b border-[#e5dfd3] px-3 pt-1 pb-1 shadow-xs shrink-0">
+    <div class="w-full max-w-[430px] h-[100dvh] sm:h-[860px] bg-[#fdfbf7] sm:rounded-[2rem] shadow-2xl sm:border-[5px] border-[#d6d0c4] overflow-hidden relative flex flex-col mx-auto my-auto">        <header class="bg-[#fdfbf7]/95 backdrop-blur-md sticky top-0 z-30 border-b border-[#e5dfd3] px-3 pt-1 pb-1 shadow-xs shrink-0">
             <div class="flex items-center justify-between relative px-2">
                 <div class="w-12"></div>
                 <div class="flex items-center justify-center space-x-2 shrink-0">
@@ -5256,10 +5276,10 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
                     </div>
                 </div>
             </div>
-            <div id="tabBarContainer" class="mt-1.5 flex bg-[#f0ebe1] rounded-lg p-0.5 shadow-inner border border-[#e5dfd3] relative z-20 overflow-x-auto scrollbar-hide w-full box-border">
+            <div id="tabBarContainer" class="mt-1.5 flex h-[34px] min-h-[34px] shrink-0 bg-[#f0ebe1] rounded-lg p-0.5 shadow-inner border border-[#e5dfd3] relative z-20 w-full box-border items-center overflow-hidden">
         </header>
 
-        <main id="timelinePage" class="hidden absolute inset-0 top-[88px] overflow-y-auto overflow-x-hidden z-10 bg-[#fdfbf7] scrollbar-hide pointer-events-auto" style="-webkit-overflow-scrolling: touch; overscroll-behavior-y: contain;">
+        <main id="timelinePage" class="hidden flex-1 min-h-0 flex-col overflow-y-auto overflow-x-hidden relative z-10 bg-[#fdfbf7] scrollbar-hide" style="-webkit-overflow-scrolling: touch; overscroll-behavior-y: contain;">
             <div id="timelineStickyHeader" class="sticky top-0 z-50 w-full bg-gradient-to-b from-[#fdfbf7] via-[#fdfbf7]/95 to-transparent pt-2 pb-2 px-4 flex flex-col items-center justify-center pointer-events-none transition-all">
                 <div class="flex items-center justify-center gap-2 w-full max-w-[500px]">
                     <div class="flex items-center gap-1.5 justify-end flex-1">
@@ -5301,7 +5321,7 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
             </div>
             <div class="flex-1 min-h-0 flex overflow-hidden relative">
                 <div class="flex-1 min-h-0 flex flex-col p-2 overflow-hidden relative" id="mapScrollContainer">
-                    <div id="mapWrapper" class="relative w-full h-[320px] bg-[#fdfbf7] rounded-xl overflow-hidden shadow-inner border-2 border-slate-300 transition-colors shrink-0">
+                    <div id="mapWrapper" class="relative w-full h-[240px] bg-[#fdfbf7] rounded-xl overflow-hidden shadow-inner border-2 border-slate-300 transition-colors shrink-0">
                         <div class="absolute top-0 left-0 right-0 h-[40%] bg-blue-50/60 border-b-2 border-slate-300 pointer-events-none transition-colors"><div class="absolute top-2 left-3 text-blue-300/80 font-black text-xl tracking-widest select-none">1/F</div></div>
                         <div class="absolute top-[40%] left-0 right-0 bottom-0 bg-emerald-50/60 border-t-2 border-slate-300 pointer-events-none transition-colors"><div class="absolute top-2 left-3 text-emerald-300/80 font-black text-xl tracking-widest select-none">地面層</div></div>
                         <div class="absolute top-[8%] left-[50%] -translate-x-1/2 w-[38%] h-[24%] bg-blue-100/80 border-2 border-blue-400 rounded-lg flex flex-col justify-end pb-2 items-center shadow-inner pointer-events-none"><div class="text-blue-600 font-bold text-sm tracking-wider flex items-center"><i data-lucide="headphones" class="w-4 h-4 mr-1"></i>客服室</div></div>
