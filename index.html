@@ -3411,11 +3411,14 @@ window.crSaveData = () => {
             document.querySelectorAll('.conveyor-task').forEach(w => {
                 const status = calculateTaskStatus(w.dataset.start, w.dataset.end); if (status.state !== 'waiting') { needReRender = true; return; }
                 const st = parseTime(w.dataset.start); w.style.marginTop = `${Math.min(8 + Math.max(0, (st - prev) / 60000) * 0.1, 16)}px`;
-                const tEl = w.querySelector('.time-text'); if (tEl) tEl.innerHTML = `<span class="text-amber-600 font-bold flex items-center"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1 shrink-0"></i>⏳ ${status.text.replace('未開始 (', '還有 ').replace('後)', '')} 到來</span>`;
+                // 👇 直接使用原生 SVG 替代 Lucide 的 <i> 標籤
+                const tEl = w.querySelector('.time-text'); if (tEl) tEl.innerHTML = `<span class="text-amber-600 font-bold flex items-center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 mr-1 shrink-0"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>⏳ ${status.text.replace('未開始 (', '還有 ').replace('後)', '')} 到來</span>`;
                 prev = st;
             });
             if (needReRender) { window.renderTimeline(false); return; }
-            try { lucide.createIcons(); } catch(e) {} window.updateCurrentTimeIndicator();
+            
+            // 👇 拿掉耗效能的 lucide.createIcons(); 直接更新即可
+            window.updateCurrentTimeIndicator();
         };
 
         window.updateClockUI = () => {
@@ -3979,25 +3982,6 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
             } catch(e) { window.showToast("連線驗證失敗", true); }
         }
 
-        // 👇【將第二步的監聽程式碼加在這裡，安全又好找】
-        window.addEventListener('storage', (e) => {
-            if (e.key && e.key.startsWith('market_report_')) {
-                try {
-                    const index = JSON.parse(localStorage.getItem('market_reports_index') || '[]');
-                    const allReports = {};
-                    index.forEach(k => {
-                        const raw = localStorage.getItem('market_report_' + k);
-                        if (raw) allReports[k] = JSON.parse(raw);
-                    });
-                    localStorage.setItem('market_reports_all_data', JSON.stringify(allReports));
-
-                    if (currentUser && db) {
-                        syncConfig('meeting_report_data', { reports: allReports }, true);
-                    }
-                } catch(err) {}
-            }
-        });
-
         onAuthStateChanged(auth, (user) => {
             currentUser = user; const dot = $('connectionDot'), st = $('connectionStatus');
             if (user) { dot?.classList.replace('bg-red-500', 'bg-green-500'); if (st) st.textContent = '系統已連線並同步'; setupPureRealtimeSync(); }
@@ -4116,8 +4100,15 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
   <script>tailwind.config = { darkMode: 'class' };<\/script>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
+    <style>
     * { transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease; }
     body:not(.dark), body:not(.dark) h1, body:not(.dark) h2, body:not(.dark) span, body:not(.dark) label, body:not(.dark) p, body:not(.dark) div { color: #000000; }
+    #toast, #toast span { color: #ffffff !important; }
+    
+    /* 👇 加上這段：當螢幕寬度小於 640px (手機) 時，將基準字級從預設的 16px 縮小到 13px (大約縮小 80%) */
+    @media (max-width: 640px) {
+        html { font-size: 13px !important; }
+    }
     .expand-input { display: inline-block; min-width: 32px; max-width: 100%; border: none; border-bottom: 2px solid #3b82f6; background-color: rgba(239, 246, 255, 0.7); color: #000000; font-weight: 600; padding: 1px 6px; margin: 0 4px; border-radius: 4px 4px 0 0; outline: none; vertical-align: baseline; word-break: break-word; }
     .expand-input.num-input { min-width: 24px; text-align: center; }
     .expand-input.detail-input { min-width: 80px; }
