@@ -1968,19 +1968,25 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             window.renderUploadBatchList(); 
         };
 
-        // 👇【替換這裡開始】
         window.toggleBatchMergeView = () => {
             window.isBatchMergedView = !window.isBatchMergedView;
+            
+            // 👇 關鍵修復：切換分開時，立刻把焦點改成第 1 張圖片的 ID，絕不再停留於 'merged'
+            if (!window.isBatchMergedView) {
+                if (window.pendingUploadImages.length > 0) {
+                    window.activeKeypadTarget = window.pendingUploadImages[0].tempId;
+                }
+            } else {
+                window.activeKeypadTarget = 'merged';
+            }
+
             window.renderUploadBatchList();
             
-            // 如果是切換到展開分開模式，自動將輸入焦點指定給第 1 張卡片
-            if (!window.isBatchMergedView && window.pendingUploadImages.length > 0) {
-                window.setKeypadTarget(window.pendingUploadImages[0].tempId);
-            } else if (window.isBatchMergedView) {
-                window.setKeypadTarget('merged');
+            // 重新整理鍵盤綁定
+            if (window.activeKeypadTarget) {
+                setTimeout(() => window.setKeypadTarget(window.activeKeypadTarget), 50);
             }
         };
-        // 👆【替換這裡結束】
 
         window.updateBatchAutoHintUI = (codeRaw, timeStr, hintBoxId, isMerged = true, tempId = null) => {
             const hintBox = $(hintBoxId);
@@ -2199,78 +2205,86 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
         };
 
-        // ==========================================
-        // 👇【第一步：把十宮格核心邏輯貼在這邊】
-        // ==========================================
-        window.activeKeypadTarget = 'merged'; // 'merged' 或 指定的 tempId
-        window.keypadRawDigits = '';
+        // ====== 十宮格虛擬鍵盤專屬核心邏輯 (修復版) ======
+        window.activeKeypadTarget = 'merged';
+        window.keypadStore = {}; // 專門存放每張卡片當前輸入的純數字字串，防止被 001 鎖死長度
 
         window.setKeypadTarget = (targetId) => {
-            // 防呆：如果沒有傳入或找不到，自動 fallback
             if (!targetId) {
-                if (window.isBatchMergedView) targetId = 'merged';
-                else if (window.pendingUploadImages.length > 0) targetId = window.pendingUploadImages[0].tempId;
+                targetId = window.isBatchMergedView ? 'merged' : (window.pendingUploadImages[0]?.tempId || 'merged');
             }
             window.activeKeypadTarget = targetId;
 
-            // 讀取當前目標的檔號數字
-            const currentVal = (targetId === 'merged') 
-                ? (window.mergedBatchForm.code || '')
-                : (window.pendingUploadImages.find(x => x.tempId === targetId)?.code || '');
-            
-            window.keypadRawDigits = currentVal ? String(currentVal).replace(/\D/g, '') : '';
+            // 讀取既有純數字
+            if (window.keypadStore[targetId] === undefined) {
+                const currentVal = (targetId === 'merged') 
+                    ? (window.mergedBatchForm.code || '')
+                    : (window.pendingUploadImages.find(x => x.tempId === targetId)?.code || '');
+                window.keypadStore[targetId] = currentVal ? String(currentVal).replace(/\D/g, '') : '';
+            }
 
-            // 更新介面選中樣式（讓使用者一眼看出現在正在打哪一張）
+            // 更新選中外框藍光
             document.querySelectorAll('[id^="keypadDisplay-"]').forEach(el => {
                 el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/50');
             });
-            const activeDisplayEl = document.getElementById(`keypadDisplay-${targetId}`);
-            if (activeDisplayEl) {
-                activeDisplayEl.classList.add('ring-2', 'ring-blue-500', 'bg-blue-100/50');
+            const activeEl = document.getElementById(`keypadDisplay-${targetId}`);
+            if (activeEl) {
+                activeEl.classList.add('ring-2', 'ring-blue-500', 'bg-blue-100/50');
             }
-
             window.updateKeypadDisplayUI();
         };
 
-        window.onKeypadPress = (key) => {
-            if (key === 'CLEAR') {
-                window.keypadRawDigits = '';
-            } else if (key === 'BACK') {
-                window.keypadRawDigits = window.keypadRawDigits.slice(0, -1);
-            } else {
-                if (window.keypadRawDigits.length < 3) {
-                    window.keypadRawDigits += String(key);
-                }
+        window.onKeypadPress = (key, forcedOwnerId = null) => {
+            const targetId = forcedOwnerId || window.activeKeypadTarget || 'merged';
+            window.activeKeypadTarget = targetId;
+
+            if (window.keypadStore[targetId] === undefined) {
+                window.keypadStore[targetId] = '';
             }
 
-            const formatted = window.formatStallCode(window.keypadRawDigits);
+            let raw = window.keypadStore[targetId];
 
-            if (window.activeKeypadTarget === 'merged') {
+            if (key === 'CLEAR') {
+                raw = '';
+            } else if (key === 'BACK') {
+                raw = raw.slice(0, -1);
+            } else {
+                // 最多輸入 3 位數檔號
+                if (raw.length < 3) {
+                    raw += String(key);
+                }
+            }
+            window.keypadStore[targetId] = raw;
+
+            // 儲存格式化後的 3 位數檔號
+            const formatted = raw ? raw.padStart(3, '0') : '';
+
+            if (targetId === 'merged') {
                 window.mergedBatchForm.code = formatted;
                 const fullCode = `${window.mergedBatchForm.prefix || ''}${formatted}`.trim();
                 window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
             } else {
-                const item = window.pendingUploadImages.find(x => x.tempId === window.activeKeypadTarget);
+                const item = window.pendingUploadImages.find(x => x.tempId === targetId);
                 if (item) {
                     item.code = formatted;
                     item.title = `${item.prefix || ''}${formatted}`.trim();
                     window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${item.tempId}`, false, item.tempId);
                 }
             }
-            window.updateKeypadDisplayUI();
+
+            // 顯示當前輸入數字或三條橫線
+            const displayEl = document.getElementById(`keypadDisplay-${targetId}`);
+            if (displayEl) {
+                displayEl.textContent = raw || '---';
+            }
         };
 
         window.updateKeypadDisplayUI = () => {
-            const targetId = window.activeKeypadTarget;
-            const formatted = window.formatStallCode(window.keypadRawDigits);
-            const displayCode = formatted || '---';
-
-            if (targetId === 'merged') {
-                const el = document.getElementById('keypadDisplay-merged');
-                if (el) el.textContent = displayCode;
-            } else {
-                const el = document.getElementById(`keypadDisplay-${targetId}`);
-                if (el) el.textContent = displayCode;
+            const targetId = window.activeKeypadTarget || 'merged';
+            const raw = window.keypadStore[targetId] || '';
+            const displayEl = document.getElementById(`keypadDisplay-${targetId}`);
+            if (displayEl) {
+                displayEl.textContent = raw || '---';
             }
         };
 
@@ -2290,10 +2304,8 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             }
         });
 
-        // ==========================================
-        // 👇【第二步：把十宮格按鍵 HTML 產生器貼在這邊】
-        // ==========================================
-        window.renderKeypadGridHtml = () => {
+        // 按鍵產生器：把按鍵所屬的 ownerId 明確綁定
+        window.renderKeypadGridHtml = (ownerId = 'merged') => {
             const keys = [
                 ['1', '2', '3'],
                 ['4', '5', '6'],
@@ -2305,7 +2317,6 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             <div class="grid grid-cols-3 gap-1 w-full select-none mt-1">
                 ${keys.flat().map(k => {
                     let label = k;
-                    // 👇 改為極細邊框 border-[1px] border-slate-200，字體更醒目
                     let style = "bg-white text-slate-800 border-[1px] border-slate-200 shadow-2xs text-base font-black hover:bg-slate-50";
                     if (k === 'CLEAR') {
                         label = '<span class="text-xs font-black text-rose-600">清空</span>';
@@ -2315,7 +2326,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                         style = "bg-slate-100/80 border-[1px] border-slate-200 text-slate-700 hover:bg-slate-200";
                     }
                     return `
-                    <button type="button" onclick="window.onKeypadPress('${k}')" 
+                    <button type="button" onclick="window.onKeypadPress('${k}', '${ownerId}')" 
                         class="h-8 sm:h-9 rounded-lg font-mono border flex items-center justify-center active:scale-95 transition-all ${style}">
                         ${label}
                     </button>`;
@@ -2323,7 +2334,6 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             </div>`;
         };
 
-        // 原本的函數開始
         window.renderUploadBatchList = () => {
             const list = $('uploadBatchList');
             const total = window.pendingUploadImages.length;
@@ -2344,21 +2354,20 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 const [hStr, mStr] = (window.mergedBatchForm.time || '00:00').split(':');
                 list.innerHTML = `
                 <div class="flex flex-col items-center animate-pop-in pb-1">
-                    <!-- 👇 壓低圖片預覽高度，騰出空間給鍵盤 -->
                     <div class="photo-deck-container cursor-pointer !h-[75px] !mb-1" onclick="window.openFullscreenImg('${window.pendingUploadImages[0]?.src}')" title="點擊放大預覽">
-    ${window.pendingUploadImages.slice(0, 5).map((img) => `
-        <div class="deck-card !w-[130px] !h-[70px]">
-            <img src="${img.src}" class="w-full h-full object-contain p-0.5">
-        </div>
-    `).join('')}
-    <div class="absolute -bottom-1 bg-slate-900/85 backdrop-blur-md text-white text-[9.5px] font-black px-2 py-0.2 rounded-full shadow-lg border border-white/40 flex items-center z-20">
-        共疊加 ${total} 張相片
-    </div>
-</div>
+                        ${window.pendingUploadImages.slice(0, 5).map((img) => `
+                            <div class="deck-card !w-[130px] !h-[70px]">
+                                <img src="${img.src}" class="w-full h-full object-contain p-0.5">
+                            </div>
+                        `).join('')}
+                        <div class="absolute -bottom-1 bg-slate-900/85 backdrop-blur-md text-white text-[9.5px] font-black px-2 py-0.2 rounded-full shadow-lg border border-white/40 flex items-center z-20">
+                            共疊加 ${total} 張相片
+                        </div>
+                    </div>
 
                     <div class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-2.5 shadow-xs space-y-1.5 mt-1">
-                        <!-- 👇 提示框預設為透明佔位 (opacity-0)，高度固定 h-[42px] -->
-                        <div id="batchMergedAutoHint" class="opacity-0 pointer-events-none h-[42px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent"></div>
+                        <!-- 判定提示框常駐預留高度 -->
+                        <div id="batchMergedAutoHint" class="opacity-0 pointer-events-none h-[38px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent"></div>
 
                         <!-- 橫排 4 個分類鍵 -->
                         <div class="flex items-center gap-1 w-full">
@@ -2381,50 +2390,47 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                                 </select>
                             </div>
 
-                            <!-- 👇 改為垂直排列 (flex flex-col)，高度縮小為 py-0.5，直立疊在中間 -->
-<div class="w-12 flex flex-col space-y-1 shrink-0">
-    <button type="button" id="merged-prefix-1-" onclick="window.setMergedPrefix('1-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border transition-all ${window.mergedBatchForm.prefix === '1-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
-    <button type="button" id="merged-prefix-R-" onclick="window.setMergedPrefix('R-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border transition-all ${window.mergedBatchForm.prefix === 'R-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
-    <button type="button" id="merged-prefix-J-" onclick="window.setMergedPrefix('J-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border transition-all ${window.mergedBatchForm.prefix === 'J-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
-</div>
+                            <!-- 垂直排版前綴按鈕 -->
+                            <div class="w-12 flex flex-col space-y-1 shrink-0">
+                                <button type="button" id="merged-prefix-1-" onclick="window.setMergedPrefix('1-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border transition-all ${window.mergedBatchForm.prefix === '1-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+                                <button type="button" id="merged-prefix-R-" onclick="window.setMergedPrefix('R-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border transition-all ${window.mergedBatchForm.prefix === 'R-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+                                <button type="button" id="merged-prefix-J-" onclick="window.setMergedPrefix('J-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border transition-all ${window.mergedBatchForm.prefix === 'J-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
+                            </div>
 
-                            <!-- 👇 檔號顯示卡：加深底框、字體加大 -->
                             <div class="flex-1 h-10 bg-blue-50/80 border-2 border-blue-400 rounded-xl px-2 flex items-center justify-center font-mono font-black text-xl text-blue-700 tracking-widest shadow-inner cursor-default select-none" id="keypadDisplay-merged">
-                                ${window.mergedBatchForm.code || '---'}
+                                ${window.keypadStore['merged'] || '---'}
                             </div>
                         </div>
 
-                        ${window.renderKeypadGridHtml()}
+                        ${window.renderKeypadGridHtml('merged')}
                     </div>
                 </div>`;
                 window.updateBatchAutoHintUI(`${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
             } else {
-                // 單張展開模式
+                // 展開分開模式
                 list.innerHTML = window.pendingUploadImages.map(item => {
                     const [hStr, mStr] = (item.time || '00:00').split(':');
+                    const curDigits = window.keypadStore[item.tempId] || '';
                     return `
-                    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 flex flex-col space-y-2 shadow-xs">
+                    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-2.5 flex flex-col space-y-1.5 shadow-xs">
                         <div class="relative w-fit max-w-full mx-auto rounded-xl overflow-hidden cursor-zoom-in group border border-slate-300 shadow-sm" onclick="window.openFullscreenImg('${item.src}')">
-                            <img src="${item.src}" class="max-h-24 sm:max-h-28 w-auto object-contain rounded-xl block">
-                            <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1.5 right-1.5 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md active:scale-95 transition-all">
+                            <img src="${item.src}" class="max-h-20 sm:max-h-24 w-auto object-contain rounded-xl block">
+                            <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1 right-1 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md active:scale-95 transition-all">
                                 <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                             </button>
                         </div>
 
-                        <!-- 單張模式提示框預留位置 -->
                         <div id="hint-pending-${item.tempId}" class="opacity-0 pointer-events-none h-[38px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent"></div>
 
-                        <!-- 橫排 4 個分類鍵 -->
                         <div class="flex items-center gap-1.5 w-full">
                             ${catList.map(cat => `
                                 <button type="button" id="btn-cat-${item.tempId}-${cat}" onclick="window.setPendingItemCategory('${item.tempId}', '${cat}', true)" 
-                                    class="flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all active:scale-95 ${item.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
+                                    class="flex-1 py-1 rounded-lg text-xs font-bold border transition-all active:scale-95 ${item.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
                                     ${cat}
                                 </button>
                             `).join('')}
                         </div>
 
-                        <!-- 時間、垂直前綴按鈕、檔號顯示框 -->
                         <div class="flex items-stretch space-x-1.5">
                             <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-xl px-1.5 py-1 shadow-inner shrink-0 h-fit my-auto">
                                 <select onchange="window.updateTimePart('${item.tempId}','h',this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
@@ -2436,20 +2442,20 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                                 </select>
                             </div>
 
-                            <!-- 👇 修正：一樓、魚檔、雞檔 改為垂直排列 -->
+                            <!-- 垂直排列前綴 -->
                             <div class="w-12 flex flex-col space-y-1 shrink-0">
                                 <button type="button" id="btn-prefix-${item.tempId}-1-" onclick="window.selectPrefixOption('${item.tempId}', '1-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${item.prefix === '1-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
                                 <button type="button" id="btn-prefix-${item.tempId}-R-" onclick="window.selectPrefixOption('${item.tempId}', 'R-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${item.prefix === 'R-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
                                 <button type="button" id="btn-prefix-${item.tempId}-J-" onclick="window.selectPrefixOption('${item.tempId}', 'J-')" class="w-full py-0.5 rounded-lg text-[11px] font-black border ${item.prefix === 'J-' ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
                             </div>
 
-                            <!-- 檔號顯示框 -->
-                            <div onclick="window.setKeypadTarget('${item.tempId}')" class="flex-1 h-9 bg-white border-2 border-blue-300 rounded-xl px-2 flex items-center justify-center font-mono font-black text-xl text-blue-600 tracking-widest shadow-inner cursor-pointer select-none my-auto" id="keypadDisplay-${item.tempId}">
-                                ${item.code || '---'}
+                            <div onclick="window.setKeypadTarget('${item.tempId}')" class="flex-1 h-10 bg-white border-2 border-blue-300 rounded-xl px-2 flex items-center justify-center font-mono font-black text-xl text-blue-600 tracking-widest shadow-inner cursor-pointer select-none my-auto" id="keypadDisplay-${item.tempId}">
+                                ${curDigits || '---'}
                             </div>
                         </div>
 
-                        ${window.renderKeypadGridHtml()}
+                        <!-- 傳入當前卡片的 ID，精準綁定此卡片 -->
+                        ${window.renderKeypadGridHtml(item.tempId)}
                     </div>`;
                 }).join('');
 
@@ -2457,7 +2463,6 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                     window.updateBatchAutoHintUI(it.title, it.time, `hint-pending-${it.tempId}`, false, it.tempId);
                 });
 
-                // 👇 加上這兩行：確保展開分開模式生成完成後，立即啟動選中當前目標卡片
                 if (window.pendingUploadImages.length > 0) {
                     const curId = (window.activeKeypadTarget && window.activeKeypadTarget !== 'merged') 
                         ? window.activeKeypadTarget 
