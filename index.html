@@ -68,7 +68,7 @@
     <script type="module">
         import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, onSnapshot, writeBatch, addDoc, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, updateDoc, getDocs, deleteDoc, onSnapshot, writeBatch, addDoc, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const CONFIG = { maxDim: 1200, quality: 0.6 };
         const firebaseConfig = {
@@ -4284,14 +4284,16 @@ setTimeout(() => {
                 }
                 safeSetLocal('market_report_' + dateKey, report);
 
-                // 同步寫入 Firebase 雲端
+                // 雲端同步：只更新該日期的 reports.dateKey，絕不整包覆蓋洗掉其他日
                 if (currentUser && db) {
                     try {
-                        await setDoc(cfgDoc('meeting_report_data'), {
-                            reports: {
-                                [dateKey]: report
-                            }
-                        }, { merge: true });
+                        const ref = cfgDoc('meeting_report_data');
+                        await updateDoc(ref, {
+                            [`reports.${dateKey}`]: report
+                        }).catch(async () => {
+                            // 如果文件尚未存在則直接建立
+                            await setDoc(ref, { reports: { [dateKey]: report } }, { merge: true });
+                        });
                     } catch (err) {
                         console.error("開會記錄雲端同步失敗:", err);
                     }
@@ -4313,7 +4315,7 @@ setTimeout(() => {
             const iframe = document.getElementById('meetingReportIframe');
             if (modal && iframe) {
                 const pushLatest = () => {
-                    const all = getLocal('work_cache_meeting_report_all', {});
+                    const all = getLocal('market_reports_all_data', {}); // 👈 改這裡
                     try {
                         iframe.contentWindow.postMessage({
                             type: 'SYNC_MEETING_REPORTS',
@@ -5054,6 +5056,7 @@ setTimeout(() => {
       if (badge) badge.innerText = getArchiveIndex().length;
     }
 
+    // B. 存檔改送 postMessage
     let autoSaveTimer = null;
     function saveCurrentDayReport() {
       clearTimeout(autoSaveTimer);
@@ -5068,39 +5071,50 @@ setTimeout(() => {
 
         const reportObject = { dateKey, updatedAt: new Date().toISOString(), data, tags: activeTags, boxes: openBoxes };
         
-        // 雙寫：本機與外層同步寫入
-        localStorage.setItem('market_report_' + dateKey, JSON.stringify(reportObject));
-        if (window.parent && window.parent.localStorage) {
-          window.parent.localStorage.setItem('market_report_' + dateKey, JSON.stringify(reportObject));
-        }
-
-        let index = getArchiveIndex();
-        if (!index.includes(dateKey)) {
-          index.push(dateKey);
-          index.sort((a, b) => b.localeCompare(a));
-          localStorage.setItem('market_reports_index', JSON.stringify(index));
-          if (window.parent && window.parent.localStorage) {
-            window.parent.localStorage.setItem('market_reports_index', JSON.stringify(index));
+        try {
+          localStorage.setItem('market_report_' + dateKey, JSON.stringify(reportObject));
+          let index = getArchiveIndex();
+          if (!index.includes(dateKey)) {
+            index.push(dateKey);
+            index.sort((a, b) => b.localeCompare(a));
+            localStorage.setItem('market_reports_index', JSON.stringify(index));
           }
-        }
+        } catch(e) {}
 
-        // 打包送上雲端
-try {
-  const allReports = {};
-  index.forEach(k => {
-    const raw = localStorage.getItem('market_report_' + k) || (window.parent?.localStorage.getItem('market_report_' + k));
-    if (raw) allReports[k] = JSON.parse(raw);
-  });
-
-  if (window.parent && typeof window.parent.syncConfig === 'function') {
-    window.parent.syncConfig('meeting_report_data', { reports: allReports }, true);
-  }
-} catch(e) {}
+        // 透過 postMessage 送給父層代為寫入雲端
+        try {
+          window.parent.postMessage({
+            type: 'SAVE_MEETING_REPORT',
+            dateKey,
+            report: reportObject
+          }, '*');
+        } catch(e) {}
 
         updateSaveStatusIndicator();
         updateHistoryCountBadge();
       }, 150);
     }
+
+    // C. iframe 收雲端資料
+    window.addEventListener('message', (event) => {
+      if (event.data?.type !== 'SYNC_MEETING_REPORTS') return;
+      const reports = event.data.reports || {};
+      const index = Object.keys(reports).sort((a, b) => b.localeCompare(a));
+      try {
+        localStorage.setItem('market_reports_index', JSON.stringify(index));
+        Object.keys(reports).forEach((k) => {
+          localStorage.setItem('market_report_' + k, JSON.stringify(reports[k]));
+        });
+      } catch(e) {}
+
+      loadReportByDate(getCurrentDateKey());
+      updateHistoryCountBadge();
+    });
+
+    // 啟動時向外層請求最新資料
+    try {
+      window.parent.postMessage({ type: 'REQUEST_MEETING_REPORTS' }, '*');
+    } catch(e) {}
 
     // 接收遠端更新
     window.syncRemoteReport = () => {
