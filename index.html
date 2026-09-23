@@ -4250,7 +4250,15 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         };
 
         loadLocalFastCache(); 
-        initAuth();
+initAuth();
+
+// 👇 加入這兩行：網頁打開時，背景就先把開會記錄框架準備好，隨時待命接收遠端同步
+setTimeout(() => {
+    const iframe = document.getElementById('meetingReportIframe');
+    if (iframe && !iframe.srcdoc) {
+        iframe.srcdoc = window.MEETING_REPORT_HTML_SRC;
+    }
+}, 1000);
 
         if (getLocal('work_cache_dark_mode', false)) {
             document.body.classList.add('dark-mode');
@@ -4258,23 +4266,29 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         }
         // ====== 開會記錄彈窗控制 ======
         window.openMeetingReportModal = () => {
-            const modal = document.getElementById('meetingReportModal');
-            const iframe = document.getElementById('meetingReportIframe');
-            if (modal && iframe) {
-                if (!iframe.srcdoc) {
-                    iframe.srcdoc = window.MEETING_REPORT_HTML_SRC;
-                } else if (iframe.contentWindow) {
-                    // 每次點開時立即重整內容，確保看到最新遠端數據
-                    try {
-                        if (typeof iframe.contentWindow.syncRemoteReport === 'function') {
-                            iframe.contentWindow.syncRemoteReport();
-                        }
-                    } catch(e) {}
-                }
-                modal.classList.replace('hidden', 'flex');
-                if (window.lucide) lucide.createIcons();
+    const modal = document.getElementById('meetingReportModal');
+    const iframe = document.getElementById('meetingReportIframe');
+    if (modal && iframe) {
+        // 如果還沒載入過，先載入
+        if (!iframe.srcdoc) {
+            iframe.srcdoc = window.MEETING_REPORT_HTML_SRC;
+            iframe.onload = () => {
+                setTimeout(() => {
+                    if (iframe.contentWindow && typeof iframe.contentWindow.syncRemoteReport === 'function') {
+                        iframe.contentWindow.syncRemoteReport();
+                    }
+                }, 200);
+            };
+        } else {
+            // 如果已經載入過，每次從設定點開，立刻強制刷新為最新雲端內容！
+            if (iframe.contentWindow && typeof iframe.contentWindow.syncRemoteReport === 'function') {
+                iframe.contentWindow.syncRemoteReport();
             }
-        };
+        }
+        modal.classList.replace('hidden', 'flex');
+        if (window.lucide) lucide.createIcons();
+    }
+};
 
         window.closeMeetingReportModal = () => {
             document.getElementById('meetingReportModal')?.classList.replace('flex', 'hidden');
@@ -5028,17 +5042,17 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         }
 
         // 打包送上雲端
-        try {
-          const allReports = {};
-          index.forEach(k => {
-            const raw = localStorage.getItem('market_report_' + k) || (window.parent?.localStorage.getItem('market_report_' + k));
-            if (raw) allReports[k] = JSON.parse(raw);
-          });
+try {
+  const allReports = {};
+  index.forEach(k => {
+    const raw = localStorage.getItem('market_report_' + k) || (window.parent?.localStorage.getItem('market_report_' + k));
+    if (raw) allReports[k] = JSON.parse(raw);
+  });
 
-          if (window.parent && typeof window.parent.syncConfig === 'function') {
-            window.parent.syncConfig('meeting_report_data', { reports: allReports }, true);
-          }
-        } catch(e) {}
+  if (window.parent && typeof window.parent.syncConfig === 'function') {
+    window.parent.syncConfig('meeting_report_data', { reports: allReports }, true);
+  }
+} catch(e) {}
 
         updateSaveStatusIndicator();
         updateHistoryCountBadge();
