@@ -207,7 +207,9 @@
 
         const cfgDoc = (key) => doc(db, 'artifacts', appId, 'public', 'data', 'config', key);
         const syncConfig = (key, data, merge = false) => { if (currentUser) setDoc(cfgDoc(key), data, { merge }); };
-window.syncConfig = syncConfig; // 👈 關鍵修復：讓 iframe 能調用雲端儲存
+window.syncConfig = syncConfig; // 👈 必備：開放給 iframe 雲端同步使用
+window.safeSetLocal = safeSetLocal;
+window.getLocal = getLocal;
         const pad = (n) => String(n).padStart(2, '0');
 
         // 只保留這唯一的一組
@@ -2738,42 +2740,31 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 }, console.error);
             };
 
-            // 👇【確保這裡有這段接收遠端開會記錄的監聽】
-            bindSync('meeting_report_data', 'work_cache_meeting_report_all', d => {
-                if (d && d.reports) {
-                    safeSetLocal('market_reports_all_data', d.reports);
-                    const index = Object.keys(d.reports).sort((a, b) => b.localeCompare(a));
-                    localStorage.setItem('market_reports_index', JSON.stringify(index));
+           // ====== 開會記錄雲端即時雙向監聽 (修正版) ======
+            onSnapshot(cfgDoc('meeting_report_data'), (snap) => {
+                if (snap.exists()) {
+                    const d = snap.data();
+                    const reports = d?.reports || {};
+                    safeSetLocal('market_reports_all_data', reports);
                     
-                    Object.keys(d.reports).forEach(k => {
-                        localStorage.setItem('market_report_' + k, JSON.stringify(d.reports[k]));
+                    const index = Object.keys(reports).sort((a, b) => b.localeCompare(a));
+                    safeSetLocal('market_reports_index', index);
+
+                    Object.keys(reports).forEach(k => {
+                        safeSetLocal('market_report_' + k, reports[k]);
                     });
-                    
-                    // 即時通知 iframe 重新載入最新畫面
+
+                    // 同步直接派發通知給 iframe
                     const iframe = document.getElementById('meetingReportIframe');
                     if (iframe && iframe.contentWindow) {
                         try {
-                            iframe.contentWindow.postMessage({ type: 'MARKET_REPORT_SYNC_NOW' }, '*');
                             if (typeof iframe.contentWindow.syncRemoteReport === 'function') {
                                 iframe.contentWindow.syncRemoteReport();
                             }
                         } catch(e) {}
                     }
                 }
-            });
-
-            bindSync('schedule', 'work_cache_schedule', d => { if (d.tasks) { dailyScheduleData = d.tasks; if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false); } });
-            
-            // ⬅️【請在此處加上這行開會記錄雲端即時同步監聽】
-            bindSync('meeting_report_data', 'work_cache_meeting_report_all', d => {
-                if (d && d.reports) {
-                    safeSetLocal('market_reports_all_data', d.reports);
-                    const iframe = document.getElementById('meetingReportIframe');
-                    if (iframe && iframe.contentWindow && typeof iframe.contentWindow.syncRemoteReport === 'function') {
-                        iframe.contentWindow.syncRemoteReport();
-                    }
-                }
-            });
+            }, console.error);
 
             bindSync('gallery_categories', 'work_cache_gallery_categories', d => { 
                 if (d.categories && Array.isArray(d.categories)) {
@@ -5019,23 +5010,30 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         document.querySelectorAll('.remark-box.open').forEach(box => openBoxes.push(box.id));
 
         const reportObject = { dateKey, updatedAt: new Date().toISOString(), data, tags: activeTags, boxes: openBoxes };
+        
+        // 雙寫：本機與外層同步寫入
         localStorage.setItem('market_report_' + dateKey, JSON.stringify(reportObject));
+        if (window.parent && window.parent.localStorage) {
+          window.parent.localStorage.setItem('market_report_' + dateKey, JSON.stringify(reportObject));
+        }
 
         let index = getArchiveIndex();
         if (!index.includes(dateKey)) {
           index.push(dateKey);
           index.sort((a, b) => b.localeCompare(a));
           localStorage.setItem('market_reports_index', JSON.stringify(index));
+          if (window.parent && window.parent.localStorage) {
+            window.parent.localStorage.setItem('market_reports_index', JSON.stringify(index));
+          }
         }
 
-        // 👇 雲端上傳同步邏輯 (支援跨裝置同步)
+        // 打包送上雲端
         try {
           const allReports = {};
           index.forEach(k => {
-            const raw = localStorage.getItem('market_report_' + k);
+            const raw = localStorage.getItem('market_report_' + k) || (window.parent?.localStorage.getItem('market_report_' + k));
             if (raw) allReports[k] = JSON.parse(raw);
           });
-          localStorage.setItem('market_reports_all_data', JSON.stringify(allReports));
 
           if (window.parent && typeof window.parent.syncConfig === 'function') {
             window.parent.syncConfig('meeting_report_data', { reports: allReports }, true);
@@ -5044,11 +5042,23 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
 
         updateSaveStatusIndicator();
         updateHistoryCountBadge();
-      }, 300);
+      }, 150);
     }
 
-    // 👇 關鍵修復：供外部即時接收雲端更新的函式
+    // 接收遠端更新
     window.syncRemoteReport = () => {
+      // 把外層父頁面的資料同步複製進 iframe
+      try {
+        if (window.parent && window.parent.localStorage) {
+          const pIndex = window.parent.localStorage.getItem('market_reports_index');
+          if (pIndex) localStorage.setItem('market_reports_index', pIndex);
+          (JSON.parse(pIndex || '[]')).forEach(k => {
+            const pData = window.parent.localStorage.getItem('market_report_' + k);
+            if (pData) localStorage.setItem('market_report_' + k, pData);
+          });
+        }
+      } catch(e) {}
+      
       const currentKey = getCurrentDateKey();
       loadReportByDate(currentKey);
       updateHistoryCountBadge();
