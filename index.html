@@ -205,6 +205,7 @@
 
         const cfgDoc = (key) => doc(db, 'artifacts', appId, 'public', 'data', 'config', key);
         const syncConfig = (key, data, merge = false) => { if (currentUser) setDoc(cfgDoc(key), data, { merge }); };
+window.syncConfig = syncConfig; // 👈 關鍵修復：讓 iframe 能調用雲端儲存
         const pad = (n) => String(n).padStart(2, '0');
 
         // 只保留這唯一的一組
@@ -4279,12 +4280,10 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
   <script>tailwind.config = { darkMode: 'class' };<\/script>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    <style>
     * { transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease; }
     body:not(.dark), body:not(.dark) h1, body:not(.dark) h2, body:not(.dark) span, body:not(.dark) label, body:not(.dark) p, body:not(.dark) div { color: #000000; }
     #toast, #toast span { color: #ffffff !important; }
     
-    /* 👇 加上這段：當螢幕寬度小於 640px (手機) 時，將基準字級從預設的 16px 縮小到 13px (大約縮小 80%) */
     @media (max-width: 640px) {
         html { font-size: 11px !important; }
     }
@@ -5010,7 +5009,7 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
           localStorage.setItem('market_reports_index', JSON.stringify(index));
         }
 
-        // 👇【請在這邊補上這段雲端上傳同步邏輯】
+        // 👇 雲端上傳同步邏輯 (支援跨裝置同步)
         try {
           const allReports = {};
           index.forEach(k => {
@@ -5028,6 +5027,13 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         updateHistoryCountBadge();
       }, 300);
     }
+
+    // 👇 關鍵修復：供外部即時接收雲端更新的函式
+    window.syncRemoteReport = () => {
+      const currentKey = getCurrentDateKey();
+      loadReportByDate(currentKey);
+      updateHistoryCountBadge();
+    };
 
     function loadReportByDate(targetDateKey) {
       const parts = targetDateKey.split('-');
@@ -5062,13 +5068,11 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
             }
           });
           updateBracketStates();
-          showToast(\`已載入 \${targetDateKey} 的匯報記錄\`);
           return;
         } catch (e) {}
       }
       resetFieldsWithoutDate();
       updateBracketStates();
-      showToast(\`已切換至 \${targetDateKey} (新空白記錄)\`);
     }
 
     function resetFieldsWithoutDate() {
