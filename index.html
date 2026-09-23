@@ -2740,6 +2740,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             };
 
            // ====== 開會記錄雲端即時雙向監聽 (修正版) ======
+            // ====== 開會記錄雲端即時雙向監聽 (完整修復版) ======
             onSnapshot(cfgDoc('meeting_report_data'), (snap) => {
                 if (snap.exists()) {
                     const d = snap.data();
@@ -2753,13 +2754,14 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                         safeSetLocal('market_report_' + k, reports[k]);
                     });
 
-                    // 同步直接派發通知給 iframe
+                    // 直接將雲端資料即時派發給 iframe (完全免疫跨域沙盒限制)
                     const iframe = document.getElementById('meetingReportIframe');
                     if (iframe && iframe.contentWindow) {
                         try {
-                            if (typeof iframe.contentWindow.syncRemoteReport === 'function') {
-                                iframe.contentWindow.syncRemoteReport();
-                            }
+                            iframe.contentWindow.postMessage({
+                                type: 'SYNC_MEETING_REPORTS',
+                                reports: reports
+                            }, '*');
                         } catch(e) {}
                     }
                 }
@@ -4263,31 +4265,72 @@ setTimeout(() => {
             document.body.classList.add('dark-mode');
             window.addEventListener('DOMContentLoaded', () => { const icon = $('darkModeIcon'); if (icon) { icon.setAttribute('data-lucide', 'sun'); lucide.createIcons(); } });
         }
-        // ====== 開會記錄彈窗控制 ======
-        window.openMeetingReportModal = () => {
-    const modal = document.getElementById('meetingReportModal');
-    const iframe = document.getElementById('meetingReportIframe');
-    if (modal && iframe) {
-        // 如果還沒載入過，先載入
-        if (!iframe.srcdoc) {
-            iframe.srcdoc = window.MEETING_REPORT_HTML_SRC;
-            iframe.onload = () => {
-                setTimeout(() => {
-                    if (iframe.contentWindow && typeof iframe.contentWindow.syncRemoteReport === 'function') {
-                        iframe.contentWindow.syncRemoteReport();
+        // 👈 補上這段：主頁面必須監聽 iframe 傳過來的存檔訊息並寫入 Firebase 雲端
+        window.addEventListener('message', async (event) => {
+            if (event.data?.type === 'SAVE_MEETING_REPORT') {
+                const { dateKey, report } = event.data;
+                if (!dateKey || !report) return;
+
+                let all = getLocal('market_reports_all_data', {});
+                all[dateKey] = report;
+                safeSetLocal('market_reports_all_data', all);
+
+                let index = getLocal('market_reports_index', []);
+                if (!index.includes(dateKey)) {
+                    index.push(dateKey);
+                    index.sort((a, b) => b.localeCompare(a));
+                    safeSetLocal('market_reports_index', index);
+                }
+                safeSetLocal('market_report_' + dateKey, report);
+
+                // 同步寫入 Firebase 雲端
+                if (currentUser && db) {
+                    try {
+                        await setDoc(cfgDoc('meeting_report_data'), {
+                            reports: {
+                                [dateKey]: report
+                            }
+                        }, { merge: true });
+                    } catch (err) {
+                        console.error("開會記錄雲端同步失敗:", err);
                     }
-                }, 200);
-            };
-        } else {
-            // 如果已經載入過，每次從設定點開，立刻強制刷新為最新雲端內容！
-            if (iframe.contentWindow && typeof iframe.contentWindow.syncRemoteReport === 'function') {
-                iframe.contentWindow.syncRemoteReport();
+                }
+            } else if (event.data?.type === 'REQUEST_MEETING_REPORTS') {
+                const all = getLocal('market_reports_all_data', {});
+                const iframe = document.getElementById('meetingReportIframe');
+                if (iframe && iframe.contentWindow) {
+                    iframe.contentWindow.postMessage({
+                        type: 'SYNC_MEETING_REPORTS',
+                        reports: all
+                    }, '*');
+                }
             }
-        }
-        modal.classList.replace('hidden', 'flex');
-        if (window.lucide) lucide.createIcons();
-    }
-};
+        });
+
+        window.openMeetingReportModal = () => {
+            const modal = document.getElementById('meetingReportModal');
+            const iframe = document.getElementById('meetingReportIframe');
+            if (modal && iframe) {
+                const pushLatest = () => {
+                    const all = getLocal('market_reports_all_data', {});
+                    try {
+                        iframe.contentWindow.postMessage({
+                            type: 'SYNC_MEETING_REPORTS',
+                            reports: all
+                        }, '*');
+                    } catch(e) {}
+                };
+
+                if (!iframe.srcdoc) {
+                    iframe.srcdoc = window.MEETING_REPORT_HTML_SRC;
+                    iframe.onload = () => setTimeout(pushLatest, 150);
+                } else {
+                    pushLatest();
+                }
+                modal.classList.replace('hidden', 'flex');
+                if (window.lucide) lucide.createIcons();
+            }
+        };
 
         window.closeMeetingReportModal = () => {
             document.getElementById('meetingReportModal')?.classList.replace('flex', 'hidden');
