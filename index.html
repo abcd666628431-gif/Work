@@ -2742,12 +2742,22 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             bindSync('meeting_report_data', 'work_cache_meeting_report_all', d => {
                 if (d && d.reports) {
                     safeSetLocal('market_reports_all_data', d.reports);
+                    const index = Object.keys(d.reports).sort((a, b) => b.localeCompare(a));
+                    localStorage.setItem('market_reports_index', JSON.stringify(index));
+                    
                     Object.keys(d.reports).forEach(k => {
                         localStorage.setItem('market_report_' + k, JSON.stringify(d.reports[k]));
                     });
+                    
+                    // 即時通知 iframe 重新載入最新畫面
                     const iframe = document.getElementById('meetingReportIframe');
-                    if (iframe && iframe.contentWindow && typeof iframe.contentWindow.syncRemoteReport === 'function') {
-                        iframe.contentWindow.syncRemoteReport();
+                    if (iframe && iframe.contentWindow) {
+                        try {
+                            iframe.contentWindow.postMessage({ type: 'MARKET_REPORT_SYNC_NOW' }, '*');
+                            if (typeof iframe.contentWindow.syncRemoteReport === 'function') {
+                                iframe.contentWindow.syncRemoteReport();
+                            }
+                        } catch(e) {}
                     }
                 }
             });
@@ -4262,6 +4272,13 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
             if (modal && iframe) {
                 if (!iframe.srcdoc) {
                     iframe.srcdoc = window.MEETING_REPORT_HTML_SRC;
+                } else if (iframe.contentWindow) {
+                    // 每次點開時立即重整內容，確保看到最新遠端數據
+                    try {
+                        if (typeof iframe.contentWindow.syncRemoteReport === 'function') {
+                            iframe.contentWindow.syncRemoteReport();
+                        }
+                    } catch(e) {}
                 }
                 modal.classList.replace('hidden', 'flex');
                 if (window.lucide) lucide.createIcons();
