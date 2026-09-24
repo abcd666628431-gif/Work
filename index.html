@@ -2029,6 +2029,109 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             }, 60);
         };
 
+// ====== 確認批次發布（支援離線優先儲存） ======
+        window.confirmBatchUpload = async () => {
+            const items = [...window.pendingUploadImages];
+            if (!items.length || window.isUploading) return;
+
+            if (window.isBatchMergedView) {
+                // 合併模式防呆檢查：沒選前綴就跳出提示
+                if (!window.mergedBatchForm.prefix) {
+                    return window.showToast("⚠️ 請先選擇樓層前綴（一樓、魚檔或雞檔）", true);
+                }
+
+                const inputEl = $('mergedCodeInput');
+                let codeRaw = inputEl ? inputEl.value.trim() : (window.mergedBatchForm.code || '');
+                let codeFormatted = formatStallCode(codeRaw);
+                const prefixClean = window.mergedBatchForm.prefix || '';
+                const curCategory = window.mergedBatchForm.category || '未分類';
+                const curTime = window.mergedBatchForm.time || '12:00';
+
+                if (curCategory === '測溫相') {
+                    const [h] = curTime.split(':').map(Number);
+                    const suffix = h < 12 ? '上午測溫相' : '下午測溫相';
+                    codeFormatted = codeFormatted ? `${codeFormatted} ${suffix}` : suffix;
+                }
+
+                const cleanTitle = `${prefixClean}${codeFormatted}`.trim();
+
+                items.forEach(it => {
+                    it.prefix = prefixClean;
+                    it.code = codeFormatted;
+                    it.markStatus = window.mergedBatchForm.markStatus || "";
+                    it.title = cleanTitle || '無標題';
+                    it.category = curCategory;
+                    it.time = curTime;
+                });
+            } else {
+                // 單張模式防呆檢查
+                for (let it of items) {
+                    if (!it.prefix) {
+                        return window.showToast("⚠️ 所有圖片皆須選擇樓層前綴（一樓、魚檔或雞檔）", true);
+                    }
+                }
+
+                items.forEach(it => {
+                    const inputEl = $(`input-code-${it.tempId}`);
+                    let codeRaw = inputEl ? inputEl.value.trim() : (it.code || '');
+                    let codeFormatted = formatStallCode(codeRaw);
+                    const prefixClean = it.prefix || '';
+                    
+                    if (it.category === '測溫相') {
+                        const [h] = (it.time || '12:00').split(':').map(Number);
+                        const suffix = h < 12 ? '上午測溫相' : '下午測溫相';
+                        codeFormatted = codeFormatted ? `${codeFormatted} ${suffix}` : suffix;
+                    }
+
+                    it.code = codeFormatted;
+                    it.title = `${prefixClean}${codeFormatted}`.trim() || '無標題';
+                });
+            }
+
+            // ====== 離線安全優先寫入機制 ======
+            try {
+                for (let it of items) {
+                    await idbSet(it.tempId, it.src);
+                    memoryImageCache.set(it.tempId, it.src);
+                    const localItem = {
+                        id: it.tempId,
+                        chunkCount: it.chunks.length,
+                        title: it.title || '無標題',
+                        markStatus: it.markStatus || '',
+                        category: it.category || '未分類',
+                        time: it.time || '12:00',
+                        createdAt: Date.now(),
+                        sessionId: clientSessionId,
+                        isDeleted: false
+                    };
+                    const map = new Map();
+                    [localItem, ...galleryItems].forEach(x => { if (x?.id) map.set(x.id, x); });
+                    galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+                }
+                await saveGalleryItemsSafe(galleryItems);
+
+                // 立即刷新介面
+                window._lastRenderFingerprint = '';
+                window.renderGallery();
+
+                // 寫入離線待同步佇列
+                window._uploadQueue = [...window._uploadQueue, ...items];
+                window._totalUploadCount = window._uploadQueue.length;
+                safeSetLocal('work_pending_offline_uploads', window._uploadQueue);
+
+                window.closeUploadBatchModal(true);
+
+                if (!navigator.onLine) {
+                    window.showToast("💾 已成功儲存至本機（離線模式），有網路時將自動同步！");
+                } else {
+                    window.showToast(`✅ 成功發布 ${items.length} 張圖片！`);
+                    window.resumeBatchUploadQueue();
+                }
+            } catch (err) {
+                window.showToast("⚠️ 儲存至本機失敗，請檢查瀏覽器容量", true);
+            }
+        };
+
         window.closeUploadBatchModal = (force = false) => { 
             // 若有待上傳的圖片且非強制關閉，跳出確認視窗
             if (!force && window.pendingUploadImages && window.pendingUploadImages.length > 0) {
@@ -2399,21 +2502,23 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             ];
 
             return `
-            <!-- 數字盤：數字與邊框空隙再縮小 1.5px (h-[24px] + leading-[24px]) -->
+            <!-- 數字盤：邊框空隙加回 1.5px (h-[26px])，數字字元再大 1.5px (text-[20px]) -->
             <div class="grid grid-cols-3 gap-[2px] w-full select-none mt-0.5">
                 ${keys.flat().map(k => {
                     let label = k;
-                    let style = "bg-white text-slate-800 border-[1px] border-slate-200 shadow-2xs text-[17px] font-black hover:bg-slate-50";
+                    // 數字字元再放大 1.5px 至 text-[20px]
+                    let style = "bg-white text-slate-800 border-[1px] border-slate-200 shadow-2xs text-[20px] font-black hover:bg-slate-50";
                     if (k === 'CLEAR') {
-                        label = '<span class="text-[12px] font-black text-rose-600 leading-none">清空</span>';
+                        // 清空文字維持適中 text-[12.5px]
+                        label = '<span class="text-[12.5px] font-black text-rose-600 leading-none">清空</span>';
                         style = "bg-rose-50/80 border-[1px] border-rose-200 text-rose-600 hover:bg-rose-100";
                     } else if (k === 'BACK') {
-                        label = '<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-slate-700 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6-6h12a2 2 0 012 2v8a2 2 0 01-2 2H9l-6-6z" /></svg>';
+                        label = '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-slate-700 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6-6h12a2 2 0 012 2v8a2 2 0 01-2 2H9l-6-6z" /></svg>';
                         style = "bg-slate-100/80 border-[1px] border-slate-200 text-slate-700 hover:bg-slate-200";
                     }
                     return `
                     <button type="button" onclick="window.onKeypadPress('${k}', '${ownerId}')" 
-                        class="h-[24px] sm:h-6.5 rounded-lg font-mono border flex items-center justify-center p-0 leading-[24px] active:scale-90 active:bg-blue-100 active:shadow-inner transition-all ${style}">
+                        class="h-[26px] sm:h-7 rounded-lg font-mono border flex items-center justify-center p-0 leading-none active:scale-90 active:bg-blue-100 active:shadow-inner transition-all ${style}">
                         ${label}
                     </button>`;
                 }).join('')}
