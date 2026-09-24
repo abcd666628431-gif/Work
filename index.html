@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>工作記錄本</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@0.469.0"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
@@ -308,25 +308,20 @@ window.getLocal = getLocal;
         window.isUploading = false;
         window._isTogglingTask = false;
 
-        const defaultTabVisibility = { timeline: true, memo: true, map: true, gallery: true, coldRoom: true, closing: true };
-        let tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility); // 👈 補回此行
-        const defaultTabOrder = ['timeline', 'memo', 'map', 'gallery', 'coldRoom', 'closing'];
+        const defaultTabVisibility = { timeline: true, memo: true, map: true, gallery: true, coldRoom: true, closing: true, meetingReport: true };
+        let tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility);
+        const defaultTabOrder = ['timeline', 'memo', 'map', 'gallery', 'coldRoom', 'closing', 'meetingReport'];
         let tabOrderList = getLocal('work_tab_order_ids', defaultTabOrder);
 
         const tabMetadataMap = {
-            timeline: { name: '動態', btnId: 'tabTimeline', icon: 'activity' },
-            memo: { name: '備忘', btnId: 'tabMemo', icon: 'calendar-clock' },
-            map: { name: '地圖', btnId: 'tabMap', icon: 'map' },
-            gallery: { name: '圖庫', btnId: 'tabGallery', icon: 'image' },
-            coldRoom: { name: '雪房', btnId: 'tabColdRoom', icon: 'snowflake' },
-            closing: { name: '收工', btnId: 'tabClosing', icon: 'store' }
-        };
-
-// 清理可能殘留在本機快取的舊分頁 (例如 meetingReport)
-        tabOrderList = tabOrderList.filter(k => tabMetadataMap[k]);
-        if (!tabMetadataMap[localStorage.getItem('activeTab')]) {
-            localStorage.setItem('activeTab', 'timeline');
-        }
+    timeline: { name: '動態', btnId: 'tabTimeline', icon: 'activity' },
+    memo: { name: '備忘', btnId: 'tabMemo', icon: 'calendar-clock' },
+    map: { name: '地圖', btnId: 'tabMap', icon: 'map' },
+    gallery: { name: '圖庫', btnId: 'tabGallery', icon: 'image' },
+    coldRoom: { name: '雪房', btnId: 'tabColdRoom', icon: 'snowflake' },
+    closing: { name: '收工', btnId: 'tabClosing', icon: 'store' },
+    meetingReport: { name: '匯報', btnId: 'tabMeetingReport', icon: 'clipboard-pen-line' }
+};
 
         window.applyTabVisibility = () => {
             const container = $('tabBarContainer');
@@ -2002,32 +1997,19 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             const hintBox = $(hintBoxId);
             if (!hintBox) return;
 
-            // 檢查當前分類是否被手動鎖定（營業相、開工-雞相、測溫相）
-            const currentCat = isMerged 
-                ? window.mergedBatchForm.category 
-                : window.pendingUploadImages.find(x => x.tempId === tempId)?.category;
-            
-            const isNonClosingCat = (currentCat === '營業相' || currentCat === '開工-雞相' || currentCat === '測溫相');
-            const isLocked = isMerged ? window._batchCategoryLocked : window.pendingUploadImages.find(x => x.tempId === tempId)?._categoryLocked;
-
-            if (isNonClosingCat || isLocked) {
-                hintBox.className = 'opacity-100 h-[38px] p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between';
-                hintBox.innerHTML = `<span>✋ 已選取「${currentCat}」，不進行收工判定</span><button type="button" onclick="${isMerged ? "window.setMergedCategory('提早收工', true);" : `window.setPendingItemCategory('${tempId}', '提早收工', true);`}" class="text-[10px] text-blue-600 underline ml-2">切回收工判定</button>`;
-                lucide.createIcons({ root: hintBox });
-                return;
-            }
-
             // 取得當前前綴
             const currentPrefix = isMerged ? window.mergedBatchForm.prefix : window.pendingUploadImages.find(x => x.tempId === tempId)?.prefix;
 
+            // 👇 關鍵防呆：若沒有選取前綴（一樓、魚檔、雞檔），絕對不自動判定！
             if (!currentPrefix) {
                 hintBox.className = 'opacity-0 pointer-events-none h-[38px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent';
                 hintBox.innerHTML = '';
                 return;
             }
 
+            // 👇 清空時，變回透明佔位 (保持高度不變，不會跳動)
             if (!codeRaw || !window.stallList || !window.stallList.length) {
-                hintBox.className = 'opacity-0 pointer-events-none h-[38px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent';
+                hintBox.className = 'opacity-0 pointer-events-none h-[42px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent';
                 hintBox.innerHTML = '';
                 return;
             }
@@ -2039,7 +2021,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
 
             const cleanCode = pureCode.replace(/\D/g, '').replace(/^0+/, '') || pureCode.replace(/\D/g, '');
             if (!cleanCode) {
-                hintBox.className = 'opacity-0 pointer-events-none h-[38px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent';
+                hintBox.className = 'opacity-0 pointer-events-none h-[42px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent';
                 hintBox.innerHTML = '';
                 return;
             }
@@ -2054,7 +2036,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             });
 
             if (!matched || !matched.hours) {
-                hintBox.className = 'opacity-0 pointer-events-none h-[38px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent';
+                hintBox.className = 'opacity-0 pointer-events-none h-[42px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent';
                 hintBox.innerHTML = '';
                 return;
             }
@@ -2066,22 +2048,23 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             const targetMins = th * 60 + tm;
             const diff = closeMins - targetMins;
 
+            // 👇 有判定結果時，透明度變 100%，高度依舊固定 h-[42px]
             if (isChickenStall) {
-                hintBox.className = 'opacity-100 h-[38px] p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col justify-center gap-0.5 animate-pop-in';
+                hintBox.className = 'opacity-100 h-[42px] p-2 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col justify-center gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
                     <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
                     <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 雞檔固定判定為清潔</div>`;
                 if (isMerged) window.setMergedCategory('清潔', false);
                 else if (tempId) window.setPendingItemCategory(tempId, '清潔', false);
             } else if (diff > 30) {
-                hintBox.className = 'opacity-100 h-[38px] p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col justify-center gap-0.5 animate-pop-in';
+                hintBox.className = 'opacity-100 h-[42px] p-2 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col justify-center gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
                     <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
                     <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘</div>`;
                 if (isMerged) window.setMergedCategory('提早收工', false);
                 else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             } else {
-                hintBox.className = 'opacity-100 h-[38px] p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col justify-center gap-0.5 animate-pop-in';
+                hintBox.className = 'opacity-100 h-[42px] p-2 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col justify-center gap-0.5 animate-pop-in';
                 const statusDetail = diff > 0 
                     ? `[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (寬限期內)` 
                     : `[${matched.floor} ${matched.code}] 表定 ${closingTime}，已過打烊時間`;
@@ -2154,8 +2137,8 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 if (cat === '提早收工' || cat === '收工') {
                     item._categoryLocked = false;
                     window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
-                } else {
-                    item._categoryLocked = true; // 包含測溫相、營業相、開工-雞相均鎖定，不被自動改掉
+                } else if (cat !== '測溫相') {
+                    item._categoryLocked = true;
                     const hintBox = $(`hint-pending-${tempId}`);
                     if (hintBox) {
                         hintBox.classList.remove('hidden');
@@ -2326,7 +2309,6 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             }
         });
 
-        // 按鍵產生器：把按鍵所屬的 ownerId 明確綁定
         window.renderKeypadGridHtml = (ownerId = 'merged') => {
             const keys = [
                 ['1', '2', '3'],
@@ -2429,22 +2411,23 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 </div>`;
                 window.updateBatchAutoHintUI(`${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
             } else {
-                // 展開分開模式 (手機端完全免滑動緊湊版)
+                // 展開分開模式
                 list.innerHTML = window.pendingUploadImages.map(item => {
                     const [hStr, mStr] = (item.time || '00:00').split(':');
                     const curDigits = window.keypadStore[item.tempId] || '';
                     return `
-                    <div class="bg-slate-50 border border-slate-200 rounded-xl p-1.5 flex flex-col space-y-1 shadow-xs">
-                        <!-- 緊湊圖片預覽：限制高度在 110px，留足空間給下方鍵盤 -->
-                        <div class="relative w-full h-28 sm:h-36 rounded-lg overflow-hidden cursor-zoom-in group border border-slate-300 shadow-2xs bg-slate-100 flex items-center justify-center shrink-0" onclick="window.openFullscreenImg('${item.src}')">
+                    <div class="bg-slate-50 border border-slate-200 rounded-xl p-1.5 flex flex-col h-full flex-1 min-h-0 justify-between gap-1 shadow-xs overflow-hidden">
+                        <!-- 預覽圖區塊：彈性吸收所有剩餘空間，最小可縮到 60px，絕不把下方內容擠出螢幕 -->
+                        <div class="relative w-full rounded-lg overflow-hidden cursor-zoom-in group border border-slate-300 shadow-xs bg-slate-100 flex items-center justify-center flex-1 min-h-[60px] max-h-[180px]" onclick="window.openFullscreenImg('${item.src}')">
                             <img src="${item.src}" class="w-full h-full object-contain block">
-                            <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1 right-1 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md active:scale-95 transition-all">
+                            <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1 right-1 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md active:scale-95 transition-all z-10">
                                 <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                             </button>
                         </div>
 
-                        <div id="hint-pending-${item.tempId}" class="opacity-0 pointer-events-none h-0 overflow-hidden text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent"></div>
+                        <div id="hint-pending-${item.tempId}" class="opacity-0 pointer-events-none h-0 p-0 text-[10px] font-bold border border-transparent transition-all flex items-center bg-transparent shrink-0"></div>
 
+                        <!-- 分類選擇：固定高度不被壓縮 -->
                         <div class="flex items-center gap-1 w-full shrink-0">
                             ${catList.map(cat => `
                                 <button type="button" id="btn-cat-${item.tempId}-${cat}" onclick="window.setPendingItemCategory('${item.tempId}', '${cat}', true)" 
@@ -2454,8 +2437,9 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                             `).join('')}
                         </div>
 
-                        <div class="flex items-stretch space-x-1 shrink-0">
-                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-lg px-1 py-0.5 shadow-inner shrink-0 h-8 my-auto">
+                        <!-- 時間、前綴與檔號顯示：固定高度不被壓縮 -->
+                        <div class="flex items-center space-x-1.5 shrink-0">
+                            <div class="flex items-center justify-center font-mono font-bold text-xs bg-white border border-slate-300 rounded-lg px-1.5 py-0.5 shadow-inner shrink-0 h-8">
                                 <select onchange="window.updateTimePart('${item.tempId}','h',this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
                                     ${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
                                 </select>
@@ -2465,20 +2449,21 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                                 </select>
                             </div>
 
-                            <!-- 垂直排列前綴 -->
                             <div class="w-12 flex flex-col space-y-0.5 shrink-0">
-                                <button type="button" id="btn-prefix-${item.tempId}-1-" onclick="window.selectPrefixOption('${item.tempId}', '1-')" class="w-full py-0.5 rounded text-[10.5px] font-black border ${item.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
-                                <button type="button" id="btn-prefix-${item.tempId}-R-" onclick="window.selectPrefixOption('${item.tempId}', 'R-')" class="w-full py-0.5 rounded text-[10.5px] font-black border ${item.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
-                                <button type="button" id="btn-prefix-${item.tempId}-J-" onclick="window.selectPrefixOption('${item.tempId}', 'J-')" class="w-full py-0.5 rounded text-[10.5px] font-black border ${item.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-1-" onclick="window.selectPrefixOption('${item.tempId}', '1-')" class="w-full py-0.5 rounded text-[10px] font-black border leading-tight ${item.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-R-" onclick="window.selectPrefixOption('${item.tempId}', 'R-')" class="w-full py-0.5 rounded text-[10px] font-black border leading-tight ${item.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-J-" onclick="window.selectPrefixOption('${item.tempId}', 'J-')" class="w-full py-0.5 rounded text-[10px] font-black border leading-tight ${item.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
                             </div>
 
-                            <div onclick="window.setKeypadTarget('${item.tempId}')" class="flex-1 h-8 bg-white border-2 border-blue-300 rounded-lg px-2 flex items-center justify-center font-mono font-black text-lg text-blue-600 tracking-widest shadow-inner cursor-pointer select-none my-auto" id="keypadDisplay-${item.tempId}">
+                            <div onclick="window.setKeypadTarget('${item.tempId}')" class="flex-1 h-9 bg-white border-2 border-blue-300 rounded-xl px-2 flex items-center justify-center font-mono font-black text-xl text-blue-600 tracking-widest shadow-inner cursor-pointer select-none" id="keypadDisplay-${item.tempId}">
                                 ${curDigits || '---'}
                             </div>
                         </div>
 
-                        <!-- 傳入當前卡片的 ID，精準綁定此卡片 -->
-                        ${window.renderKeypadGridHtml(item.tempId)}
+                        <!-- 數字鍵盤：固定在底部，絕不被擠出 -->
+                        <div class="w-full shrink-0">
+                            ${window.renderKeypadGridHtml(item.tempId)}
+                        </div>
                     </div>`;
                 }).join('');
 
@@ -2748,8 +2733,6 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
 
         function setupPureRealtimeSync() {
             if (!currentUser) return;
-            if (window._syncReady) return; // 👈 防止 onAuthStateChanged 重複執行時堆疊監聽器
-            window._syncReady = true;
             const bindSync = (key, localKey, onUpdate) => {
                 onSnapshot(cfgDoc(key), (snap) => {
                     if (snap.exists()) {
@@ -4304,13 +4287,15 @@ setTimeout(() => {
                 }
                 safeSetLocal('market_report_' + dateKey, report);
 
-                // 雲端同步：確保文件存在後以點路徑更新，絕不覆蓋其他日期
+                // 雲端同步：只更新該日期的 reports.dateKey，絕不整包覆蓋洗掉其他日
                 if (currentUser && db) {
                     try {
                         const ref = cfgDoc('meeting_report_data');
-                        await setDoc(ref, {}, { merge: true });
                         await updateDoc(ref, {
-                            ['reports.' + dateKey]: report
+                            [`reports.${dateKey}`]: report
+                        }).catch(async () => {
+                            // 如果文件尚未存在則直接建立
+                            await setDoc(ref, { reports: { [dateKey]: report } }, { merge: true });
                         });
                     } catch (err) {
                         console.error("開會記錄雲端同步失敗:", err);
@@ -4661,8 +4646,6 @@ setTimeout(() => {
           <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_4" title="添加/收回 4">+</button>
           <span class="remark-box" id="box_cs_inquiry_desc_5"><span contenteditable="true" id="cs_inquiry_desc_5" class="expand-input detail-input"></span></span>
           <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_5" title="添加/收回 5">+</button>
-          <span class="remark-box" id="box_cs_inquiry_desc_6"><span contenteditable="true" id="cs_inquiry_desc_6" class="expand-input detail-input"></span></span>
-          <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_6" title="添加/收回 6">+</button>
         </div>
         <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="cs_lost_count">
           <span class="font-bold text-black dark:text-slate-100">· 失物發現：</span>
@@ -5148,20 +5131,7 @@ setTimeout(() => {
         metaYear.innerText = parts[0]; metaMonth.innerText = parts[1]; metaDay.innerText = parts[2];
         updateTextColor(metaYear); updateTextColor(metaMonth); updateTextColor(metaDay);
       }
-      
-      let savedRaw = localStorage.getItem('market_report_' + targetDateKey);
-      let isInherited = false;
-
-      // 若今天尚無存檔，自動尋找最近的上一天歷史記錄繼承
-      if (!savedRaw) {
-        const index = getArchiveIndex();
-        const prevDates = index.filter(d => d < targetDateKey).sort((a, b) => b.localeCompare(a));
-        if (prevDates.length > 0) {
-          savedRaw = localStorage.getItem('market_report_' + prevDates[0]);
-          isInherited = true;
-        }
-      }
-
+      const savedRaw = localStorage.getItem(\`market_report_\${targetDateKey}\`);
       if (savedRaw) {
         try {
           const report = JSON.parse(savedRaw);
@@ -5179,19 +5149,15 @@ setTimeout(() => {
           document.querySelectorAll('.remark-box').forEach(box => {
             if (report.boxes && report.boxes.includes(box.id)) {
               box.classList.add('open');
-              const btn = document.querySelector('.toggle-btn[data-target="' + box.id + '"]');
+              const btn = document.querySelector(\`.toggle-btn[data-target="\${box.id}"]\`);
               if (btn) { btn.classList.add('active'); btn.innerText = '－'; }
             } else {
               box.classList.remove('open');
-              const btn = document.querySelector('.toggle-btn[data-target="' + box.id + '"]');
+              const btn = document.querySelector(\`.toggle-btn[data-target="\${box.id}"]\`);
               if (btn) { btn.classList.remove('active'); btn.innerText = '＋'; }
             }
           });
           updateBracketStates();
-          if (isInherited) {
-            saveCurrentDayReport(); // 自動以當天日期存下一份副本
-            showToast('已為您自動載入上一日的匯報資料');
-          }
           return;
         } catch (e) {}
       }
@@ -5821,9 +5787,9 @@ setTimeout(() => {
         </div>
     </div>
 
-   <div id="uploadBatchModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[260] hidden flex-col items-center justify-center p-2 sm:p-4">
-        <!-- 緊湊型高空間彈窗 (隨螢幕高度彈性自適應) -->
-        <div class="bg-white rounded-2xl p-2.5 sm:p-3 w-full max-w-[390px] max-h-[96vh] shadow-2xl relative flex flex-col overflow-hidden" onclick="event.stopPropagation()">
+    <div id="uploadBatchModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[260] hidden flex-col items-center justify-center p-2.5 sm:p-4">
+    <!-- 緊湊型高空間彈窗 -->
+    <div class="bg-white rounded-2xl p-2.5 sm:p-3 w-full max-w-[390px] max-h-[96vh] shadow-2xl relative flex flex-col overflow-hidden" onclick="event.stopPropagation()">
             <header class="flex justify-between items-center pb-1.5 mb-1.5 border-b border-slate-100 shrink-0">
                 <div class="flex items-center space-x-1.5">
                     <h3 class="font-black text-xs sm:text-sm text-slate-800">上傳圖片</h3>
@@ -5845,6 +5811,7 @@ setTimeout(() => {
             </div>
         </div>
     </div>
+
     <div id="imageViewer" class="fixed inset-0 bg-black/95 z-[350] hidden flex-col items-center justify-center p-4" onclick="window.closeFullscreenImg()">
         <button type="button" onclick="window.closeFullscreenImg()" class="absolute top-5 right-5 text-white bg-slate-800/80 p-2 rounded-full active:scale-95 shadow-lg border border-slate-600 hover:bg-red-600 transition-colors z-10">
             <i data-lucide="x" class="w-5 h-5"></i>
