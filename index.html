@@ -613,7 +613,44 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 safeSetLocal('work_cache_schedule_date', todayStr); syncConfig('member_schedules', { schedules: [], date: todayStr });
                 if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
             }
+
+            // ====== 圖庫每晚 12 點自動將所有照片移至還原清單 ======
+            const lastGalleryCleanupDate = getLocal('work_cache_gallery_cleanup_date', todayStr);
+            if (lastGalleryCleanupDate !== todayStr) {
+                safeSetLocal('work_cache_gallery_cleanup_date', todayStr);
+                window.autoCleanupGalleryToTrash();
+            }
         }
+
+        window.autoCleanupGalleryToTrash = async () => {
+            const activeItems = galleryItems.filter(i => !i.isDeleted);
+            if (!activeItems.length) return;
+
+            const now = Date.now();
+            activeItems.forEach(i => {
+                i.isDeleted = true;
+                i.deletedAt = now;
+            });
+            await saveGalleryItemsSafe(galleryItems);
+
+            // 雲端同步軟刪除至還原清單
+            if (currentUser && db) {
+                try {
+                    const batch = writeBatch(db);
+                    activeItems.forEach(i => {
+                        const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', i.id);
+                        batch.set(ref, { isDeleted: true, deletedAt: now }, { merge: true });
+                    });
+                    await batch.commit();
+                } catch(e) {
+                    console.error("每日自動移至還原清單失敗:", e);
+                }
+            }
+
+            window.writeGalleryLog('每日歸檔', `${activeItems.length} 張相片`, '午夜自動移至還原清單');
+            window._lastRenderFingerprint = '';
+            window.renderGallery();
+        };
 
         window.saveStateSnapshot = () => {
             actionHistory.push({ tasks: { ...taskCompletionState }, subtasks: JSON.parse(JSON.stringify(subTaskCompletionState || {})) });
@@ -1962,7 +1999,21 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             }, 60);
         };
 
-        window.closeUploadBatchModal = () => { 
+        window.closeUploadBatchModal = (force = false) => { 
+            // 若有待上傳的圖片且非強制關閉，跳出確認視窗
+            if (!force && window.pendingUploadImages && window.pendingUploadImages.length > 0) {
+                window.showConfirm(
+                    "取消上傳", 
+                    `目前有 ${window.pendingUploadImages.length} 張圖片尚未發布，確定要取消並放棄上傳嗎？`, 
+                    () => {
+                        window.pendingUploadImages = []; 
+                        window.isBatchMergedView = false;
+                        $('uploadBatchModal')?.classList.replace('flex', 'hidden'); 
+                    }
+                );
+                return;
+            }
+
             window.pendingUploadImages = []; 
             window.isBatchMergedView = false;
             $('uploadBatchModal')?.classList.replace('flex', 'hidden'); 
@@ -2510,15 +2561,19 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
 
         window.resumeBatchUploadQueue = async () => {
             if (window.isUploading || !window._uploadQueue.length) return;
+            if (!navigator.onLine) return; // 無網路時保持佇列，不浪費流量報錯
+
             window.isUploading = true;
             await requestWakeLock();
 
             const total = window._totalUploadCount || window._uploadQueue.length;
 
             try {
-                if (!currentUser || !db) throw new Error("授權未就緒，正在重新連線...");
+                if (!currentUser || !db) throw new Error("授權未就緒，等待連線...");
 
                 while (window._uploadQueue.length > 0) {
+                    if (!navigator.onLine) throw new Error("網路中斷");
+
                     const item = window._uploadQueue[0];
                     const docId = item.tempId;
 
@@ -2526,15 +2581,15 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                     memoryImageCache.set(docId, item.src);
 
                     const mainDocData = {
-                    id: docId,
-                    chunkCount: item.chunks.length,
-                    title: item.title || '無標題',
-                    markStatus: item.markStatus || '',
-                    category: item.category || '未分類',
-                    time: item.time || '12:00',
-                    createdAt: Date.now(),
-                    sessionId: clientSessionId // 記錄是由哪一個瀏覽器上傳的
-                };
+                        id: docId,
+                        chunkCount: item.chunks.length,
+                        title: item.title || '無標題',
+                        markStatus: item.markStatus || '',
+                        category: item.category || '未分類',
+                        time: item.time || '12:00',
+                        createdAt: Date.now(),
+                        sessionId: clientSessionId
+                    };
 
                     const singleBatch = writeBatch(db);
                     singleBatch.set(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', docId), mainDocData);
@@ -2545,109 +2600,43 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
 
                     await singleBatch.commit();
 
-                    // 上傳成功一張就從佇列移除一張（確保不會重複傳送）
+                    // 上傳成功後移出佇列並更新快取
                     window._uploadQueue.shift();
-
-                    // 記錄到本機圖庫 (採用防爆安全儲存)
-                    const map = new Map();
-                    [mainDocData, ...galleryItems].forEach(x => { if (x?.id) map.set(x.id, x); });
-                    galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
-                    await saveGalleryItemsSafe(galleryItems);
+                    safeSetLocal('work_pending_offline_uploads', window._uploadQueue);
 
                     const finishedCount = total - window._uploadQueue.length;
                     const currentPercent = ((finishedCount / total) * 100).toFixed(1);
-                    window.setUploadProgress(currentPercent, `上傳中：${finishedCount} / ${total} (${currentPercent}%)`);
+                    window.setUploadProgress(currentPercent, `雲端同步中：${finishedCount} / ${total} (${currentPercent}%)`);
                 }
 
-               window.setUploadProgress(-1, "");
-                window._lastRenderFingerprint = '';
-                await window.renderGallery();
-                // window.playAlertSound(); // 如果自己上傳時也不需要發出鈴聲，也可以把這行拿掉
-                
-                // 上傳本人不彈出疊加通知視窗（該通知保留給其他連線中的成員）
-
-                // 👇【在這裡加上這行寫入上傳日誌】
-                window.writeGalleryLog('發布圖片', `${total} 張相片`, `批次上傳成功`);
-
-                window.showToast(`✅ 全部圖片（共 ${total} 張）已成功發布！`);
+                window.setUploadProgress(-1, "");
+                window.writeGalleryLog('發布圖片', `${total} 張相片`, `本機與雲端同步完成`);
+                window.showToast(`✅ 全部圖片（共 ${total} 張）已同步至雲端！`);
 
             } catch (err) {
                 window.setUploadProgress(-1, "");
-                window.showToast(`⚠️ 上傳暫停，解鎖螢幕後將自動繼續`, true);
+                // 斷網或暫停時，本地已有資料，安撫使用者無需慌張
+                if (!navigator.onLine) {
+                    window.showToast(`📡 目前已離線，待恢復連線時將自動接續上傳`, true);
+                }
             } finally {
                 window.isUploading = false;
                 if (!window._uploadQueue.length) releaseWakeLock();
             }
         };
 
-        window.confirmBatchUpload = async () => {
-            const items = [...window.pendingUploadImages];
-            if (!items.length || window.isUploading) return;
-
-            if (window.isBatchMergedView) {
-                // 👇 合併模式防呆檢查：沒選前綴就跳出提示
-                if (!window.mergedBatchForm.prefix) {
-                    return window.showToast("⚠️ 請先選擇樓層前綴（一樓、魚檔或雞檔）", true);
-                }
-
-                // 合併模式：主動讀取當前數值與時間
-                const inputEl = $('mergedCodeInput');
-                let codeRaw = inputEl ? inputEl.value.trim() : (window.mergedBatchForm.code || '');
-                let codeFormatted = formatStallCode(codeRaw);
-                const prefixClean = window.mergedBatchForm.prefix || '';
-                const curCategory = window.mergedBatchForm.category || '未分類';
-                const curTime = window.mergedBatchForm.time || '12:00';
-
-                // 如果是「測溫相」，在背景默默加上「上午/下午測溫相」
-                if (curCategory === '測溫相') {
-                    const [h] = curTime.split(':').map(Number);
-                    const suffix = h < 12 ? '上午測溫相' : '下午測溫相';
-                    codeFormatted = codeFormatted ? `${codeFormatted} ${suffix}` : suffix;
-                }
-
-                const cleanTitle = `${prefixClean}${codeFormatted}`.trim();
-
-                items.forEach(it => {
-                    it.prefix = prefixClean;
-                    it.code = codeFormatted;
-                    it.markStatus = window.mergedBatchForm.markStatus || "";
-                    it.title = cleanTitle || '無標題';
-                    it.category = curCategory;
-                    it.time = curTime;
-                });
-            } else {
-                // 👇 單張模式防呆檢查：逐張檢查是否有漏選前綴
-                for (let it of items) {
-                    if (!it.prefix) {
-                        return window.showToast("⚠️ 所有圖片皆須選擇樓層前綴（一樓、魚檔或雞檔）", true);
-                    }
-                }
-
-                // 單張模式發布
-                items.forEach(it => {
-                    const inputEl = $(`input-code-${it.tempId}`);
-                    let codeRaw = inputEl ? inputEl.value.trim() : (it.code || '');
-                    let codeFormatted = formatStallCode(codeRaw);
-                    const prefixClean = it.prefix || '';
-                    
-                    // 如果是「測溫相」，在背景默默加上「上午/下午測溫相」
-                    if (it.category === '測溫相') {
-                        const [h] = (it.time || '12:00').split(':').map(Number);
-                        const suffix = h < 12 ? '上午測溫相' : '下午測溫相';
-                        codeFormatted = codeFormatted ? `${codeFormatted} ${suffix}` : suffix;
-                    }
-
-                    it.code = codeFormatted;
-                    it.title = `${prefixClean}${codeFormatted}`.trim() || '無標題';
-                });
+        // ====== 監聽連網事件：網路恢復時自動觸發離線補傳 ======
+        window.addEventListener('online', () => {
+            window.showToast("🌐 網路已恢復連線，正在檢查未同步圖片...");
+            const offlinePending = getLocal('work_pending_offline_uploads', []);
+            if (offlinePending.length > 0 && !window._uploadQueue.length) {
+                window._uploadQueue = offlinePending;
+                window._totalUploadCount = offlinePending.length;
             }
-
-            window._uploadQueue = [...items];
-            window._totalUploadCount = items.length;
-
-            window.closeUploadBatchModal();
-            window.resumeBatchUploadQueue();
-        };
+            if (window._uploadQueue.length > 0) {
+                window.resumeBatchUploadQueue();
+            }
+        });
 
         window.openCategoryManager = () => {
             $('categoryManageList').innerHTML = `
@@ -4646,6 +4635,8 @@ setTimeout(() => {
           <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_4" title="添加/收回 4">+</button>
           <span class="remark-box" id="box_cs_inquiry_desc_5"><span contenteditable="true" id="cs_inquiry_desc_5" class="expand-input detail-input"></span></span>
           <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_5" title="添加/收回 5">+</button>
+          <span class="remark-box" id="box_cs_inquiry_desc_6"><span contenteditable="true" id="cs_inquiry_desc_6" class="expand-input detail-input"></span></span>
+          <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_6" title="添加/收回 6">+</button>
         </div>
         <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="cs_lost_count">
           <span class="font-bold text-black dark:text-slate-100">· 失物發現：</span>
@@ -5131,7 +5122,7 @@ setTimeout(() => {
         metaYear.innerText = parts[0]; metaMonth.innerText = parts[1]; metaDay.innerText = parts[2];
         updateTextColor(metaYear); updateTextColor(metaMonth); updateTextColor(metaDay);
       }
-      const savedRaw = localStorage.getItem(\`market_report_\${targetDateKey}\`);
+      const savedRaw = localStorage.getItem('market_report_' + targetDateKey);
       if (savedRaw) {
         try {
           const report = JSON.parse(savedRaw);
