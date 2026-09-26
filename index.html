@@ -607,33 +607,49 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         };
 
         function checkAndResetDailySchedule() {
-            const todayStr = getNowInputStrs().date, lastSavedDate = getLocal('work_cache_schedule_date', todayStr);
-            if (lastSavedDate !== todayStr) {
-                memberSchedules = []; safeSetLocal('work_cache_member_schedules', memberSchedules);
-                safeSetLocal('work_cache_schedule_date', todayStr); syncConfig('member_schedules', { schedules: [], date: todayStr });
+            const todayStr = getNowInputStrs().date;
+            
+            // 排班清理
+            const lastSavedDate = getLocal('work_cache_schedule_date', '');
+            if (lastSavedDate && lastSavedDate !== todayStr) {
+                memberSchedules = [];
+                safeSetLocal('work_cache_member_schedules', memberSchedules);
+                safeSetLocal('work_cache_schedule_date', todayStr);
+                syncConfig('member_schedules', { schedules: [], date: todayStr });
                 if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+            } else if (!lastSavedDate) {
+                safeSetLocal('work_cache_schedule_date', todayStr);
             }
 
-            // ====== 圖庫每晚 12 點自動將所有照片移至還原清單 ======
-            const lastGalleryCleanupDate = getLocal('work_cache_gallery_cleanup_date', todayStr);
-            if (lastGalleryCleanupDate !== todayStr) {
+            // ====== 圖庫跨日自動清空至還原清單 ======
+            // 預設值必須為空字串 ''，絕不能給 todayStr，否則隔天會被判定為已清理！
+            const lastGalleryCleanupDate = getLocal('work_cache_gallery_cleanup_date', '');
+            if (!lastGalleryCleanupDate) {
+                // 首次使用時記錄今天日期
+                safeSetLocal('work_cache_gallery_cleanup_date', todayStr);
+            } else if (lastGalleryCleanupDate !== todayStr) {
+                // 日期不同（跨過午夜 00:00），立即執行自動清理
                 safeSetLocal('work_cache_gallery_cleanup_date', todayStr);
                 window.autoCleanupGalleryToTrash();
             }
         }
 
         window.autoCleanupGalleryToTrash = async () => {
+            const now = Date.now();
+            
+            // 找出所有未被刪除的照片
             const activeItems = galleryItems.filter(i => !i.isDeleted);
             if (!activeItems.length) return;
 
-            const now = Date.now();
+            // 標記本機資料為軟刪除
             activeItems.forEach(i => {
                 i.isDeleted = true;
                 i.deletedAt = now;
             });
+
             await saveGalleryItemsSafe(galleryItems);
 
-            // 雲端同步軟刪除至還原清單
+            // 同步雲端批次軟刪除
             if (currentUser && db) {
                 try {
                     const batch = writeBatch(db);
@@ -649,10 +665,16 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
             window.writeGalleryLog('每日歸檔', `${activeItems.length} 張相片`, '午夜自動移至還原清單');
             window._lastRenderFingerprint = '';
-            window.renderGallery();
+            if (!$('galleryPage')?.classList.contains('hidden')) {
+                window.renderGallery();
+            }
+            if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
+                window.renderTrashList();
+            }
         };
 
         window.saveStateSnapshot = () => {
+
             actionHistory.push({ tasks: { ...taskCompletionState }, subtasks: JSON.parse(JSON.stringify(subTaskCompletionState || {})) });
             if (actionHistory.length > 30) actionHistory.shift();
         };
@@ -823,8 +845,8 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
         // ====== 支援直接傳入 File 陣列處理上傳 (點選與拖放共用) ======
         window.processImageFilesUpload = async (files) => {
-            if (window.isUploading) {
-                return window.showToast("⚠️ 上傳進行中，請稍候再試", true);
+            if (window.isUploading && navigator.onLine) {
+                return window.showToast("⚠️ 雲端同步進行中，請稍候再試", true);
             }
             const validFiles = Array.from(files || []).filter(f => f.type.startsWith('image/'));
             if (!validFiles.length) return window.showToast("請選擇或拖入有效圖片檔案", true);
@@ -1769,13 +1791,13 @@ window.deleteSelectedGalleryItems = () => {
             const codePart = item.code || '';
             item.title = `${basePrefix}${codePart}`.trim();
 
-            // 更新按鈕樣式
+            // 更新按鈕樣式（固定 h-[22px] 鎖死高度，徹底杜絕介面跳動）
             ['1-', 'R-', 'J-'].forEach(pKey => {
                 const btn = $(`btn-prefix-${tempId}-${pKey}`);
                 if (btn) {
                     btn.className = (item.prefix === pKey)
-                        ? "w-full py-[3px] px-1 rounded-lg text-[12.5px] font-black border leading-tight transition-all bg-emerald-600 text-white border-emerald-600 shadow-xs"
-                        : "w-full py-[3px] px-1 rounded-lg text-[12.5px] font-black border leading-tight transition-all bg-white hover:bg-slate-100 text-slate-700 border-slate-200";
+                        ? "w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : "w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-white hover:bg-slate-100 text-slate-700 border-slate-200";
                 }
             });
 
@@ -2032,7 +2054,10 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
 // ====== 確認批次發布（支援離線優先儲存） ======
         window.confirmBatchUpload = async () => {
             const items = [...window.pendingUploadImages];
-            if (!items.length || window.isUploading) return;
+            if (!items.length) return;
+            if (window.isUploading && navigator.onLine) {
+                return window.showToast("⚠️ 正在同步上一批照片，請稍候再試", true);
+            }
 
             if (window.isBatchMergedView) {
                 // 合併模式防呆檢查：沒選前綴就跳出提示
@@ -2181,17 +2206,29 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             const hintBox = $(hintBoxId);
             if (!hintBox) return;
 
-            // 取得當前前綴
+            // 1. 取得當前前綴、當前分類與手動鎖定狀態
             const currentPrefix = isMerged ? window.mergedBatchForm.prefix : window.pendingUploadImages.find(x => x.tempId === tempId)?.prefix;
+            const currentCategory = isMerged ? window.mergedBatchForm.category : window.pendingUploadImages.find(x => x.tempId === tempId)?.category;
+            const isCategoryLocked = isMerged ? window._batchCategoryLocked : window.pendingUploadImages.find(x => x.tempId === tempId)?._categoryLocked;
 
-            // 👇 關鍵防呆：若沒有選取前綴（一樓、魚檔、雞檔），絕對不自動判定！
+            const isManualNonClosingCategory = ['營業相', '開工-雞相', '測溫相'].includes(currentCategory) || isCategoryLocked;
+
+            if (isManualNonClosingCategory) {
+                // 統一樣式與邊框大小，不再重新引發 animate-pop-in 動畫造成閃爍
+                hintBox.className = 'opacity-100 h-[40px] px-2.5 py-1.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between transition-all';
+                hintBox.innerHTML = `<span>✋ 已選取「${currentCategory}」，不進行收工判定</span><button type="button" onclick="${isMerged ? "window._batchCategoryLocked=false; window.setMergedCategory('提早收工', true);" : `window.setPendingItemCategory('${tempId}', '提早收工', true);`}" class="text-[10px] text-blue-600 underline ml-2">切回收工判定</button>`;
+                lucide.createIcons({ root: hintBox });
+                return;
+            }
+
+            // 若是走自動收工/清潔判定，才需要嚴格檢查是否已選樓層
             if (!currentPrefix) {
-                hintBox.className = 'opacity-0 pointer-events-none h-[38px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent';
+                hintBox.className = 'opacity-0 pointer-events-none h-0 p-0 text-[12px] font-bold border border-transparent transition-all flex items-center bg-transparent';
                 hintBox.innerHTML = '';
                 return;
             }
 
-            // 👇 清空時，變回透明佔位 (保持高度不變，不會跳動)
+            // 尚未輸入檔號時，維持隱藏佔位
             if (!codeRaw || !window.stallList || !window.stallList.length) {
                 hintBox.className = 'opacity-0 pointer-events-none h-[42px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent';
                 hintBox.innerHTML = '';
@@ -2219,6 +2256,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 return true;
             });
 
+            // 查無資料庫檔號時
             if (!matched || !matched.hours) {
                 hintBox.className = 'opacity-0 pointer-events-none h-[42px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent';
                 hintBox.innerHTML = '';
@@ -2232,7 +2270,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             const targetMins = th * 60 + tm;
             const diff = closeMins - targetMins;
 
-            // 👇 有判定結果時，透明度變 100%，高度依舊固定 h-[42px]
+            // 自動收工／清潔判定
             if (isChickenStall) {
                 hintBox.className = 'opacity-100 h-[42px] p-2 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col justify-center gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
@@ -2269,8 +2307,8 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 const btn = $(`merged-prefix-${pKey}`);
                 if (btn) {
                     btn.className = (window.mergedBatchForm.prefix === pKey)
-                        ? "w-full py-[3px] px-1 rounded-lg text-[12.5px] font-black border leading-tight transition-all bg-emerald-600 text-white border-emerald-600 shadow-xs"
-                        : "w-full py-[3px] px-1 rounded-lg text-[12.5px] font-black border leading-tight transition-all bg-white text-slate-700 border-slate-200 hover:bg-slate-100";
+                        ? "w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : "w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-white text-slate-700 border-slate-200 hover:bg-slate-100";
                 }
             });
 
@@ -2294,7 +2332,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                     const hintBox = $('batchMergedAutoHint');
                     if (hintBox) {
                         hintBox.classList.remove('hidden');
-                        hintBox.className = 'mb-2.5 p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between';
+                        hintBox.className = 'opacity-100 h-[40px] px-2.5 py-1.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between transition-all';
                         hintBox.innerHTML = `<span>✋ 已選取「${cat}」，不進行收工判定</span><button type="button" onclick="window.setMergedCategory('提早收工', true);" class="text-[10px] text-blue-600 underline ml-2">切回收工判定</button>`;
                         lucide.createIcons({ root: hintBox });
                     }
@@ -2326,7 +2364,7 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                     const hintBox = $(`hint-pending-${tempId}`);
                     if (hintBox) {
                         hintBox.classList.remove('hidden');
-                        hintBox.className = 'p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between';
+                        hintBox.className = 'opacity-100 h-[40px] px-2.5 py-1.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between transition-all';
                         hintBox.innerHTML = `<span>✋ 已選取「${cat}」，不進行收工判定</span><button type="button" onclick="window.setPendingItemCategory('${tempId}', '提早收工', true);" class="text-[10px] text-blue-600 underline ml-2">切回收工判定</button>`;
                         lucide.createIcons({ root: hintBox });
                     }
@@ -2581,11 +2619,11 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                                 </select>
                             </div>
 
-                            <!-- 樓層按鍵：邊框留白加大 1.5px -->
+                            <!-- 樓層按鍵：固定高度防止介面跳動 -->
                             <div class="w-14 flex flex-col space-y-1 shrink-0">
-                                <button type="button" id="merged-prefix-1-" onclick="window.setMergedPrefix('1-')" class="w-full py-1 px-1.5 rounded-lg text-[13px] font-black border leading-tight transition-all ${window.mergedBatchForm.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
-                                <button type="button" id="merged-prefix-R-" onclick="window.setMergedPrefix('R-')" class="w-full py-1 px-1.5 rounded-lg text-[13px] font-black border leading-tight transition-all ${window.mergedBatchForm.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
-                                <button type="button" id="merged-prefix-J-" onclick="window.setMergedPrefix('J-')" class="w-full py-1 px-1.5 rounded-lg text-[13px] font-black border leading-tight transition-all ${window.mergedBatchForm.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
+                                <button type="button" id="merged-prefix-1-" onclick="window.setMergedPrefix('1-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+                                <button type="button" id="merged-prefix-R-" onclick="window.setMergedPrefix('R-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+                                <button type="button" id="merged-prefix-J-" onclick="window.setMergedPrefix('J-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
                             </div>
 
                             <!-- 檔號顯示 (數字加大3px: text-[23px]) -->
@@ -2637,12 +2675,11 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                                 </select>
                             </div>
 
-                            <!-- 樓層按鍵：上下間距多 2px (space-y-1)，字元加大2px (text-[13px]) -->
-                            <!-- 樓層按鍵：邊框留白加大 1.5px -->
+                            <!-- 樓層按鍵：固定高度防止介面跳動 -->
                             <div class="w-14 flex flex-col space-y-1 shrink-0">
-                                <button type="button" id="btn-prefix-${item.tempId}-1-" onclick="window.selectPrefixOption('${item.tempId}', '1-')" class="w-full py-1 px-1.5 rounded-lg text-[13px] font-black border leading-tight transition-all ${item.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
-                                <button type="button" id="btn-prefix-${item.tempId}-R-" onclick="window.selectPrefixOption('${item.tempId}', 'R-')" class="w-full py-1 px-1.5 rounded-lg text-[13px] font-black border leading-tight transition-all ${item.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
-                                <button type="button" id="btn-prefix-${item.tempId}-J-" onclick="window.selectPrefixOption('${item.tempId}', 'J-')" class="w-full py-1 px-1.5 rounded-lg text-[13px] font-black border leading-tight transition-all ${item.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-1-" onclick="window.selectPrefixOption('${item.tempId}', '1-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-R-" onclick="window.selectPrefixOption('${item.tempId}', 'R-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-J-" onclick="window.selectPrefixOption('${item.tempId}', 'J-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
                             </div>
 
                             <!-- 檔號顯示 (數字加大3px: text-[23px]) -->
@@ -2699,8 +2736,14 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
         });
 
         window.resumeBatchUploadQueue = async () => {
+            // 如果處於離線狀態，直接結束並確保旗標為 false，絕不卡死使用者下一次發布
+            if (!navigator.onLine) {
+                window.isUploading = false;
+                releaseWakeLock();
+                return;
+            }
+
             if (window.isUploading || !window._uploadQueue.length) return;
-            if (!navigator.onLine) return; // 無網路時保持佇列，不浪費流量報錯
 
             window.isUploading = true;
             await requestWakeLock();
@@ -2708,7 +2751,10 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             const total = window._totalUploadCount || window._uploadQueue.length;
 
             try {
-                if (!currentUser || !db) throw new Error("授權未就緒，等待連線...");
+                if (!currentUser || !db) {
+                    window.isUploading = false;
+                    return;
+                }
 
                 while (window._uploadQueue.length > 0) {
                     if (!navigator.onLine) throw new Error("網路中斷");
@@ -2754,9 +2800,8 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
 
             } catch (err) {
                 window.setUploadProgress(-1, "");
-                // 斷網或暫停時，本地已有資料，安撫使用者無需慌張
                 if (!navigator.onLine) {
-                    window.showToast(`📡 目前已離線，待恢復連線時將自動接續上傳`, true);
+                    window.showToast(`📡 目前處於離線狀態，已存於本機，連網時將自動同步`, true);
                 }
             } finally {
                 window.isUploading = false;
