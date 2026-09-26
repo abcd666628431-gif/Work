@@ -2177,23 +2177,24 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
             $('uploadBatchModal')?.classList.replace('flex', 'hidden'); 
         };
 
-        // ====== 順時針旋轉 90 度並重新切片 ======
-        window.rotatePendingUploadItem = async (tempId, e) => {
+        // ====== 圖片旋轉函式（支援左轉與右轉，不顯示 Toast 提示） ======
+        window.rotatePendingUploadItem = async (tempId, angleDeg, e) => {
             if (e) e.stopPropagation();
             const item = window.pendingUploadImages.find(x => x.tempId === tempId);
             if (!item || !item.src) return;
 
-            window.showToast("🔄 正在旋轉圖片...");
             try {
                 const rotatedDataUrl = await new Promise((resolve, reject) => {
                     const img = new Image();
                     img.onload = () => {
                         const cvs = document.createElement('canvas');
-                        cvs.width = img.naturalHeight || img.height;
-                        cvs.height = img.naturalWidth || img.width;
+                        const isSwap = Math.abs(angleDeg) === 90 || Math.abs(angleDeg) === 270;
+                        cvs.width = isSwap ? (img.naturalHeight || img.height) : (img.naturalWidth || img.width);
+                        cvs.height = isSwap ? (img.naturalWidth || img.width) : (img.naturalHeight || img.height);
+                        
                         const ctx = cvs.getContext('2d');
                         ctx.translate(cvs.width / 2, cvs.height / 2);
-                        ctx.rotate((90 * Math.PI) / 180);
+                        ctx.rotate((angleDeg * Math.PI) / 180);
                         ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
                         resolve(cvs.toDataURL('image/jpeg', 0.85));
                     };
@@ -2207,7 +2208,6 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                 item.src = rotatedDataUrl;
 
                 window.renderUploadBatchList();
-                window.showToast("✅ 已旋轉 90 度！");
             } catch (err) {
                 window.showToast("旋轉圖片失敗", true);
             }
@@ -2679,17 +2679,24 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                     const curDigits = window.keypadStore[item.tempId] || '';
                     return `
                     <div class="bg-slate-50 border border-slate-200 rounded-xl p-1.5 flex flex-col h-full flex-1 min-h-0 justify-between gap-1 shadow-xs overflow-hidden">
-                        <!-- 彈性預覽圖容器：自適應螢幕大小 -->
+                        <!-- 彈性預覽圖容器 -->
                         <div class="relative w-full rounded-lg overflow-hidden cursor-zoom-in group border border-slate-300 shadow-xs bg-slate-100 flex items-center justify-center flex-1 min-h-[60px] max-h-[175px]" onclick="window.openFullscreenImg('${item.src}')">
                             <img src="${item.src}" class="w-full h-full object-contain block">
-                            <div class="absolute top-1 right-1 flex items-center space-x-1 z-10">
-    <button type="button" onclick="window.rotatePendingUploadItem('${item.tempId}', event)" class="text-slate-600 hover:text-blue-600 p-1 rounded-full bg-white/95 shadow-md active:scale-90 transition-all" title="旋轉90度">
-        <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
-    </button>
-    <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md active:scale-90 transition-all" title="刪除">
-        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-    </button>
-</div>
+                            
+                            <!-- 左轉按鈕 (向右移動對齊左側紅圈位置) -->
+                            <button type="button" onclick="window.rotatePendingUploadItem('${item.tempId}', -90, event)" class="absolute left-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向左轉 90°">
+                                <i data-lucide="rotate-ccw" class="w-4 h-4 pointer-events-none"></i>
+                            </button>
+
+                            <!-- 右轉按鈕 (對齊右側紅圈位置) -->
+                            <button type="button" onclick="window.rotatePendingUploadItem('${item.tempId}', 90, event)" class="absolute right-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向右轉 90°">
+                                <i data-lucide="rotate-cw" class="w-4 h-4 pointer-events-none"></i>
+                            </button>
+
+                            <!-- 右上角刪除按鈕 -->
+                            <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1 right-1 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="刪除">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
+                            </button>
                         </div>
 
                         <div id="hint-pending-${item.tempId}" class="opacity-0 pointer-events-none h-0 p-0 text-[12px] font-bold border border-transparent transition-all flex items-center bg-transparent shrink-0"></div>
