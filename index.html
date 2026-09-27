@@ -953,9 +953,82 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             await window.processImageFilesUpload(files);
         };
 
-        window.setGalleryCategory = (c) => { currentGalleryCategory = c; window.renderGallery(); };
-        window.openFullscreenImg = (src) => { $('imageViewerImg').src = src; $('imageViewer')?.classList.replace('hidden', 'flex'); };
-        window.closeFullscreenImg = () => $('imageViewer')?.classList.replace('flex', 'hidden');
+        window._currentViewerImageId = null;
+
+        window.openFullscreenImg = (src, itemId = null) => { 
+            window._currentViewerImageId = itemId;
+            const imgEl = $('imageViewerImg');
+            if (imgEl) imgEl.src = src; 
+            $('imageViewer')?.classList.replace('hidden', 'flex'); 
+            lucide.createIcons({ root: $('imageViewer') });
+        };
+
+        window.closeFullscreenImg = () => {
+            window._currentViewerImageId = null;
+            $('imageViewer')?.classList.replace('flex', 'hidden');
+        };
+
+        // ====== 全螢幕預覽旋轉處理函式 ======
+        window.rotateFullscreenImg = async (angleDeg, e) => {
+            if (e) e.stopPropagation();
+            const imgEl = $('imageViewerImg');
+            if (!imgEl || !imgEl.src) return;
+
+            try {
+                const rotatedDataUrl = await new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const cvs = document.createElement('canvas');
+                        const isSwap = Math.abs(angleDeg) === 90 || Math.abs(angleDeg) === 270;
+                        cvs.width = isSwap ? (img.naturalHeight || img.height) : (img.naturalWidth || img.width);
+                        cvs.height = isSwap ? (img.naturalWidth || img.width) : (img.naturalHeight || img.height);
+
+                        const ctx = cvs.getContext('2d');
+                        ctx.translate(cvs.width / 2, cvs.height / 2);
+                        ctx.rotate((angleDeg * Math.PI) / 180);
+                        ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+                        resolve(cvs.toDataURL('image/jpeg', 0.85));
+                    };
+                    img.onerror = reject;
+                    img.src = imgEl.src;
+                });
+
+                // 立即更新全螢幕畫面顯示
+                imgEl.src = rotatedDataUrl;
+
+                // 若該圖片屬於圖庫已儲存的圖片，同步更新本機資料與快取
+                const itemId = window._currentViewerImageId;
+                if (itemId) {
+                    memoryImageCache.set(itemId, rotatedDataUrl);
+                    thumbImageCache.delete(itemId);
+                    await idbSet(itemId, rotatedDataUrl);
+                    await idbDel(`thumb_v2_${itemId}`);
+
+                    // 重新產生新縮圖並更新圖庫卡片
+                    const newThumb = await getLowResThumbUrlAsync({ id: itemId });
+                    const cardImg = document.getElementById(`gallery-img-${itemId}`);
+                    if (cardImg) cardImg.src = newThumb;
+
+                    // 若為在線上傳狀態，同步切片至雲端
+                    if (currentUser && db) {
+                        try {
+                            const blob = dataURLToBlob(rotatedDataUrl);
+                            if (blob) {
+                                const { chunks } = await splitImageTo4ChunksAsync(blob);
+                                const batch = writeBatch(db);
+                                chunks.forEach((chunkStr, idx) => {
+                                    const chunkRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', itemId, 'chunks', `part_${idx}`);
+                                    batch.set(chunkRef, { index: idx, data: chunkStr });
+                                });
+                                await batch.commit();
+                            }
+                        } catch (cloudErr) {}
+                    }
+                }
+            } catch (err) {
+                window.showToast("旋轉圖片失敗", true);
+            }
+        };
 
         // ====== 放大鏡專屬全域函式 ======
         window.viewHdImage = async (id, e) => {
@@ -964,7 +1037,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             if (!item) return;
             const fullSrc = await getFullImageUrlAsync(item);
             if (fullSrc) {
-                window.openFullscreenImg(fullSrc);
+                window.openFullscreenImg(fullSrc, item.id);
             } else {
                 window.showToast("無法載入原圖", true);
             }
@@ -6034,11 +6107,26 @@ setTimeout(() => {
         </div>
     </div>
 
-    <div id="imageViewer" class="fixed inset-0 bg-black/95 z-[350] hidden flex-col items-center justify-center p-4" onclick="window.closeFullscreenImg()">
-        <button type="button" onclick="window.closeFullscreenImg()" class="absolute top-5 right-5 text-white bg-slate-800/80 p-2 rounded-full active:scale-95 shadow-lg border border-slate-600 hover:bg-red-600 transition-colors z-10">
-            <i data-lucide="x" class="w-5 h-5"></i>
+    <div id="imageViewer" class="fixed inset-0 bg-black/95 z-[350] hidden flex-col items-center justify-center p-4 select-none" onclick="window.closeFullscreenImg()">
+        <!-- 右上角關閉按鈕 -->
+        <button type="button" onclick="window.closeFullscreenImg()" class="absolute top-5 right-5 text-white bg-slate-800/80 p-2 rounded-full active:scale-95 shadow-lg border border-slate-600 hover:bg-red-600 transition-colors z-20">
+            <i data-lucide="x" class="w-5 h-5 pointer-events-none"></i>
         </button>
-        <img id="imageViewerImg" src="" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl border border-slate-700 cursor-pointer" onclick="window.closeFullscreenImg()" />
+
+        <!-- 圖片本體（點擊阻止冒泡，避免點圖片直接關閉） -->
+        <div class="relative max-w-full max-h-full flex items-center justify-center" onclick="event.stopPropagation()">
+            <img id="imageViewerImg" src="" class="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl border border-slate-700" />
+            
+            <!-- 左旋轉按鈕 (浮於圖片左下方) -->
+            <button type="button" onclick="window.rotateFullscreenImg(-90, event)" class="absolute left-4 bottom-4 text-white bg-slate-800/80 hover:bg-blue-600 p-2.5 rounded-full shadow-lg border border-slate-600 active:scale-90 transition-all z-20" title="向左旋轉 90°">
+                <i data-lucide="rotate-ccw" class="w-5 h-5 pointer-events-none"></i>
+            </button>
+
+            <!-- 右旋轉按鈕 (浮於圖片右下方) -->
+            <button type="button" onclick="window.rotateFullscreenImg(90, event)" class="absolute right-4 bottom-4 text-white bg-slate-800/80 hover:bg-blue-600 p-2.5 rounded-full shadow-lg border border-slate-600 active:scale-90 transition-all z-20" title="向右旋轉 90°">
+                <i data-lucide="rotate-cw" class="w-5 h-5 pointer-events-none"></i>
+            </button>
+        </div>
     </div>
 
     <div id="categoryManageModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
