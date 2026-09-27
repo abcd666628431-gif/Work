@@ -956,12 +956,12 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         window._currentViewerImageId = null;
 
         window.openFullscreenImg = (src, itemId = null) => { 
-         window._currentViewerImageId = itemId;
-         const imgEl = $('imageViewerImg');
-         if (imgEl) imgEl.src = src; 
-         $('imageViewer')?.classList.replace('hidden', 'flex'); 
-         lucide.createIcons({ root: $('imageViewer') });
-     };
+            window._currentViewerImageId = itemId;
+            const imgEl = $('imageViewerImg');
+            if (imgEl) imgEl.src = src; 
+            $('imageViewer')?.classList.replace('hidden', 'flex'); 
+            lucide.createIcons({ root: $('imageViewer') });
+        };
 
         window.closeFullscreenImg = () => {
             window._currentViewerImageId = null;
@@ -969,15 +969,12 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         };
 
         // ====== 全螢幕預覽旋轉處理函式 ======
-        // ====== 全螢幕預覽旋轉處理函式 (完整同步原圖、縮圖、IDB 與雲端) ======
-        // ====== 全螢幕預覽旋轉處理函式 (完整同步原圖、縮圖、IDB 與雲端) ======
         window.rotateFullscreenImg = async (angleDeg, e) => {
             if (e) e.stopPropagation();
             const imgEl = $('imageViewerImg');
             if (!imgEl || !imgEl.src) return;
 
             try {
-                // 1. 利用 Canvas 旋轉像素並輸出高品質 DataURL
                 const rotatedDataUrl = await new Promise((resolve, reject) => {
                     const img = new Image();
                     img.onload = () => {
@@ -987,8 +984,6 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                         cvs.height = isSwap ? (img.naturalWidth || img.width) : (img.naturalHeight || img.height);
 
                         const ctx = cvs.getContext('2d');
-                        ctx.imageSmoothingEnabled = true;
-                        ctx.imageSmoothingQuality = 'high';
                         ctx.translate(cvs.width / 2, cvs.height / 2);
                         ctx.rotate((angleDeg * Math.PI) / 180);
                         ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
@@ -998,53 +993,23 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     img.src = imgEl.src;
                 });
 
-                // 2. 即時更新全螢幕畫面顯示
+                // 立即更新全螢幕畫面顯示
                 imgEl.src = rotatedDataUrl;
 
+                // 若該圖片屬於圖庫已儲存的圖片，同步更新本機資料與快取
                 const itemId = window._currentViewerImageId;
-
-                // 情況 A：若是上傳暫存批次清單中的圖片
-                if (window.pendingUploadImages && window.pendingUploadImages.some(x => x.tempId === itemId)) {
-                    const pendingItem = window.pendingUploadImages.find(x => x.tempId === itemId);
-                    if (pendingItem) {
-                        const blob = dataURLToBlob(rotatedDataUrl);
-                        const { chunks } = await splitImageTo4ChunksAsync(blob);
-                        pendingItem.chunks = chunks;
-                        pendingItem.src = rotatedDataUrl;
-                        window.renderUploadBatchList();
-                    }
-                    return;
-                }
-
-                // 情況 B：若是圖庫已發布的圖片，同步更新原圖快取、重做縮圖並同步 Firestore
                 if (itemId) {
-                    // 更新記憶體快取並刪除舊縮圖快取
                     memoryImageCache.set(itemId, rotatedDataUrl);
                     thumbImageCache.delete(itemId);
-
-                    // 寫入 IndexedDB 原圖資料庫，並刪除舊縮圖紀錄
                     await idbSet(itemId, rotatedDataUrl);
                     await idbDel(`thumb_v2_${itemId}`);
 
-                    // 重新生成 360px 輕量高清縮圖
+                    // 重新產生新縮圖並更新圖庫卡片
                     const newThumb = await getLowResThumbUrlAsync({ id: itemId });
-
-                    // 更新本地陣列並持久化
-                    const targetItem = galleryItems.find(x => x.id === itemId);
-                    if (targetItem) {
-                        targetItem.updatedAt = Date.now();
-                        await saveGalleryItemsSafe(galleryItems);
-                    }
-
-                    // 即時更新圖庫介面上的圖片卡片
                     const cardImg = document.getElementById(`gallery-img-${itemId}`);
                     if (cardImg) cardImg.src = newThumb;
 
-                    // 強制重繪圖庫
-                    window._lastRenderFingerprint = '';
-                    window.renderGallery();
-
-                    // 若已登入且有網路，將重新切片的 4 個分塊同步上傳至雲端
+                    // 若為在線上傳狀態，同步切片至雲端
                     if (currentUser && db) {
                         try {
                             const blob = dataURLToBlob(rotatedDataUrl);
@@ -1055,36 +1020,267 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                                     const chunkRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', itemId, 'chunks', `part_${idx}`);
                                     batch.set(chunkRef, { index: idx, data: chunkStr });
                                 });
-                                const mainRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', itemId);
-                                batch.set(mainRef, { updatedAt: Date.now() }, { merge: true });
                                 await batch.commit();
                             }
-                        } catch (cloudErr) {
-                            console.error("雲端切片旋轉同步失敗:", cloudErr);
-                        }
+                        } catch (cloudErr) {}
                     }
-
-                    window.writeGalleryLog('旋轉圖片', targetItem?.title || itemId, `旋轉 ${angleDeg > 0 ? '+90°' : '-90°'}`);
-                    window.showToast("✅ 圖片已旋轉並同步更新！");
                 }
             } catch (err) {
-                console.error("旋轉錯誤:", err);
                 window.showToast("旋轉圖片失敗", true);
             }
         };
 
         // ====== 放大鏡專屬全域函式 ======
         window.viewHdImage = async (id, e) => {
-         if (e) e.stopPropagation();
-         const item = galleryItems.find(x => x.id === id);
-         if (!item) return;
-         const fullSrc = await getFullImageUrlAsync(item);
-         if (fullSrc) {
-             window.openFullscreenImg(fullSrc, item.id);
-         } else {
-             window.showToast("無法載入原圖", true);
-         }
-     };
+            if (e) e.stopPropagation();
+            const item = galleryItems.find(x => x.id === id);
+            if (!item) return;
+            const fullSrc = await getFullImageUrlAsync(item);
+            if (fullSrc) {
+                window.openFullscreenImg(fullSrc, item.id);
+            } else {
+                window.showToast("無法載入原圖", true);
+            }
+        };
+
+        // ====== 移至垃圾桶（軟刪除） ======
+        window.deleteGalleryItem = async (id, e) => {
+            if (e) e.stopPropagation();
+            $('galleryItemEditModal')?.remove();
+
+            const item = galleryItems.find(i => i.id === id);
+            if (!item) return;
+
+            item.isDeleted = true;
+            item.deletedAt = Date.now();
+            await saveGalleryItemsSafe(galleryItems);
+
+            if (currentUser && db) {
+                try {
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), {
+                        isDeleted: true,
+                        deletedAt: item.deletedAt
+                    }, { merge: true });
+                } catch (err) {
+                    console.error("垃圾桶雲端同步失敗", err);
+                }
+            }
+
+            // 👇【第一個地方：寫入「移至垃圾桶」】
+            window.writeGalleryLog('移至垃圾桶', item.title || item.id, `分類: ${item.category || '未分類'}`);
+
+            window._lastRenderFingerprint = '';
+            await window.renderGallery();
+            window.showToast("🗑️ 圖片已移至垃圾桶");
+        };
+
+        // ====== 批次移至還原清單（軟刪除） ======
+window.deleteSelectedGalleryItems = () => {
+    const count = window.selectedGalleryIds.size;
+    if (!count) return window.showToast("尚未選取任何圖片", true);
+
+    window.showConfirm("移至還原清單", `確定要將已選取的 ${count} 張圖片移入還原清單嗎？`, async () => {
+        const now = Date.now();
+        const idsToDelete = Array.from(window.selectedGalleryIds).map(String);
+
+        // 1. 本地資料只標記 isDeleted，絕不能用 filter 刪除
+        galleryItems.forEach(i => {
+            if (idsToDelete.includes(String(i.id))) {
+                i.isDeleted = true;
+                i.deletedAt = now;
+            }
+        });
+        await saveGalleryItemsSafe(galleryItems);
+
+        // 2. 雲端批次軟更新（不調用 deleteDoc）
+        if (currentUser && db) {
+            try {
+                const batch = writeBatch(db);
+                idsToDelete.forEach(id => {
+                    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id);
+                    batch.set(ref, {
+                        isDeleted: true,
+                        deletedAt: now
+                    }, { merge: true });
+                });
+                await batch.commit();
+            } catch (err) {
+                console.error("批次刪除同步失敗:", err);
+            }
+        }
+
+        // 3. 重置選取模式並刷新畫面
+        window.isGallerySelectMode = false;
+        window.selectedGalleryIds.clear();
+        window._lastRenderFingerprint = '';
+        await window.renderGallery();
+
+        // 4. 若還原彈窗目前開啟中，同步刷新清單
+        if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
+            window.renderTrashList();
+        }
+
+        window.showToast(`🗑️ 已將 ${count} 張圖片移入還原清單！`);
+    });
+};
+
+        // ====== 單張還原 ======
+        window.restoreGalleryItem = async (id) => {
+            const item = galleryItems.find(i => i.id === id);
+            if (!item) return;
+
+            item.isDeleted = false;
+            delete item.deletedAt;
+            await saveGalleryItemsSafe(galleryItems);
+
+            if (currentUser && db) {
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), {
+                    isDeleted: false,
+                    deletedAt: null
+                }, { merge: true }).catch(() => {});
+            }
+
+            // 👇【第二個地方：保持「還原圖片」】
+            window.writeGalleryLog('還原圖片', item.title || item.id, `自垃圾桶還原`);
+
+            window._lastRenderFingerprint = '';
+            window.renderTrashList();
+            await window.renderGallery();
+            window.showToast("✅ 已成功還原圖片！");
+        };
+
+        // ====== 全部還原 ======
+        window.restoreAllTrashItems = async () => {
+            const trashed = galleryItems.filter(i => i.isDeleted);
+            if (!trashed.length) return;
+
+            trashed.forEach(item => {
+                item.isDeleted = false;
+                delete item.deletedAt;
+                if (currentUser && db) {
+                    setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id), {
+                        isDeleted: false,
+                        deletedAt: null
+                    }, { merge: true }).catch(() => {});
+                }
+            });
+
+            await saveGalleryItemsSafe(galleryItems);
+            window._lastRenderFingerprint = '';
+            window.closeTrashModal();
+            await window.renderGallery();
+            window.showToast(`✅ 已還原全部 ${trashed.length} 張圖片！`);
+        };
+
+        // ====== 永久清空垃圾桶 ======
+        window.clearTrashPermanently = () => {
+            const trashed = galleryItems.filter(i => i.isDeleted);
+            if (!trashed.length) return window.showToast("垃圾桶已經是空的", true);
+
+            window.showConfirm("永久清空", `確定要徹底清空垃圾桶內的 ${trashed.length} 張圖片嗎？（此動作無法復原）`, async () => {
+                for (const item of trashed) {
+                    memoryImageCache.delete(item.id);
+                    thumbImageCache.delete(item.id);
+                    await idbDel(item.id);
+                    await idbDel(`thumb_v2_${item.id}`);
+                    if (currentUser && db) {
+                        deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id)).catch(() => {});
+                        getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items', item.id, 'chunks'))
+                            .then(snap => snap.forEach(d => deleteDoc(d.ref)))
+                            .catch(() => {});
+                    }
+                }
+
+                galleryItems = galleryItems.filter(i => !i.isDeleted);
+                safeSetLocal('work_cache_gallery_items', galleryItems);
+                window._lastRenderFingerprint = '';
+                window.closeTrashModal();
+                await window.renderGallery();
+                window.showToast("🔥 已永久清空垃圾桶！");
+            });
+        };
+
+        // ====== 垃圾桶彈窗控制與渲染 ======
+        window.openTrashModal = () => {
+            window.renderTrashList();
+            $('galleryTrashModal')?.classList.replace('hidden', 'flex');
+            lucide.createIcons();
+        };
+
+        window.closeTrashModal = () => {
+            $('galleryTrashModal')?.classList.replace('flex', 'hidden');
+        };
+
+        window.renderTrashList = async () => {
+            const container = $('trashListContainer');
+            const countEl = $('trashTotalCount');
+            if (!container) return;
+
+            const trashed = galleryItems.filter(i => i.isDeleted);
+            if (countEl) countEl.textContent = trashed.length;
+
+            if (!trashed.length) {
+                container.innerHTML = `
+                    <div class="flex flex-col items-center justify-center py-16 text-slate-400">
+                        <i data-lucide="rotate-ccw" class="w-10 h-10 mb-2 opacity-30"></i>
+                        <span class="text-xs font-bold tracking-widest text-center">目前沒有可還原的圖片</span>
+                    </div>`;
+                lucide.createIcons({ root: container });
+                return;
+            }
+
+            // 1. 依照刪除或建立時間降序排序（最新的排在最上方）
+            trashed.sort((a, b) => (b.deletedAt || b.createdAt || 0) - (a.deletedAt || a.createdAt || 0));
+
+            // 2. 依照日期 (MM/DD) 進行分組 (Group by Date)
+            const groups = {};
+            for (const item of trashed) {
+                const d = item.deletedAt ? new Date(item.deletedAt) : (item.createdAt ? new Date(item.createdAt) : window.getNow());
+                const dateKey = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+                if (!groups[dateKey]) groups[dateKey] = [];
+                groups[dateKey].push(item);
+            }
+
+            // 3. 渲染分組 HTML
+            const groupKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a)); // 日期由新到舊排序
+            
+            const groupedHtml = await Promise.all(groupKeys.map(async dateStr => {
+                const groupItems = groups[dateStr];
+                
+                const cardsHtml = await Promise.all(groupItems.map(async item => {
+                    const thumbSrc = await getLowResThumbUrlAsync(item);
+                    return `
+                        <div class="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-xl">
+                            <div class="flex items-center space-x-2.5 min-w-0 flex-1">
+                                <div class="w-12 h-12 rounded-lg bg-slate-200 overflow-hidden shrink-0 border border-slate-300">
+                                    <img src="${thumbSrc}" class="w-full h-full object-cover">
+                                </div>
+                                <div class="min-w-0 flex-1">
+                                    <div class="text-[10px] font-mono font-bold text-slate-400">${item.time || '12:00'}</div>
+                                    <div class="text-xs font-black text-slate-800 truncate">${item.title || '無標題'}</div>
+                                </div>
+                            </div>
+                            <button type="button" onclick="window.restoreGalleryItem('${item.id}')" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center active:scale-95 transition-all ml-2 shrink-0">
+                                <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 mr-1"></i>還原
+                            </button>
+                        </div>`;
+                }));
+
+                return `
+                    <div class="space-y-1.5 mb-3">
+                        <div class="text-[11px] font-black text-blue-600 px-1 flex items-center space-x-1">
+                            <i data-lucide="calendar" class="w-3.5 h-3.5 mr-1"></i>
+                            <span>${dateStr} (${groupItems.length} 張)</span>
+                        </div>
+                        <div class="space-y-2">
+                            ${cardsHtml.join('')}
+                        </div>
+                    </div>`;
+            }));
+
+            container.innerHTML = groupedHtml.join('');
+            lucide.createIcons({ root: container });
+        };
 
         // ====== 點擊預覽圖修改圖片內容 (內建刪除鍵、判定卡片與手動鎖定) ======
         window.openEditGalleryModal = (id, e) => {
@@ -1178,6 +1374,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             else if (/^J-?/i.test(pureCode)) { prefix = '花園仔'; pureCode = pureCode.replace(/^J-?/i, ''); }
             const cleanCode = pureCode.replace(/^0+/, '') || '0';
 
+            // 判斷是否為雞檔 / 花園仔
             const isChickenStall = prefix === '花園仔' || /^J-0?/i.test(titleVal);
 
             const matched = window.stallList.find(s => {
@@ -1201,6 +1398,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
             hintBox.classList.remove('hidden');
 
+            // 雞檔固定判定為清潔，不設提早收工
             if (isChickenStall) {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
@@ -1679,7 +1877,186 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
         };
 
-        
+        // ====== 點擊預覽圖修改圖片內容 (內建刪除鍵、判定卡片與手動鎖定) ======
+        window.openEditGalleryModal = (id, e) => {
+            if (e) e.stopPropagation();
+            const item = galleryItems.find(x => x.id === id);
+            if (!item) return;
+
+            const catList = ['提早收工', '營業相', '開工-雞相', '測溫相'];;
+            const curCat = (item.category === '收工' ? '提早收工' : item.category) || '提早收工';
+            const curTime = item.time || '12:00';
+
+            window._modalUserOverridden = false;
+
+            const modalHtml = `
+            <div id="galleryItemEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();">
+                <div class="bg-white rounded-2xl p-4 w-full max-w-[330px] shadow-2xl relative animate-pop-in" onclick="event.stopPropagation()">
+                    <header class="flex justify-between items-center pb-2.5 mb-2.5 border-b border-slate-100">
+                        <h3 class="font-bold text-sm text-slate-800 flex items-center">
+                            <i data-lucide="edit-3" class="w-4 h-4 mr-1.5 text-blue-500"></i> 修改圖片內容
+                        </h3>
+                        <button type="button" onclick="document.getElementById('galleryItemEditModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </header>
+
+                    <!-- 介面內提示框 -->
+                    <div id="editModalAutoHint" class="hidden mb-2.5 p-2 rounded-xl text-[11px] font-bold border transition-all flex items-center"></div>
+
+                    <div class="space-y-3">
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">分類</label>
+                            <div class="grid grid-cols-4 gap-1.5" id="editModalCatGroup">
+                                ${catList.map(cat => `
+                                    <button type="button" onclick="window.setModalEditCat('${cat}', true)" data-cat="${cat}" 
+                                        class="modal-cat-btn py-1.5 rounded-lg text-xs font-bold border transition-all ${curCat === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
+                                        ${cat}
+                                    </button>
+                                `).join('')}
+                            </div>
+                            <input type="hidden" id="editModalCatInput" value="${curCat}">
+                        </div>
+
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">標題 / 檔號</label>
+                            <input type="text" id="editModalTitleInput" value="${item.title || ''}" placeholder="例如: 1-002 或 R-061" 
+                                oninput="window.runModalAutoDetect(false)"
+                                class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500 text-center shadow-inner">
+                        </div>
+
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">時間</label>
+                            <input type="time" id="editModalTimeInput" value="${curTime}" 
+                                onchange="window.runModalAutoDetect(false)"
+                                class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-blue-500 text-center shadow-inner">
+                        </div>
+                    </div>
+
+                    <div class="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center">
+                        <button type="button" onclick="window.deleteGalleryItem('${id}', event)" 
+                            class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center active:scale-95 shadow-2xs">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5 mr-1"></i>刪除
+                        </button>
+                        <div class="space-x-1.5">
+                            <button type="button" onclick="document.getElementById('galleryItemEditModal')?.remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold">取消</button>
+                            <button type="button" onclick="window.saveGalleryItemEdit('${id}')" class="px-3.5 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95">儲存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            lucide.createIcons();
+            window.runModalAutoDetect(false);
+        };
+
+        window.runModalAutoDetect = (force = false) => {
+            if (window._modalUserOverridden && !force) return;
+
+            const titleVal = $('editModalTitleInput')?.value.trim() || '';
+            const timeVal = $('editModalTimeInput')?.value || '12:00';
+            const hintBox = $('editModalAutoHint');
+            if (!hintBox) return;
+
+            if (!titleVal || !window.stallList || !window.stallList.length) {
+                hintBox.className = 'hidden';
+                return;
+            }
+
+            let prefix = '', pureCode = titleVal;
+            if (/^1-?/i.test(pureCode)) { prefix = '一樓'; pureCode = pureCode.replace(/^1-?/i, ''); }
+            else if (/^R-?/i.test(pureCode)) { prefix = '地下'; pureCode = pureCode.replace(/^R-?/i, ''); }
+            else if (/^J-?/i.test(pureCode)) { prefix = '花園仔'; pureCode = pureCode.replace(/^J-?/i, ''); }
+            const cleanCode = pureCode.replace(/^0+/, '') || '0';
+
+            const matched = window.stallList.find(s => {
+                const sClean = String(s.code || '').replace(/^0+/, '');
+                if (sClean !== cleanCode) return false;
+                if (prefix) return s.floor.includes(prefix);
+                return true;
+            });
+
+            if (!matched || !matched.hours) {
+                hintBox.className = 'hidden';
+                return;
+            }
+
+            const closingTime = getClosingTime(matched.hours);
+            const [ch, cm] = closingTime.split(':').map(Number);
+            const [th, tm] = timeVal.split(':').map(Number);
+            const closeMins = ch * 60 + cm;
+            const targetMins = th * 60 + tm;
+            const diff = closeMins - targetMins;
+
+            hintBox.classList.remove('hidden');
+            // 提早大於 30 分鐘才算提早收工；30分鐘內寬限期算清潔
+            if (diff > 30) {
+                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col gap-0.5 animate-pop-in';
+                hintBox.innerHTML = `
+                    <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
+                    <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (超過 30 分寬限)</div>`;
+                if (isMerged) window.setMergedCategory('提早收工', false);
+else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
+            } else {
+                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
+                const statusDetail = diff > 0 
+                    ? `[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (在 30 分鐘寬限期內)` 
+                    : `[${matched.floor} ${matched.code}] 表定 ${closingTime}，已過打烊時間`;
+                hintBox.innerHTML = `
+                    <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
+                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">${statusDetail}</div>`;
+                window.setModalEditCat('清潔', false);
+            }
+            lucide.createIcons({ root: hintBox });
+        };
+
+        window.setModalEditCat = (cat, isUserClick = false) => {
+            const input = $('editModalCatInput');
+            if (input) input.value = cat;
+
+            if (isUserClick) {
+                window._modalUserOverridden = true;
+                const hintBox = $('editModalAutoHint');
+                if (hintBox) {
+                    hintBox.classList.remove('hidden');
+                    hintBox.className = 'mb-2.5 p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between';
+                    hintBox.innerHTML = `<span>✋ 已手動鎖定為「${cat}」</span><button type="button" onclick="window._modalUserOverridden=false; window.runModalAutoDetect(true);" class="text-[10px] text-blue-600 underline ml-2">重置自動判定</button>`;
+                }
+            }
+
+            document.querySelectorAll('.modal-cat-btn').forEach(btn => {
+                const isActive = btn.dataset.cat === cat;
+                btn.className = `modal-cat-btn py-1.5 rounded-lg text-xs font-bold border transition-all ${isActive ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}`;
+            });
+        };
+
+        window.saveGalleryItemEdit = (id) => {
+            const item = galleryItems.find(x => x.id === id);
+            if (!item) return;
+
+            const newTitle = $('editModalTitleInput')?.value.trim() || '無標題';
+            const newCat = $('editModalCatInput')?.value || '提早收工';
+            const newTime = $('editModalTimeInput')?.value || '12:00';
+
+            item.title = newTitle;
+            item.category = newCat;
+            item.time = newTime;
+
+            safeSetLocal('work_cache_gallery_items', galleryItems);
+            if (currentUser) {
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), {
+                    title: newTitle,
+                    category: newCat,
+                    time: newTime
+                }, { merge: true });
+            }
+
+            $('galleryItemEditModal')?.remove();
+            window._lastRenderFingerprint = '';
+            window.renderGallery();
+            window.showToast(`✅ 已儲存！分類確定為「${newCat}」`);
+        };
+
         // ====== 根據「收工查核」自動判定：提早收工 / 清潔 (含 30 分鐘寬限期) ======
         window.autoDetectStallCategory = (codeRaw, timeStr, fallbackCat) => {
             if (!codeRaw || !window.stallList || !window.stallList.length) return fallbackCat;
@@ -2380,14 +2757,14 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                             <img src="${item.src}" class="w-full h-full object-contain block">
                             
                             <!-- 左轉按鈕 (向右移動對齊左側紅圈位置) -->
-                            <button type="button" onclick="event.stopPropagation(); window.rotatePendingUploadItem('${item.tempId}', -90, event)" class="absolute left-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向左轉 90°">
+                            <button type="button" onclick="window.rotatePendingUploadItem('${item.tempId}', -90, event)" class="absolute left-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向左轉 90°">
                                 <i data-lucide="rotate-ccw" class="w-4 h-4 pointer-events-none"></i>
                             </button>
 
                             <!-- 右轉按鈕 (對齊右側紅圈位置) -->
-                            <button type="button" onclick="event.stopPropagation(); window.rotatePendingUploadItem('${item.tempId}', 90, event)" class="absolute right-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向右轉 90°">
-    <i data-lucide="rotate-cw" class="w-4 h-4 pointer-events-none"></i>
-</button>
+                            <button type="button" onclick="window.rotatePendingUploadItem('${item.tempId}', 90, event)" class="absolute right-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向右轉 90°">
+                                <i data-lucide="rotate-cw" class="w-4 h-4 pointer-events-none"></i>
+                            </button>
 
                             <!-- 右上角刪除按鈕 -->
                             <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1 right-1 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="刪除">
@@ -4942,72 +5319,22 @@ setTimeout(() => {
           const targetId = btn.getAttribute('data-target');
           const box = document.getElementById(targetId);
           if (!box) return;
-
-          // 判斷是否為「諮詢協助」（維持固定 6 個按鈕個別控制）
-          const isCsInquiry = targetId.indexOf('box_cs_inquiry_desc_') === 0;
-
           const isOpen = box.classList.toggle('open');
           if (isOpen) {
             btn.classList.add('active');
             btn.innerText = '－';
-
-            if (!isCsInquiry) {
-              // 取得同行前面的次數輸入框數值
-              const row = btn.closest('[data-trigger]');
-              const triggerId = row ? row.getAttribute('data-trigger') : null;
-              const triggerEl = triggerId ? document.getElementById(triggerId) : null;
-              const countVal = triggerEl ? parseInt(triggerEl.innerText.trim(), 10) : 1;
-              const targetCount = (!isNaN(countVal) && countVal > 0) ? countVal : 1;
-
-              // 讀取當前或暫存的輸入資料
-              const baseId = targetId.replace('box_', '');
-              let savedList = (window._reportMultiStore && window._reportMultiStore[baseId]) ? window._reportMultiStore[baseId] : [];
-              box.querySelectorAll('.expand-input').forEach(inp => {
-                const txt = inp.innerText.trim();
-                if (txt && savedList.indexOf(txt) === -1) savedList.push(txt);
-              });
-
-              // 動態生成 targetCount 個輸入框（採用純字串串接，防止模板字面量解析崩潰）
-              let html = '';
-              for (let i = 0; i < targetCount; i++) {
-                const val = savedList[i] || '';
-                const hasTextCls = val ? 'has-text' : '';
-                const numLabel = targetCount > 1 ? (i + 1) + '.' : '';
-                html += '<span class="inline-flex items-baseline my-0.5"><span class="text-xs text-slate-400 font-mono font-bold mr-0.5">' + numLabel + '</span><span contenteditable="true" id="' + baseId + '_multi_' + i + '" data-group="' + baseId + '" class="expand-input detail-input ' + hasTextCls + '">' + val + '</span></span>';
-              }
-              box.innerHTML = html;
-
-              // 重新為新生成的輸入框綁定事件
-              box.querySelectorAll('.expand-input').forEach(el => {
-                el.addEventListener('input', () => {
-                  updateTextColor(el);
-                  updateBracketStates();
-                  saveCurrentDayReport();
-                });
-                el.addEventListener('keydown', (e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
-                });
-              });
-            }
-
             const input = box.querySelector('.expand-input');
             if (input) setTimeout(() => input.focus(), 50);
           } else {
             btn.classList.remove('active');
             btn.innerText = '＋';
-            // 收起時暫存資料，不丟失使用者打好的文字
-            if (!isCsInquiry) {
-              const baseId = targetId.replace('box_', '');
-              window._reportMultiStore = window._reportMultiStore || {};
-              const vals = [];
-              box.querySelectorAll('.expand-input').forEach(inp => vals.push(inp.innerText.trim()));
-              window._reportMultiStore[baseId] = vals;
-            }
+            // 保留輸入內容，收起時不清除文字
           }
           saveCurrentDayReport();
         });
       });
     }
+    setupToggleButtons();
 
     function getCurrentDateKey() {
       const y = (metaYear.innerText.trim() || String(today.getFullYear())).padStart(4, '0');
@@ -5039,9 +5366,7 @@ setTimeout(() => {
       autoSaveTimer = setTimeout(() => {
         const dateKey = getCurrentDateKey();
         const data = {};
-        document.querySelectorAll('.expand-input').forEach(el => {
-          if (el.id) data[el.id] = el.innerText;
-        });
+        editableElements.forEach(el => { if (el.id) data[el.id] = el.innerText; });
         const activeTags = [];
         document.querySelectorAll('.pick-tag.selected').forEach(tag => activeTags.push(tag.getAttribute('data-tag')));
         const openBoxes = [];
@@ -5117,35 +5442,13 @@ setTimeout(() => {
             else tag.classList.remove('selected');
           });
           document.querySelectorAll('.remark-box').forEach(box => {
-            const btn = document.querySelector('.toggle-btn[data-target="' + box.id + '"]');
-            if (report.boxes && report.boxes.indexOf(box.id) !== -1) {
+            if (report.boxes && report.boxes.includes(box.id)) {
               box.classList.add('open');
+              const btn = document.querySelector(\`.toggle-btn[data-target="\${box.id}"]\`);
               if (btn) { btn.classList.add('active'); btn.innerText = '－'; }
-
-              // 若有動態多筆輸入框，依存檔資料重新建構
-              const baseId = box.id.replace('box_', '');
-              if (box.id.indexOf('box_cs_inquiry_desc_') !== 0) {
-                const multiKeys = Object.keys(report.data || {}).filter(k => k.indexOf(baseId + '_multi_') === 0);
-                if (multiKeys.length > 0) {
-                  multiKeys.sort((a, b) => {
-                    const idxA = parseInt(a.split('_').pop(), 10);
-                    const idxB = parseInt(b.split('_').pop(), 10);
-                    return idxA - idxB;
-                  });
-                  box.innerHTML = multiKeys.map((k, idx) => {
-                    const val = report.data[k] || '';
-                    const numLabel = multiKeys.length > 1 ? (idx + 1) + '.' : '';
-                    return '<span class="inline-flex items-baseline my-0.5"><span class="text-xs text-slate-400 font-mono font-bold mr-0.5">' + numLabel + '</span><span contenteditable="true" id="' + k + '" data-group="' + baseId + '" class="expand-input detail-input ' + (val ? 'has-text' : '') + '">' + val + '</span></span>';
-                  }).join('');
-
-                  box.querySelectorAll('.expand-input').forEach(el => {
-                    el.addEventListener('input', () => { updateTextColor(el); updateBracketStates(); saveCurrentDayReport(); });
-                    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.blur(); } });
-                  });
-                }
-              }
             } else {
               box.classList.remove('open');
+              const btn = document.querySelector(\`.toggle-btn[data-target="\${box.id}"]\`);
               if (btn) { btn.classList.remove('active'); btn.innerText = '＋'; }
             }
           });
@@ -6007,7 +6310,7 @@ setTimeout(() => {
     <!-- 設定操作者姓名與顏色 Modal -->
     <div id="userNameModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] hidden flex-col items-center justify-center p-4" onclick="if(event.target === this) window.closeUserNameModal()">
         <div class="bg-white rounded-2xl p-4 w-full max-w-[280px] shadow-2xl relative" onclick="event.stopPropagation()">
-            <h3 class="font-bold text-sm mb-3 text-slate-800 flex items-center border-b pb-2">
+            <h3 class="font-bold text-sm mb-3 text-slate-800 flex items-center border-b pb-2">下午 11:57 星期六 9-26下午 11:57 星期六 9-26
                 <i data-lucide="user-cog" class="w-4 h-4 mr-2 text-blue-500"></i> 設定操作者身分
             </h3>
             <div class="space-y-3">
