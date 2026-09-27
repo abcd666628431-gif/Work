@@ -776,28 +776,35 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
         const getFullImageUrlAsync = async (item) => {
             const id = item.id;
-            if (memoryImageCache.has(id)) return memoryImageCache.get(id);
+            const verKey = `${id}_v_${item.updatedAt || item.createdAt || 0}`;
 
-            const idbCached = await idbGet(id);
-            if (idbCached) { memoryImageCache.set(id, idbCached); return idbCached; }
-            if (item.src) { memoryImageCache.set(id, item.src); return item.src; }
+            // 優先檢查當前版本的記憶體快取
+            if (memoryImageCache.has(verKey)) return memoryImageCache.get(verKey);
 
+            // 檢查 IndexedDB 中對應此版本號的快取
+            const idbCached = await idbGet(verKey);
+            if (idbCached) { 
+                memoryImageCache.set(verKey, idbCached); 
+                return idbCached; 
+            }
+
+            // 若有網路或雲端，從雲端抓取最新切片並合併
             if (currentUser && db) {
                 try {
-                    const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id, 'chunks'));
+                    const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(id), 'chunks'));
                     const chunkList = [];
                     snap.forEach(d => chunkList.push(d.data()));
                     chunkList.sort((a, b) => a.index - b.index);
 
                     if (chunkList.length) {
                         const mergedUrl = await merge4ChunksAsync(chunkList.map(c => c.data));
-                        memoryImageCache.set(id, mergedUrl);
-                        await idbSet(id, mergedUrl);
+                        memoryImageCache.set(verKey, mergedUrl);
+                        await idbSet(verKey, mergedUrl);
                         return mergedUrl;
                     }
                 } catch (e) {}
             }
-            return '';
+            return item.src || '';
         };
 
         // ====== 輕量高清縮圖 (360px、品質 0.75，視網膜清晰度且不卡頓) ======
@@ -968,7 +975,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             $('imageViewer')?.classList.replace('flex', 'hidden');
         };
 
-        // ====== 全螢幕預覽旋轉處理函式 (完整同步原圖、縮圖、IDB 與雲端) ======
+        // ====== 全螢幕預覽旋轉處理函式 (強制版本覆蓋與雲端同步版) ======
         window.rotateFullscreenImg = async (angleDeg, e) => {
             if (e) e.stopPropagation();
             const imgEl = $('imageViewerImg');
@@ -996,14 +1003,12 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     img.src = imgEl.src;
                 });
 
-                // 2. 即時更新全螢幕畫面顯示
+                // 2. 立即更新全螢幕畫面顯示
                 imgEl.src = rotatedDataUrl;
 
-                // 3. 取得當前全螢幕檢視的圖片 ID
                 const itemId = window._currentViewerImageId;
-
                 if (!itemId) {
-                    window.showToast("⚠️ 找不到圖片編號，無法同步更新", true);
+                    window.showToast("⚠️ 找不到圖片編號，無法儲存旋轉方向", true);
                     return;
                 }
 
@@ -1013,18 +1018,19 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     targetItem.updatedAt = newTimestamp;
                 }
 
-                // 4. 更新本機版本化快取與 IndexedDB
+                // 3. 關鍵：建立新的版本 Key，並強力寫入本機快取與 IndexedDB（覆蓋舊方向）
                 const verKey = `${itemId}_v_${newTimestamp}`;
                 const thumbVerKey = `thumb_${itemId}_v_${newTimestamp}`;
-                
+
                 memoryImageCache.set(verKey, rotatedDataUrl);
                 await idbSet(verKey, rotatedDataUrl);
 
-                // 5. 重新生成 360px 輕量高清縮圖並寫入快取
+                // 4. 重新生成 360px 縮圖並寫入版本化縮圖快取
                 const newThumb = await getLowResThumbUrlAsync({ id: itemId, updatedAt: newTimestamp });
                 thumbImageCache.set(thumbVerKey, newThumb);
                 await idbSet(thumbVerKey, newThumb);
 
+                // 5. 持久化圖庫總表 metadata（包含更新後的 updatedAt）
                 await saveGalleryItemsSafe(galleryItems);
 
                 // 6. 即時更新圖庫中該張卡片的縮圖顯示
@@ -1034,7 +1040,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 window._lastRenderFingerprint = '';
                 window.renderGallery();
 
-                // 7. 線上即時同步：將旋轉後的 4 個切片與最新 updatedAt 寫入 Firebase 雲端
+                // 7. 雲端同步：切片上傳 + 更新主文件 updatedAt，強制所有裝置快取失效並同步
                 if (currentUser && db) {
                     try {
                         const blob = dataURLToBlob(rotatedDataUrl);
@@ -1058,7 +1064,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 }
 
                 window.writeGalleryLog('旋轉圖片', targetItem?.title || itemId, `旋轉 ${angleDeg > 0 ? '+90°' : '-90°'}`);
-                window.showToast("✅ 圖片已旋轉並線上即時同步！");
+                window.showToast("✅ 圖片旋轉已成功保存並同步至所有設備！");
 
             } catch (err) {
                 console.error("旋轉錯誤:", err);
