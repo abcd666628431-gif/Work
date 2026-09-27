@@ -1374,7 +1374,6 @@ window.deleteSelectedGalleryItems = () => {
             else if (/^J-?/i.test(pureCode)) { prefix = '花園仔'; pureCode = pureCode.replace(/^J-?/i, ''); }
             const cleanCode = pureCode.replace(/^0+/, '') || '0';
 
-            // 判斷是否為雞檔 / 花園仔
             const isChickenStall = prefix === '花園仔' || /^J-0?/i.test(titleVal);
 
             const matched = window.stallList.find(s => {
@@ -1398,7 +1397,6 @@ window.deleteSelectedGalleryItems = () => {
 
             hintBox.classList.remove('hidden');
 
-            // 雞檔固定判定為清潔，不設提早收工
             if (isChickenStall) {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
@@ -1877,186 +1875,7 @@ window.deleteSelectedGalleryItems = () => {
             window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
         };
 
-        // ====== 點擊預覽圖修改圖片內容 (內建刪除鍵、判定卡片與手動鎖定) ======
-        window.openEditGalleryModal = (id, e) => {
-            if (e) e.stopPropagation();
-            const item = galleryItems.find(x => x.id === id);
-            if (!item) return;
-
-            const catList = ['提早收工', '營業相', '開工-雞相', '測溫相'];;
-            const curCat = (item.category === '收工' ? '提早收工' : item.category) || '提早收工';
-            const curTime = item.time || '12:00';
-
-            window._modalUserOverridden = false;
-
-            const modalHtml = `
-            <div id="galleryItemEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();">
-                <div class="bg-white rounded-2xl p-4 w-full max-w-[330px] shadow-2xl relative animate-pop-in" onclick="event.stopPropagation()">
-                    <header class="flex justify-between items-center pb-2.5 mb-2.5 border-b border-slate-100">
-                        <h3 class="font-bold text-sm text-slate-800 flex items-center">
-                            <i data-lucide="edit-3" class="w-4 h-4 mr-1.5 text-blue-500"></i> 修改圖片內容
-                        </h3>
-                        <button type="button" onclick="document.getElementById('galleryItemEditModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
-                            <i data-lucide="x" class="w-4 h-4"></i>
-                        </button>
-                    </header>
-
-                    <!-- 介面內提示框 -->
-                    <div id="editModalAutoHint" class="hidden mb-2.5 p-2 rounded-xl text-[11px] font-bold border transition-all flex items-center"></div>
-
-                    <div class="space-y-3">
-                        <div>
-                            <label class="text-[11px] font-bold text-slate-500 block mb-1">分類</label>
-                            <div class="grid grid-cols-4 gap-1.5" id="editModalCatGroup">
-                                ${catList.map(cat => `
-                                    <button type="button" onclick="window.setModalEditCat('${cat}', true)" data-cat="${cat}" 
-                                        class="modal-cat-btn py-1.5 rounded-lg text-xs font-bold border transition-all ${curCat === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
-                                        ${cat}
-                                    </button>
-                                `).join('')}
-                            </div>
-                            <input type="hidden" id="editModalCatInput" value="${curCat}">
-                        </div>
-
-                        <div>
-                            <label class="text-[11px] font-bold text-slate-500 block mb-1">標題 / 檔號</label>
-                            <input type="text" id="editModalTitleInput" value="${item.title || ''}" placeholder="例如: 1-002 或 R-061" 
-                                oninput="window.runModalAutoDetect(false)"
-                                class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500 text-center shadow-inner">
-                        </div>
-
-                        <div>
-                            <label class="text-[11px] font-bold text-slate-500 block mb-1">時間</label>
-                            <input type="time" id="editModalTimeInput" value="${curTime}" 
-                                onchange="window.runModalAutoDetect(false)"
-                                class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-blue-500 text-center shadow-inner">
-                        </div>
-                    </div>
-
-                    <div class="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center">
-                        <button type="button" onclick="window.deleteGalleryItem('${id}', event)" 
-                            class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center active:scale-95 shadow-2xs">
-                            <i data-lucide="trash-2" class="w-3.5 h-3.5 mr-1"></i>刪除
-                        </button>
-                        <div class="space-x-1.5">
-                            <button type="button" onclick="document.getElementById('galleryItemEditModal')?.remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold">取消</button>
-                            <button type="button" onclick="window.saveGalleryItemEdit('${id}')" class="px-3.5 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95">儲存</button>
-                        </div>
-                    </div>
-                </div>
-            </div>`;
-            document.body.insertAdjacentHTML('beforeend', modalHtml);
-            lucide.createIcons();
-            window.runModalAutoDetect(false);
-        };
-
-        window.runModalAutoDetect = (force = false) => {
-            if (window._modalUserOverridden && !force) return;
-
-            const titleVal = $('editModalTitleInput')?.value.trim() || '';
-            const timeVal = $('editModalTimeInput')?.value || '12:00';
-            const hintBox = $('editModalAutoHint');
-            if (!hintBox) return;
-
-            if (!titleVal || !window.stallList || !window.stallList.length) {
-                hintBox.className = 'hidden';
-                return;
-            }
-
-            let prefix = '', pureCode = titleVal;
-            if (/^1-?/i.test(pureCode)) { prefix = '一樓'; pureCode = pureCode.replace(/^1-?/i, ''); }
-            else if (/^R-?/i.test(pureCode)) { prefix = '地下'; pureCode = pureCode.replace(/^R-?/i, ''); }
-            else if (/^J-?/i.test(pureCode)) { prefix = '花園仔'; pureCode = pureCode.replace(/^J-?/i, ''); }
-            const cleanCode = pureCode.replace(/^0+/, '') || '0';
-
-            const matched = window.stallList.find(s => {
-                const sClean = String(s.code || '').replace(/^0+/, '');
-                if (sClean !== cleanCode) return false;
-                if (prefix) return s.floor.includes(prefix);
-                return true;
-            });
-
-            if (!matched || !matched.hours) {
-                hintBox.className = 'hidden';
-                return;
-            }
-
-            const closingTime = getClosingTime(matched.hours);
-            const [ch, cm] = closingTime.split(':').map(Number);
-            const [th, tm] = timeVal.split(':').map(Number);
-            const closeMins = ch * 60 + cm;
-            const targetMins = th * 60 + tm;
-            const diff = closeMins - targetMins;
-
-            hintBox.classList.remove('hidden');
-            // 提早大於 30 分鐘才算提早收工；30分鐘內寬限期算清潔
-            if (diff > 30) {
-                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col gap-0.5 animate-pop-in';
-                hintBox.innerHTML = `
-                    <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
-                    <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (超過 30 分寬限)</div>`;
-                if (isMerged) window.setMergedCategory('提早收工', false);
-else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
-            } else {
-                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
-                const statusDetail = diff > 0 
-                    ? `[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (在 30 分鐘寬限期內)` 
-                    : `[${matched.floor} ${matched.code}] 表定 ${closingTime}，已過打烊時間`;
-                hintBox.innerHTML = `
-                    <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
-                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">${statusDetail}</div>`;
-                window.setModalEditCat('清潔', false);
-            }
-            lucide.createIcons({ root: hintBox });
-        };
-
-        window.setModalEditCat = (cat, isUserClick = false) => {
-            const input = $('editModalCatInput');
-            if (input) input.value = cat;
-
-            if (isUserClick) {
-                window._modalUserOverridden = true;
-                const hintBox = $('editModalAutoHint');
-                if (hintBox) {
-                    hintBox.classList.remove('hidden');
-                    hintBox.className = 'mb-2.5 p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between';
-                    hintBox.innerHTML = `<span>✋ 已手動鎖定為「${cat}」</span><button type="button" onclick="window._modalUserOverridden=false; window.runModalAutoDetect(true);" class="text-[10px] text-blue-600 underline ml-2">重置自動判定</button>`;
-                }
-            }
-
-            document.querySelectorAll('.modal-cat-btn').forEach(btn => {
-                const isActive = btn.dataset.cat === cat;
-                btn.className = `modal-cat-btn py-1.5 rounded-lg text-xs font-bold border transition-all ${isActive ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}`;
-            });
-        };
-
-        window.saveGalleryItemEdit = (id) => {
-            const item = galleryItems.find(x => x.id === id);
-            if (!item) return;
-
-            const newTitle = $('editModalTitleInput')?.value.trim() || '無標題';
-            const newCat = $('editModalCatInput')?.value || '提早收工';
-            const newTime = $('editModalTimeInput')?.value || '12:00';
-
-            item.title = newTitle;
-            item.category = newCat;
-            item.time = newTime;
-
-            safeSetLocal('work_cache_gallery_items', galleryItems);
-            if (currentUser) {
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), {
-                    title: newTitle,
-                    category: newCat,
-                    time: newTime
-                }, { merge: true });
-            }
-
-            $('galleryItemEditModal')?.remove();
-            window._lastRenderFingerprint = '';
-            window.renderGallery();
-            window.showToast(`✅ 已儲存！分類確定為「${newCat}」`);
-        };
-
+        
         // ====== 根據「收工查核」自動判定：提早收工 / 清潔 (含 30 分鐘寬限期) ======
         window.autoDetectStallCategory = (codeRaw, timeStr, fallbackCat) => {
             if (!codeRaw || !window.stallList || !window.stallList.length) return fallbackCat;
@@ -2757,14 +2576,14 @@ else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
                             <img src="${item.src}" class="w-full h-full object-contain block">
                             
                             <!-- 左轉按鈕 (向右移動對齊左側紅圈位置) -->
-                            <button type="button" onclick="window.rotatePendingUploadItem('${item.tempId}', -90, event)" class="absolute left-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向左轉 90°">
+                            <button type="button" onclick="event.stopPropagation(); window.rotatePendingUploadItem('${item.tempId}', -90, event)" class="absolute left-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向左轉 90°">
                                 <i data-lucide="rotate-ccw" class="w-4 h-4 pointer-events-none"></i>
                             </button>
 
                             <!-- 右轉按鈕 (對齊右側紅圈位置) -->
-                            <button type="button" onclick="window.rotatePendingUploadItem('${item.tempId}', 90, event)" class="absolute right-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向右轉 90°">
-                                <i data-lucide="rotate-cw" class="w-4 h-4 pointer-events-none"></i>
-                            </button>
+                            <button type="button" onclick="event.stopPropagation(); window.rotatePendingUploadItem('${item.tempId}', 90, event)" class="absolute right-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向右轉 90°">
+    <i data-lucide="rotate-cw" class="w-4 h-4 pointer-events-none"></i>
+</button>
 
                             <!-- 右上角刪除按鈕 -->
                             <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1 right-1 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="刪除">
@@ -5319,22 +5138,72 @@ setTimeout(() => {
           const targetId = btn.getAttribute('data-target');
           const box = document.getElementById(targetId);
           if (!box) return;
+
+          // 判斷是否為「諮詢協助」（維持固定 6 個按鈕個別控制）
+          const isCsInquiry = targetId.indexOf('box_cs_inquiry_desc_') === 0;
+
           const isOpen = box.classList.toggle('open');
           if (isOpen) {
             btn.classList.add('active');
             btn.innerText = '－';
+
+            if (!isCsInquiry) {
+              // 取得同行前面的次數輸入框數值
+              const row = btn.closest('[data-trigger]');
+              const triggerId = row ? row.getAttribute('data-trigger') : null;
+              const triggerEl = triggerId ? document.getElementById(triggerId) : null;
+              const countVal = triggerEl ? parseInt(triggerEl.innerText.trim(), 10) : 1;
+              const targetCount = (!isNaN(countVal) && countVal > 0) ? countVal : 1;
+
+              // 讀取當前或暫存的輸入資料
+              const baseId = targetId.replace('box_', '');
+              let savedList = (window._reportMultiStore && window._reportMultiStore[baseId]) ? window._reportMultiStore[baseId] : [];
+              box.querySelectorAll('.expand-input').forEach(inp => {
+                const txt = inp.innerText.trim();
+                if (txt && savedList.indexOf(txt) === -1) savedList.push(txt);
+              });
+
+              // 動態生成 targetCount 個輸入框（採用純字串串接，防止模板字面量解析崩潰）
+              let html = '';
+              for (let i = 0; i < targetCount; i++) {
+                const val = savedList[i] || '';
+                const hasTextCls = val ? 'has-text' : '';
+                const numLabel = targetCount > 1 ? (i + 1) + '.' : '';
+                html += '<span class="inline-flex items-baseline my-0.5"><span class="text-xs text-slate-400 font-mono font-bold mr-0.5">' + numLabel + '</span><span contenteditable="true" id="' + baseId + '_multi_' + i + '" data-group="' + baseId + '" class="expand-input detail-input ' + hasTextCls + '">' + val + '</span></span>';
+              }
+              box.innerHTML = html;
+
+              // 重新為新生成的輸入框綁定事件
+              box.querySelectorAll('.expand-input').forEach(el => {
+                el.addEventListener('input', () => {
+                  updateTextColor(el);
+                  updateBracketStates();
+                  saveCurrentDayReport();
+                });
+                el.addEventListener('keydown', (e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+                });
+              });
+            }
+
             const input = box.querySelector('.expand-input');
             if (input) setTimeout(() => input.focus(), 50);
           } else {
             btn.classList.remove('active');
             btn.innerText = '＋';
-            // 保留輸入內容，收起時不清除文字
+            // 收起時暫存資料，不丟失使用者打好的文字
+            if (!isCsInquiry) {
+              const baseId = targetId.replace('box_', '');
+              window._reportMultiStore = window._reportMultiStore || {};
+              const vals = [];
+              box.querySelectorAll('.expand-input').forEach(inp => vals.push(inp.innerText.trim()));
+              window._reportMultiStore[baseId] = vals;
+            }
           }
           saveCurrentDayReport();
         });
       });
     }
-    setupToggleButtons();
 
     function getCurrentDateKey() {
       const y = (metaYear.innerText.trim() || String(today.getFullYear())).padStart(4, '0');
@@ -5366,7 +5235,9 @@ setTimeout(() => {
       autoSaveTimer = setTimeout(() => {
         const dateKey = getCurrentDateKey();
         const data = {};
-        editableElements.forEach(el => { if (el.id) data[el.id] = el.innerText; });
+        document.querySelectorAll('.expand-input').forEach(el => {
+          if (el.id) data[el.id] = el.innerText;
+        });
         const activeTags = [];
         document.querySelectorAll('.pick-tag.selected').forEach(tag => activeTags.push(tag.getAttribute('data-tag')));
         const openBoxes = [];
@@ -5442,13 +5313,35 @@ setTimeout(() => {
             else tag.classList.remove('selected');
           });
           document.querySelectorAll('.remark-box').forEach(box => {
-            if (report.boxes && report.boxes.includes(box.id)) {
+            const btn = document.querySelector('.toggle-btn[data-target="' + box.id + '"]');
+            if (report.boxes && report.boxes.indexOf(box.id) !== -1) {
               box.classList.add('open');
-              const btn = document.querySelector(\`.toggle-btn[data-target="\${box.id}"]\`);
               if (btn) { btn.classList.add('active'); btn.innerText = '－'; }
+
+              // 若有動態多筆輸入框，依存檔資料重新建構
+              const baseId = box.id.replace('box_', '');
+              if (box.id.indexOf('box_cs_inquiry_desc_') !== 0) {
+                const multiKeys = Object.keys(report.data || {}).filter(k => k.indexOf(baseId + '_multi_') === 0);
+                if (multiKeys.length > 0) {
+                  multiKeys.sort((a, b) => {
+                    const idxA = parseInt(a.split('_').pop(), 10);
+                    const idxB = parseInt(b.split('_').pop(), 10);
+                    return idxA - idxB;
+                  });
+                  box.innerHTML = multiKeys.map((k, idx) => {
+                    const val = report.data[k] || '';
+                    const numLabel = multiKeys.length > 1 ? (idx + 1) + '.' : '';
+                    return '<span class="inline-flex items-baseline my-0.5"><span class="text-xs text-slate-400 font-mono font-bold mr-0.5">' + numLabel + '</span><span contenteditable="true" id="' + k + '" data-group="' + baseId + '" class="expand-input detail-input ' + (val ? 'has-text' : '') + '">' + val + '</span></span>';
+                  }).join('');
+
+                  box.querySelectorAll('.expand-input').forEach(el => {
+                    el.addEventListener('input', () => { updateTextColor(el); updateBracketStates(); saveCurrentDayReport(); });
+                    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.blur(); } });
+                  });
+                }
+              }
             } else {
               box.classList.remove('open');
-              const btn = document.querySelector(\`.toggle-btn[data-target="\${box.id}"]\`);
               if (btn) { btn.classList.remove('active'); btn.innerText = '＋'; }
             }
           });
@@ -6310,7 +6203,7 @@ setTimeout(() => {
     <!-- 設定操作者姓名與顏色 Modal -->
     <div id="userNameModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] hidden flex-col items-center justify-center p-4" onclick="if(event.target === this) window.closeUserNameModal()">
         <div class="bg-white rounded-2xl p-4 w-full max-w-[280px] shadow-2xl relative" onclick="event.stopPropagation()">
-            <h3 class="font-bold text-sm mb-3 text-slate-800 flex items-center border-b pb-2">下午 11:57 星期六 9-26下午 11:57 星期六 9-26
+            <h3 class="font-bold text-sm mb-3 text-slate-800 flex items-center border-b pb-2">
                 <i data-lucide="user-cog" class="w-4 h-4 mr-2 text-blue-500"></i> 設定操作者身分
             </h3>
             <div class="space-y-3">
