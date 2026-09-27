@@ -969,99 +969,63 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         };
 
         // ====== 全螢幕預覽旋轉處理函式 ======
-        // ====== 全螢幕預覽旋轉處理函式（完美支援雲端即時同步） ======
         window.rotateFullscreenImg = async (angleDeg, e) => {
             if (e) e.stopPropagation();
             const imgEl = $('imageViewerImg');
             if (!imgEl || !imgEl.src) return;
 
-            window.showToast("🔄 旋轉處理中...");
-
             try {
-                // 1. 使用 Canvas 執行旋轉與產生 4 切片
-                const result = await new Promise((resolve, reject) => {
+                const rotatedDataUrl = await new Promise((resolve, reject) => {
                     const img = new Image();
                     img.onload = () => {
-                        const isSwap = Math.abs(angleDeg) === 90 || Math.abs(angleDeg) === 270;
-                        const w = isSwap ? (img.naturalHeight || img.height) : (img.naturalWidth || img.width);
-                        const h = isSwap ? (img.naturalWidth || img.width) : (img.naturalHeight || img.height);
-
                         const cvs = document.createElement('canvas');
-                        cvs.width = w;
-                        cvs.height = h;
+                        const isSwap = Math.abs(angleDeg) === 90 || Math.abs(angleDeg) === 270;
+                        cvs.width = isSwap ? (img.naturalHeight || img.height) : (img.naturalWidth || img.width);
+                        cvs.height = isSwap ? (img.naturalWidth || img.width) : (img.naturalHeight || img.height);
 
                         const ctx = cvs.getContext('2d');
-                        ctx.imageSmoothingQuality = 'high';
-                        ctx.translate(w / 2, h / 2);
+                        ctx.translate(cvs.width / 2, cvs.height / 2);
                         ctx.rotate((angleDeg * Math.PI) / 180);
                         ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
-
-                        const fullDataUrl = cvs.toDataURL('image/jpeg', 0.85);
-
-                        // 直接從旋轉好的 Canvas 切割成 4 個部分 (不用再轉 Blob 讀取，最穩固)
-                        const chunkHeight = Math.floor(h / 4);
-                        const chunks = Array.from({ length: 4 }, (_, i) => {
-                            const sub = document.createElement('canvas');
-                            const curH = (i === 3) ? (h - chunkHeight * 3) : chunkHeight;
-                            sub.width = w;
-                            sub.height = curH;
-                            sub.getContext('2d').drawImage(cvs, 0, i * chunkHeight, w, curH, 0, 0, w, curH);
-                            return sub.toDataURL('image/jpeg', 0.6);
-                        });
-
-                        resolve({ fullDataUrl, chunks, w, h });
+                        resolve(cvs.toDataURL('image/jpeg', 0.85));
                     };
                     img.onerror = reject;
                     img.src = imgEl.src;
                 });
 
-                const { fullDataUrl, chunks } = result;
+                // 立即更新全螢幕畫面顯示
+                imgEl.src = rotatedDataUrl;
 
-                // 2. 立即更新當前放大畫面
-                imgEl.src = fullDataUrl;
-
+                // 若該圖片屬於圖庫已儲存的圖片，同步更新本機資料與快取
                 const itemId = window._currentViewerImageId;
                 if (itemId) {
-                    // 3. 更新本地快取與本機資料庫 (IndexedDB)
-                    memoryImageCache.set(itemId, fullDataUrl);
+                    memoryImageCache.set(itemId, rotatedDataUrl);
                     thumbImageCache.delete(itemId);
-                    await idbSet(itemId, fullDataUrl);
+                    await idbSet(itemId, rotatedDataUrl);
                     await idbDel(`thumb_v2_${itemId}`);
 
-                    // 重新產生縮圖並即刻更新圖庫卡片
+                    // 重新產生新縮圖並更新圖庫卡片
                     const newThumb = await getLowResThumbUrlAsync({ id: itemId });
                     const cardImg = document.getElementById(`gallery-img-${itemId}`);
                     if (cardImg) cardImg.src = newThumb;
 
-                    // 4. ====== 線上雲端同步 (關鍵寫入) ======
-                    if (currentUser && db && navigator.onLine) {
-                        const batch = writeBatch(db);
-                        
-                        // (a) 觸發主文件更新，更新時間戳記通知所有在線人員
-                        const mainRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', itemId);
-                        batch.update(mainRef, {
-                            updatedAt: Date.now(),
-                            chunkCount: chunks.length
-                        });
-
-                        // (b) 覆蓋雲端 4 個圖片切片
-                        chunks.forEach((chunkStr, idx) => {
-                            const chunkRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', itemId, 'chunks', `part_${idx}`);
-                            batch.set(chunkRef, { index: idx, data: chunkStr }, { merge: true });
-                        });
-
-                        await batch.commit();
-
-                        // 寫入日誌
-                        const itemObj = galleryItems.find(x => x.id === itemId);
-                        window.writeGalleryLog('旋轉圖片', itemObj?.title || itemId, `旋轉 ${angleDeg > 0 ? '右轉 90°' : '左轉 90°'}`);
-                        window.showToast("✅ 已同步旋轉至雲端！");
-                    } else {
-                        window.showToast("💾 已更新本機圖片（離線模式）");
+                    // 若為在線上傳狀態，同步切片至雲端
+                    if (currentUser && db) {
+                        try {
+                            const blob = dataURLToBlob(rotatedDataUrl);
+                            if (blob) {
+                                const { chunks } = await splitImageTo4ChunksAsync(blob);
+                                const batch = writeBatch(db);
+                                chunks.forEach((chunkStr, idx) => {
+                                    const chunkRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', itemId, 'chunks', `part_${idx}`);
+                                    batch.set(chunkRef, { index: idx, data: chunkStr });
+                                });
+                                await batch.commit();
+                            }
+                        } catch (cloudErr) {}
                     }
                 }
             } catch (err) {
-                console.error("旋轉同步錯誤:", err);
                 window.showToast("旋轉圖片失敗", true);
             }
         };
@@ -5355,65 +5319,16 @@ setTimeout(() => {
           const targetId = btn.getAttribute('data-target');
           const box = document.getElementById(targetId);
           if (!box) return;
-
-          // 判斷是否為「諮詢協助」（維持固定 6 個按鈕個別控制）
-          const isCsInquiry = targetId.startsWith('box_cs_inquiry_desc_');
-
           const isOpen = box.classList.toggle('open');
           if (isOpen) {
             btn.classList.add('active');
             btn.innerText = '－';
-
-            if (!isCsInquiry) {
-              // 取得同行前面的次數輸入框數值
-              const row = btn.closest('[data-trigger]');
-              const triggerId = row?.getAttribute('data-trigger');
-              const triggerEl = triggerId ? document.getElementById(triggerId) : null;
-              const countVal = triggerEl ? parseInt(triggerEl.innerText.trim(), 10) : 1;
-              const targetCount = (!isNaN(countVal) && countVal > 0) ? countVal : 1;
-
-              // 讀取當前或暫存的輸入資料
-              const baseId = targetId.replace('box_', '');
-              let savedList = window._reportMultiStore?.[baseId] || [];
-              box.querySelectorAll('.expand-input').forEach(inp => {
-                if (inp.innerText.trim()) savedList.push(inp.innerText.trim());
-              });
-
-              // 動態生成 targetCount 個輸入框
-              let html = '';
-              for (let i = 0; i < targetCount; i++) {
-                const val = savedList[i] || '';
-                const hasTextCls = val ? 'has-text' : '';
-                html += `<span class="inline-flex items-baseline my-0.5"><span class="text-xs text-slate-400 font-mono font-bold mr-0.5">${targetCount > 1 ? (i + 1) + '.' : ''}</span><span contenteditable="true" id="${baseId}_multi_${i}" data-group="${baseId}" class="expand-input detail-input ${hasTextCls}">${val}</span></span>`;
-              }
-              box.innerHTML = html;
-
-              // 重新為新生成的輸入框綁定事件
-              box.querySelectorAll('.expand-input').forEach(el => {
-                el.addEventListener('input', () => {
-                  updateTextColor(el);
-                  updateBracketStates();
-                  saveCurrentDayReport();
-                });
-                el.addEventListener('keydown', (e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
-                });
-              });
-            }
-
             const input = box.querySelector('.expand-input');
             if (input) setTimeout(() => input.focus(), 50);
           } else {
             btn.classList.remove('active');
             btn.innerText = '＋';
-            // 收起時暫存資料，不丟失使用者打好的文字
-            if (!isCsInquiry) {
-              const baseId = targetId.replace('box_', '');
-              window._reportMultiStore = window._reportMultiStore || {};
-              const vals = [];
-              box.querySelectorAll('.expand-input').forEach(inp => vals.push(inp.innerText.trim()));
-              window._reportMultiStore[baseId] = vals;
-            }
+            // 保留輸入內容，收起時不清除文字
           }
           saveCurrentDayReport();
         });
@@ -5451,9 +5366,7 @@ setTimeout(() => {
       autoSaveTimer = setTimeout(() => {
         const dateKey = getCurrentDateKey();
         const data = {};
-        document.querySelectorAll('.expand-input').forEach(el => {
-          if (el.id) data[el.id] = el.innerText;
-        });
+        editableElements.forEach(el => { if (el.id) data[el.id] = el.innerText; });
         const activeTags = [];
         document.querySelectorAll('.pick-tag.selected').forEach(tag => activeTags.push(tag.getAttribute('data-tag')));
         const openBoxes = [];
@@ -5529,34 +5442,13 @@ setTimeout(() => {
             else tag.classList.remove('selected');
           });
           document.querySelectorAll('.remark-box').forEach(box => {
-            const btn = document.querySelector(`.toggle-btn[data-target="${box.id}"]`);
             if (report.boxes && report.boxes.includes(box.id)) {
               box.classList.add('open');
+              const btn = document.querySelector(\`.toggle-btn[data-target="\${box.id}"]\`);
               if (btn) { btn.classList.add('active'); btn.innerText = '－'; }
-
-              // 若有動態多筆輸入框，依存檔資料重新建構
-              const baseId = box.id.replace('box_', '');
-              if (!box.id.startsWith('box_cs_inquiry_desc_')) {
-                const multiKeys = Object.keys(report.data || {}).filter(k => k.startsWith(`${baseId}_multi_`));
-                if (multiKeys.length > 0) {
-                  multiKeys.sort((a, b) => {
-                    const idxA = parseInt(a.split('_').pop(), 10);
-                    const idxB = parseInt(b.split('_').pop(), 10);
-                    return idxA - idxB;
-                  });
-                  box.innerHTML = multiKeys.map((k, idx) => {
-                    const val = report.data[k] || '';
-                    return `<span class="inline-flex items-baseline my-0.5"><span class="text-xs text-slate-400 font-mono font-bold mr-0.5">${multiKeys.length > 1 ? (idx + 1) + '.' : ''}</span><span contenteditable="true" id="${k}" data-group="${baseId}" class="expand-input detail-input ${val ? 'has-text' : ''}">${val}</span></span>`;
-                  }).join('');
-
-                  box.querySelectorAll('.expand-input').forEach(el => {
-                    el.addEventListener('input', () => { updateTextColor(el); updateBracketStates(); saveCurrentDayReport(); });
-                    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.blur(); } });
-                  });
-                }
-              }
             } else {
               box.classList.remove('open');
+              const btn = document.querySelector(\`.toggle-btn[data-target="\${box.id}"]\`);
               if (btn) { btn.classList.remove('active'); btn.innerText = '＋'; }
             }
           });
