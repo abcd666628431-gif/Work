@@ -597,7 +597,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
         window.toggleSettingsMenu = (e) => { if (e) e.stopPropagation(); $('settingsDropdown')?.classList.toggle('hidden'); };
         document.addEventListener('click', (e) => {
-            const dropdown = $('settingsDropdown'), btn = $('settingsMenuBtn');
+            const dropdown = $('settingsDropdown'), btn =$('settingsMenuBtn');
             if (dropdown && !dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && e.target !== btn) dropdown.classList.add('hidden');
         });
 
@@ -606,6 +606,51 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             return { date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, time: `${pad(d.getHours())}:${pad(d.getMinutes())}` };
         };
 
+        // 👇 ====== 【從這裡開始替換：修正點一】 ====== 👇
+
+        // 1. 依據照片「建立時間」是否早於今日凌晨 00:00 來精準歸檔
+        window.autoCleanupGalleryToTrash = async () => {
+            const now = new Date(Date.now() + timeOffset);
+            // 取得今天凌晨 00:00:00 的時間戳記
+            const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+            // 抓出所有「建立時間早於今天 00:00」且「尚未被軟刪除」的昨日/舊相片
+            const yesterdayItems = galleryItems.filter(i => !i.isDeleted && (i.createdAt || 0) < startOfToday);
+            if (!yesterdayItems.length) return;
+
+            const cleanupTime = Date.now();
+            yesterdayItems.forEach(i => {
+                i.isDeleted = true;
+                i.deletedAt = cleanupTime;
+            });
+
+            await saveGalleryItemsSafe(galleryItems);
+
+            // 同步雲端 Firebase 批次軟刪除
+            if (currentUser && db) {
+                try {
+                    const batch = writeBatch(db);
+                    yesterdayItems.forEach(i => {
+                        const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(i.id));
+                        batch.set(ref, { isDeleted: true, deletedAt: cleanupTime }, { merge: true });
+                    });
+                    await batch.commit();
+                } catch(e) {
+                    console.error("每日自動移至還原清單雲端同步失敗:", e);
+                }
+            }
+
+            window.writeGalleryLog('每日歸檔', `${yesterdayItems.length} 張昨日相片`, '跨日自動移至還原清單');
+            window._lastRenderFingerprint = '';
+            if (!$('galleryPage')?.classList.contains('hidden')) {
+                window.renderGallery();
+            }
+            if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
+                window.renderTrashList();
+            }
+        };
+
+        // 2. 每日排班重置與觸發相簿歸檔檢查
         function checkAndResetDailySchedule() {
             const todayStr = getNowInputStrs().date;
             
@@ -621,60 +666,13 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 safeSetLocal('work_cache_schedule_date', todayStr);
             }
 
-            // ====== 圖庫跨日自動清空至還原清單 ======
-            // 預設值必須為空字串 ''，絕不能給 todayStr，否則隔天會被判定為已清理！
-            const lastGalleryCleanupDate = getLocal('work_cache_gallery_cleanup_date', '');
-            if (!lastGalleryCleanupDate) {
-                // 首次使用時記錄今天日期
-                safeSetLocal('work_cache_gallery_cleanup_date', todayStr);
-            } else if (lastGalleryCleanupDate !== todayStr) {
-                // 日期不同（跨過午夜 00:00），立即執行自動清理
-                safeSetLocal('work_cache_gallery_cleanup_date', todayStr);
-                window.autoCleanupGalleryToTrash();
-            }
+            // 執行圖庫依日期檢查歸檔
+            window.autoCleanupGalleryToTrash();
         }
 
-        window.autoCleanupGalleryToTrash = async () => {
-            const now = Date.now();
-            
-            // 找出所有未被刪除的照片
-            const activeItems = galleryItems.filter(i => !i.isDeleted);
-            if (!activeItems.length) return;
-
-            // 標記本機資料為軟刪除
-            activeItems.forEach(i => {
-                i.isDeleted = true;
-                i.deletedAt = now;
-            });
-
-            await saveGalleryItemsSafe(galleryItems);
-
-            // 同步雲端批次軟刪除
-            if (currentUser && db) {
-                try {
-                    const batch = writeBatch(db);
-                    activeItems.forEach(i => {
-                        const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', i.id);
-                        batch.set(ref, { isDeleted: true, deletedAt: now }, { merge: true });
-                    });
-                    await batch.commit();
-                } catch(e) {
-                    console.error("每日自動移至還原清單失敗:", e);
-                }
-            }
-
-            window.writeGalleryLog('每日歸檔', `${activeItems.length} 張相片`, '午夜自動移至還原清單');
-            window._lastRenderFingerprint = '';
-            if (!$('galleryPage')?.classList.contains('hidden')) {
-                window.renderGallery();
-            }
-            if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
-                window.renderTrashList();
-            }
-        };
+        // 👆 ====== 【替換到這裡結束】 ====== 👆
 
         window.saveStateSnapshot = () => {
-
             actionHistory.push({ tasks: { ...taskCompletionState }, subtasks: JSON.parse(JSON.stringify(subTaskCompletionState || {})) });
             if (actionHistory.length > 30) actionHistory.shift();
         };
@@ -4406,8 +4404,16 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
 
         onAuthStateChanged(auth, (user) => {
             currentUser = user; const dot = $('connectionDot'), st = $('connectionStatus');
-            if (user) { dot?.classList.replace('bg-red-500', 'bg-green-500'); if (st) st.textContent = '系統已連線並同步'; setupPureRealtimeSync(); }
-            else { dot?.classList.replace('bg-green-500', 'bg-red-500'); if (st) st.textContent = '連線中...'; }
+            if (user) { 
+                dot?.classList.replace('bg-red-500', 'bg-green-500'); 
+                if (st) st.textContent = '系統已連線並同步'; 
+                setupPureRealtimeSync(); 
+                // 👇 關鍵補強：登入成功後，立刻檢查並將未同步的昨日圖片補推上雲端軟刪除
+                window.autoCleanupGalleryToTrash();
+            } else { 
+                dot?.classList.replace('bg-green-500', 'bg-red-500'); 
+                if (st) st.textContent = '連線中...'; 
+            }
         });
 
         // ====== 頂部累積疊加通知橫幅與音效管理 ======
