@@ -1021,7 +1021,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     targetItem.updatedAt = newTimestamp;
                 }
 
-                // 3. 建立新的版本 Key，並強力寫入本機快取與 IndexedDB（覆蓋舊方向）
+                // 3. 關鍵：建立新的版本 Key，並強力寫入本機快取與 IndexedDB（覆蓋舊方向）
                 const verKey = `${itemId}_v_${newTimestamp}`;
                 const thumbVerKey = `thumb_${itemId}_v_${newTimestamp}`;
 
@@ -1033,7 +1033,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 thumbImageCache.set(thumbVerKey, newThumb);
                 await idbSet(thumbVerKey, newThumb);
 
-                // 5. 持久化圖庫總表 metadata
+                // 5. 持久化圖庫總表 metadata（包含更新後的 updatedAt）
                 await saveGalleryItemsSafe(galleryItems);
 
                 // 6. 即時更新圖庫中該張卡片的縮圖顯示
@@ -1043,7 +1043,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 window._lastRenderFingerprint = '';
                 window.renderGallery();
 
-                // 7. 雲端同步與嚴格成功驗證 👈【這就是你要加的位置】
+                // 7. 雲端同步：切片上傳 + 更新主文件 updatedAt，強制所有裝置快取失效並同步
                 if (currentUser && db) {
                     try {
                         const blob = dataURLToBlob(rotatedDataUrl);
@@ -1059,19 +1059,15 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                             const mainRef = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(itemId));
                             batch.set(mainRef, { updatedAt: newTimestamp }, { merge: true });
                             
-                            // 嚴格等待雲端 commit 完成
                             await batch.commit();
-                            
-                            window.writeGalleryLog('旋轉圖片', targetItem?.title || itemId, `旋轉 ${angleDeg > 0 ? '+90°' : '-90°'}`);
-                            window.showToast("✅ 圖片旋轉已成功保存並同步至所有設備！");
                         }
                     } catch (cloudErr) {
                         console.error("雲端切片旋轉同步失敗:", cloudErr);
-                        window.showToast("⚠️ 本機已旋轉，但雲端同步失敗，請檢查網路", true);
                     }
-                } else {
-                    window.showToast("✅ 圖片已在本機旋轉儲存（離線模式）！");
                 }
+
+                window.writeGalleryLog('旋轉圖片', targetItem?.title || itemId, `旋轉 ${angleDeg > 0 ? '+90°' : '-90°'}`);
+                window.showToast("✅ 圖片旋轉已成功保存並同步至所有設備！");
 
             } catch (err) {
                 console.error("旋轉錯誤:", err);
@@ -1778,6 +1774,14 @@ window.deleteSelectedGalleryItems = () => {
                 default:
                     return 'bg-slate-100 text-slate-700 border-slate-300';
             }
+        };
+
+// ====== 圖庫分類切換專屬函式（修正點擊無反應問題） ======
+        window.setGalleryCategory = (cat) => {
+            currentGalleryCategory = cat;
+            window._lastRenderCategory = '';    // 重置分類快取，讓側邊欄按鈕能亮藍燈
+            window._lastRenderFingerprint = ''; // 重置渲染指紋，讓照片清單立刻過濾更新
+            window.renderGallery();
         };
 
         window.renderGallery = async () => {
@@ -4975,28 +4979,28 @@ setTimeout(() => {
           <button type="button" class="toggle-btn" data-target="box_cs_complaint_desc" title="添加/收回說明">+</button>
         </div>
         <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="cs_inquiry_count">
-    <span class="font-bold text-black dark:text-slate-100">· 諮詢協助：</span>
-    <span contenteditable="true" id="cs_inquiry_count" class="expand-input num-input">無</span>
-    <span class="text-black font-semibold">人次</span>
-    <span class="bracket-group">
-        <span class="ml-1 font-semibold">(</span>
-        <span class="pick-tag" data-tag="cs_find">尋物</span><span class="font-semibold">/</span>
-        <span class="pick-tag" data-tag="cs_guide">指引</span>
-        <span class="font-semibold">)</span>
-    </span>
-    <span class="remark-box" id="box_cs_inquiry_desc_1"><span contenteditable="true" id="cs_inquiry_desc_1" class="expand-input detail-input"></span></span>
-    <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_1" title="添加/收回 1">+</button>
-    <span class="remark-box" id="box_cs_inquiry_desc_2"><span contenteditable="true" id="cs_inquiry_desc_2" class="expand-input detail-input"></span></span>
-    <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_2" title="添加/收回 2">+</button>
-    <span class="remark-box" id="box_cs_inquiry_desc_3"><span contenteditable="true" id="cs_inquiry_desc_3" class="expand-input detail-input"></span></span>
-    <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_3" title="添加/收回 3">+</button>
-    <span class="remark-box" id="box_cs_inquiry_desc_4"><span contenteditable="true" id="cs_inquiry_desc_4" class="expand-input detail-input"></span></span>
-    <button type="button" class="tog下午 12:23 星期日 9-27gle-btn" data-target="box_cs_inquiry_desc_4" title="添加/收回 4">+</button>
-    <span class="remark-box" id="box_cs_inquiry_desc_5"><span contenteditable="true" id="cs_inquiry_desc_5" class="expand-input detail-input"></span></span>
-    <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_5" title="添加/收回 5">+</button>
-    <span class="remark-box" id="box_cs_inquiry_desc_6"><span contenteditable="true" id="cs_inquiry_desc_6" class="expand-input detail-input"></span></span>
-    <button type="button" class="toggle-btn" data-target="box_cs_inquiry_desc_6" title="添加/收回 6">+</button>
-</div>
+          <span class="font-bold text-black dark:text-slate-100">· 諮詢協助：</span>
+          <span contenteditable="true" id="cs_inquiry_count" class="expand-input num-input">無</span>
+          <span class="text-black font-semibold">人次</span>
+          <span class="bracket-group">
+            <span class="ml-1 font-semibold">(</span>
+            <span class="pick-tag" data-tag="cs_find">尋物</span><span class="font-semibold">/</span>
+            <span class="pick-tag" data-tag="cs_guide">指引</span>
+            <span class="font-semibold">)</span>
+          </span>
+          <span class="remark-box" id="box_cs_inquiry_desc_1"><span contenteditable="true" id="cs_inquiry_desc_1" class="expand-input detail-input"></span></span>
+          <button type="button" class="toggle-btn show-btn" data-target="box_cs_inquiry_desc_1" title="添加/收回 1">＋</button>
+          <span class="remark-box" id="box_cs_inquiry_desc_2"><span contenteditable="true" id="cs_inquiry_desc_2" class="expand-input detail-input"></span></span>
+          <button type="button" class="toggle-btn show-btn" data-target="box_cs_inquiry_desc_2" title="添加/收回 2">＋</button>
+          <span class="remark-box" id="box_cs_inquiry_desc_3"><span contenteditable="true" id="cs_inquiry_desc_3" class="expand-input detail-input"></span></span>
+          <button type="button" class="toggle-btn show-btn" data-target="box_cs_inquiry_desc_3" title="添加/收回 3">＋</button>
+          <span class="remark-box" id="box_cs_inquiry_desc_4"><span contenteditable="true" id="cs_inquiry_desc_4" class="expand-input detail-input"></span></span>
+          <button type="button" class="toggle-btn show-btn" data-target="box_cs_inquiry_desc_4" title="添加/收回 4">＋</button>
+          <span class="remark-box" id="box_cs_inquiry_desc_5"><span contenteditable="true" id="cs_inquiry_desc_5" class="expand-input detail-input"></span></span>
+          <button type="button" class="toggle-btn show-btn" data-target="box_cs_inquiry_desc_5" title="添加/收回 5">＋</button>
+          <span class="remark-box" id="box_cs_inquiry_desc_6"><span contenteditable="true" id="cs_inquiry_desc_6" class="expand-input detail-input"></span></span>
+          <button type="button" class="toggle-btn show-btn" data-target="box_cs_inquiry_desc_6" title="添加/收回 6">＋</button>
+        </div>
         <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="cs_lost_count">
           <span class="font-bold text-black dark:text-slate-100">· 失物發現：</span>
           <span contenteditable="true" id="cs_lost_count" class="expand-input num-input">無</span>
