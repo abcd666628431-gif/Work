@@ -851,6 +851,158 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             });
         };
 
+// ====== 全螢幕預覽控制函式 ======
+        window._currentViewerImageId = null;
+        window.openFullscreenImg = (src, itemId = null) => { 
+            window._currentViewerImageId = itemId;
+            const imgEl = $('imageViewerImg');
+            if (imgEl) imgEl.src = src; 
+            $('imageViewer')?.classList.replace('hidden', 'flex'); 
+            try { lucide.createIcons({ root: $('imageViewer') }); } catch (err) {}
+        };
+
+        window.closeFullscreenImg = () => {
+            window._currentViewerImageId = null;
+            $('imageViewer')?.classList.replace('flex', 'hidden');
+        };
+
+        // ====== 圖片拖曳防呆支援 ======
+        window.handleImageDragStart = (e, title, src) => {
+            if (e.dataTransfer) {
+                e.dataTransfer.setData('text/plain', title || '');
+            }
+        };
+
+        // ====== 拍照/選取圖片上傳入口函式 ======
+        window.handleGalleryUpload = async (input) => {
+            const files = Array.from(input.files || []);
+            input.value = '';
+            if (!files.length) return;
+            await window.processImageFilesUpload(files);
+        };
+
+        // ====== 支援累加/疊加拖入與選取圖片 (拖完一張可再拖多張) ======
+        window.processImageFilesUpload = async (files) => {
+            if (window.isUploading && navigator.onLine) {
+                return window.showToast("⚠️ 雲端同步進行中，請稍候再試", true);
+            }
+            const validFiles = Array.from(files || []).filter(f => f.type.startsWith('image/'));
+            if (!validFiles.length) return window.showToast("請選擇或拖入有效圖片檔案", true);
+
+            window.pendingUploadImages = window.pendingUploadImages || [];
+            
+            const { time } = getNowInputStrs();
+            const defaultCat = '未分類';
+            const initialCount = window.pendingUploadImages.length;
+
+            for (let i = 0; i < validFiles.length; i++) {
+                try {
+                    const { chunks } = await splitImageTo4ChunksAsync(validFiles[i]);
+                    const tempId = `img_${Date.now()}_${initialCount + i}_${Math.random().toString(36).substr(2, 4)}`;
+                    const previewSrc = await merge4ChunksAsync(chunks);
+                    
+                    window.pendingUploadImages.push({
+                        tempId, chunks, src: previewSrc,
+                        prefix: "", code: "", markStatus: "", title: "", time, category: defaultCat
+                    });
+                } catch (e) {
+                    console.error("圖片讀取處理失敗:", e);
+                }
+                const percent = (((i + 1) / validFiles.length) * 100).toFixed(1);
+                window.setUploadProgress(percent, `追加圖片中：${i + 1} / ${validFiles.length} (${percent}%)`);
+            }
+
+            window.setUploadProgress(-1, "");
+
+            if (window.pendingUploadImages.length > 0) {
+                const modal = $('uploadBatchModal');
+                const isAlreadyOpen = modal && !modal.classList.contains('hidden');
+
+                if (isAlreadyOpen) {
+                    if (window.pendingUploadImages.length > 1) {
+                        window.isBatchMergedView = true;
+                    }
+                    window.renderUploadBatchList();
+                    window.showToast(`➕ 已追加 ${validFiles.length} 張圖片！目前共 ${window.pendingUploadImages.length} 張`);
+                } else {
+                    window.openUploadBatchModal();
+                }
+            } else {
+                window.showToast("無法讀取圖片", true);
+            }
+        };
+
+        // ====== 全域拖曳監聽 (支援彈窗開啟時繼續拖入疊加) ======
+        window.setupGalleryDragAndDrop = () => {
+            if (window._globalDragInitialized) return;
+            window._globalDragInitialized = true;
+
+            let dragCounter = 0;
+
+            const isDropAllowed = () => {
+                const page = $('galleryPage');
+                const modal = $('uploadBatchModal');
+                const isGalleryActive = page && !page.classList.contains('hidden');
+                const isModalOpen = modal && !modal.classList.contains('hidden');
+                return isGalleryActive || isModalOpen;
+            };
+
+            window.addEventListener('dragover', (e) => e.preventDefault(), false);
+            window.addEventListener('drop', (e) => e.preventDefault(), false);
+
+            window.addEventListener('dragenter', (e) => {
+                e.preventDefault();
+                if (!isDropAllowed()) return;
+
+                dragCounter++;
+                const overlay = $('galleryDragOverlay');
+                if (overlay && e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
+                    overlay.classList.remove('hidden');
+                    overlay.classList.add('flex');
+                    try { lucide.createIcons({ root: overlay }); } catch (err) {}
+                }
+            });
+
+            window.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                if (!isDropAllowed()) return;
+                if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+            });
+
+            window.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                if (!isDropAllowed()) return;
+
+                dragCounter--;
+                if (dragCounter <= 0) {
+                    dragCounter = 0;
+                    const overlay = $('galleryDragOverlay');
+                    if (overlay) {
+                        overlay.classList.add('hidden');
+                        overlay.classList.remove('flex');
+                    }
+                }
+            });
+
+            window.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                if (!isDropAllowed()) return;
+
+                dragCounter = 0;
+                const overlay = $('galleryDragOverlay');
+                if (overlay) {
+                    overlay.classList.add('hidden');
+                    overlay.classList.remove('flex');
+                }
+
+                const files = e.dataTransfer?.files;
+                if (files && files.length > 0) {
+                    await window.processImageFilesUpload(files);
+                }
+            });
+        };
+        window.setupGalleryDragAndDrop();
+
         // ====== 全螢幕預覽旋轉處理函式 (強制版本覆蓋與雲端同步版) ======
         window.rotateFullscreenImg = async (angleDeg, e) => {
             if (e) e.stopPropagation();
