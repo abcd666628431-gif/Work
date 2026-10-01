@@ -1962,187 +1962,7 @@ window.deleteSelectedGalleryItems = () => {
             window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
         };
 
-        // ====== 點擊預覽圖修改圖片內容 (內建刪除鍵、判定卡片與手動鎖定) ======
-        window.openEditGalleryModal = (id, e) => {
-            if (e) e.stopPropagation();
-            const item = galleryItems.find(x => x.id === id);
-            if (!item) return;
-
-            const catList = ['提早收工', '營業相', '開工-雞相', '測溫相'];;
-            const curCat = (item.category === '收工' ? '提早收工' : item.category) || '提早收工';
-            const curTime = item.time || '12:00';
-
-            window._modalUserOverridden = false;
-
-            const modalHtml = `
-            <div id="galleryItemEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();">
-                <div class="bg-white rounded-2xl p-4 w-full max-w-[330px] shadow-2xl relative animate-pop-in" onclick="event.stopPropagation()">
-                    <header class="flex justify-between items-center pb-2.5 mb-2.5 border-b border-slate-100">
-                        <h3 class="font-bold text-sm text-slate-800 flex items-center">
-                            <i data-lucide="edit-3" class="w-4 h-4 mr-1.5 text-blue-500"></i> 修改圖片內容
-                        </h3>
-                        <button type="button" onclick="document.getElementById('galleryItemEditModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
-                            <i data-lucide="x" class="w-4 h-4"></i>
-                        </button>
-                    </header>
-
-                    <!-- 介面內提示框 -->
-                    <div id="editModalAutoHint" class="hidden mb-2.5 p-2 rounded-xl text-[11px] font-bold border transition-all flex items-center"></div>
-
-                    <div class="space-y-3">
-                        <div>
-                            <label class="text-[11px] font-bold text-slate-500 block mb-1">分類</label>
-                            <div class="grid grid-cols-4 gap-1.5" id="editModalCatGroup">
-                                ${catList.map(cat => `
-                                    <button type="button" onclick="window.setModalEditCat('${cat}', true)" data-cat="${cat}" 
-                                        class="modal-cat-btn py-1.5 rounded-lg text-xs font-bold border transition-all ${curCat === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
-                                        ${cat}
-                                    </button>
-                                `).join('')}
-                            </div>
-                            <input type="hidden" id="editModalCatInput" value="${curCat}">
-                        </div>
-
-                        <div>
-                            <label class="text-[11px] font-bold text-slate-500 block mb-1">標題 / 檔號</label>
-                            <input type="text" id="editModalTitleInput" value="${item.title || ''}" placeholder="例如: 1-002 或 R-061" 
-                                oninput="window.runModalAutoDetect(false)"
-                                class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500 text-center shadow-inner">
-                        </div>
-
-                        <div>
-                            <label class="text-[11px] font-bold text-slate-500 block mb-1">時間</label>
-                            <input type="time" id="editModalTimeInput" value="${curTime}" 
-                                onchange="window.runModalAutoDetect(false)"
-                                class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-blue-500 text-center shadow-inner">
-                        </div>
-                    </div>
-
-                    <div class="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center">
-                        <button type="button" onclick="window.deleteGalleryItem('${id}', event)" 
-                            class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center active:scale-95 shadow-2xs">
-                            <i data-lucide="trash-2" class="w-3.5 h-3.5 mr-1"></i>刪除
-                        </button>
-                        <div class="space-x-1.5">
-                            <button type="button" onclick="document.getElementById('galleryItemEditModal')?.remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold">取消</button>
-                            <button type="button" onclick="window.saveGalleryItemEdit('${id}')" class="px-3.5 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95">儲存</button>
-                        </div>
-                    </div>
-                </div>
-            </div>`;
-            document.body.insertAdjacentHTML('beforeend', modalHtml);
-            lucide.createIcons();
-            window.runModalAutoDetect(false);
-        };
-
-        window.runModalAutoDetect = (force = false) => {
-            if (window._modalUserOverridden && !force) return;
-
-            const titleVal = $('editModalTitleInput')?.value.trim() || '';
-            const timeVal = $('editModalTimeInput')?.value || '12:00';
-            const hintBox = $('editModalAutoHint');
-            if (!hintBox) return;
-
-            if (!titleVal || !window.stallList || !window.stallList.length) {
-                hintBox.className = 'hidden';
-                return;
-            }
-
-            let prefix = '', pureCode = titleVal;
-            if (/^1-?/i.test(pureCode)) { prefix = '一樓'; pureCode = pureCode.replace(/^1-?/i, ''); }
-            else if (/^R-?/i.test(pureCode)) { prefix = '地下'; pureCode = pureCode.replace(/^R-?/i, ''); }
-            else if (/^J-?/i.test(pureCode)) { prefix = '花園仔'; pureCode = pureCode.replace(/^J-?/i, ''); }
-            const cleanCode = pureCode.replace(/^0+/, '') || '0';
-
-            const matched = window.stallList.find(s => {
-                const sClean = String(s.code || '').replace(/^0+/, '');
-                if (sClean !== cleanCode) return false;
-                if (prefix) return s.floor.includes(prefix);
-                return true;
-            });
-
-            if (!matched || !matched.hours) {
-                hintBox.className = 'hidden';
-                return;
-            }
-
-            const closingTime = getClosingTime(matched.hours);
-            const [ch, cm] = closingTime.split(':').map(Number);
-            const [th, tm] = timeVal.split(':').map(Number);
-            const closeMins = ch * 60 + cm;
-            const targetMins = th * 60 + tm;
-            const diff = closeMins - targetMins;
-
-            hintBox.classList.remove('hidden');
-            // 提早大於 30 分鐘才算提早收工；30分鐘內寬限期算清潔
-            if (diff > 30) {
-                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col gap-0.5 animate-pop-in';
-                hintBox.innerHTML = `
-                    <div class="flex items-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500 shrink-0"></i> 判定：<span class="font-black text-red-600 ml-0.5">提早收工</span></div>
-                    <div class="text-[10px] text-red-500 font-medium pl-4.5">[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (超過 30 分寬限)</div>`;
-                if (isMerged) window.setMergedCategory('提早收工', false);
-else if (tempId) window.setPendingItemCategory(tempId, '提早收工', false);
-            } else {
-                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
-                const statusDetail = diff > 0 
-                    ? `[${matched.floor} ${matched.code}] 表定 ${closingTime}，提早 ${diff} 分鐘 (在 30 分鐘寬限期內)` 
-                    : `[${matched.floor} ${matched.code}] 表定 ${closingTime}，已過打烊時間`;
-                hintBox.innerHTML = `
-                    <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
-                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">${statusDetail}</div>`;
-                window.setModalEditCat('清潔', false);
-            }
-            lucide.createIcons({ root: hintBox });
-        };
-
-        window.setModalEditCat = (cat, isUserClick = false) => {
-            const input = $('editModalCatInput');
-            if (input) input.value = cat;
-
-            if (isUserClick) {
-                window._modalUserOverridden = true;
-                const hintBox = $('editModalAutoHint');
-                if (hintBox) {
-                    hintBox.classList.remove('hidden');
-                    hintBox.className = 'mb-2.5 p-1.5 px-2.5 rounded-xl text-[11px] font-bold border border-amber-200 bg-amber-50 text-amber-800 flex items-center justify-between';
-                    hintBox.innerHTML = `<span>✋ 已手動鎖定為「${cat}」</span><button type="button" onclick="window._modalUserOverridden=false; window.runModalAutoDetect(true);" class="text-[10px] text-blue-600 underline ml-2">重置自動判定</button>`;
-                }
-            }
-
-            document.querySelectorAll('.modal-cat-btn').forEach(btn => {
-                const isActive = btn.dataset.cat === cat;
-                btn.className = `modal-cat-btn py-1.5 rounded-lg text-xs font-bold border transition-all ${isActive ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}`;
-            });
-        };
-
-        window.saveGalleryItemEdit = (id) => {
-            const item = galleryItems.find(x => x.id === id);
-            if (!item) return;
-
-            const newTitle = $('editModalTitleInput')?.value.trim() || '無標題';
-            const newCat = $('editModalCatInput')?.value || '提早收工';
-            const newTime = $('editModalTimeInput')?.value || '12:00';
-
-            item.title = newTitle;
-            item.category = newCat;
-            item.time = newTime;
-
-            safeSetLocal('work_cache_gallery_items', galleryItems);
-            if (currentUser) {
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), {
-                    title: newTitle,
-                    category: newCat,
-                    time: newTime
-                }, { merge: true });
-            }
-
-            $('galleryItemEditModal')?.remove();
-            window._lastRenderFingerprint = '';
-            window.renderGallery();
-            window.showToast(`✅ 已儲存！分類確定為「${newCat}」`);
-        };
-
-        // ====== 根據「收工查核」自動判定：提早收工 / 清潔 (含 30 分鐘寬限期) ======
+        
         window.autoDetectStallCategory = (codeRaw, timeStr, fallbackCat) => {
             if (!codeRaw || !window.stallList || !window.stallList.length) return fallbackCat;
 
@@ -4808,10 +4628,7 @@ setTimeout(() => {
             </span>
             <span id="theme-text">深色模式</span>
           </button>
-          <button id="btn-fill-sample" class="px-3 py-1.5 text-xs sm:text-sm font-medium text-black dark:text-slate-200 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-xl transition-all flex items-center gap-1.5">
-            <svg class="w-3.5 h-3.5 text-black dark:text-slate-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
-            填入範例
-          </button>
+          
           <button id="btn-clear" class="px-3 py-1.5 text-xs sm:text-sm font-medium text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/40 rounded-xl transition-all flex items-center gap-1.5">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
             重設清空
@@ -5454,8 +5271,7 @@ setTimeout(() => {
               for (let i = 0; i < targetCount; i++) {
                 const val = savedList[i] || '';
                 const hasTextCls = val ? 'has-text' : '';
-                const numLabel = targetCount > 1 ? (i + 1) + '.' : '';
-                html += '<span class="inline-flex items-baseline my-0.5"><span class="text-xs text-slate-400 font-mono font-bold mr-0.5">' + numLabel + '</span><span contenteditable="true" id="' + baseId + '_multi_' + i + '" data-group="' + baseId + '" class="expand-input detail-input ' + hasTextCls + '">' + val + '</span></span>';
+                html += '<span class="inline-flex items-baseline my-0.5"><span contenteditable="true" id="' + baseId + '_multi_' + i + '" data-group="' + baseId + '" class="expand-input detail-input ' + hasTextCls + '">' + val + '</span></span>';
               }
               box.innerHTML = html;
 
@@ -5501,95 +5317,159 @@ setTimeout(() => {
     }
 
     function updateSaveStatusIndicator() {
-      const statusEl = document.getElementById('save-status-text');
-      if (!statusEl) return;
-      const now = new Date();
-      statusEl.innerText = \`已於 \${String(now.getHours()).padStart(2, '0')}:\${String(now.getMinutes()).padStart(2, '0')}:\${String(now.getSeconds()).padStart(2, '0')} 自動保存\`;
-    }
+          const statusEl = document.getElementById('save-status-text');
+          if (!statusEl) return;
+          const now = new Date();
+          statusEl.innerText = '已於 ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ':' + String(now.getSeconds()).padStart(2, '0') + ' 自動保存';
+        }
 
-    function getArchiveIndex() {
-      try { return JSON.parse(localStorage.getItem('market_reports_index') || '[]'); }
-      catch (e) { return []; }
-    }
+        function getArchiveIndex() {
+          try { return JSON.parse(localStorage.getItem('market_reports_index') || '[]'); }
+          catch (e) { return []; }
+        }
 
-    function updateHistoryCountBadge() {
-      const badge = document.getElementById('history-badge-count');
-      if (badge) badge.innerText = getArchiveIndex().length;
-    }
+        function updateHistoryCountBadge() {
+          const badge = document.getElementById('history-badge-count');
+          if (badge) badge.innerText = getArchiveIndex().length;
+        }
 
-    let autoSaveTimer = null;
-    function saveCurrentDayReport() {
-      clearTimeout(autoSaveTimer);
-      autoSaveTimer = setTimeout(() => {
-        const dateKey = getCurrentDateKey();
-        const data = {};
-        editableElements.forEach(el => { if (el.id) data[el.id] = el.innerText; });
-        const activeTags = [];
-        document.querySelectorAll('.pick-tag.selected').forEach(tag => activeTags.push(tag.getAttribute('data-tag')));
-        const openBoxes = [];
-        document.querySelectorAll('.remark-box.open').forEach(box => openBoxes.push(box.id));
+        // 👇 ====== 【從這裡開始替換：即時同步核心】 ====== 👇
 
-        const reportObject = { dateKey, updatedAt: new Date().toISOString(), data, tags: activeTags, boxes: openBoxes };
-        
-        try {
-          localStorage.setItem('market_report_' + dateKey, JSON.stringify(reportObject));
-          let index = getArchiveIndex();
-          if (!index.includes(dateKey)) {
-            index.push(dateKey);
-            index.sort((a, b) => b.localeCompare(a));
-            localStorage.setItem('market_reports_index', JSON.stringify(index));
+        let autoSaveTimer = null;
+        function saveCurrentDayReport() {
+          clearTimeout(autoSaveTimer);
+          // 縮短為 80 毫秒防抖，每打一個字即時送出雲端
+          autoSaveTimer = setTimeout(() => {
+            const dateKey = getCurrentDateKey();
+            const data = {};
+            // 動態取得所有輸入框（包含加號展開出來的多個輸入框）
+            document.querySelectorAll('.expand-input').forEach(el => { 
+              if (el.id) data[el.id] = el.innerText; 
+            });
+            const activeTags = [];
+            document.querySelectorAll('.pick-tag.selected').forEach(tag => activeTags.push(tag.getAttribute('data-tag')));
+            const openBoxes = [];
+            document.querySelectorAll('.remark-box.open').forEach(box => openBoxes.push(box.id));
+
+            const reportObject = { dateKey: dateKey, updatedAt: new Date().toISOString(), data: data, tags: activeTags, boxes: openBoxes };
+            
+            try {
+              localStorage.setItem('market_report_' + dateKey, JSON.stringify(reportObject));
+              let index = getArchiveIndex();
+              if (!index.includes(dateKey)) {
+                index.push(dateKey);
+                index.sort((a, b) => b.localeCompare(a));
+                localStorage.setItem('market_reports_index', JSON.stringify(index));
+              }
+            } catch(e) {}
+
+            try {
+              window.parent.postMessage({
+                type: 'SAVE_MEETING_REPORT',
+                dateKey: dateKey,
+                report: reportObject
+              }, '*');
+            } catch(e) {}
+
+            updateSaveStatusIndicator();
+            updateHistoryCountBadge();
+          }, 80);
+        }
+
+        // 全域委託監聽：任何輸入框打字、中文選字完成，即時觸發同步
+        document.addEventListener('input', (e) => {
+          if (e.target && e.target.classList && e.target.classList.contains('expand-input')) {
+            updateTextColor(e.target);
+            updateBracketStates();
+            updateToggleBtnVisibility();
+            saveCurrentDayReport();
           }
-        } catch(e) {}
+        });
+        document.addEventListener('compositionend', (e) => {
+          if (e.target && e.target.classList && e.target.classList.contains('expand-input')) {
+            updateTextColor(e.target);
+            saveCurrentDayReport();
+          }
+        });
+
+        // 接收端：欄位級即時變更
+        window.addEventListener('message', (event) => {
+          if (event.data?.type !== 'SYNC_MEETING_REPORTS') return;
+          const reports = event.data.reports || {};
+          const index = Object.keys(reports).sort((a, b) => b.localeCompare(a));
+          try {
+            localStorage.setItem('market_reports_index', JSON.stringify(index));
+            Object.keys(reports).forEach((k) => {
+              localStorage.setItem('market_report_' + k, JSON.stringify(reports[k]));
+            });
+          } catch(e) {}
+
+          const currentKey = getCurrentDateKey();
+          const currentReport = reports[currentKey];
+          if (!currentReport || !currentReport.data) {
+            updateHistoryCountBadge();
+            return;
+          }
+
+          // 1. 同步標籤選取
+          if (currentReport.tags) {
+            pickTags.forEach(tag => {
+              const id = tag.getAttribute('data-tag');
+              if (currentReport.tags.includes(id)) tag.classList.add('selected');
+              else tag.classList.remove('selected');
+            });
+          }
+
+          // 2. 同步展開框
+          if (currentReport.boxes) {
+            document.querySelectorAll('.remark-box').forEach(box => {
+              const btn = document.querySelector('.toggle-btn[data-target="' + box.id + '"]');
+              if (currentReport.boxes.includes(box.id)) {
+                box.classList.add('open');
+                if (btn) { btn.classList.add('active'); btn.innerText = '－'; }
+              } else {
+                box.classList.remove('open');
+                if (btn) { btn.classList.remove('active'); btn.innerText = '＋'; }
+              }
+            });
+          }
+
+          // 3. 欄位級同步：排除自己目前正在輸入的格子，其他格子即時變動
+          document.querySelectorAll('.expand-input').forEach(el => {
+            if (!el.id || el.id === 'meta_year' || el.id === 'meta_month' || el.id === 'meta_day') return;
+            if (document.activeElement === el) return; // 保護當前打字游標不跳動
+
+            const remoteVal = currentReport.data[el.id] !== undefined ? currentReport.data[el.id] : (el.classList.contains('num-input') ? '無' : '');
+            if (el.innerText !== remoteVal) {
+              el.innerText = remoteVal;
+              updateTextColor(el);
+            }
+          });
+
+          updateBracketStates();
+          updateToggleBtnVisibility();
+          updateHistoryCountBadge();
+        });
+
+        // 👆 ====== 【替換到這裡結束】 ====== 👆
 
         try {
-          window.parent.postMessage({
-            type: 'SAVE_MEETING_REPORT',
-            dateKey,
-            report: reportObject
-          }, '*');
+          window.parent.postMessage({ type: 'REQUEST_MEETING_REPORTS' }, '*');
         } catch(e) {}
 
-        updateSaveStatusIndicator();
-        updateHistoryCountBadge();
-      }, 150);
-    }
-
-    window.addEventListener('message', (event) => {
-      if (event.data?.type !== 'SYNC_MEETING_REPORTS') return;
-      const reports = event.data.reports || {};
-      const index = Object.keys(reports).sort((a, b) => b.localeCompare(a));
-      try {
-        localStorage.setItem('market_reports_index', JSON.stringify(index));
-        Object.keys(reports).forEach((k) => {
-          localStorage.setItem('market_report_' + k, JSON.stringify(reports[k]));
-        });
-      } catch(e) {}
-
-      const isTyping = document.activeElement && document.activeElement.classList.contains('expand-input');
-      if (!isTyping) {
-        const currentKey = getCurrentDateKey();
-        loadReportByDate(currentKey);
-      }
-      updateHistoryCountBadge();
-    });
-
-    try {
-      window.parent.postMessage({ type: 'REQUEST_MEETING_REPORTS' }, '*');
-    } catch(e) {}
-
-    function loadReportByDate(targetDateKey) {
-      const parts = targetDateKey.split('-');
-      if (parts.length === 3) {
-        metaYear.innerText = parts[0]; metaMonth.innerText = parts[1]; metaDay.innerText = parts[2];
-        updateTextColor(metaYear); updateTextColor(metaMonth); updateTextColor(metaDay);
-      }
+        function loadReportByDate(targetDateKey) {
+          const parts = targetDateKey.split('-');
+          if (parts.length === 3) {
+            metaYear.innerText = parts[0]; metaMonth.innerText = parts[1]; metaDay.innerText = parts[2];
+            updateTextColor(metaYear); updateTextColor(metaMonth); updateTextColor(metaDay);
+          }
 
       let savedRaw = localStorage.getItem('market_report_' + targetDateKey);
       let isInherited = false;
 
-      // 關鍵：若當天尚無記錄，自動尋找上一筆（前一天）的記錄進行繼承
+      // 若當天尚無記錄，自動尋找上一筆（前一天）的歷史記錄進行繼承
       if (!savedRaw) {
-        const index = getArchiveIndex(); // 歷史記錄索引
+        const index = getArchiveIndex();
         const prevDateKey = index.find(k => k < targetDateKey) || index[0];
         if (prevDateKey) {
           const prevRaw = localStorage.getItem('market_report_' + prevDateKey);
@@ -5615,7 +5495,7 @@ setTimeout(() => {
             else tag.classList.remove('selected');
           });
           document.querySelectorAll('.remark-box').forEach(box => {
-            // 改用字串相加，避免觸發外層反引號解析錯誤
+            // 純字串相加，絕不觸發外層反引號解析錯誤
             const btn = document.querySelector('.toggle-btn[data-target="' + box.id + '"]');
             if (report.boxes && report.boxes.includes(box.id)) {
               box.classList.add('open');
@@ -5627,10 +5507,10 @@ setTimeout(() => {
           });
           updateBracketStates();
 
-          // 若為繼承過來的資料，自動保存為今天的新草稿
+          // 若為繼承過來的資料，自動存為今天草稿
           if (isInherited) {
             saveCurrentDayReport();
-            showToast("📋 已自動繼承前日資料！");
+            showToast('📋 已自動繼承前日匯報資料！');
           }
           return;
         } catch (e) {}
@@ -5885,96 +5765,6 @@ setTimeout(() => {
       saveCurrentDayReport();
       updateBracketStates();
       showToast('已重設當前日子的填寫內容');
-    });
-
-    document.getElementById('btn-fill-sample').addEventListener('click', () => {
-      const samples = {
-        'meta_year': String(today.getFullYear()),
-        'meta_month': String(today.getMonth() + 1).padStart(2, '0'),
-        'meta_day': String(today.getDate()).padStart(2, '0'),
-        'sec_cases': '1',
-        'sec_detail': '全日秩序良好，無違規記錄',
-        'clean_cases': '1',
-        'clean_detail': '海鮮檔外側通道微量積水，已即時安排清理刮乾',
-        'pest_count': '1',
-        'pest_loc': '垃圾房周邊',
-        'pest_type': '少量果蠅痕跡',
-        'pest_detail': '已補放誘捕板及藥劑',
-        'rep_comp_total': '2',
-        'rep_comp_desc': '公廁沖水掣更換完畢',
-        'rep_vend_total': '1',
-        'rep_vend_desc': '中央空調保養商預約今日下午到場',
-        'drain_count': '1',
-        'drain_loc': '活禽及鮮肉區排水渠',
-        'drain_desc': '清出少量菜葉雜物，水流恢復通暢',
-        'clean_equip_count': '1',
-        'clean_equip': '高壓水槍運作正常 / 洗地機電池充足',
-        'cs_dispute_count': '無',
-        'cs_dispute_desc': '商戶關係和諧',
-        'cs_complaint_count': '1',
-        'cs_complaint_desc': '反映通道推車暫阻，已即時勸喻檔主騰空',
-        'cs_inquiry_count': '12',
-        'cs_inquiry_desc_1': '尋路與街市泊車諮詢',
-        'cs_lost_count': '1',
-        'cs_lost_time': '下午 14:30',
-        'cs_lost_desc': '拾獲八達通一張，已存服務台待領',
-        'gov_req_items': '1',
-        'gov_req_deadline': '本週五前',
-        'gov_req_detail': '更換公眾洗手液補充紀錄表',
-        'gov_doc_count': '1',
-        'gov_doc_progress': '80',
-        'gov_doc_desc': '消防月檢表整理中',
-        'gov_inspect_count': '1',
-        'gov_inspect_desc': '食環署巡視，有核對清潔點更表，合規',
-        'task_priority_count': '1',
-        'task_priority': '1. 冷氣排水檢修；2. 鮮肉區高壓沖洗',
-        'task_prevent_count': '1',
-        'task_prevent': '出入口預備防滑地墊，加強巡邏頻次',
-        'task_hazard_count': '1',
-        'task_hazard_desc': '電線保護槽已固定',
-        'sp_weather_count': '1',
-        'sp_weather': '開啟各抽風機與除濕機，各出入口已放防滑黃地膠',
-        'sp_leakage_count': '無',
-        'sp_leakage': '各檔口防水插座日常巡檢完成，無跳閘或外露線路',
-        'sp_tour_count': '1',
-        'sp_tour_name': '社區小學環保教育團',
-        'sp_tour_purpose': '街市減廢與分類宣傳',
-        'sp_tour_staff': '2',
-        'sp_councilor_count': '無',
-        'sp_councilor_desc': '無',
-        'sp_official_count': '1',
-        'sp_official_desc': '食環署人員視察',
-        'oth_incident_count': '無',
-        'oth_incident_desc': '全日運作平穩，無突發事故',
-        'oth_staff_count': '正常',
-        'oth_staff_behavior': '',
-        'oth_attendance_count': '正常',
-        'oth_attendance': ''
-      };
-
-      Object.entries(samples).forEach(([id, text]) => {
-        const el = document.getElementById(id);
-        if (el) {
-          el.innerText = text;
-          updateTextColor(el);
-          const parentBox = el.closest('.remark-box');
-          if (parentBox) {
-            parentBox.classList.add('open');
-            const toggleBtn = document.querySelector(\`.toggle-btn[data-target="\${parentBox.id}"]\`);
-            if (toggleBtn) { toggleBtn.classList.add('active'); toggleBtn.innerText = '－'; }
-          }
-        }
-      });
-
-      ['clean_water', 'eq_washer', 'eq_sweeper', 'cs_find'].forEach(tagId => {
-        const tagEl = document.querySelector(\`.pick-tag[data-tag="\${tagId}"]\`);
-        if (tagEl) tagEl.classList.add('selected');
-      });
-
-      updateBracketStates();
-      updateToggleBtnVisibility();
-      saveCurrentDayReport();
-      showToast('已填入標準範例數據並自動保存');
     });
 
     const htmlEl = document.documentElement;
