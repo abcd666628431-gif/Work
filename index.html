@@ -322,41 +322,44 @@ window.getLocal = getLocal;
         window._isTogglingTask = false;
 
         const defaultTabVisibility = { patrol: true, gallery: true, timeline: true, memo: true, map: true, coldRoom: true, closing: true, meetingReport: true };
-// 強制全部顯示，清除舊的隱藏狀態
-let tabVisibilityState = { ...defaultTabVisibility };
-safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
-        const defaultTabOrder = ['patrol', 'gallery', 'timeline', 'memo', 'map', 'coldRoom', 'closing', 'meetingReport'];
-        let tabOrderList = getLocal('work_tab_order_ids', defaultTabOrder);
+const defaultTabOrder = ['patrol', 'gallery', 'timeline', 'memo', 'map', 'coldRoom', 'closing', 'meetingReport'];
 
-        const tabMetadataMap = {
-            patrol: { name: '剔檔', btnId: 'tabPatrol', icon: 'clipboard-check' },
-            gallery: { name: '圖庫', btnId: 'tabGallery', icon: 'image' },
-            timeline: { name: '動態', btnId: 'tabTimeline', icon: 'activity' },
-            memo: { name: '備忘', btnId: 'tabMemo', icon: 'calendar-clock' },
-            map: { name: '地圖', btnId: 'tabMap', icon: 'map' },
-            coldRoom: { name: '雪房', btnId: 'tabColdRoom', icon: 'snowflake' },
-                        closing: { name: '收工', btnId: 'tabClosing', icon: 'store' },
-            meetingReport: { name: '匯報', btnId: 'tabMeetingReport', icon: 'clipboard-pen-line' }
-        };
+// 正確讀取本機設定，不要強制全部顯示
+let tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility);
+let tabOrderList = getLocal('work_tab_order_ids', defaultTabOrder);
 
-        // ===== 自動補齊缺少的分頁（解決「剔檔」不出現的問題）=====
-        (function ensureAllTabsPresent() {
-            // 1. 補可見狀態
-            Object.keys(defaultTabVisibility).forEach(k => {
-                if (tabVisibilityState[k] === undefined) {
-                    tabVisibilityState[k] = true;
-                }
-            });
-            // 2. 補排序（缺少的就加進去）
-            defaultTabOrder.forEach(k => {
-                if (!tabOrderList.includes(k)) {
-                    tabOrderList.push(k);
-                }
-            });
-            // 3. 存回本機
-            safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
-            safeSetLocal('work_tab_order_ids', tabOrderList);
-        })();
+const tabMetadataMap = {
+    patrol: { name: '剔檔', btnId: 'tabPatrol', icon: 'clipboard-check' },
+    gallery: { name: '圖庫', btnId: 'tabGallery', icon: 'image' },
+    timeline: { name: '動態', btnId: 'tabTimeline', icon: 'activity' },
+    memo: { name: '備忘', btnId: 'tabMemo', icon: 'calendar-clock' },
+    map: { name: '地圖', btnId: 'tabMap', icon: 'map' },
+    coldRoom: { name: '雪房', btnId: 'tabColdRoom', icon: 'snowflake' },
+    closing: { name: '收工', btnId: 'tabClosing', icon: 'store' },
+    meetingReport: { name: '匯報', btnId: 'tabMeetingReport', icon: 'clipboard-pen-line' }
+};
+
+// 只補「從來沒出現過」的分頁，不會把你已隱藏的打開
+(function ensureAllTabsPresent() {
+    let changed = false;
+    Object.keys(defaultTabVisibility).forEach(k => {
+        if (tabVisibilityState[k] === undefined) {
+            tabVisibilityState[k] = defaultTabVisibility[k];
+            changed = true;
+        }
+    });
+    defaultTabOrder.forEach(k => {
+        if (!tabOrderList.includes(k)) {
+            tabOrderList.push(k);
+            changed = true;
+        }
+    });
+    tabOrderList = tabOrderList.filter(k => !!tabMetadataMap[k]);
+    if (changed) {
+        safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
+        safeSetLocal('work_tab_order_ids', tabOrderList);
+    }
+})();
 
         window.applyTabVisibility = () => {
             const container = $('tabBarContainer');
@@ -602,7 +605,9 @@ safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
         ];
 
         let patrolFloor = 'ALL';
-        let patrolSlot = '上午9點';
+        let patrolSlot = (typeof window.getAutoPatrolSlot === 'function')
+    ? window.getAutoPatrolSlot()
+    : '上午9點';
         let patrolViewMode = 'focus';
         let patrolFocusIndex = 0;
         let focusAutoTimer = null;
@@ -638,6 +643,28 @@ safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
             '下午6點': 18 * 60
         };
 
+// 依現實時間自動選擇對應巡查時段
+window.getAutoPatrolSlot = () => {
+    const now = window.getNow ? window.getNow() : new Date();
+    const mins = now.getHours() * 60 + now.getMinutes();
+    // 規則：已到達哪個時段就選哪個（由晚到早判斷）
+    if (mins >= 18 * 60) return '下午6點';   // 18:00 之後
+    if (mins >= 16 * 60) return '下午4點';   // 16:00～17:59
+    if (mins >= 11 * 60) return '上午11點';  // 11:00～15:59
+    return '上午9點';                        // 11:00 之前
+};
+
+// 套用自動時段（可在進入剔檔分頁時呼叫）
+window.applyAutoPatrolSlot = () => {
+    const autoSlot = window.getAutoPatrolSlot();
+    if (patrolSlot !== autoSlot) {
+        window.setPatrolSlot(autoSlot);
+    } else {
+        // 即使相同也更新一次按鈕樣式
+        window.setPatrolSlot(autoSlot);
+    }
+};
+
         window.getPatrolKey = (stall) => `${stall.floor}-${stall.id}`;
         window.getPatrolStatus = (stall, slot) => {
             const dateRecords = patrolHistoryStore[currentPatrolDate] || {};
@@ -645,18 +672,21 @@ safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
         };
 
         window.clearFocusAutoTimer = () => {
-            if (focusAutoTimer) {
-                clearTimeout(focusAutoTimer);
-                focusAutoTimer = null;
-            }
-            const bar = $('focusCountdownBar');
-            const inner = $('focusCountdownInner');
-            if (bar) bar.classList.add('hidden');
-            if (inner) {
-                inner.classList.remove('animate-countdown-bar');
-                inner.style.width = '100%';
-            }
-        };
+    if (focusAutoTimer) {
+        clearTimeout(focusAutoTimer);
+        focusAutoTimer = null;
+    }
+    const bar = $('focusCountdownBar');
+    const inner = $('focusCountdownInner');
+    if (bar) {
+        bar.classList.add('opacity-0', 'pointer-events-none');
+        bar.classList.remove('opacity-100');
+    }
+    if (inner) {
+        inner.classList.remove('animate-countdown-bar');
+        inner.style.width = '100%';
+    }
+};
 
         window.autoSyncClosedStallsToPatrol = (silent = true) => {
             if (!Array.isArray(galleryItems) || !galleryItems.length) return 0;
@@ -792,22 +822,22 @@ safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
                 }
 
                 if (patrolViewMode === 'focus') {
-                    window.clearFocusAutoTimer();
-                    const bar = $('focusCountdownBar');
-                    const inner = $('focusCountdownInner');
-                    if (bar && inner) {
-                        bar.classList.remove('hidden');
-                        inner.classList.remove('animate-countdown-bar');
-                        void inner.offsetWidth;
-                        inner.classList.add('animate-countdown-bar');
-                    }
+    window.clearFocusAutoTimer();
+    const bar = $('focusCountdownBar');
+    const inner = $('focusCountdownInner');
+    if (bar && inner) {
+        bar.classList.remove('opacity-0', 'pointer-events-none');
+        bar.classList.add('opacity-100');
+        inner.classList.remove('animate-countdown-bar');
+        void inner.offsetWidth;
+        inner.classList.add('animate-countdown-bar');
+    }
 
-                    focusAutoTimer = setTimeout(() => {
-                        window.patrolFocusNext(true);
-                    }, 5000);
-                }
-            }
-
+    focusAutoTimer = setTimeout(() => {
+        window.patrolFocusNext(true);
+    }, 5000);
+}
+}
             patrolState = patrolHistoryStore[currentPatrolDate] || {};
             safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
             safeSetLocal('work_cache_patrol_records', patrolState);
@@ -1065,7 +1095,7 @@ safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
                     <div id="patrol-card-${stall.floor}-${stall.id}" class="p-3 rounded-2xl border-2 transition-all shadow-sm ${isFilled ? cardBg : cardUnfilledBg}">
                         <div class="flex items-center justify-between border-b border-slate-200/60 pb-2 mb-2">
                             <div class="flex items-center space-x-2.5 min-w-0">
-                                <span class="bg-slate-950 text-white font-mono font-black text-2xl sm:text-3xl px-3 py-1 rounded-xl shrink-0 shadow-sm leading-none">${stall.id}</span>
+                                <span class="bg-slate-950 text-white font-black text-2xl sm:text-3xl px-3 py-1 rounded-xl shrink-0 shadow-sm leading-none tracking-wide">${stall.id}</span>
                                 ${genderTag}
                                 <span class="text-xs sm:text-sm font-bold text-slate-500 truncate tracking-tight">(${stall.name})</span>
                             </div>
@@ -1149,8 +1179,9 @@ safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
                     $('focusBadgeA')?.setAttribute('class', status === 'A' ? 'w-9 h-9 bg-white text-emerald-600 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs' : 'w-9 h-9 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs');
                     $('focusBadge1')?.setAttribute('class', status === '1' ? 'w-9 h-9 bg-white text-amber-600 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs' : 'w-9 h-9 bg-amber-100 text-amber-800 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs');$('focusBadge0')?.setAttribute('class', status === '0' ? 'w-9 h-9 bg-white text-slate-700 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs' : 'w-9 h-9 bg-slate-100 text-slate-800 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs');
 
-                    $('focusCheckA')?.setAttribute('class', status === 'A' ? 'w-5 h-5 text-white' : 'w-5 h-5 text-emerald-500');
-                    $('focusCheck1')?.setAttribute('class', status === '1' ? 'w-5 h-5 text-white' : 'w-5 h-5 text-amber-600');$('focusCheck0')?.setAttribute('class', status === '0' ? 'w-5 h-5 text-white' : 'w-5 h-5 text-slate-600');
+                    $('focusCheckA')?.setAttribute('class', status === 'A' ? 'w-5 h-5 text-white' : 'w-5 h-5 text-emerald-500 hidden');
+$('focusCheck1')?.setAttribute('class', status === '1' ? 'w-5 h-5 text-white' : 'w-5 h-5 text-amber-600 hidden');
+$('focusCheck0')?.setAttribute('class', status === '0' ? 'w-5 h-5 text-white' : 'w-5 h-5 text-slate-600 hidden');
                 }
             }
             if (window.lucide) lucide.createIcons();
@@ -3853,8 +3884,7 @@ window.deleteSelectedGalleryItems = () => {
             tabOrderList = getLocal('work_tab_order_ids', defaultTabOrder);
             checkAndResetDailySchedule(); 
             window.applyTabVisibility();
-            const lastTab = localStorage.getItem('activeTab') || 'gallery';
-window.switchTab(lastTab);
+            window.switchTab('gallery');   // 每次都固定開圖庫
         }
 
         function setupPureRealtimeSync() {
@@ -3914,16 +3944,23 @@ window.switchTab(lastTab);
             });
 
             bindSync('tab_visibility', 'work_cache_tab_visibility', d => { 
-                if (d.visibility) { 
-                    tabVisibilityState = d.visibility; 
-                    safeSetLocal('work_cache_tab_visibility', tabVisibilityState); 
-                }
-                if (d.order && Array.isArray(d.order)) {
-                    tabOrderList = d.order;
-                    safeSetLocal('work_tab_order_ids', tabOrderList);
-                }
-                window.applyTabVisibility(); 
-            });
+    if (d.visibility) { 
+        // 用預設值當底，再蓋上雲端資料，避免舊資料把新分頁弄不見
+        tabVisibilityState = { ...defaultTabVisibility, ...d.visibility };
+        // 強制「剔檔」一定顯示（可依需求拿掉這行）
+        tabVisibilityState.patrol = true;
+        safeSetLocal('work_cache_tab_visibility', tabVisibilityState); 
+    }
+    if (d.order && Array.isArray(d.order)) {
+        tabOrderList = d.order.filter(k => !!tabMetadataMap[k]);
+        // 補上缺少的分頁
+        defaultTabOrder.forEach(k => {
+            if (!tabOrderList.includes(k)) tabOrderList.push(k);
+        });
+        safeSetLocal('work_tab_order_ids', tabOrderList);
+    }
+    window.applyTabVisibility(); 
+});
 
             bindSync('coldRoom', 'coldRoomRecords', d => {
                 if (d.records) { crRecords = d.records; safeSetLocal('coldRoomRecords', crRecords); }
@@ -4787,23 +4824,24 @@ window.crSaveData = () => {
             const pages = { patrol: 'patrolPage', gallery: 'galleryPage', timeline: 'timelinePage', memo: 'memoPage', map: 'mapPage', coldRoom: 'coldRoomPage', closing: 'closingPage', meetingReport: 'meetingReportPage' };
 
 ({
-                patrol: () => {
-                    window.autoSyncClosedStallsToPatrol(true);
-                    window.setPatrolViewMode(patrolViewMode);
-                },
-                gallery: window.renderGallery,
-                timeline: () => window.renderTimeline(true),
-                memo: window.renderMemos,
-                map: window.renderMap,
-                coldRoom: window.crRenderList,
-                closing: () => { window.searchStall?.(); },
-                meetingReport: () => {
-                    const iframe = $('meetingReportPageIframe');
-                    if (iframe && !iframe.srcdoc) {
-                        iframe.srcdoc = window.MEETING_REPORT_HTML_SRC;
-                    }
-                }
-            })[tab]?.();
+    patrol: () => {
+        window.applyAutoPatrolSlot();
+        window.autoSyncClosedStallsToPatrol(true);
+        window.setPatrolViewMode(patrolViewMode);
+    },
+    gallery: window.renderGallery,
+    timeline: () => window.renderTimeline(true),
+    memo: window.renderMemos,
+    map: window.renderMap,
+    coldRoom: window.crRenderList,
+    closing: () => { window.searchStall?.(); },
+    meetingReport: () => {
+        const iframe = $('meetingReportPageIframe');
+        if (iframe && !iframe.srcdoc) {
+            iframe.srcdoc = window.MEETING_REPORT_HTML_SRC;
+        }
+    }
+})[tab]?.();
 
             const actCls = "flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
             const inactCls = "flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap";
@@ -5350,11 +5388,11 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         initAuth();
 
         window.addEventListener('DOMContentLoaded', () => {
-            window.applyTabVisibility();
-            window.updatePatrolDateInputUI();
-            window.switchTab(localStorage.getItem('activeTab') || 'gallery');
-            if (window.lucide) lucide.createIcons();
-        });
+    window.applyTabVisibility();
+    window.updatePatrolDateInputUI();
+    window.switchTab('gallery');   // 每次都固定開圖庫
+    if (window.lucide) lucide.createIcons();
+});
 
         // ====== 頂部累積疊加通知橫幅與音效管理 ======
         window._galleryNewCount = 0;
@@ -6788,7 +6826,7 @@ setTimeout(() => {
         </header>
 
         <!-- ==================== 1. 剔檔 (巡查) 專屬分頁 ==================== -->
-        <main id="patrolPage" class="flex-1 min-h-0 flex-col relative z-10 bg-[#fdfbf7] overflow-hidden">
+        <main id="patrolPage" class="hidden flex-1 min-h-0 flex-col relative z-10 bg-[#fdfbf7] overflow-hidden">
             <div class="px-3 pt-2 pb-2 bg-white border-b border-slate-200 shrink-0 space-y-1.5 shadow-xs">
                 <div class="flex items-center justify-between pb-1 relative">
                     <div class="flex items-center text-xs font-black text-slate-800">
@@ -6896,7 +6934,7 @@ setTimeout(() => {
 
                         <div class="flex-1 px-2">
                             <div class="flex justify-center items-center mb-1">
-                                <span id="focusStallId" class="bg-slate-950 text-white font-mono font-black text-3xl sm:text-4xl px-4 py-1 rounded-2xl shadow-sm leading-none">J-002</span>
+                                <span id="focusStallId" class="bg-slate-950 text-white font-black text-3xl sm:text-4xl px-4 py-1 rounded-2xl shadow-sm leading-none tracking-wide">J-002</span>
                             </div>
                             <div id="focusStallGender" class="my-1.5 flex justify-center">
                                 <span class="bg-blue-600 text-white font-black text-lg px-3 py-1 rounded-xl shadow-xs leading-none">[男]</span>
@@ -6915,15 +6953,17 @@ setTimeout(() => {
                         </button>
                     </div>
 
-                    <div id="focusCountdownBar" class="hidden mb-3.5 px-1">
-                        <div class="flex justify-between items-center text-[12px] font-bold text-emerald-700 mb-1 px-1">
-                            <span class="flex items-center"><i data-lucide="check-circle" class="w-3.5 h-3.5 mr-1 text-emerald-600"></i>已確認記錄</span>
-                            <span class="font-mono text-emerald-800">5秒後自動下一檔...</span>
-                        </div>
-                        <div class="w-full bg-slate-200 h-2 rounded-full overflow-hidden shadow-inner">
-                            <div id="focusCountdownInner" class="bg-emerald-500 h-full w-full rounded-full transition-none"></div>
-                        </div>
-                    </div>
+                    <div class="h-[42px] mb-2 px-1 flex flex-col justify-center">
+    <div id="focusCountdownBar" class="opacity-0 pointer-events-none transition-opacity duration-200">
+        <div class="flex justify-between items-center text-[12px] font-bold text-emerald-700 mb-1 px-1">
+            <span class="flex items-center"><i data-lucide="check-circle" class="w-3.5 h-3.5 mr-1 text-emerald-600"></i>已確認記錄</span>
+            <span class="font-mono text-emerald-800">5秒後自動下一檔...</span>
+        </div>
+        <div class="w-full bg-slate-200 h-2 rounded-full overflow-hidden shadow-inner">
+            <div id="focusCountdownInner" class="bg-emerald-500 h-full w-full rounded-full transition-none"></div>
+        </div>
+    </div>
+</div>
 
                     <div class="space-y-3">
                         <button id="focusBtnA" onclick="window.patrolFocusChoose('A')" class="btn-style-capsule w-full py-3.5 px-4 rounded-full font-black text-base flex items-center justify-between cursor-pointer select-none bg-white text-emerald-800 border-emerald-300 hover:bg-emerald-50 shadow-sm">
@@ -6931,10 +6971,10 @@ setTimeout(() => {
                                 <span id="focusBadgeA" class="w-9 h-9 bg-emerald-100 text-emerald-800 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs">A</span>
                                 <span class="text-left leading-tight">
                                     <div class="text-lg">【A】檔主在場</div>
-                                    <div class="text-[11px] font-normal opacity-90">承租人本人在場親自經營</div>
+                                    
                                 </span>
                             </span>
-                            <i id="focusCheckA" data-lucide="check" class="w-5 h-5 text-emerald-600"></i>
+                            <i id="focusCheckA" data-lucide="check" class="w-5 h-5 text-emerald-600 hidden"></i>
                         </button>
 
                         <button id="focusBtn1" onclick="window.patrolFocusChoose('1')" class="btn-style-capsule w-full py-3.5 px-4 rounded-full font-black text-base flex items-center justify-between cursor-pointer select-none bg-white text-amber-800 border-amber-300 hover:bg-amber-50 shadow-sm">
@@ -6942,10 +6982,10 @@ setTimeout(() => {
                                 <span id="focusBadge1" class="w-9 h-9 bg-amber-100 text-amber-800 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs">1</span>
                                 <span class="text-left leading-tight">
                                     <div class="text-lg">【1】協作人在場</div>
-                                    <div class="text-[11px] font-normal opacity-90">承租人不在，只有員工或協助人</div>
+                                    
                                 </span>
                             </span>
-                            <i id="focusCheck1" data-lucide="check" class="w-5 h-5 text-amber-600"></i>
+                            <i id="focusCheck1" data-lucide="check" class="w-5 h-5 text-amber-600 hidden"></i>
                         </button>
 
                         <button id="focusBtn0" onclick="window.patrolFocusChoose('0')" class="btn-style-capsule w-full py-3.5 px-4 rounded-full font-black text-base flex items-center justify-between cursor-pointer select-none bg-white text-slate-800 border-slate-300 hover:bg-slate-50 shadow-sm">
@@ -6953,10 +6993,10 @@ setTimeout(() => {
                                 <span id="focusBadge0" class="w-9 h-9 bg-slate-100 text-slate-800 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs">0</span>
                                 <span class="text-left leading-tight">
                                     <div class="text-lg">【0】無人在場</div>
-                                    <div class="text-[11px] font-normal opacity-90">店舖未營業或無人在場</div>
+                                    
                                 </span>
                             </span>
-                            <i id="focusCheck0" data-lucide="check" class="w-5 h-5 text-slate-600"></i>
+                            <i id="focusCheck0" data-lucide="check" class="w-5 h-5 text-slate-600 hidden"></i>
                         </button>
                     </div>
                 </div>
@@ -7074,7 +7114,7 @@ setTimeout(() => {
             </div>
         </main>
 
-        <main id="galleryPage" class="hidden flex-1 min-h-0 flex-col relative z-10 bg-[#fdfbf7] overflow-hidden">
+        <main id="galleryPage" class="flex-1 min-h-0 flex-col relative z-10 bg-[#fdfbf7] overflow-hidden">
             <div id="globalProgressContainer" class="hidden absolute top-0 left-0 right-0 z-[300] bg-slate-900/95 backdrop-blur-md p-3 text-white border-b border-blue-500 shadow-2xl">
                 <div class="flex justify-between items-center text-xs font-bold mb-1.5"><span id="globalProgressText" class="text-blue-300">正在處理...</span></div>
                 <div class="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
