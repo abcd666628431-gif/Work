@@ -321,8 +321,8 @@ window.getLocal = getLocal;
         window.isUploading = false;
         window._isTogglingTask = false;
 
-        const defaultTabVisibility = { patrol: true, gallery: true, timeline: true, memo: true, map: true, coldRoom: true, closing: true, meetingReport: true };
-const defaultTabOrder = ['patrol', 'gallery', 'timeline', 'memo', 'map', 'coldRoom', 'closing', 'meetingReport'];
+        const defaultTabVisibility = { patrol: true, gallery: true, timeline: true, memo: true, map: true, coldRoom: true, closing: true };
+const defaultTabOrder = ['patrol', 'gallery', 'timeline', 'memo', 'map', 'coldRoom', 'closing'];
 
 // 正確讀取本機設定，不要強制全部顯示
 let tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility);
@@ -335,8 +335,7 @@ const tabMetadataMap = {
     memo: { name: '備忘', btnId: 'tabMemo', icon: 'calendar-clock' },
     map: { name: '地圖', btnId: 'tabMap', icon: 'map' },
     coldRoom: { name: '雪房', btnId: 'tabColdRoom', icon: 'snowflake' },
-    closing: { name: '收工', btnId: 'tabClosing', icon: 'store' },
-    meetingReport: { name: '匯報', btnId: 'tabMeetingReport', icon: 'clipboard-pen-line' }
+    closing: { name: '收工', btnId: 'tabClosing', icon: 'store' },    
 };
 
 // 只補「從來沒出現過」的分頁，不會把你已隱藏的打開
@@ -765,7 +764,7 @@ window.applyAutoPatrolSlot = () => {
                 patrolState = patrolHistoryStore[currentPatrolDate];
                 safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
                 safeSetLocal('work_cache_patrol_records', patrolState);
-                syncConfig('patrol_history', { history: patrolHistoryStore });
+                syncConfig('patrol_history', { history: patrolHistoryStore }, true);
                 syncConfig('patrol_records_' + currentPatrolDate, { records: patrolState });
                 if (!silent) {
                     window.showToast(`⚡ 依今日收工/清潔照片，已自動判定 ${autoFilledCount} 個時段為【無人】！`);
@@ -841,7 +840,7 @@ window.applyAutoPatrolSlot = () => {
             patrolState = patrolHistoryStore[currentPatrolDate] || {};
             safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
             safeSetLocal('work_cache_patrol_records', patrolState);
-            syncConfig('patrol_history', { history: patrolHistoryStore });
+            syncConfig('patrol_history', { history: patrolHistoryStore }, true);
             syncConfig('patrol_records_' + currentPatrolDate, { records: patrolState });
             window.renderPatrol();
         };
@@ -1035,6 +1034,60 @@ window.applyAutoPatrolSlot = () => {
         window.getFilteredPatrolStalls = () => {
             if (patrolFloor === 'ALL') return RAW_PATROL_STALLS;
             return RAW_PATROL_STALLS.filter(s => s.floor === patrolFloor);
+        };
+
+        window.openPatrolFilledList = () => {
+            const stalls = window.getFilteredPatrolStalls ? window.getFilteredPatrolStalls() : RAW_PATROL_STALLS;
+            const filled = stalls.filter(s => window.getPatrolStatus(s, patrolSlot));
+            const list = $('patrolFilledList');
+            const label = $('patrolFilledSlotLabel');
+            const countEl = $('patrolFilledCount');
+            if (label) label.innerText = patrolSlot;
+            if (countEl) countEl.innerText = filled.length;
+            if (!list) return;
+
+            if (!filled.length) {
+                list.innerHTML = `<div class="text-center py-10 text-slate-400 text-xs font-bold">本時段尚未有任何已剔選記錄</div>`;
+            } else {
+                list.innerHTML = filled.map(stall => {
+                    const status = window.getPatrolStatus(stall, patrolSlot);
+                    const reason = (patrolHistoryStore[currentPatrolDate] || {})[window.getPatrolKey(stall)]?.[`${patrolSlot}_reason`] || '';
+                    let badge = '';
+                    if (status === 'A') badge = `<span class="bg-emerald-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full">A 檔主</span>`;
+                    else if (status === '1') badge = `<span class="bg-amber-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full">1 協作人</span>`;
+                    else badge = `<span class="bg-slate-600 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full">0 無人</span>`;
+
+                    return `
+                    <button type="button" onclick="window.jumpToPatrolStall('${stall.floor}','${stall.id}')"
+                        class="w-full flex items-center justify-between p-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 rounded-xl text-left active:scale-[0.98] transition-all">
+                        <div class="flex items-center space-x-2 min-w-0">
+                            <span class="bg-slate-900 text-white font-black text-xs px-2 py-0.5 rounded-lg shrink-0">${stall.id}</span>
+                            <span class="text-[11px] font-bold text-slate-600 truncate">${stall.floor} · ${stall.name || ''}</span>
+                        </div>
+                        <div class="flex items-center space-x-1.5 shrink-0">
+                            ${badge}
+                            ${reason ? `<span class="text-[9px] text-amber-700 bg-amber-100 px-1 rounded">${reason}</span>` : ''}
+                        </div>
+                    </button>`;
+                }).join('');
+            }
+            $('patrolFilledModal')?.classList.replace('hidden', 'flex');
+            if (window.lucide) lucide.createIcons({ root: $('patrolFilledModal') });
+        };
+
+        window.closePatrolFilledList = () => {
+            $('patrolFilledModal')?.classList.replace('flex', 'hidden');
+        };
+
+        window.jumpToPatrolStall = (floor, id) => {
+            window.closePatrolFilledList();
+            const stalls = window.getFilteredPatrolStalls ? window.getFilteredPatrolStalls() : RAW_PATROL_STALLS;
+            const idx = stalls.findIndex(s => s.floor === floor && s.id === id);
+            if (idx >= 0) {
+                patrolFocusIndex = idx;
+                if (patrolViewMode !== 'focus') window.setPatrolViewMode('focus');
+                else window.renderPatrol();
+            }
         };
 
         window.renderPatrol = () => {
@@ -1386,7 +1439,7 @@ $('focusCheck0')?.setAttribute('class', status === '0' ? 'w-5 h-5 text-white' : 
             patrolState = patrolHistoryStore[currentPatrolDate];
             safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
             safeSetLocal('work_cache_patrol_records', patrolState);
-            syncConfig('patrol_history', { history: patrolHistoryStore });
+            syncConfig('patrol_history', { history: patrolHistoryStore }, true);
             syncConfig('patrol_records_' + currentPatrolDate, { records: patrolState });
             window.renderPatrol();
             window.showToast(`已模擬快填【${currentPatrolDate} ${patrolSlot}】！`);
@@ -3914,16 +3967,7 @@ window.deleteSelectedGalleryItems = () => {
                         safeSetLocal('market_report_' + k, reports[k]);
                     });
 
-                    // 同步直接派發通知給 iframe
-                    const iframe = document.getElementById('meetingReportIframe');
-                    if (iframe && iframe.contentWindow) {
-                        try {
-                            iframe.contentWindow.postMessage({
-                                type: 'SYNC_MEETING_REPORTS',
-                                reports: reports
-                            }, '*');
-                        } catch(e) {}
-                    }
+                    window.pushMeetingReportsToAllIframes(reports);
                 }
             }, console.error);
 
@@ -4821,7 +4865,7 @@ window.crSaveData = () => {
         };
 
         window.switchTab = (tab) => {
-            const pages = { patrol: 'patrolPage', gallery: 'galleryPage', timeline: 'timelinePage', memo: 'memoPage', map: 'mapPage', coldRoom: 'coldRoomPage', closing: 'closingPage', meetingReport: 'meetingReportPage' };
+            const pages = { patrol: 'patrolPage', gallery: 'galleryPage', timeline: 'timelinePage', memo: 'memoPage', map: 'mapPage', coldRoom: 'coldRoomPage', closing: 'closingPage' };
 
 ({
     patrol: () => {
@@ -4835,12 +4879,6 @@ window.crSaveData = () => {
     map: window.renderMap,
     coldRoom: window.crRenderList,
     closing: () => { window.searchStall?.(); },
-    meetingReport: () => {
-        const iframe = $('meetingReportPageIframe');
-        if (iframe && !iframe.srcdoc) {
-            iframe.srcdoc = window.MEETING_REPORT_HTML_SRC;
-        }
-    }
 })[tab]?.();
 
             const actCls = "flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
@@ -5352,22 +5390,37 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         }
 
         function setupPatrolSync() {
-            if (!currentUser) return;
-            onSnapshot(cfgDoc('patrol_history'), (snap) => {
-                if (snap.exists()) {
-                    const data = snap.data();
-                    if (data && data.history) {
-                        patrolHistoryStore = { ...patrolHistoryStore, ...data.history };
-                        patrolState = patrolHistoryStore[currentPatrolDate] || {};
-                        safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
-                        safeSetLocal('work_cache_patrol_records', patrolState);
-                        if (!$('patrolPage')?.classList.contains('hidden')) {
-                            window.renderPatrol();
-                        }
-                    }
+    if (!currentUser) return;
+    onSnapshot(cfgDoc('patrol_history'), (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        if (!data || !data.history) return;
+
+        const remote = data.history;
+        Object.keys(remote).forEach(dateKey => {
+            if (!patrolHistoryStore[dateKey]) {
+                patrolHistoryStore[dateKey] = remote[dateKey];
+                return;
+            }
+            const localDay = patrolHistoryStore[dateKey];
+            const remoteDay = remote[dateKey] || {};
+            Object.keys(remoteDay).forEach(stallKey => {
+                if (!localDay[stallKey]) {
+                    localDay[stallKey] = remoteDay[stallKey];
+                    return;
                 }
-            }, console.error);
+                localDay[stallKey] = { ...localDay[stallKey], ...remoteDay[stallKey] };
+            });
+        });
+
+        patrolState = patrolHistoryStore[currentPatrolDate] || {};
+        safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
+        safeSetLocal('work_cache_patrol_records', patrolState);
+        if (!$('patrolPage')?.classList.contains('hidden')) {
+            window.renderPatrol();
         }
+    }, console.error);
+}
 
         onAuthStateChanged(auth, (user) => {
             currentUser = user; const dot = $('connectionDot'), st = $('connectionStatus');
@@ -5517,41 +5570,42 @@ setTimeout(() => {
                     }
                 }
             } else if (event.data?.type === 'REQUEST_MEETING_REPORTS') {
-                const all = getLocal('market_reports_all_data', {});
-                const iframe = document.getElementById('meetingReportIframe');
-                if (iframe && iframe.contentWindow) {
-                    iframe.contentWindow.postMessage({
-                        type: 'SYNC_MEETING_REPORTS',
-                        reports: all
-                    }, '*');
-                }
-            }
+    window.pushMeetingReportsToAllIframes(getLocal('market_reports_all_data', {}));
+}
         });
 
-        window.openMeetingReportModal = () => {
-            const modal = document.getElementById('meetingReportModal');
-            const iframe = document.getElementById('meetingReportIframe');
-            if (modal && iframe) {
-                const pushLatest = () => {
-                    const all = getLocal('market_reports_all_data', {}); // 👈 改這裡
-                    try {
-                        iframe.contentWindow.postMessage({
-                            type: 'SYNC_MEETING_REPORTS',
-                            reports: all
-                        }, '*');
-                    } catch(e) {}
-                };
+// 同時把開會記錄推給「分頁 iframe」和「彈窗 iframe」
+window.pushMeetingReportsToAllIframes = (reports) => {
+    const data = reports || getLocal('market_reports_all_data', {});
+    ['meetingReportIframe', 'meetingReportPageIframe'].forEach(id => {
+        const iframe = document.getElementById(id);
+        if (iframe && iframe.contentWindow) {
+            try {
+                iframe.contentWindow.postMessage({
+                    type: 'SYNC_MEETING_REPORTS',
+                    reports: data
+                }, '*');
+            } catch (e) {}
+        }
+    });
+};
 
-                if (!iframe.srcdoc) {
-                    iframe.srcdoc = window.MEETING_REPORT_HTML_SRC;
-                    iframe.onload = () => setTimeout(pushLatest, 150);
-                } else {
-                    pushLatest();
-                }
-                modal.classList.replace('hidden', 'flex');
-                if (window.lucide) lucide.createIcons();
-            }
-        };
+        window.openMeetingReportModal = () => {
+    const modal = document.getElementById('meetingReportModal');
+    const iframe = document.getElementById('meetingReportIframe');
+    if (modal && iframe) {
+        const pushLatest = () => window.pushMeetingReportsToAllIframes();
+
+        if (!iframe.srcdoc) {
+            iframe.srcdoc = window.MEETING_REPORT_HTML_SRC;
+            iframe.onload = () => setTimeout(pushLatest, 150);
+        } else {
+            pushLatest();
+        }
+        modal.classList.replace('hidden', 'flex');
+        if (window.lucide) lucide.createIcons();
+    }
+};
 
         window.closeMeetingReportModal = () => {
             document.getElementById('meetingReportModal')?.classList.replace('flex', 'hidden');
@@ -6900,7 +6954,9 @@ setTimeout(() => {
 
                 <div class="flex items-center justify-between bg-blue-50/70 border border-blue-200 rounded-xl px-2.5 py-1 text-[15px]">
                     <div class="flex items-center space-x-2 flex-1 mr-2">
-                        <span class="font-bold text-blue-950 shrink-0">進度: <span id="patrolProgressText" class="font-black text-blue-700">0/0</span></span>
+                        <button type="button" onclick="window.openPatrolFilledList()" class="font-bold text-blue-950 shrink-0 active:scale-95 transition-transform text-left">
+    進度: <span id="patrolProgressText" class="font-black text-blue-700 underline decoration-dotted">0/0</span>
+</button>
                         <div class="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
                             <div id="patrolProgressBar" class="bg-emerald-500 h-full w-0 transition-all duration-300"></div>
                         </div>
@@ -7245,12 +7301,6 @@ setTimeout(() => {
             </div>
         </main>
 
-        <!-- 👇 這裡就是新增的【開會記錄 (匯報)】內嵌分頁主結構 👇 -->
-        <main id="meetingReportPage" class="hidden flex-1 min-h-0 flex-col relative z-10 bg-[#f1f5f9] overflow-hidden">
-            <iframe id="meetingReportPageIframe" class="w-full flex-1 border-none bg-[#f1f5f9] dark:bg-slate-900"></iframe>
-        </main>
-        <!-- 👆 新增結束 👆 -->
-
     </div>
 
     <div id="tabVisibilityModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] hidden flex-col items-center justify-center p-4">
@@ -7516,6 +7566,32 @@ setTimeout(() => {
             </div>
         </div>
     </div>
+            </div>
+        </div>
+    </div>
+
+<!-- 已剔檔清單 -->
+<div id="patrolFilledModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[280] hidden flex-col items-center justify-center p-3">
+    <div class="bg-white rounded-2xl p-4 w-full max-w-[360px] max-h-[80vh] shadow-2xl flex flex-col" onclick="event.stopPropagation()">
+        <header class="flex justify-between items-center pb-2.5 mb-2 border-b border-slate-100 shrink-0">
+            <h3 class="font-bold text-sm text-slate-800 flex items-center">
+                <i data-lucide="list-checks" class="w-4 h-4 mr-1.5 text-blue-500"></i>
+                已剔選清單 · <span id="patrolFilledSlotLabel" class="text-blue-600"></span>
+            </h3>
+            <button type="button" onclick="window.closePatrolFilledList()" class="text-slate-400 p-1">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </header>
+        <div class="text-[11px] text-slate-500 mb-2 shrink-0">
+            共 <span id="patrolFilledCount" class="font-black text-blue-600">0</span> 檔已填
+        </div>
+        <div id="patrolFilledList" class="flex-1 overflow-y-auto space-y-1.5 pr-0.5 scrollbar-hide"></div>
+        <div class="pt-2.5 border-t border-slate-100 flex justify-end shrink-0 mt-2">
+            <button type="button" onclick="window.closePatrolFilledList()" class="px-4 py-1.5 bg-slate-800 text-white rounded-xl text-xs font-bold">關閉</button>
+        </div>
+    </div>
+</div>
+
 <!-- 開會記錄全螢幕彈窗 -->
     <div id="meetingReportModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[1500] hidden flex-col items-center justify-center p-1 sm:p-4">
         <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-4xl h-[95vh] flex flex-col overflow-hidden border border-slate-200 dark:border-slate-700">
