@@ -846,27 +846,31 @@ window.applyAutoPatrolSlot = () => {
                 }
 
                 if (patrolViewMode === 'focus') {
-    window.clearFocusAutoTimer();
-    const bar = $('focusCountdownBar');
-    const inner = $('focusCountdownInner');
-    if (bar && inner) {
-        bar.classList.remove('opacity-0', 'pointer-events-none');
-        bar.classList.add('opacity-100');
-        inner.classList.remove('animate-countdown-bar');
-        void inner.offsetWidth;
-        inner.classList.add('animate-countdown-bar');
-    }
+                    window.clearFocusAutoTimer();
+                    const bar = $('focusCountdownBar');
+                    const inner = $('focusCountdownInner');
+                    if (bar && inner) {
+                        bar.classList.remove('opacity-0', 'pointer-events-none');
+                        bar.classList.add('opacity-100');
+                        inner.classList.remove('animate-countdown-bar');
+                        void inner.offsetWidth;
+                        inner.classList.add('animate-countdown-bar');
+                    }
 
-    focusAutoTimer = setTimeout(() => {
-        window.patrolFocusNext(true);
-    }, 5000);
-}
-}
+                    focusAutoTimer = setTimeout(() => {
+                        window.patrolFocusNext(true);
+                    }, 5000);
+                }
+            }
+
             patrolState = patrolHistoryStore[currentPatrolDate] || {};
             safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
             safeSetLocal('work_cache_patrol_records', patrolState);
-            syncConfig('patrol_history', { history: patrolHistoryStore }, true);
-            syncConfig('patrol_records_' + currentPatrolDate, { records: patrolState });
+
+            // 🌟 關鍵修正：取消或修改時，將 merge 設為 false，全量覆蓋寫入，確保雲端已被刪除的鍵值徹底消失
+            syncConfig('patrol_history', { history: patrolHistoryStore }, false);
+            syncConfig('patrol_records_' + currentPatrolDate, { records: patrolState }, false);
+
             window.renderPatrol();
         };
 
@@ -5426,37 +5430,23 @@ setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
         }
 
         function setupPatrolSync() {
-    if (!currentUser) return;
-    onSnapshot(cfgDoc('patrol_history'), (snap) => {
-        if (!snap.exists()) return;
-        const data = snap.data();
-        if (!data || !data.history) return;
+            if (!currentUser) return;
+            onSnapshot(cfgDoc('patrol_history'), (snap) => {
+                if (!snap.exists()) return;
+                const data = snap.data();
+                if (!data || !data.history) return;
 
-        const remote = data.history;
-        Object.keys(remote).forEach(dateKey => {
-            if (!patrolHistoryStore[dateKey]) {
-                patrolHistoryStore[dateKey] = remote[dateKey];
-                return;
-            }
-            const localDay = patrolHistoryStore[dateKey];
-            const remoteDay = remote[dateKey] || {};
-            Object.keys(remoteDay).forEach(stallKey => {
-                if (!localDay[stallKey]) {
-                    localDay[stallKey] = remoteDay[stallKey];
-                    return;
+                // 🌟 直接將雲端最新歷史覆蓋本地，避免保留已刪除的舊狀態
+                patrolHistoryStore = data.history;
+
+                patrolState = patrolHistoryStore[currentPatrolDate] || {};
+                safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
+                safeSetLocal('work_cache_patrol_records', patrolState);
+                if (!$('patrolPage')?.classList.contains('hidden')) {
+                    window.renderPatrol();
                 }
-                localDay[stallKey] = { ...localDay[stallKey], ...remoteDay[stallKey] };
-            });
-        });
-
-        patrolState = patrolHistoryStore[currentPatrolDate] || {};
-        safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
-        safeSetLocal('work_cache_patrol_records', patrolState);
-        if (!$('patrolPage')?.classList.contains('hidden')) {
-            window.renderPatrol();
+            }, console.error);
         }
-    }, console.error);
-}
 
         onAuthStateChanged(auth, (user) => {
             currentUser = user; const dot = $('connectionDot'), st = $('connectionStatus');
