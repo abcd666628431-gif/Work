@@ -1840,14 +1840,13 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
         // 👇 ====== 【從這裡開始替換：修正點一】 ====== 👇
 
-        // 1. 依據照片「建立時間」是否早於今日凌晨 00:00 來精準歸檔
+        // 1. 每日自動清理：排除已被手動還原的相片 (!i.restored)
         window.autoCleanupGalleryToTrash = async () => {
-            const now = new Date(Date.now() + timeOffset);
-            // 取得今天凌晨 00:00:00 的時間戳記
+            const now = window.getNow();
             const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 
-            // 抓出所有「建立時間早於今天 00:00」且「尚未被軟刪除」的昨日/舊相片
-            const yesterdayItems = galleryItems.filter(i => !i.isDeleted && (i.createdAt || 0) < startOfToday);
+            // 🌟 關鍵修復：必須排除 i.restored（手動還原過的相片絕不可被自動清理再度刪除）
+            const yesterdayItems = galleryItems.filter(i => !i.isDeleted && !i.restored && (i.createdAt || 0) < startOfToday);
             if (!yesterdayItems.length) return;
 
             const cleanupTime = Date.now();
@@ -2433,7 +2432,7 @@ window.deleteSelectedGalleryItems = () => {
     });
 };
 
-        // ====== 單張還原 (支援全設備即時同步) ======
+        // ====== 單張還原 (附帶免死金牌 restored: true) ======
         window.restoreGalleryItem = async (id) => {
             const item = galleryItems.find(i => String(i.id) === String(id));
             if (!item) return;
@@ -2441,6 +2440,7 @@ window.deleteSelectedGalleryItems = () => {
             const now = Date.now();
             item.isDeleted = false;
             delete item.deletedAt;
+            item.restored = true; // 🌟 打上永久免死金牌，跨日自動清理不再碰它
             item.updatedAt = now;
             await saveGalleryItemsSafe(galleryItems);
 
@@ -2448,7 +2448,8 @@ window.deleteSelectedGalleryItems = () => {
                 try {
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(id)), {
                         isDeleted: false,
-                        deletedAt: deleteField(), // 🌟 徹底在雲端拔除 deletedAt 欄位
+                        deletedAt: deleteField(),
+                        restored: true, // 🌟 雲端同步打上免死標記
                         updatedAt: now
                     }, { merge: true });
                 } catch (err) {
@@ -2461,10 +2462,10 @@ window.deleteSelectedGalleryItems = () => {
             window._lastRenderFingerprint = '';
             window.renderTrashList();
             await window.renderGallery();
-            window.showToast("✅ 已成功還原圖片並同步至所有設備！");
+            window.showToast("✅ 已成功還原圖片！");
         };
 
-        // ====== 全部還原 (批次雲端同步) ======
+        // ====== 全部還原 (附帶免死金牌 restored: true) ======
         window.restoreAllTrashItems = async () => {
             const trashed = galleryItems.filter(i => i.isDeleted);
             if (!trashed.length) return;
@@ -2473,6 +2474,7 @@ window.deleteSelectedGalleryItems = () => {
             trashed.forEach(item => {
                 item.isDeleted = false;
                 delete item.deletedAt;
+                item.restored = true; // 🌟 打上永久免死金牌
                 item.updatedAt = now;
             });
 
@@ -2486,6 +2488,7 @@ window.deleteSelectedGalleryItems = () => {
                         batch.set(ref, {
                             isDeleted: false,
                             deletedAt: deleteField(),
+                            restored: true, // 🌟 雲端同步打上免死標記
                             updatedAt: now
                         }, { merge: true });
                     });
@@ -2500,7 +2503,7 @@ window.deleteSelectedGalleryItems = () => {
             window._lastRenderFingerprint = '';
             window.closeTrashModal();
             await window.renderGallery();
-            window.showToast(`✅ 已還原全部 ${trashed.length} 張圖片並同步！`);
+            window.showToast(`✅ 已還原全部 ${trashed.length} 張圖片！`);
         };
 
         // ====== 永久清空垃圾桶 ======
