@@ -4471,6 +4471,37 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 }
             });
 
+            window.dutyCountdownMode = window.dutyCountdownMode || 'shift'; // 'shift' | 'rest'
+
+            window.toggleDutyCountdownMode = () => {
+                window.dutyCountdownMode = window.dutyCountdownMode === 'shift' ? 'rest' : 'shift';
+                
+                const thumb = $('dutySliderThumb');
+                const tabShift = $('dutyTabShift');
+                const tabRest = $('dutyTabRest');
+                const titleEl = $('dutyStaffPanelTitle');
+
+                if (window.dutyCountdownMode === 'rest') {
+                    // 滑動到右側 (休息)
+                    if (thumb) thumb.style.transform = 'translateX(72px)';
+                    if (tabShift) { tabShift.className = 'relative z-10 flex-1 text-center text-[9.5px] font-bold text-slate-500 transition-colors duration-200 leading-none'; }
+                    if (tabRest) { tabRest.className = 'relative z-10 flex-1 text-center text-[9.5px] font-black text-amber-700 transition-colors duration-200 leading-none'; }
+                    if (titleEl) {
+                        titleEl.innerHTML = `<i data-lucide="coffee" class="w-3.5 h-3.5 mr-1 text-amber-600"></i>今日人員休息動態`;
+                    }
+                } else {
+                    // 滑動回左側 (上下班)
+                    if (thumb) thumb.style.transform = 'translateX(0px)';
+                    if (tabShift) { tabShift.className = 'relative z-10 flex-1 text-center text-[9.5px] font-black text-blue-600 transition-colors duration-200 leading-none'; }
+                    if (tabRest) { tabRest.className = 'relative z-10 flex-1 text-center text-[9.5px] font-bold text-slate-500 transition-colors duration-200 leading-none'; }
+                    if (titleEl) {
+                        titleEl.innerHTML = `<i data-lucide="users-2" class="w-3.5 h-3.5 mr-1 text-blue-600"></i>今日人員上下班動態`;
+                    }
+                }
+
+                window.updateMapSimulation();
+            };
+
             const staffStatusListEl = $('todayDutyStaffList');
             if (staffStatusListEl) {
                 const uniqueScheduled = Array.from(new Set(memberSchedules.filter(s => s.name && !s.name.includes('休')).map(s => s.name)));
@@ -4479,27 +4510,88 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 } else {
                     const memberDutyList = uniqueScheduled.map(name => {
                         const shifts = memberSchedules.filter(s => s.name === name);
-                        const earliest = shifts.reduce((min, s) => s.start < min ? s.start : min, "23:59");
-                        const latest = shifts.reduce((max, s) => s.end > max ? s.end : max, "00:00");
-                        const [esH, esM] = earliest.split(':').map(Number), [leH, leM] = latest.split(':').map(Number);
-                        const eMins = esH * 60 + esM, lMins = leH * 60 + leM, col = window.getMemberColorClass(name);
-                        let rank = 3, subSort = lMins, statusBadge = '';
-                        if (eMins <= curMins && curMins < lMins) {
-                            rank = 1; const diff = lMins - curMins; subSort = diff;
-                            const h = Math.floor(diff / 60), m = diff % 60;
-                            statusBadge = `<div class="bg-emerald-50 border border-emerald-300 text-emerald-700 font-bold text-[10px] px-2 py-0.5 rounded-md flex items-center shadow-xs whitespace-nowrap"><i data-lucide="timer" class="w-3 h-3 mr-1 text-emerald-600"></i>剩 ${h>0?h+'小時':''}${m}分 下班</div>`;
-                        } else if (curMins < eMins) {
-                            rank = 2; const diff = eMins - curMins; subSort = diff;
-                            const h = Math.floor(diff / 60), m = diff % 60;
-                            statusBadge = `<div class="bg-amber-50 border border-amber-300 text-amber-700 font-bold text-[10px] px-2 py-0.5 rounded-md flex items-center shadow-xs whitespace-nowrap"><i data-lucide="clock" class="w-3 h-3 mr-1 text-amber-600"></i>再過 ${h>0?h+'小時':''}${m}分 上班</div>`;
+                        const col = window.getMemberColorClass(name);
+                        let rank = 3, subSort = 9999, statusBadge = '';
+
+                        if (window.dutyCountdownMode === 'rest') {
+                            // ====== ☕ 模式二：休息倒數 ======
+                            // 找出地點為 pt_7 (人員休息中) 的班次
+                            const restShifts = shifts.filter(s => s.locationId === 'pt_7');
+
+                            if (!restShifts.length) {
+                                rank = 4; subSort = 9999;
+                                statusBadge = `<div class="bg-slate-100 border border-slate-200 text-slate-400 font-medium text-[10px] px-2 py-0.5 rounded-md flex items-center whitespace-nowrap"><i data-lucide="coffee" class="w-3 h-3 mr-1 text-slate-400"></i>無排定休息</div>`;
+                            } else {
+                                // 檢查目前是否正在休息中
+                                let currentRest = null;
+                                let upcomingRest = null;
+
+                                restShifts.forEach(rs => {
+                                    const [sH, sM] = rs.start.split(':').map(Number);
+                                    const [eH, eM] = rs.end.split(':').map(Number);
+                                    const rStartMins = sH * 60 + sM;
+                                    const rEndMins = eH * 60 + eM;
+
+                                    if (curMins >= rStartMins && curMins < rEndMins) {
+                                        currentRest = { rs, remain: rEndMins - curMins };
+                                    } else if (curMins < rStartMins) {
+                                        const diff = rStartMins - curMins;
+                                        if (!upcomingRest || diff < upcomingRest.diff) {
+                                            upcomingRest = { rs, diff };
+                                        }
+                                    }
+                                });
+
+                                if (currentRest) {
+                                    // 正在休息中
+                                    rank = 1; subSort = currentRest.remain;
+                                    const h = Math.floor(currentRest.remain / 60), m = currentRest.remain % 60;
+                                    statusBadge = `<div class="bg-amber-100 border border-amber-300 text-amber-800 font-black text-[10px] px-2 py-0.5 rounded-md flex items-center shadow-xs whitespace-nowrap animate-pulse"><i data-lucide="coffee" class="w-3 h-3 mr-1 text-amber-600"></i>休息中 (剩 ${h>0?h+'小時':''}${m}分)</div>`;
+                                } else if (upcomingRest) {
+                                    // 即將休息倒數
+                                    rank = 2; subSort = upcomingRest.diff;
+                                    const h = Math.floor(upcomingRest.diff / 60), m = upcomingRest.diff % 60;
+                                    statusBadge = `<div class="bg-sky-50 border border-sky-300 text-sky-700 font-bold text-[10px] px-2 py-0.5 rounded-md flex items-center shadow-xs whitespace-nowrap"><i data-lucide="clock" class="w-3 h-3 mr-1 text-sky-600"></i>再過 ${h>0?h+'小時':''}${m}分 休息</div>`;
+                                } else {
+                                    // 今日休息已結束
+                                    rank = 3; subSort = 9000;
+                                    statusBadge = `<div class="bg-slate-100 border border-slate-200 text-slate-400 font-medium text-[10px] px-2 py-0.5 rounded-md flex items-center whitespace-nowrap"><i data-lucide="check" class="w-3 h-3 mr-1 text-slate-400"></i>休息已結束</div>`;
+                                }
+                            }
                         } else {
-                            rank = 3; subSort = -lMins;
-                            statusBadge = `<div class="bg-slate-100 border border-slate-200 text-slate-400 font-medium text-[10px] px-2 py-0.5 rounded-md flex items-center whitespace-nowrap"><i data-lucide="check" class="w-3 h-3 mr-1 text-slate-400"></i>下班了</div>`;
+                            // ====== 🏃 模式一：上下班倒數 (原邏輯) ======
+                            const earliest = shifts.reduce((min, s) => s.start < min ? s.start : min, "23:59");
+                            const latest = shifts.reduce((max, s) => s.end > max ? s.end : max, "00:00");
+                            const [esH, esM] = earliest.split(':').map(Number), [leH, leM] = latest.split(':').map(Number);
+                            const eMins = esH * 60 + esM, lMins = leH * 60 + leM;
+
+                            if (eMins <= curMins && curMins < lMins) {
+                                rank = 1; const diff = lMins - curMins; subSort = diff;
+                                const h = Math.floor(diff / 60), m = diff % 60;
+                                statusBadge = `<div class="bg-emerald-50 border border-emerald-300 text-emerald-700 font-bold text-[10px] px-2 py-0.5 rounded-md flex items-center shadow-xs whitespace-nowrap"><i data-lucide="timer" class="w-3 h-3 mr-1 text-emerald-600"></i>剩 ${h>0?h+'小時':''}${m}分 下班</div>`;
+                            } else if (curMins < eMins) {
+                                rank = 2; const diff = eMins - curMins; subSort = diff;
+                                const h = Math.floor(diff / 60), m = diff % 60;
+                                statusBadge = `<div class="bg-amber-50 border border-amber-300 text-amber-700 font-bold text-[10px] px-2 py-0.5 rounded-md flex items-center shadow-xs whitespace-nowrap"><i data-lucide="clock" class="w-3 h-3 mr-1 text-amber-600"></i>再過 ${h>0?h+'小時':''}${m}分 上班</div>`;
+                            } else {
+                                rank = 3; subSort = -lMins;
+                                statusBadge = `<div class="bg-slate-100 border border-slate-200 text-slate-400 font-medium text-[10px] px-2 py-0.5 rounded-md flex items-center whitespace-nowrap"><i data-lucide="check" class="w-3 h-3 mr-1 text-slate-400"></i>下班了</div>`;
+                            }
                         }
+
                         return { name, rank, subSort, col, statusBadge };
                     });
+
                     memberDutyList.sort((a, b) => a.rank - b.rank || a.subSort - b.subSort || a.name.localeCompare(b.name));
-                    staffStatusListEl.innerHTML = memberDutyList.map(item => `<div class="bg-white border border-slate-200/80 rounded-lg p-1.5 px-2.5 flex items-center justify-between shadow-xs hover:border-slate-300 transition-colors"><div class="flex items-center min-w-0 pr-2"><div class="w-2 h-2 rounded-full ${item.col.activeBg} mr-2 shrink-0"></div><span class="font-black text-[11px] text-slate-800 tracking-wide truncate">${item.name}</span></div><div class="shrink-0">${item.statusBadge}</div></div>`).join('');
+                    staffStatusListEl.innerHTML = memberDutyList.map(item => `
+                        <div class="bg-white border border-slate-200/80 rounded-lg p-1.5 px-2.5 flex items-center justify-between shadow-xs hover:border-slate-300 transition-colors">
+                            <div class="flex items-center min-w-0 pr-2">
+                                <div class="w-2 h-2 rounded-full ${item.col.activeBg} mr-2 shrink-0"></div>
+                                <span class="font-black text-[11px] text-slate-800 tracking-wide truncate">${item.name}</span>
+                            </div>
+                            <div class="shrink-0">${item.statusBadge}</div>
+                        </div>
+                    `).join('');
                 }
             }
 
@@ -7557,7 +7649,21 @@ if (!savedRaw) {
                         <div id="mapPointsContainer" class="absolute inset-0 pointer-events-none overflow-hidden z-30"></div>
                     </div>
                     <div id="todayDutyStaffPanel" class="mt-2 flex-1 min-h-0 w-full bg-white border border-slate-200 rounded-xl p-2.5 shadow-sm flex flex-col overflow-hidden">
-                        <div class="pb-1 mb-1 border-b border-slate-100 flex items-center justify-between shrink-0"><span class="flex items-center text-[10px] font-black text-slate-800 tracking-wide"><i data-lucide="users-2" class="w-3.5 h-3.5 mr-1 text-blue-600"></i>今日人員上下班動態</span><span class="text-[9px] font-bold text-slate-400">上下班倒數</span></div>
+                       <div class="pb-1 mb-1 border-b border-slate-100 flex items-center justify-between shrink-0">
+    <span id="dutyStaffPanelTitle" class="flex items-center text-[10px] font-black text-slate-800 tracking-wide">
+        <i data-lucide="users-2" class="w-3.5 h-3.5 mr-1 text-blue-600"></i>今日人員上下班動態
+    </span>
+    <!-- 🌟 切換按鍵：可切換【上下班倒數】與【休息倒數】 -->
+    <!-- 🌟 左右滑動分段切換鍵 -->
+    <div class="relative bg-slate-200/80 p-0.5 rounded-full flex items-center border border-slate-300/80 shadow-inner select-none cursor-pointer w-[148px] h-[22px]" onclick="window.toggleDutyCountdownMode()">
+        <!-- 滑動白底背景塊 -->
+        <div id="dutySliderThumb" class="absolute top-0.5 left-0.5 bottom-0.5 w-[72px] bg-white rounded-full shadow-xs transition-all duration-200 ease-out pointer-events-none"></div>
+        <!-- 左側：上下班 -->
+        <span id="dutyTabShift" class="relative z-10 flex-1 text-center text-[9.5px] font-black text-blue-600 transition-colors duration-200 leading-none">上下班</span>
+        <!-- 右側：休息 -->
+        <span id="dutyTabRest" class="relative z-10 flex-1 text-center text-[9.5px] font-bold text-slate-500 transition-colors duration-200 leading-none">休息倒數</span>
+    </div>
+</div>
                         <div id="todayDutyStaffList" class="flex-1 flex flex-col space-y-1.5 overflow-y-auto scrollbar-hide pr-0.5"></div>
                     </div>
                 </div>
