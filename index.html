@@ -5096,42 +5096,53 @@ window.crSaveData = () => {
         };
 
         window.switchTab = (tab) => {
-            const pages = { patrol: 'patrolPage', gallery: 'galleryPage', timeline: 'timelinePage', memo: 'memoPage', map: 'mapPage', coldRoom: 'coldRoomPage', closing: 'closingPage' };
-
-({
-    patrol: () => {
-        window.applyAutoPatrolSlot();
-        window.autoSyncClosedStallsToPatrol(true);
-        window.setPatrolViewMode(patrolViewMode);
-    },
-    gallery: window.renderGallery,
-    timeline: () => window.renderTimeline(true),
-    memo: window.renderMemos,
-    map: window.renderMap,
-    coldRoom: window.crRenderList,
-    closing: () => { window.searchStall?.(); },
-})[tab]?.();
+            const pages = { 
+                patrol: 'patrolPage', 
+                gallery: 'galleryPage', 
+                timeline: 'timelinePage', 
+                memo: 'memoPage', 
+                map: 'mapPage', 
+                coldRoom: 'coldRoomPage', 
+                closing: 'closingPage' 
+            };
 
             const actCls = "flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
             const inactCls = "flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap";
             
+            // 🌟 關鍵修正第 1 步：先隱藏其他頁面，並立刻顯示目標頁面（移除 hidden）
             Object.values(pages).forEach(id => { 
                 const el = $(id); 
                 if (el) { el.classList.add('hidden'); el.classList.remove('flex', 'block'); } 
             });
 
-            tabOrderList.forEach(k => {
-                const btn = $(tabMetadataMap[k]?.btnId);
-                if (btn) btn.className = inactCls;
-            });
-
-            const targetPage = $(pages[tab]), targetBtn = $(tabMetadataMap[tab]?.btnId);
+            const targetPage = $(pages[tab]);
             if (targetPage) { 
                 targetPage.classList.remove('hidden'); 
                 targetPage.classList.add(['map', 'gallery', 'coldRoom', 'closing', 'patrol'].includes(tab) ? 'flex' : 'block'); 
             }
+
+            // 更新按鈕樣式
+            tabOrderList.forEach(k => {
+                const btn = $(tabMetadataMap[k]?.btnId);
+                if (btn) btn.className = inactCls;
+            });
+            const targetBtn = $(tabMetadataMap[tab]?.btnId);
             if (targetBtn) targetBtn.className = actCls;
 
+            // 🌟 關鍵修正第 2 步：頁面已經移除 hidden 後，才執行對應的渲染函式
+            ({
+                patrol: () => {
+                    window.applyAutoPatrolSlot();
+                    window.autoSyncClosedStallsToPatrol(true);
+                    window.setPatrolViewMode(patrolViewMode);
+                },
+                gallery: window.renderGallery,
+                timeline: () => window.renderTimeline(true),
+                memo: window.renderMemos,
+                map: window.renderMap,
+                coldRoom: window.crRenderList,
+                closing: () => { window.searchStall?.(); },
+            })[tab]?.();
 
             localStorage.setItem('activeTab', tab);
         };
