@@ -2465,11 +2465,12 @@ window.deleteSelectedGalleryItems = () => {
             window.showToast("✅ 已成功還原圖片！");
         };
 
-// ====== 還原指定日期的全部相片 ======
+// ====== 還原指定日期的全部相片 (嚴格依拍攝上傳日期比對) ======
         window.restoreDateGroupItems = async (dateStr) => {
             const trashed = galleryItems.filter(i => {
                 if (!i.isDeleted) return false;
-                const d = i.deletedAt ? new Date(i.deletedAt) : (i.createdAt ? new Date(i.createdAt) : window.getNow());
+                // 🌟 核心修正：比對該張照片的拍攝/上傳日期
+                const d = i.createdAt ? new Date(i.createdAt) : window.getNow();
                 const itemDateKey = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
                 return itemDateKey === dateStr;
             });
@@ -2610,13 +2611,14 @@ window.deleteSelectedGalleryItems = () => {
                 return;
             }
 
-            // 1. 依照刪除或建立時間降序排序（最新的排在最上方）
-            trashed.sort((a, b) => (b.deletedAt || b.createdAt || 0) - (a.deletedAt || a.createdAt || 0));
+            // 1. 依照相片【拍攝/上傳建立時間 (createdAt)】排序（最新拍的排在最前面）
+            trashed.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-            // 2. 依照日期 (MM/DD) 進行分組 (Group by Date)
+            // 2. 嚴格依照【拍攝/上傳建立日期 (createdAt)】進行分組 (Group by Upload/Created Date)
             const groups = {};
             for (const item of trashed) {
-                const d = item.deletedAt ? new Date(item.deletedAt) : (item.createdAt ? new Date(item.createdAt) : window.getNow());
+                // 🌟 核心修正：一律以上傳拍攝時間 createdAt 判定日期
+                const d = item.createdAt ? new Date(item.createdAt) : window.getNow();
                 const dateKey = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
                 if (!groups[dateKey]) groups[dateKey] = [];
                 groups[dateKey].push(item);
