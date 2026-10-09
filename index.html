@@ -4334,14 +4334,17 @@ window.deleteSelectedGalleryItems = () => {
                 for (const d of snap.docs) { 
                     const it = d.data(); 
                     if (it?.id) {
-                        // 🌟 核心修復：雲端若明確標記 isDeleted === false，代表有人還原了這張照片，一律解除刪除！
-                        if (it.isDeleted === false) {
+                        // 🌟 嚴格修復：判斷雲端與本地的刪除狀態
+                        if (it.isDeleted === true) {
+                            // 雲端明確標記已刪除
+                            it.isDeleted = true;
+                            it.deletedAt = it.deletedAt || currentLocalDeleted.get(it.id)?.deletedAt || Date.now();
+                        } else if (it.isDeleted === false) {
+                            // 雲端明確標記已還原 (未刪除)
                             it.isDeleted = false;
                             delete it.deletedAt;
-                        } else if (it.isDeleted === true) {
-                            it.isDeleted = true;
-                            it.deletedAt = it.deletedAt || Date.now();
                         } else if (currentLocalDeleted.has(it.id)) {
+                            // 雲端無此欄位時，優先尊重本機既有的垃圾桶紀錄！
                             it.isDeleted = true;
                             it.deletedAt = currentLocalDeleted.get(it.id)?.deletedAt || Date.now();
                         } else {
