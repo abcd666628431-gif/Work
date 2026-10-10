@@ -1209,20 +1209,35 @@ window.clearTodayPatrolData = (e) => {
             patrolFloor = flr;
             patrolFocusIndex = 0;
             window.clearFocusAutoTimer();
+
+            // 5 個項目的索引位置對照 (全部:0, 花園仔:1, 地下:2, 一樓:3, 溫度:4)
+            const mapKeys = {
+                'ALL': { id: 'all', idx: 0 },
+                '花園仔': { id: 'garden', idx: 1 },
+                '地下': { id: 'fish', idx: 2 },
+                '一樓': { id: 'first', idx: 3 },
+                '溫度': { id: 'temp', idx: 4 }
+            };
+
+            const target = mapKeys[flr] || mapKeys['ALL'];
+
+            // 🌟 滑塊位移 (每格 20% = 100% / 5)
+            const thumb = $('floorSliderThumb');
+            if (thumb) {
+                thumb.style.left = `calc(${target.idx * 20}% + 2px)`;
+            }
+
+            // 更新 5 個項目的文字顏色（選中變白色黑體，未選中為深灰字體）
             ['all', 'garden', 'fish', 'first', 'temp'].forEach(f => {
                 const btn = $(`patrol-flt-${f}`);
                 if (btn) {
-                    const match = (f === 'all' && flr === 'ALL') ||
-                                  (f === 'garden' && flr === '花園仔') ||
-                                  (f === 'fish' && flr === '地下') ||
-                                  (f === 'first' && flr === '一樓') ||
-                                  (f === 'temp' && flr === '溫度');
-
-                    btn.className = match
-                        ? "px-2.5 py-1 rounded-lg text-[14px] font-black bg-blue-600 text-white shadow-xs shrink-0 flex items-center"
-                        : "px-2.5 py-1 rounded-lg text-[14px] font-bold bg-white text-slate-800 border border-slate-200 hover:bg-slate-50 shrink-0 flex items-center";
+                    const isSelected = (f === target.id);
+                    btn.className = isSelected
+                        ? "relative z-10 flex-1 text-center text-[12.5px] font-black text-white transition-colors duration-200 leading-none py-1 flex items-center justify-center"
+                        : "relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 hover:text-slate-900 transition-colors duration-200 leading-none py-1 flex items-center justify-center";
                 }
             });
+
             window.renderPatrol();
         };
 
@@ -7592,14 +7607,18 @@ if (!savedRaw) {
                 <!-- 第二行：【全部, 花園仔, 地下, 一樓】靠左，【卡片, 專注】靠右，完美排在同一行 -->
                 <div class="flex items-center justify-between gap-1 pt-0.5">
                     <!-- 樓層篩選 -->
-                    <div class="flex items-center space-x-1 overflow-x-auto scrollbar-hide flex-1 mr-1">
-                        <button id="patrol-flt-all" onclick="window.filterPatrolFloor('ALL')" class="px-2.5 py-1 rounded-lg text-[14px] font-black bg-blue-600 text-white shadow-xs shrink-0">全部</button>
-                        <button id="patrol-flt-garden" onclick="window.filterPatrolFloor('花園仔')" class="px-2.5 py-1 rounded-lg text-[14px] font-bold bg-white text-slate-800 border border-slate-200 hover:bg-slate-50 shrink-0">花園仔</button>
-                        <button id="patrol-flt-fish" onclick="window.filterPatrolFloor('地下')" class="px-2.5 py-1 rounded-lg text-[14px] font-bold bg-white text-slate-800 border border-slate-200 hover:bg-slate-50 shrink-0">地下</button>
-                        <button id="patrol-flt-first" onclick="window.filterPatrolFloor('一樓')" class="px-2.5 py-1 rounded-lg text-[14px] font-bold bg-white text-slate-800 border border-slate-200 hover:bg-slate-50 shrink-0">一樓</button>
-<button id="patrol-flt-temp" onclick="window.filterPatrolFloor('溫度')" class="px-2.5 py-1 rounded-lg text-[14px] font-bold bg-white text-slate-800 border border-slate-200 hover:bg-slate-50 shrink-0 flex items-center">
-    <i data-lucide="thermometer" class="w-3.5 h-3.5 mr-0.5 text-rose-500 pointer-events-none"></i>溫度
-</button>
+                    <!-- 🌟 樓層/溫度一體化滑動切換軌道 -->
+                    <div class="relative bg-slate-200/90 p-0.5 rounded-xl flex items-center border border-slate-300/80 shadow-inner select-none flex-1 mr-1.5 h-[28px] overflow-hidden">
+                        <!-- 滑動底塊（5 等分，寬度 20%） -->
+                        <div id="floorSliderThumb" class="absolute top-0.5 bottom-0.5 left-[2px] w-[calc(20%-2px)] bg-blue-600 rounded-[10px] shadow-sm transition-all duration-200 ease-out pointer-events-none"></div>
+                        
+                        <button type="button" id="patrol-flt-all" onclick="window.filterPatrolFloor('ALL')" class="relative z-10 flex-1 text-center text-[12.5px] font-black text-white transition-colors duration-200 leading-none py-1">全部</button>
+                        <button type="button" id="patrol-flt-garden" onclick="window.filterPatrolFloor('花園仔')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1">花園仔</button>
+                        <button type="button" id="patrol-flt-fish" onclick="window.filterPatrolFloor('地下')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1">地下</button>
+                        <button type="button" id="patrol-flt-first" onclick="window.filterPatrolFloor('一樓')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1">一樓</button>
+                        <button type="button" id="patrol-flt-temp" onclick="window.filterPatrolFloor('溫度')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1 flex items-center justify-center">
+                            <i data-lucide="thermometer" class="w-3 h-3 mr-0.5 text-rose-500 pointer-events-none"></i>溫度
+                        </button>
                     </div>
 
                     <!-- 模式切換：卡片 / 專注 -->
