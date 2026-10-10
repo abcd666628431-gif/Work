@@ -642,6 +642,14 @@ const tabMetadataMap = {
                 titleEl.innerText = pt.name;
             }
 
+            // 🌟 讀取既有溫度並同步至彈窗顯示框
+            const curSlotTemps = (patrolTempRecords[currentPatrolDate] || {})[patrolSlot] || {};
+            const curVal = curSlotTemps[pointId] || '';
+            const popupDisplay = $('tempKeypadCurrentDisplay');
+            if (popupDisplay) {
+                popupDisplay.innerText = curVal || '---';
+            }
+
             const modal = $('tempKeypadModal');
             if (modal) {
                 modal.classList.remove('hidden');
@@ -691,20 +699,29 @@ const tabMetadataMap = {
             safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
             syncConfig('patrol_temp_records', { records: patrolTempRecords }, true);
 
+            // 🌟 1. 同步彈窗內顯示框
+            const popupDisplay = $('tempKeypadCurrentDisplay');
+            if (popupDisplay) {
+                popupDisplay.innerText = val || '---';
+            }
+
+            // 2. 同步底層卡片數值
             const displayEl = $(`tempDisplay-${pointId}`);
             if (displayEl) {
                 displayEl.innerHTML = val ? `${val}<span class="text-xs font-black text-slate-500 ml-0.5">°C</span>` : `---`;
             }
 
+            // 3. 更新進度
             const curSlotTemps = patrolTempRecords[date][slot] || {};
             const filledCount = RAW_TEMPERATURE_POINTS.filter(pt => curSlotTemps[pt.id]).length;
             const total = RAW_TEMPERATURE_POINTS.length;
             if ($('patrolProgressText'))$('patrolProgressText').innerText = `${filledCount} / ${total} (溫度)`;
             if ($('patrolProgressBar'))$('patrolProgressBar').style.width = `${Math.round((filledCount / total) * 100)}%`;
             if ($('patrolUnfilledBadge'))$('patrolUnfilledBadge').innerText = total - filledCount;
+            if ($('tempModalProgress'))$('tempModalProgress').innerText = `${filledCount}/${total}`;
         };
 
-        window.setPointTempRecorder = (val) => {
+                window.setPointTempRecorder = (val) => {
             const date = currentPatrolDate;
             const slot = patrolSlot;
             if (!patrolTempRecords[date]) patrolTempRecords[date] = {};
@@ -714,11 +731,52 @@ const tabMetadataMap = {
             syncConfig('patrol_temp_records', { records: patrolTempRecords }, true);
         };
 
+        // ===== 溫度彈窗（浮窗鍵用）=====
+                                window.openTempModal = () => {
+            const modal = $('tempStatsModal');
+            if (!modal) return;
+            window.renderTempModalList();
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        };
+
+        window.closeTempModal = () => {
+            const modal = $('tempStatsModal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            window.closeTempKeypadModal?.();
+        };
+
+        window.renderTempModalList = () => {
+            const list = $('tempModalList');
+            if (!list) return;
+            const curSlotTemps = (patrolTempRecords[currentPatrolDate] || {})[patrolSlot] || {};
+            const filled = RAW_TEMPERATURE_POINTS.filter(pt => curSlotTemps[pt.id]);
+            if ($('tempModalSlotLabel'))$('tempModalSlotLabel').innerText = patrolSlot;
+            if ($('tempModalProgress'))$('tempModalProgress').innerText = `${filled.length}/${RAW_TEMPERATURE_POINTS.length}`;
+            if ($('tempModalRecorder'))$('tempModalRecorder').value = curSlotTemps['recorder'] || '';
+
+            list.innerHTML = RAW_TEMPERATURE_POINTS.map(pt => {
+                const tempVal = curSlotTemps[pt.id] || '';
+                const hasVal = !!tempVal;
+                return `
+                <div onclick="window.selectTempPointTarget('${pt.id}', event)"
+                     class="py-1 px-3 rounded-xl border flex items-center justify-between cursor-pointer active:scale-[0.99] ${hasVal ? 'bg-slate-100 border-slate-300' : 'bg-white border-amber-300 shadow-2xs'}">
+                    <span class="text-sm font-black text-slate-800 truncate">${pt.name}</span>
+                    <div id="tempDisplay-${pt.id}"
+                         class="w-24 h-[29px] bg-white border-2 border-blue-400 rounded-lg flex items-center justify-center font-mono font-black text-base text-blue-700 shadow-inner select-none">
+                        ${tempVal ? `${tempVal}<span class="text-xs font-black text-slate-500 ml-0.5">°C</span>` : `---`}
+                    </div>
+                </div>`;
+            }).join('');
+        };
+
         let patrolFloor = 'ALL';
         let patrolSlot = (typeof window.getAutoPatrolSlot === 'function')
     ? window.getAutoPatrolSlot()
     : '上午9點';
-        let patrolViewMode = 'focus';
+        let patrolViewMode = 'card';
         let patrolFocusIndex = 0;
 
 // ===== 卡片縮放控制核心邏輯 =====
@@ -1210,25 +1268,38 @@ window.clearTodayPatrolData = (e) => {
             patrolFocusIndex = 0;
             window.clearFocusAutoTimer();
 
-            // 5 個項目的索引位置對照 (全部:0, 花園仔:1, 地下:2, 一樓:3, 溫度:4)
+            // 🌟 浮窗按鈕天藍色質感控制 (晴朗天空藍)
+            const floatInner = $('floatingTempInner');
+            const floatIcon = $('floatingTempIcon');
+            const floatBadge = $('floatingTempBadge');
+
+            if (floatInner) {
+                floatInner.className = "w-full h-full rounded-full bg-[#38bdf8] border-2 border-white flex flex-col items-center justify-center pt-0.5";
+            }
+            if (floatIcon) {
+                floatIcon.className = "w-[18px] h-[18px] text-white stroke-[2.4] pointer-events-none";
+            }
+            if (floatBadge) {
+                floatBadge.className = "text-[8px] font-mono font-black text-white leading-none tracking-tighter mt-0.5";
+            }
+
+            // 4 個項目 (全部:0, 花園仔:1, 地下:2, 一樓:3)
             const mapKeys = {
                 'ALL': { id: 'all', idx: 0 },
                 '花園仔': { id: 'garden', idx: 1 },
                 '地下': { id: 'fish', idx: 2 },
-                '一樓': { id: 'first', idx: 3 },
-                '溫度': { id: 'temp', idx: 4 }
+                '一樓': { id: 'first', idx: 3 }
             };
 
             const target = mapKeys[flr] || mapKeys['ALL'];
 
-            // 🌟 滑塊位移 (每格 20% = 100% / 5)
+            // 滑塊位移 (每格 25% = 100% / 4)
             const thumb = $('floorSliderThumb');
             if (thumb) {
-                thumb.style.left = `calc(${target.idx * 20}% + 2px)`;
+                thumb.style.left = `calc(${target.idx * 25}% + 2px)`;
             }
 
-            // 更新 5 個項目的文字顏色（選中變白色黑體，未選中為深灰字體）
-            ['all', 'garden', 'fish', 'first', 'temp'].forEach(f => {
+            ['all', 'garden', 'fish', 'first'].forEach(f => {
                 const btn = $(`patrol-flt-${f}`);
                 if (btn) {
                     const isSelected = (f === target.id);
@@ -1278,6 +1349,10 @@ window.clearTodayPatrolData = (e) => {
             if (window.lucide) lucide.createIcons();
             window.autoSyncClosedStallsToPatrol(true);
             window.renderPatrol();
+// 🌟 若溫度彈窗開著，切換時段時同步刷新該時段的溫度紀錄
+            if ($('tempStatsModal') && !$('tempStatsModal').classList.contains('hidden')) {
+                window.renderTempModalList();
+            }
         };
 
         window.setPatrolViewMode = (mode) => {
@@ -1366,96 +1441,7 @@ window.clearTodayPatrolData = (e) => {
         window.renderPatrol = () => {
             // 🌟 溫度模式專屬卡片清單渲染 (去標籤 + 圖片上傳同款數字盤)
             // 🌟 溫度模式專屬卡片清單渲染 (點擊溫度框才彈出數字盤)
-            if (patrolFloor === '溫度') {
-                const container = $('patrolCardList');
-                const focusBox = $('patrolFocusContainer');
-                const cardBox = $('patrolCardContainer');
-                if (cardBox) cardBox.classList.remove('hidden');
-                if (focusBox) focusBox.classList.add('hidden');
-
-                const curSlotTemps = (patrolTempRecords[currentPatrolDate] || {})[patrolSlot] || {};
-                const filledPoints = RAW_TEMPERATURE_POINTS.filter(pt => curSlotTemps[pt.id]);
-                const total = RAW_TEMPERATURE_POINTS.length;
-
-                if ($('patrolProgressText'))$('patrolProgressText').innerText = `${filledPoints.length} / ${total} (溫度)`;
-                if ($('patrolProgressBar'))$('patrolProgressBar').style.width = `${Math.round((filledPoints.length / total) * 100)}%`;
-                if ($('patrolUnfilledBadge'))$('patrolUnfilledBadge').innerText = total - filledPoints.length;
-
-                if (container) {
-                    const keys = [
-                        ['1', '2', '3'],
-                        ['4', '5', '6'],
-                        ['7', '8', '9'],
-                        ['.', '0', 'BACK']
-                    ];
-
-                    container.innerHTML = `
-                    <!-- 頂部記錄者輸入卡片 -->
-                    <div class="bg-rose-50 border-2 border-rose-200 rounded-2xl p-2 mb-2 flex items-center justify-between shadow-xs">
-                        <div class="flex items-center space-x-1.5">
-                            <i data-lucide="user-check" class="w-4 h-4 text-rose-500"></i>
-                            <span class="text-xs font-black text-rose-800">【${patrolSlot}】記錄者</span>
-                        </div>
-                        <input type="text" placeholder="填寫記錄者姓名..." value="${curSlotTemps['recorder'] || ''}" 
-                               onchange="window.setPointTempRecorder(this.value)" 
-                               class="bg-white border border-rose-300 rounded-xl px-2.5 py-1 text-xs font-bold text-slate-800 text-center focus:outline-none focus:border-rose-500 w-32 shadow-inner">
-                    </div>
-
-                    <!-- 12 測溫點卡片 (平時清爽無阻擋) -->
-                    <div class="space-y-1.5 mb-6">
-                        ${RAW_TEMPERATURE_POINTS.map((pt) => {
-                            const tempVal = curSlotTemps[pt.id] || '';
-                            const hasVal = tempVal !== '';
-                            return `
-                            <div onclick="window.selectTempPointTarget('${pt.id}', event)" 
-                                 class="p-2.5 px-3 rounded-2xl border transition-all flex items-center justify-between cursor-pointer active:scale-[0.99] ${hasVal ? 'bg-slate-100 border-slate-300' : 'bg-white border-amber-300 shadow-xs'}">
-                                <span class="text-sm font-black text-slate-800 truncate">${pt.name}</span>
-                                <div id="tempDisplay-${pt.id}" 
-                                     class="w-24 h-9 bg-white border-2 border-blue-400 rounded-xl flex items-center justify-center font-mono font-black text-lg text-blue-700 shadow-inner select-none transition-all">
-                                    ${tempVal ? `${tempVal}<span class="text-xs font-black text-slate-500 ml-0.5">°C</span>` : `---`}
-                                </div>
-                            </div>`;
-                        }).join('')}
-                    </div>
-
-                    <!-- 🌟 點擊後置中彈出的專屬數字盤 Modal -->
-                    <div id="tempKeypadModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-[350] flex flex-col items-center justify-center p-4" onclick="window.closeTempKeypadModal()">
-                        <div class="bg-white rounded-3xl border-2 border-slate-200 p-4 shadow-2xl w-full max-w-[320px] space-y-2.5 animate-pop-in" onclick="event.stopPropagation()">
-                            <div class="flex justify-between items-center px-1 pb-1 border-b border-slate-100">
-                                <div class="flex items-center space-x-1.5">
-                                    <span class="w-2 h-2 rounded-full bg-blue-500"></span>
-                                    <span id="tempKeypadTargetTitle" class="text-xs font-black text-slate-800">測溫點</span>
-                                </div>
-                                <div class="flex items-center space-x-3">
-                                    <button type="button" onclick="window.onTempKeypadPress('CLEAR')" class="text-rose-600 text-xs font-black hover:underline active:scale-95">清空</button>
-                                    <button type="button" onclick="window.closeTempKeypadModal()" class="bg-blue-600 text-white px-3 py-1 rounded-xl text-xs font-bold active:scale-95 shadow-xs">完成</button>
-                                </div>
-                            </div>
-                            <!-- 十宮格數字鍵 (高度 34px) -->
-                            <div class="grid grid-cols-3 gap-[3px] w-full select-none pt-1">
-                                ${keys.flat().map(k => {
-                                    let label = k;
-                                    let style = "bg-white text-slate-800 border border-slate-200 shadow-2xs text-[20px] font-black hover:bg-slate-50";
-                                    if (k === 'BACK') {
-                                        label = '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-slate-700 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6-6h12a2 2 0 012 2v8a2 2 0 01-2 2H9l-6-6z" /></svg>';
-                                        style = "bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200";
-                                    } else if (k === '.') {
-                                        label = '·';
-                                        style = "bg-slate-50 border border-slate-200 text-slate-800 text-[26px] hover:bg-slate-100 leading-none";
-                                    }
-                                    return `
-                                    <button type="button" onclick="window.onTempKeypadPress('${k}')" 
-                                        class="h-[36px] rounded-xl font-mono border flex items-center justify-center p-0 leading-none active:scale-95 active:bg-blue-100 transition-all ${style}">
-                                        ${label}
-                                    </button>`;
-                                }).join('')}
-                            </div>
-                        </div>
-                    </div>`;
-                }
-                if (window.lucide) lucide.createIcons();
-                return;
-            }
+            
 
             // 原本的程式碼從這裡繼續：
             const stalls = window.getFilteredPatrolStalls();
@@ -3489,8 +3475,8 @@ window.deleteSelectedGalleryItems = () => {
                 const btn = $(`btn-prefix-${tempId}-${pKey}`);
                 if (btn) {
                     btn.className = (item.prefix === pKey)
-                        ? "w-full h-[23px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-emerald-600 text-white border-emerald-600 shadow-xs"
-                        : "w-full h-[23px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-white hover:bg-slate-100 text-slate-700 border-slate-200";
+                        ? "w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : "w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-white hover:bg-slate-100 text-slate-700 border-slate-200";
                 }
             });
 
@@ -3856,8 +3842,8 @@ window.deleteSelectedGalleryItems = () => {
                 const btn = $(`merged-prefix-${pKey}`);
                 if (btn) {
                     btn.className = (window.mergedBatchForm.prefix === pKey)
-                        ? "w-full h-[23px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-emerald-600 text-white border-emerald-600 shadow-xs"
-                        : "w-full h-[23px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-white text-slate-700 border-slate-200 hover:bg-slate-100";
+                        ? "w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : "w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-white text-slate-700 border-slate-200 hover:bg-slate-100";
                 }
             });
 
@@ -4105,7 +4091,7 @@ window.deleteSelectedGalleryItems = () => {
                     }
                     return `
                     <button type="button" onclick="window.onKeypadPress('${k}', '${ownerId}')" 
-                        class="h-[33px] sm:h-[35px] rounded-lg font-mono border flex items-center justify-center p-0 leading-none active:scale-90 active:bg-blue-100 active:shadow-inner transition-all ${style}">
+                        class="h-[26px] sm:h-7 rounded-lg font-mono border flex items-center justify-center p-0 leading-none active:scale-90 active:bg-blue-100 active:shadow-inner transition-all ${style}">
                         ${label}
                     </button>`;
                 }).join('')}
@@ -4150,7 +4136,7 @@ window.deleteSelectedGalleryItems = () => {
                         <div class="flex items-center gap-1 w-full">
                             ${catList.map(cat => `
                                 <button type="button" id="merged-cat-btn-${cat}" onclick="window.setMergedCategory('${cat}', true)" 
-                                    class="flex-1 py-[5px] rounded-lg text-[13px] font-bold border transition-all active:scale-95 ${window.mergedBatchForm.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
+                                    class="flex-1 py-1 rounded-lg text-[13px] font-bold border transition-all active:scale-95 ${window.mergedBatchForm.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
                                     ${cat}
                                 </button>
                             `).join('')}
@@ -4170,9 +4156,9 @@ window.deleteSelectedGalleryItems = () => {
 
                             <!-- 樓層按鍵：固定高度防止介面跳動 -->
                             <div class="w-14 flex flex-col space-y-1 shrink-0">
-                                <button type="button" id="merged-prefix-1-" onclick="window.setMergedPrefix('1-')" class="w-full h-[23px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
-                                <button type="button" id="merged-prefix-R-" onclick="window.setMergedPrefix('R-')" class="w-full h-[23px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
-                                <button type="button" id="merged-prefix-J-" onclick="window.setMergedPrefix('J-')" class="w-full h-[23px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
+                                <button type="button" id="merged-prefix-1-" onclick="window.setMergedPrefix('1-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+                                <button type="button" id="merged-prefix-R-" onclick="window.setMergedPrefix('R-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+                                <button type="button" id="merged-prefix-J-" onclick="window.setMergedPrefix('J-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
                             </div>
 
                             <!-- 檔號顯示 (數字加大3px: text-[23px]) -->
@@ -4215,11 +4201,10 @@ window.deleteSelectedGalleryItems = () => {
                         <div id="hint-pending-${item.tempId}" class="opacity-0 pointer-events-none h-0 p-0 text-[12px] font-bold border border-transparent transition-all flex items-center bg-transparent shrink-0"></div>
 
                         <!-- 分類選擇 (加大2px: text-[13px]) -->
-                        <!-- 分類選擇 (加大2px: text-[13px]) -->
                         <div class="flex items-center gap-1 w-full shrink-0">
                             ${catList.map(cat => `
                                 <button type="button" id="btn-cat-${item.tempId}-${cat}" onclick="window.setPendingItemCategory('${item.tempId}', '${cat}', true)" 
-                                    class="flex-1 py-[5px] rounded-lg text-[13px] font-bold border transition-all active:scale-95 ${item.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
+                                    class="flex-1 py-1 rounded-lg text-[13px] font-bold border transition-all active:scale-95 ${item.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
                                     ${cat}
                                 </button>
                             `).join('')}
@@ -4239,9 +4224,9 @@ window.deleteSelectedGalleryItems = () => {
 
                             <!-- 樓層按鍵：固定高度防止介面跳動 -->
                             <div class="w-14 flex flex-col space-y-1 shrink-0">
-                                <button type="button" id="btn-prefix-${item.tempId}-1-" onclick="window.selectPrefixOption('${item.tempId}', '1-')" class="w-full h-[23px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
-                                <button type="button" id="btn-prefix-${item.tempId}-R-" onclick="window.selectPrefixOption('${item.tempId}', 'R-')" class="w-full h-[23px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
-                                <button type="button" id="btn-prefix-${item.tempId}-J-" onclick="window.selectPrefixOption('${item.tempId}', 'J-')" class="w-full h-[23px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-1-" onclick="window.selectPrefixOption('${item.tempId}', '1-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-R-" onclick="window.selectPrefixOption('${item.tempId}', 'R-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-J-" onclick="window.selectPrefixOption('${item.tempId}', 'J-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
                             </div>
 
                             <!-- 檔號顯示 (數字加大3px: text-[23px]) -->
@@ -4544,6 +4529,26 @@ window.deleteSelectedGalleryItems = () => {
 });
 
             bindSync('coldRoom', 'coldRoomRecords', d => {
+
+// 🌟 溫度統計表雙向即時同步
+            bindSync('patrol_temp_records', 'work_cache_patrol_temp_records', d => {
+                if (d && d.records) {
+                    patrolTempRecords = d.records;
+                    safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
+                    // 若溫度彈窗開啟中，即時刷新數值與進度
+                    if ($('tempStatsModal') && !$('tempStatsModal').classList.contains('hidden')) {
+                        window.renderTempModalList();
+                    }
+                    // 同步更新當前選中的輸入框（若有開啟小鍵盤）
+                    if (window.activeTempKeypadPointId) {
+                        const curSlotTemps = (patrolTempRecords[currentPatrolDate] || {})[patrolSlot] || {};
+                        const curVal = curSlotTemps[window.activeTempKeypadPointId] || '';
+                        const popupDisplay = $('tempKeypadCurrentDisplay');
+                        if (popupDisplay) popupDisplay.innerText = curVal || '---';
+                    }
+                }
+            });
+
                 if (d.records) { crRecords = d.records; safeSetLocal('coldRoomRecords', crRecords); }
                 if (d.types) { crItemTypes = d.types; safeSetLocal('coldRoomTypes', crItemTypes); }
                 if (!$('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
@@ -5542,7 +5547,7 @@ window.crSaveData = () => {
                 patrol: () => {
                     window.applyAutoPatrolSlot();
                     window.autoSyncClosedStallsToPatrol(true);
-                    window.setPatrolViewMode(patrolViewMode);
+                    window.setPatrolViewMode('card');
                 },
                 gallery: window.renderGallery,
                 timeline: () => window.renderTimeline(true),
@@ -7611,15 +7616,12 @@ if (!savedRaw) {
                     <!-- 🌟 樓層/溫度一體化滑動切換軌道 -->
                     <div class="relative bg-slate-200/90 p-0.5 rounded-xl flex items-center border border-slate-300/80 shadow-inner select-none flex-1 mr-1.5 h-[28px] overflow-hidden">
                         <!-- 滑動底塊（5 等分，寬度 20%） -->
-                        <div id="floorSliderThumb" class="absolute top-0.5 bottom-0.5 left-[2px] w-[calc(20%-2px)] bg-blue-600 rounded-[10px] shadow-sm transition-all duration-200 ease-out pointer-events-none"></div>
-                        
+                                                <div id="floorSliderThumb" class="absolute top-0.5 bottom-0.5 left-[2px] w-[calc(25%-2px)] bg-blue-600 rounded-[10px] shadow-sm transition-all duration-200 ease-out pointer-events-none"></div>
+
                         <button type="button" id="patrol-flt-all" onclick="window.filterPatrolFloor('ALL')" class="relative z-10 flex-1 text-center text-[12.5px] font-black text-white transition-colors duration-200 leading-none py-1">全部</button>
                         <button type="button" id="patrol-flt-garden" onclick="window.filterPatrolFloor('花園仔')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1">花園仔</button>
                         <button type="button" id="patrol-flt-fish" onclick="window.filterPatrolFloor('地下')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1">地下</button>
-                        <button type="button" id="patrol-flt-first" onclick="window.filterPatrolFloor('一樓')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1">一樓</button>
-                        <button type="button" id="patrol-flt-temp" onclick="window.filterPatrolFloor('溫度')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1 flex items-center justify-center">
-                            <i data-lucide="thermometer" class="w-3 h-3 mr-0.5 text-rose-500 pointer-events-none"></i>溫度
-                        </button>
+                                                <button type="button" id="patrol-flt-first" onclick="window.filterPatrolFloor('一樓')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1">一樓</button>
                     </div>
 
                     <!-- 模式切換：卡片 / 專注 -->
@@ -7786,12 +7788,85 @@ if (!savedRaw) {
                     <button type="button" onclick="window.openPatrolSearchModal()" class="px-3.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold active:scale-95 flex items-center shadow-2xs">
                         <i data-lucide="search" class="w-3.5 h-3.5 mr-1 text-blue-600"></i>搜尋
                     </button>
-                    <button type="button" onclick="window.exportPatrolExcelCSV()" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 flex items-center">
+                                        <button type="button" onclick="window.exportPatrolExcelCSV()" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 flex items-center">
                         <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5 mr-1"></i>匯出報表
                     </button>
                 </div>
             </div>
+
+<!-- 溫度浮窗鍵 (晴朗天空藍 + 零重疊清晰排版) -->
+<button id="floatingTempBtn" type="button" onclick="window.openTempModal()"
+        class="absolute right-3.5 bottom-16 z-[40] w-12 h-12 rounded-full p-[2.5px] bg-[#bae6fd] border border-[#7dd3fc] flex items-center justify-center transition-transform active:scale-90 cursor-pointer group select-none">
+    <div id="floatingTempInner" class="w-full h-full rounded-full bg-[#38bdf8] border-2 border-white flex flex-col items-center justify-center pt-0.5">
+        <i data-lucide="thermometer" id="floatingTempIcon" class="w-[18px] h-[18px] text-white stroke-[2.4] pointer-events-none"></i>
+        <span id="floatingTempBadge" class="text-[8px] font-mono font-black text-white leading-none tracking-tighter mt-0.5">°C</span>
+    </div>
+</button>
+
+<div id="tempStatsModal" class="fixed inset-0 bg-slate-900/60 z-[9999] hidden flex-col justify-end sm:items-center sm:justify-center p-0 sm:p-3" onclick="if(event.target===this)window.closeTempModal()">
+    <div class="bg-white w-full sm:max-w-[360px] sm:rounded-2xl rounded-t-2xl max-h-[88vh] shadow-2xl flex flex-col overflow-hidden" onclick="event.stopPropagation()">
+        <!-- 頂部拖曳條 + 標題 -->
+        <div class="shrink-0 pt-2 pb-1 flex justify-center sm:hidden">
+            <div class="w-10 h-1 rounded-full bg-slate-300"></div>
+        </div>
+        <header class="px-4 pb-2.5 pt-1 border-b border-slate-100 flex items-center justify-between shrink-0">
+            <div>
+                <h3 class="text-sm font-black text-slate-800">溫度統計表</h3>
+                <p class="text-[11px] font-bold text-rose-600 mt-0.5">時段：<span id="tempModalSlotLabel">—</span></p>
+            </div>
+            <button type="button" onclick="window.closeTempModal()" class="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 text-xs font-bold active:scale-95">關閉</button>
+        </header>
+        <div class="px-3 py-2 border-b border-slate-100 flex items-center justify-between shrink-0 gap-2">
+            <span class="text-[11px] font-bold text-slate-500">進度 <span id="tempModalProgress" class="text-rose-600 font-black">0/12</span></span>
+            <input type="text" id="tempModalRecorder" placeholder="記錄者姓名" onchange="window.setPointTempRecorder(this.value)"
+                   class="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-center w-28 focus:outline-none focus:border-rose-400">
+        </div>
+        <div id="tempModalList" class="flex-1 overflow-y-auto p-3 space-y-1.5 min-h-0"></div>
+        <div class="p-3 border-t border-slate-100 shrink-0 pb-5">
+            <button type="button" onclick="window.closeTempModal()" class="w-full py-2.5 bg-slate-800 text-white rounded-xl text-xs font-bold active:scale-95">完成</button>
+        </div>
+    </div>
+</div>
         </main>
+
+<!-- 溫度數字盤（附同步輸入顯示框） -->
+<div id="tempKeypadModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-[10050] flex flex-col items-center justify-center p-4" onclick="window.closeTempKeypadModal()">
+    <div class="bg-white rounded-3xl border-2 border-slate-200 p-4 shadow-2xl w-full max-w-[320px] space-y-2.5 animate-pop-in" onclick="event.stopPropagation()">
+        <!-- 頂部資訊列 -->
+        <div class="flex justify-between items-center px-1 pb-1 border-b border-slate-100">
+            <div class="flex items-center space-x-1.5 min-w-0">
+                <span class="w-2 h-2 rounded-full bg-blue-500 shrink-0"></span>
+                <span id="tempKeypadTargetTitle" class="text-xs font-black text-slate-800 truncate">測溫點</span>
+            </div>
+            <div class="flex items-center space-x-3 shrink-0">
+                <button type="button" onclick="window.onTempKeypadPress('CLEAR')" class="text-rose-600 text-xs font-black active:scale-95">清空</button>
+                <button type="button" onclick="window.closeTempKeypadModal()" class="bg-blue-600 text-white px-3 py-1 rounded-xl text-xs font-bold active:scale-95 shadow-xs">完成</button>
+            </div>
+        </div>
+
+        <!-- 🌟 同步即時顯示輸入框 -->
+        <div class="w-full h-11 bg-slate-50 border-2 border-blue-400 rounded-2xl flex items-center justify-center shadow-inner">
+            <span id="tempKeypadCurrentDisplay" class="font-mono font-black text-2xl text-blue-700 tracking-wider">---</span>
+            <span class="text-xs font-black text-slate-400 ml-1">°C</span>
+        </div>
+
+        <!-- 數字按鍵 -->
+        <div class="grid grid-cols-3 gap-[3px] w-full select-none pt-0.5">
+            <button type="button" onclick="window.onTempKeypadPress('1')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">1</button>
+            <button type="button" onclick="window.onTempKeypadPress('2')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">2</button>
+            <button type="button" onclick="window.onTempKeypadPress('3')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">3</button>
+            <button type="button" onclick="window.onTempKeypadPress('4')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">4</button>
+            <button type="button" onclick="window.onTempKeypadPress('5')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">5</button>
+            <button type="button" onclick="window.onTempKeypadPress('6')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">6</button>
+            <button type="button" onclick="window.onTempKeypadPress('7')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">7</button>
+            <button type="button" onclick="window.onTempKeypadPress('8')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">8</button>
+            <button type="button" onclick="window.onTempKeypadPress('9')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">9</button>
+            <button type="button" onclick="window.onTempKeypadPress('.')" class="h-[36px] rounded-xl font-mono border bg-slate-50 text-slate-800 text-[26px] font-black active:scale-95">·</button>
+            <button type="button" onclick="window.onTempKeypadPress('0')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">0</button>
+            <button type="button" onclick="window.onTempKeypadPress('BACK')" class="h-[36px] rounded-xl font-mono border bg-slate-100 text-slate-700 text-xs font-black active:scale-95">⌫</button>
+        </div>
+    </div>
+</div>
 
         <!-- 巡查攤位搜尋彈窗 -->
         <div id="patrolSearchModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] flex-col items-center justify-center p-3 sm:p-4" onclick="if(event.target === this) window.closePatrolSearchModal();">
