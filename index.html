@@ -597,11 +597,122 @@ const tabMetadataMap = {
             { floor: "一樓", id: "1-015", type: "豬肉類", name: "曾沃孝", gender: "男" },
             { floor: "一樓", id: "1-018", type: "牛肉類", name: "何森寧", gender: "男" },
             { floor: "一樓", id: "1-019", type: "豬肉類", name: "歐陽燕", gender: "女" },
+            // 一樓 (豬肉類 / 牛肉類 15 檔)
             { floor: "一樓", id: "1-020", type: "豬肉類", name: "黃樹根", gender: "男" },
             { floor: "一樓", id: "1-021", type: "豬肉類", name: "陳麗新", gender: "女" },
             { floor: "一樓", id: "1-023", type: "豬肉類", name: "羅志友", gender: "男" },
             { floor: "一樓", id: "1-024", type: "豬肉類", name: "邱其仁", gender: "男" }
         ];
+
+        // ====== 紅街市溫度統計表 12 測溫點 (純名稱精簡版) ======
+        const RAW_TEMPERATURE_POINTS = [
+            { id: "p1", name: "一樓稽查室對面" },
+            { id: "p2", name: "一樓23號對面" },
+            { id: "p3", name: "地面73號對面" },
+            { id: "p4", name: "地面40號對面" },
+            { id: "p5", name: "花園仔36側" },
+            { id: "p6", name: "花園仔24側" },
+            { id: "p7", name: "A門" },
+            { id: "p8", name: "B門" },
+            { id: "p9", name: "F門" },
+            { id: "p10", name: "C門" },
+            { id: "p11", name: "D門" },
+            { id: "p12", name: "E門" }
+        ];
+
+        let patrolTempRecords = getLocal('work_cache_patrol_temp_records', {});
+        window.activeTempKeypadPointId = 'p1';
+
+        // 選取目標測溫卡片並彈出數字盤
+        window.selectTempPointTarget = (pointId, e) => {
+            if (e) e.stopPropagation();
+            window.activeTempKeypadPointId = pointId;
+            
+            document.querySelectorAll('[id^="tempDisplay-"]').forEach(el => {
+                el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/60');
+            });
+            const curEl = $(`tempDisplay-${pointId}`);
+            if (curEl) {
+                curEl.classList.add('ring-2', 'ring-blue-500', 'bg-blue-100/60');
+            }
+
+            const pt = RAW_TEMPERATURE_POINTS.find(p => p.id === pointId);
+            const titleEl = $('tempKeypadTargetTitle');
+            if (titleEl && pt) {
+                titleEl.innerText = pt.name;
+            }
+
+            const modal = $('tempKeypadModal');
+            if (modal) {
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            }
+        };
+
+        // 關閉溫度數字盤
+        window.closeTempKeypadModal = () => {
+            const modal = $('tempKeypadModal');
+            if (modal) {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+            document.querySelectorAll('[id^="tempDisplay-"]').forEach(el => {
+                el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/60');
+            });
+        };
+
+        // 溫度專屬虛擬鍵盤點擊處理
+        window.onTempKeypadPress = (key) => {
+            const pointId = window.activeTempKeypadPointId || 'p1';
+            const date = currentPatrolDate;
+            const slot = patrolSlot;
+
+            if (!patrolTempRecords[date]) patrolTempRecords[date] = {};
+            if (!patrolTempRecords[date][slot]) patrolTempRecords[date][slot] = {};
+
+            let val = patrolTempRecords[date][slot][pointId] || '';
+
+            if (key === 'CLEAR') {
+                val = '';
+            } else if (key === 'BACK') {
+                val = val.slice(0, -1);
+            } else if (key === '.') {
+                if (!val.includes('.') && val.length > 0) val += '.';
+            } else {
+                if (val.length < 5) val += String(key);
+            }
+
+            if (val === '') {
+                delete patrolTempRecords[date][slot][pointId];
+            } else {
+                patrolTempRecords[date][slot][pointId] = val;
+            }
+
+            safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
+            syncConfig('patrol_temp_records', { records: patrolTempRecords }, true);
+
+            const displayEl = $(`tempDisplay-${pointId}`);
+            if (displayEl) {
+                displayEl.innerHTML = val ? `${val}<span class="text-xs font-black text-slate-500 ml-0.5">°C</span>` : `---`;
+            }
+
+            const curSlotTemps = patrolTempRecords[date][slot] || {};
+            const filledCount = RAW_TEMPERATURE_POINTS.filter(pt => curSlotTemps[pt.id]).length;
+            const total = RAW_TEMPERATURE_POINTS.length;
+            if ($('patrolProgressText'))$('patrolProgressText').innerText = `${filledCount} / ${total} (溫度)`;
+            if ($('patrolProgressBar'))$('patrolProgressBar').style.width = `${Math.round((filledCount / total) * 100)}%`;
+            if ($('patrolUnfilledBadge'))$('patrolUnfilledBadge').innerText = total - filledCount;
+        };
+
+        window.setPointTempRecorder = (val) => {
+            const date = currentPatrolDate;
+            const slot = patrolSlot;
+            if (!patrolTempRecords[date]) patrolTempRecords[date] = {};
+            if (!patrolTempRecords[date][slot]) patrolTempRecords[date][slot] = {};
+            patrolTempRecords[date][slot]['recorder'] = val;
+            safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
+            syncConfig('patrol_temp_records', { records: patrolTempRecords }, true);
+        };
 
         let patrolFloor = 'ALL';
         let patrolSlot = (typeof window.getAutoPatrolSlot === 'function')
@@ -1098,18 +1209,18 @@ window.clearTodayPatrolData = (e) => {
             patrolFloor = flr;
             patrolFocusIndex = 0;
             window.clearFocusAutoTimer();
-            ['all', 'garden', 'fish', 'first'].forEach(f => {
+            ['all', 'garden', 'fish', 'first', 'temp'].forEach(f => {
                 const btn = $(`patrol-flt-${f}`);
                 if (btn) {
                     const match = (f === 'all' && flr === 'ALL') ||
                                   (f === 'garden' && flr === '花園仔') ||
                                   (f === 'fish' && flr === '地下') ||
-                                  (f === 'first' && flr === '一樓');
+                                  (f === 'first' && flr === '一樓') ||
+                                  (f === 'temp' && flr === '溫度');
 
-                    // 選取後一律變藍色（bg-blue-600 白字），未選取統一為黑字白底（text-slate-800）
                     btn.className = match
-                        ? "px-2.5 py-1 rounded-lg text-[14px] font-black bg-blue-600 text-white shadow-xs shrink-0"
-                        : "px-2.5 py-1 rounded-lg text-[14px] font-bold bg-white text-slate-800 border border-slate-200 hover:bg-slate-50 shrink-0";
+                        ? "px-2.5 py-1 rounded-lg text-[14px] font-black bg-blue-600 text-white shadow-xs shrink-0 flex items-center"
+                        : "px-2.5 py-1 rounded-lg text-[14px] font-bold bg-white text-slate-800 border border-slate-200 hover:bg-slate-50 shrink-0 flex items-center";
                 }
             });
             window.renderPatrol();
@@ -1238,12 +1349,109 @@ window.clearTodayPatrolData = (e) => {
         };
 
         window.renderPatrol = () => {
+            // 🌟 溫度模式專屬卡片清單渲染 (去標籤 + 圖片上傳同款數字盤)
+            // 🌟 溫度模式專屬卡片清單渲染 (點擊溫度框才彈出數字盤)
+            if (patrolFloor === '溫度') {
+                const container = $('patrolCardList');
+                const focusBox = $('patrolFocusContainer');
+                const cardBox = $('patrolCardContainer');
+                if (cardBox) cardBox.classList.remove('hidden');
+                if (focusBox) focusBox.classList.add('hidden');
+
+                const curSlotTemps = (patrolTempRecords[currentPatrolDate] || {})[patrolSlot] || {};
+                const filledPoints = RAW_TEMPERATURE_POINTS.filter(pt => curSlotTemps[pt.id]);
+                const total = RAW_TEMPERATURE_POINTS.length;
+
+                if ($('patrolProgressText'))$('patrolProgressText').innerText = `${filledPoints.length} / ${total} (溫度)`;
+                if ($('patrolProgressBar'))$('patrolProgressBar').style.width = `${Math.round((filledPoints.length / total) * 100)}%`;
+                if ($('patrolUnfilledBadge'))$('patrolUnfilledBadge').innerText = total - filledPoints.length;
+
+                if (container) {
+                    const keys = [
+                        ['1', '2', '3'],
+                        ['4', '5', '6'],
+                        ['7', '8', '9'],
+                        ['.', '0', 'BACK']
+                    ];
+
+                    container.innerHTML = `
+                    <!-- 頂部記錄者輸入卡片 -->
+                    <div class="bg-rose-50 border-2 border-rose-200 rounded-2xl p-2 mb-2 flex items-center justify-between shadow-xs">
+                        <div class="flex items-center space-x-1.5">
+                            <i data-lucide="user-check" class="w-4 h-4 text-rose-500"></i>
+                            <span class="text-xs font-black text-rose-800">【${patrolSlot}】記錄者</span>
+                        </div>
+                        <input type="text" placeholder="填寫記錄者姓名..." value="${curSlotTemps['recorder'] || ''}" 
+                               onchange="window.setPointTempRecorder(this.value)" 
+                               class="bg-white border border-rose-300 rounded-xl px-2.5 py-1 text-xs font-bold text-slate-800 text-center focus:outline-none focus:border-rose-500 w-32 shadow-inner">
+                    </div>
+
+                    <!-- 12 測溫點卡片 (平時清爽無阻擋) -->
+                    <div class="space-y-1.5 mb-6">
+                        ${RAW_TEMPERATURE_POINTS.map((pt) => {
+                            const tempVal = curSlotTemps[pt.id] || '';
+                            const hasVal = tempVal !== '';
+                            return `
+                            <div onclick="window.selectTempPointTarget('${pt.id}', event)" 
+                                 class="p-2.5 px-3 rounded-2xl border transition-all flex items-center justify-between cursor-pointer active:scale-[0.99] ${hasVal ? 'bg-slate-100 border-slate-300' : 'bg-white border-amber-300 shadow-xs'}">
+                                <span class="text-sm font-black text-slate-800 truncate">${pt.name}</span>
+                                <div id="tempDisplay-${pt.id}" 
+                                     class="w-24 h-9 bg-white border-2 border-blue-400 rounded-xl flex items-center justify-center font-mono font-black text-lg text-blue-700 shadow-inner select-none transition-all">
+                                    ${tempVal ? `${tempVal}<span class="text-xs font-black text-slate-500 ml-0.5">°C</span>` : `---`}
+                                </div>
+                            </div>`;
+                        }).join('')}
+                    </div>
+
+                    <!-- 🌟 點擊後置中彈出的專屬數字盤 Modal -->
+                    <div id="tempKeypadModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-[350] flex flex-col items-center justify-center p-4" onclick="window.closeTempKeypadModal()">
+                        <div class="bg-white rounded-3xl border-2 border-slate-200 p-4 shadow-2xl w-full max-w-[320px] space-y-2.5 animate-pop-in" onclick="event.stopPropagation()">
+                            <div class="flex justify-between items-center px-1 pb-1 border-b border-slate-100">
+                                <div class="flex items-center space-x-1.5">
+                                    <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                                    <span id="tempKeypadTargetTitle" class="text-xs font-black text-slate-800">測溫點</span>
+                                </div>
+                                <div class="flex items-center space-x-3">
+                                    <button type="button" onclick="window.onTempKeypadPress('CLEAR')" class="text-rose-600 text-xs font-black hover:underline active:scale-95">清空</button>
+                                    <button type="button" onclick="window.closeTempKeypadModal()" class="bg-blue-600 text-white px-3 py-1 rounded-xl text-xs font-bold active:scale-95 shadow-xs">完成</button>
+                                </div>
+                            </div>
+                            <!-- 十宮格數字鍵 (高度 34px) -->
+                            <div class="grid grid-cols-3 gap-[3px] w-full select-none pt-1">
+                                ${keys.flat().map(k => {
+                                    let label = k;
+                                    let style = "bg-white text-slate-800 border border-slate-200 shadow-2xs text-[20px] font-black hover:bg-slate-50";
+                                    if (k === 'BACK') {
+                                        label = '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-slate-700 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6-6h12a2 2 0 012 2v8a2 2 0 01-2 2H9l-6-6z" /></svg>';
+                                        style = "bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200";
+                                    } else if (k === '.') {
+                                        label = '·';
+                                        style = "bg-slate-50 border border-slate-200 text-slate-800 text-[26px] hover:bg-slate-100 leading-none";
+                                    }
+                                    return `
+                                    <button type="button" onclick="window.onTempKeypadPress('${k}')" 
+                                        class="h-[36px] rounded-xl font-mono border flex items-center justify-center p-0 leading-none active:scale-95 active:bg-blue-100 transition-all ${style}">
+                                        ${label}
+                                    </button>`;
+                                }).join('')}
+                            </div>
+                        </div>
+                    </div>`;
+                }
+                if (window.lucide) lucide.createIcons();
+                return;
+            }
+
+            // 原本的程式碼從這裡繼續：
             const stalls = window.getFilteredPatrolStalls();
             const total = stalls.length;
             let filledCount = 0;
             let unfilledStalls = [];
 
+
+
             stalls.forEach(s => {
+
                 const status = window.getPatrolStatus(s, patrolSlot);
                 if (status) filledCount++;
                 else unfilledStalls.push(s);
@@ -7389,6 +7597,9 @@ if (!savedRaw) {
                         <button id="patrol-flt-garden" onclick="window.filterPatrolFloor('花園仔')" class="px-2.5 py-1 rounded-lg text-[14px] font-bold bg-white text-slate-800 border border-slate-200 hover:bg-slate-50 shrink-0">花園仔</button>
                         <button id="patrol-flt-fish" onclick="window.filterPatrolFloor('地下')" class="px-2.5 py-1 rounded-lg text-[14px] font-bold bg-white text-slate-800 border border-slate-200 hover:bg-slate-50 shrink-0">地下</button>
                         <button id="patrol-flt-first" onclick="window.filterPatrolFloor('一樓')" class="px-2.5 py-1 rounded-lg text-[14px] font-bold bg-white text-slate-800 border border-slate-200 hover:bg-slate-50 shrink-0">一樓</button>
+<button id="patrol-flt-temp" onclick="window.filterPatrolFloor('溫度')" class="px-2.5 py-1 rounded-lg text-[14px] font-bold bg-white text-slate-800 border border-slate-200 hover:bg-slate-50 shrink-0 flex items-center">
+    <i data-lucide="thermometer" class="w-3.5 h-3.5 mr-0.5 text-rose-500 pointer-events-none"></i>溫度
+</button>
                     </div>
 
                     <!-- 模式切換：卡片 / 專注 -->
