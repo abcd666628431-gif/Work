@@ -861,28 +861,34 @@ const tabMetadataMap = {
             '下午6點': 18 * 60
         };
 
-// 依現實時間自動選擇對應巡查時段
+let lastAutoTriggeredSlot = '';
+
 window.getAutoPatrolSlot = () => {
     const now = window.getNow ? window.getNow() : new Date();
     const mins = now.getHours() * 60 + now.getMinutes();
-    // 規則：已到達哪個時段就選哪個（由晚到早判斷）
-    if (mins >= 18 * 60) return '下午6點';   // 18:00 之後
-    if (mins >= 16 * 60) return '下午4點';   // 16:00～17:59
-    if (mins >= 11 * 60) return '上午11點';  // 11:00～15:59
-    return '上午9點';                        // 11:00 之前
+    // 精準到達時間點即時切換 (由晚至早判斷)
+    if (mins >= 18 * 60) return '下午6點';   // 18:00 起
+    if (mins >= 16 * 60) return '下午4點';   // 16:00 起
+    if (mins >= 11 * 60) return '上午11點';  // 11:00 起
+    if (mins >= 9 * 60)  return '上午9點';   // 09:00 起
+    return '上午9點';                        // 09:00 前預設
 };
 
-// 套用自動時段（可在進入剔檔分頁時呼叫）
-window.applyAutoPatrolSlot = () => {
+// 套用自動時段（支援強制切換或定時跨時段自動跳轉）
+window.applyAutoPatrolSlot = (force = false) => {
     const autoSlot = window.getAutoPatrolSlot();
-    if (patrolSlot !== autoSlot) {
+    if (force) {
+        lastAutoTriggeredSlot = autoSlot;
         window.setPatrolSlot(autoSlot);
-    } else {
-        // 即使相同也更新一次按鈕樣式
-        window.setPatrolSlot(autoSlot);
+    } else if (autoSlot !== lastAutoTriggeredSlot) {
+        // 現實時間剛好跨入新時段（09:00 / 11:00 / 16:00 / 18:00）時自動切換
+        lastAutoTriggeredSlot = autoSlot;
+        if (patrolSlot !== autoSlot) {
+            window.setPatrolSlot(autoSlot);
+            window.showToast(`⏰ 時間已到達，已自動切換至【${autoSlot}】巡查時段！`);
+        }
     }
 };
-
         window.getPatrolKey = (stall) => `${stall.floor}-${stall.id}`;
         window.getPatrolStatus = (stall, slot) => {
             const dateRecords = patrolHistoryStore[currentPatrolDate] || {};
@@ -916,9 +922,20 @@ window.applyAutoPatrolSlot = () => {
 
             const now = window.getNow();
             const nowMinutes = now.getHours() * 60 + now.getMinutes();
+            const todayStr = getTodayDateStr();
 
-            // 🌟 防線 1：街市早上 07:00 開檔前，一律不觸發任何自動剔選判定
-            if (nowMinutes < 7 * 60) {
+            // 🌟 核心規則 1：晚上 22:00（10點）後封存檔案，禁止圖庫再自動覆蓋今天紀錄
+            if (currentPatrolDate === todayStr && nowMinutes >= 22 * 60) {
+                return 0;
+            }
+
+            // 🌟 核心規則 2：過去日期的舊檔案已被永久保存，不再跟隨圖庫更新
+            if (currentPatrolDate < todayStr) {
+                return 0;
+            }
+
+            // 🌟 核心規則 3：街市早上 07:00 開檔前，一律不觸發任何自動剔選判定
+            if (nowMinutes < 7 * 60) { {
                 // 如果今天紀錄裡誤存了收工資料，在清晨自動清洗抹除乾淨
                 if (patrolHistoryStore[currentPatrolDate]) {
                     let cleaned = false;
@@ -5600,7 +5617,7 @@ window.crSaveData = () => {
             // 🌟 關鍵修正第 2 步：頁面已經移除 hidden 後，才執行對應的渲染函式
             ({
                 patrol: () => {
-                    window.applyAutoPatrolSlot();
+                    window.applyAutoPatrolSlot(true); // 傳入 true，剛切換到剔檔頁面時強制對齊當前時間
                     window.autoSyncClosedStallsToPatrol(true);
                     window.setPatrolViewMode('card');
                 },
@@ -5799,7 +5816,11 @@ window.crSaveData = () => {
             if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
         };
 
-setInterval(() => { if (!isFastForwarding) window.updateClockUI(); }, 1000);
+setInterval(() => { 
+    if (!isFastForwarding) window.updateClockUI();
+    // 🌟 每秒背景檢查時間是否跨越 09:00 / 11:00 / 16:00 / 18:00，到達時即時切換
+    window.applyAutoPatrolSlot(false);
+}, 1000);
         setInterval(() => {
             checkAndResetDailySchedule();
             if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
