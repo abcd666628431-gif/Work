@@ -1274,22 +1274,7 @@ window.clearTodayPatrolData = (e) => {
             patrolFocusIndex = 0;
             window.clearFocusAutoTimer();
 
-            // 🌟 浮窗按鈕天藍色質感控制 (晴朗天空藍)
-            const floatInner = $('floatingTempInner');
-            const floatIcon = $('floatingTempIcon');
-            const floatBadge = $('floatingTempBadge');
-
-            if (floatInner) {
-                floatInner.className = "w-full h-full rounded-full bg-[#38bdf8] border-2 border-white flex flex-col items-center justify-center pt-0.5";
-            }
-            if (floatIcon) {
-                floatIcon.className = "w-[18px] h-[18px] text-white stroke-[2.4] pointer-events-none";
-            }
-            if (floatBadge) {
-                floatBadge.className = "text-[8px] font-mono font-black text-white leading-none tracking-tighter mt-0.5";
-            }
-
-            // 4 個項目 (全部:0, 花園仔:1, 地下:2, 一樓:3)
+            // 4 個項目對應座標
             const mapKeys = {
                 'ALL': { id: 'all', idx: 0 },
                 '花園仔': { id: 'garden', idx: 1 },
@@ -1299,10 +1284,10 @@ window.clearTodayPatrolData = (e) => {
 
             const target = mapKeys[flr] || mapKeys['ALL'];
 
-            // 滑塊位移 (每格 25% = 100% / 4)
+            // 🌟 採用硬體加速平滑滑動位移（每次精準平移 100% 格寬）
             const thumb = $('floorSliderThumb');
             if (thumb) {
-                thumb.style.left = `calc(${target.idx * 25}% + 2px)`;
+                thumb.style.transform = `translateX(${target.idx * 100}%)`;
             }
 
             ['all', 'garden', 'fish', 'first'].forEach(f => {
@@ -1310,13 +1295,44 @@ window.clearTodayPatrolData = (e) => {
                 if (btn) {
                     const isSelected = (f === target.id);
                     btn.className = isSelected
-                        ? "relative z-10 flex-1 text-center text-[12.5px] font-black text-white transition-colors duration-200 leading-none py-1 flex items-center justify-center"
-                        : "relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 hover:text-slate-900 transition-colors duration-200 leading-none py-1 flex items-center justify-center";
+                        ? "relative z-10 flex-1 text-center text-[12.5px] font-black text-white transition-colors duration-200 leading-none py-1 flex items-center justify-center pointer-events-auto"
+                        : "relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 hover:text-slate-900 transition-colors duration-200 leading-none py-1 flex items-center justify-center pointer-events-auto";
                 }
             });
 
             window.renderPatrol();
         };
+
+        // 🌟 支援手指在軌道上「直接滑動/拖曳」手勢
+        (function initFloorSliderTouchSwipe() {
+            const bindTrackSwipe = () => {
+                const track = $('floorSliderTrack');
+                if (!track || track._swipeBound) return;
+                track._swipeBound = true;
+                const floors = ['ALL', '花園仔', '地下', '一樓'];
+
+                const handleSwipe = (e) => {
+                    const touch = e.touches ? e.touches[0] : e;
+                    if (!touch) return;
+                    const rect = track.getBoundingClientRect();
+                    const offsetX = touch.clientX - rect.left;
+                    let idx = Math.floor((offsetX / rect.width) * 4);
+                    idx = Math.max(0, Math.min(3, idx));
+                    if (floors[idx] && patrolFloor !== floors[idx]) {
+                        window.filterPatrolFloor(floors[idx]);
+                    }
+                };
+
+                track.addEventListener('touchmove', handleSwipe, { passive: true });
+                track.addEventListener('touchstart', handleSwipe, { passive: true });
+            };
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', bindTrackSwipe);
+            } else {
+                setTimeout(bindTrackSwipe, 100);
+            }
+        })();
 
         window.setPatrolSlot = (slot) => {
             patrolSlot = slot;
@@ -7619,16 +7635,17 @@ if (!savedRaw) {
 
                 <!-- 第二行：【全部, 花園仔, 地下, 一樓】靠左，【卡片, 專注】靠右，完美排在同一行 -->
                 <div class="flex items-center justify-between gap-1 pt-0.5">
-                    <!-- 樓層篩選 -->
-                    <!-- 🌟 樓層/溫度一體化滑動切換軌道 -->
-                    <div class="relative bg-slate-200/90 p-0.5 rounded-xl flex items-center border border-slate-300/80 shadow-inner select-none flex-1 mr-1.5 h-[28px] overflow-hidden">
-                        <!-- 滑動底塊（5 等分，寬度 20%） -->
-                                                <div id="floorSliderThumb" class="absolute top-0.5 bottom-0.5 left-[2px] w-[calc(25%-2px)] bg-blue-600 rounded-[10px] shadow-sm transition-all duration-200 ease-out pointer-events-none"></div>
+                    <!-- 🌟 樓層滑動軌道（支援點擊 + 手指左右滑動拖曳） -->
+                    <div id="floorSliderTrack" class="relative bg-slate-200/90 p-0.5 rounded-xl flex items-center border border-slate-300/80 shadow-inner select-none flex-1 mr-1.5 h-[28px] overflow-hidden cursor-pointer touch-none">
+                        <!-- 滑動藍色底塊（採用精確 25% GPU transform 位移） -->
+                        <div id="floorSliderThumb" class="absolute top-0.5 bottom-0.5 left-0 w-1/4 p-0.5 transition-transform duration-200 ease-out pointer-events-none">
+                            <div class="w-full h-full bg-blue-600 rounded-[9px] shadow-sm"></div>
+                        </div>
 
                         <button type="button" id="patrol-flt-all" onclick="window.filterPatrolFloor('ALL')" class="relative z-10 flex-1 text-center text-[12.5px] font-black text-white transition-colors duration-200 leading-none py-1">全部</button>
                         <button type="button" id="patrol-flt-garden" onclick="window.filterPatrolFloor('花園仔')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1">花園仔</button>
                         <button type="button" id="patrol-flt-fish" onclick="window.filterPatrolFloor('地下')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1">地下</button>
-                                                <button type="button" id="patrol-flt-first" onclick="window.filterPatrolFloor('一樓')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1">一樓</button>
+                        <button type="button" id="patrol-flt-first" onclick="window.filterPatrolFloor('一樓')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1">一樓</button>
                     </div>
 
                     <!-- 模式切換：卡片 / 專注 -->
