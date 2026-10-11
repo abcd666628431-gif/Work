@@ -3331,6 +3331,14 @@ window.deleteSelectedGalleryItems = () => {
             link.download = `攤販提早收工資料表_${new Date().toISOString().slice(0, 10)}.csv`;
             link.click();
 
+            // 🌟 標記已成功導出並重新整理畫面
+            targetItems.forEach(item => {
+                item.isExported = true;
+            });
+            saveGalleryItemsSafe(galleryItems);
+            window._lastRenderFingerprint = '';
+            window.renderGallery();
+
             window.showToast("✅ 已成功導出含檔主名之 Excel 資料表！");
         };
 
@@ -3420,6 +3428,12 @@ window.deleteSelectedGalleryItems = () => {
                 const displayCat = (i.category === '收工' ? '提早收工' : i.category) || '提早收工';
                 const catColorClass = window.getGalleryCategoryBadgeClass(displayCat);
 
+                // 🌟 判斷：當分類為提早收工/清潔，且已經導出過，顯示綠色剔號
+                const isTargetCat = (displayCat === '提早收工' || displayCat === '清潔');
+                const exportedCheck = (i.isExported && isTargetCat) 
+                    ? `<span class="ml-1 inline-flex items-center text-emerald-600 font-black text-[11px]" title="已導出">✔</span>` 
+                    : '';
+
                 return `
                     <div data-id="${i.id}" 
                          onclick="${window.isGallerySelectMode ? `window.toggleSelectGalleryItem('${i.id}', event)` : ''}"
@@ -3430,9 +3444,9 @@ window.deleteSelectedGalleryItems = () => {
                              onclick="${window.isGallerySelectMode ? `window.toggleSelectGalleryItem('${i.id}', event)` : ''}">
                             ${window.isGallerySelectMode ? `
                                 <input type="checkbox" class="gallery-chk-box w-4 h-4 rounded text-blue-600 cursor-pointer pointer-events-none" ${isSelected ? 'checked' : ''}>
-                                <span class="inline-flex items-center justify-center text-[12px] font-black truncate max-w-[75px] ml-auto px-1 py-0.5 rounded-md border leading-none ${catColorClass}">${displayCat}</span>
+                                <span class="inline-flex items-center justify-center text-[12px] font-black truncate max-w-[85px] ml-auto px-1 py-0.5 rounded-md border leading-none ${catColorClass}">${displayCat}${exportedCheck}</span>
                             ` : `
-                                <span class="inline-flex items-center justify-center text-[12px] font-black px-1 py-0.5 rounded-md border truncate w-full text-center leading-none ${catColorClass}">${displayCat}</span>
+                                <span class="inline-flex items-center justify-center text-[12px] font-black px-1 py-0.5 rounded-md border truncate w-full text-center leading-none ${catColorClass}">${displayCat}${exportedCheck}</span>
                             `}
                         </div>
 
