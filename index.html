@@ -912,12 +912,12 @@ window.applyAutoPatrolSlot = (force = false) => {
     }
 };
 
-       window.autoSyncClosedStallsToPatrol = (silent = true) => {
+       window.autoSyncClosedStallsToPatrol = async (silent = true) => {
             const todayStr = getTodayDateStr();
             const now = window.getNow();
             const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
-            // 🌟 晚上 22:00 之後或過去歷史日期已封存，不再更動
+            // 🌟 晚上 22:00（10點）後封存，或是過去日期，不再改動
             if (currentPatrolDate < todayStr || (currentPatrolDate === todayStr && nowMinutes >= 22 * 60)) {
                 return 0;
             }
@@ -926,7 +926,7 @@ window.applyAutoPatrolSlot = (force = false) => {
                 patrolHistoryStore[currentPatrolDate] = {};
             }
 
-            // 1. 找出今天有效（未刪除、屬於收工/清潔）的相片
+            // 1. 抓取今日有效（未刪除、屬於提早收工/清潔）的照片
             const validClosedPhotos = (galleryItems || []).filter(item => {
                 if (item.isDeleted) return false;
                 const cat = item.category || '';
@@ -937,17 +937,17 @@ window.applyAutoPatrolSlot = (force = false) => {
                 return itemDateStr === currentPatrolDate;
             });
 
-            // 建立「當前相片應該自動判定為 0」的對照表：Map<stallKey, Set<slotKey>>
-            const photoExpectedZeros = new Map();
+            // 2. 建立當前有效照片對應的「預期填入 0」清單
+            const currentExpectedMap = new Map();
 
-            if (nowMinutes >= 7 * 60) { // 早上 7 點開檔後才生效
+            if (nowMinutes >= 7 * 60) {
                 validClosedPhotos.forEach(photo => {
                     const title = (photo.title || '').trim().replace(/^#/, '');
                     const photoTime = photo.time || '12:00';
                     const [phH, phM] = photoTime.split(':').map(Number);
                     const photoMins = (isNaN(phH) ? 12 : phH) * 60 + (isNaN(phM) ? 0 : phM);
 
-                    if (photoMins > nowMinutes) return; // 未到時間不判定
+                    if (photoMins > nowMinutes) return;
 
                     const matchedStalls = RAW_PATROL_STALLS.filter(s => {
                         const sId = s.id.trim();
@@ -968,65 +968,73 @@ window.applyAutoPatrolSlot = (force = false) => {
 
                     matchedStalls.forEach(stall => {
                         const k = window.getPatrolKey(stall);
-                        if (!photoExpectedZeros.has(k)) photoExpectedZeros.set(k, new Map());
+                        if (!currentExpectedMap.has(k)) currentExpectedMap.set(k, new Map());
                         PATROL_TIME_SLOTS.forEach(slotKey => {
                             const slotMins = PATROL_SLOT_MINUTES[slotKey] || 720;
                             if (slotMins >= photoMins) {
-                                photoExpectedZeros.get(k).set(slotKey, `${photoTime} ${photo.category}`);
+                                currentExpectedMap.get(k).set(slotKey, `${photoTime} ${photo.category}`);
                             }
                         });
                     });
                 });
             }
 
+            const dayRecords = patrolHistoryStore[currentPatrolDate];
             let changed = false;
             let autoFilledCount = 0;
-            const dayRecords = patrolHistoryStore[currentPatrolDate];
+            const affectedStallKeys = new Set();
 
-            // 🌟 2. 取消與復原清理：如果以前因相片填入過「0」，但相片已被刪除/改分類/取消，立刻清除還原
+            // 3. 🌟【核心撤銷操作】：檢查原先被自動填入 0 的紀錄，如果照片已被取消/刪除/改分類，立即撤銷還原！
             Object.keys(dayRecords).forEach(stallKey => {
                 PATROL_TIME_SLOTS.forEach(slotKey => {
-                    const reason = dayRecords[stallKey]?.[`${slotKey}_reason`];
-                    // 只要帶有相片原因標記，且相片已不存在於預期清單中
-                    if (reason && (!photoExpectedZeros.has(stallKey) || !photoExpectedZeros.get(stallKey).has(slotKey))) {
-                        delete dayRecords[stallKey][slotKey];
-                        delete dayRecords[stallKey][`${slotKey}_reason`];
-                        changed = true;
+                    const reasonKey = `${slotKey}_reason`;
+                    const hasAutoReason = !!dayRecords[stallKey]?.[reasonKey];
+
+                    if (hasAutoReason) {
+                        const isStillValid = currentExpectedMap.has(stallKey) && currentExpectedMap.get(stallKey).has(slotKey);
+                        // 照片已被刪除或改分類，撤銷這項操作！
+                        if (!isStillValid) {
+                            delete dayRecords[stallKey][slotKey];
+                            delete dayRecords[stallKey][reasonKey];
+                            changed = true;
+                            affectedStallKeys.add(stallKey);
+                        }
                     }
                 });
+
                 if (Object.keys(dayRecords[stallKey] || {}).length === 0) {
                     delete dayRecords[stallKey];
                 }
             });
 
-            // 🌟 3. 新增與覆蓋更新：將符合當前相片的項目補上「0」
-            photoExpectedZeros.forEach((slotMap, stallKey) => {
+            // 4. 套用目前依然有效的照片判定
+            currentExpectedMap.forEach((slots, stallKey) => {
                 if (!dayRecords[stallKey]) dayRecords[stallKey] = {};
-                slotMap.forEach((reasonStr, slotKey) => {
-                    // 若尚未填寫，或原本就是相片自動填入的，予以套用
-                    if (!dayRecords[stallKey][slotKey] || dayRecords[stallKey][`${slotKey}_reason`]) {
-                        if (dayRecords[stallKey][slotKey] !== '0' || dayRecords[stallKey][`${slotKey}_reason`] !== reasonStr) {
+                slots.forEach((reasonStr, slotKey) => {
+                    const reasonKey = `${slotKey}_reason`;
+                    if (!dayRecords[stallKey][slotKey] || dayRecords[stallKey][reasonKey]) {
+                        if (dayRecords[stallKey][slotKey] !== '0' || dayRecords[stallKey][reasonKey] !== reasonStr) {
                             dayRecords[stallKey][slotKey] = '0';
-                            dayRecords[stallKey][`${slotKey}_reason`] = reasonStr;
+                            dayRecords[stallKey][reasonKey] = reasonStr;
                             autoFilledCount++;
                             changed = true;
+                            affectedStallKeys.add(stallKey);
                         }
                     }
                 });
             });
 
-            // 4. 若有任何變動，立即保存與同步
+            // 5. 若有撤銷或新增，立即保存本地並同步清除/更新雲端
             if (changed) {
                 patrolState = patrolHistoryStore[currentPatrolDate];
                 safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
                 safeSetLocal('work_cache_patrol_records', patrolState);
 
-                // 同步雲端
-                if (currentUser && db) {
-                    syncConfig('patrol_history', { history: patrolHistoryStore }, true);
-                }
+                // 🌟 同步單檔至雲端（若是清空，會從雲端 deleteField 徹底抹除）
+                affectedStallKeys.forEach(k => {
+                    window.syncPatrolStallToCloud(currentPatrolDate, k);
+                });
 
-                // 若目前在剔檔畫面，立即重繪
                 if (!$('patrolPage')?.classList.contains('hidden')) {
                     window.renderPatrol();
                 }
@@ -2619,7 +2627,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
             window._lastRenderFingerprint = '';
             await window.renderGallery();
-window.autoSyncClosedStallsToPatrol(true); // 🌟 照片被取消/刪除，剔檔立即跟著取消
+            await window.autoSyncClosedStallsToPatrol(true); // 🌟 照片被取消/刪除，立即撤銷剔檔中的 0
             window.showToast("🗑️ 圖片已移至垃圾桶");
         };
 
@@ -2664,7 +2672,9 @@ window.deleteSelectedGalleryItems = () => {
         window._lastRenderFingerprint = '';
         await window.renderGallery();
 
-window.autoSyncClosedStallsToPatrol(true); // 🌟 批次取消，剔檔同步還原
+        await window.autoSyncClosedStallsToPatrol(true); // 🌟 批次刪除照片，立即撤銷剔檔中的 0
+
+        // 4. 若還原彈窗目前開啟中，同步刷新清單
 
         // 4. 若還原彈窗目前開啟中，同步刷新清單
         if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
@@ -3076,7 +3086,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 批次取消，剔檔同步�
             });
         };
 
-        window.saveGalleryItemEdit = (id) => {
+        window.saveGalleryItemEdit = async (id) => {
             const item = galleryItems.find(x => x.id === id);
             if (!item) return;
 
@@ -3100,7 +3110,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 批次取消，剔檔同步�
             $('galleryItemEditModal')?.remove();
             window._lastRenderFingerprint = '';
             window.renderGallery();
-window.autoSyncClosedStallsToPatrol(true); // 🌟 改分類時即時更新剔檔
+            await window.autoSyncClosedStallsToPatrol(true); // 🌟 分類一旦改掉（例如改成營業相），立即撤銷剔檔中的 0
             window.showToast(`✅ 已儲存！分類確定為「${newCat}」`);
         };
 
