@@ -2162,35 +2162,39 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         };
 
         const splitImageTo4ChunksAsync = (file, maxDim = CONFIG.maxDim, quality = CONFIG.quality) => new Promise((resolve, reject) => {
-            const r = new FileReader();
-            r.readAsDataURL(file);
-            r.onload = (e) => {
-                const img = new Image();
-                img.src = e.target.result;
-                img.onload = () => {
-                    let { width: w, height: h } = img;
-                    if (w > maxDim || h > maxDim) {
-                        const scale = maxDim / Math.max(w, h);
-                        w = Math.round(w * scale); h = Math.round(h * scale);
-                    }
-                    const canvas = document.createElement('canvas');
-                    canvas.width = w; canvas.height = h;
-                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            const blobUrl = URL.createObjectURL(file);
+            const img = new Image();
+            img.src = blobUrl;
+            img.onload = () => {
+                URL.revokeObjectURL(blobUrl);
+                let { width: w, height: h } = img;
+                if (w > maxDim || h > maxDim) {
+                    const scale = maxDim / Math.max(w, h);
+                    w = Math.round(w * scale);
+                    h = Math.round(h * scale);
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, w, h);
 
-                    const chunkHeight = Math.floor(h / 4);
-                    const chunks = Array.from({ length: 4 }, (_, i) => {
-                        const sub = document.createElement('canvas');
-                        const curH = (i === 3) ? (h - chunkHeight * 3) : chunkHeight;
-                        sub.width = w; sub.height = curH;
-                        sub.getContext('2d').drawImage(canvas, 0, i * chunkHeight, w, curH, 0, 0, w, curH);
-                        return sub.toDataURL('image/jpeg', 0.6);
-                    });
-                    img.src = '';
-                    resolve({ chunks, width: w, height: h });
-                };
-                img.onerror = () => reject(new Error("圖片載入失敗"));
+                const chunkHeight = Math.floor(h / 4);
+                const chunks = [];
+                for (let i = 0; i < 4; i++) {
+                    const sub = document.createElement('canvas');
+                    const curH = (i === 3) ? (h - chunkHeight * 3) : chunkHeight;
+                    sub.width = w; sub.height = curH;
+                    sub.getContext('2d').drawImage(canvas, 0, i * chunkHeight, w, curH, 0, 0, w, curH);
+                    chunks.push(sub.toDataURL('image/jpeg', quality));
+                }
+                const previewUrl = canvas.toDataURL('image/jpeg', 0.5);
+                img.src = '';
+                resolve({ chunks, previewSrc: previewUrl, width: w, height: h });
             };
-            r.onerror = () => reject(new Error("檔案讀取失敗"));
+            img.onerror = () => {
+                URL.revokeObjectURL(blobUrl);
+                reject(new Error("圖片載入失敗"));
+            };
         });
 
         const merge4ChunksAsync = async (chunks) => {
@@ -2343,9 +2347,8 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
             for (let i = 0; i < validFiles.length; i++) {
                 try {
-                    const { chunks } = await splitImageTo4ChunksAsync(validFiles[i]);
+                    const { chunks, previewSrc } = await splitImageTo4ChunksAsync(validFiles[i]);
                     const tempId = `img_${Date.now()}_${initialCount + i}_${Math.random().toString(36).substr(2, 4)}`;
-                    const previewSrc = await merge4ChunksAsync(chunks);
                     
                     window.pendingUploadImages.push({
                         tempId, chunks, src: previewSrc,
