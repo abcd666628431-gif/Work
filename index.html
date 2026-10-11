@@ -3212,13 +3212,26 @@ window.deleteSelectedGalleryItems = () => {
                         const writable = await fileHandle.createWritable();
                         await writable.write(pngBlob);
                         await writable.close();
+                        
+                        // 🌟 標記這張圖片已導出
+                        item.isExported = true;
+                        if (currentUser && db) {
+                            setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(item.id)), {
+                                isExported: true
+                            }, { merge: true }).catch(() => {});
+                        }
+                        
                         successCount++;
                         await new Promise(r => setTimeout(r, 120));
                     } catch (singleErr) {}
                 }
+
+                // 🌟 保存至本地快取
+                await saveGalleryItemsSafe(galleryItems);
+
                 window.showToast(`✅ 成功導出 ${successCount} / ${targetItems.length} 張 PNG 圖片！`);
                 
-                // 自動取消選取狀態並關閉選取模式
+                // 自動取消選取狀態並關閉選取模式，強制刷新畫面顯示綠色剔號
                 window.isGallerySelectMode = false;
                 window.selectedGalleryIds.clear();
                 window._lastRenderFingerprint = '';
@@ -3429,9 +3442,10 @@ window.deleteSelectedGalleryItems = () => {
                 const catColorClass = window.getGalleryCategoryBadgeClass(displayCat);
 
                 // 🌟 判斷：當分類為提早收工/清潔，且已經導出過，顯示綠色剔號
-                const isTargetCat = (displayCat === '提早收工' || displayCat === '清潔');
+                // 🌟 判斷：當分類包含收工/清潔，且已經導出過，顯示醒目的綠色剔號
+                const isTargetCat = (displayCat.includes('收工') || displayCat.includes('清潔'));
                 const exportedCheck = (i.isExported && isTargetCat) 
-                    ? `<span class="ml-1 inline-flex items-center text-emerald-600 font-black text-[11px]" title="已導出">✔</span>` 
+                    ? `<span class="ml-1 inline-flex items-center text-emerald-600 font-black text-xs shrink-0 select-none" title="已成功導出圖片">✔</span>` 
                     : '';
 
                 return `
@@ -3439,14 +3453,18 @@ window.deleteSelectedGalleryItems = () => {
                          onclick="${window.isGallerySelectMode ? `window.toggleSelectGalleryItem('${i.id}', event)` : ''}"
                          class="gallery-item-card relative group bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs flex flex-col transition-all cursor-pointer ${isSelected ? 'ring-2 ring-blue-500' : ''}">
                         
-                        <!-- 頂部整行：分類標籤加大為 12px -->
+                        <!-- 頂部整行：分類標籤（文字與剔號獨立，剔號絕不被截斷） -->
                         <div class="px-1 py-0.5 bg-slate-50 border-b border-slate-100 flex justify-between items-center select-none"
                              onclick="${window.isGallerySelectMode ? `window.toggleSelectGalleryItem('${i.id}', event)` : ''}">
                             ${window.isGallerySelectMode ? `
                                 <input type="checkbox" class="gallery-chk-box w-4 h-4 rounded text-blue-600 cursor-pointer pointer-events-none" ${isSelected ? 'checked' : ''}>
-                                <span class="inline-flex items-center justify-center text-[12px] font-black truncate max-w-[85px] ml-auto px-1 py-0.5 rounded-md border leading-none ${catColorClass}">${displayCat}${exportedCheck}</span>
+                                <span class="inline-flex items-center justify-center text-[12px] font-black max-w-[95px] ml-auto px-1.5 py-0.5 rounded-md border leading-none ${catColorClass}">
+                                    <span class="truncate">${displayCat}</span>${exportedCheck}
+                                </span>
                             ` : `
-                                <span class="inline-flex items-center justify-center text-[12px] font-black px-1 py-0.5 rounded-md border truncate w-full text-center leading-none ${catColorClass}">${displayCat}${exportedCheck}</span>
+                                <span class="inline-flex items-center justify-center text-[12px] font-black px-1.5 py-0.5 rounded-md border w-full text-center leading-none ${catColorClass}">
+                                    <span class="truncate">${displayCat}</span>${exportedCheck}
+                                </span>
                             `}
                         </div>
 
