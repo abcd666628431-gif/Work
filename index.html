@@ -913,137 +913,126 @@ window.applyAutoPatrolSlot = (force = false) => {
 };
 
        window.autoSyncClosedStallsToPatrol = (silent = true) => {
-            if (!Array.isArray(galleryItems) || !galleryItems.length) return 0;
-            
-            // 安全防呆：若 stallList 尚未初始化，自動取用 RAW_DATA
-            if (!window.stallList || !window.stallList.length) {
-                if (typeof parseRawData === 'function') window.stallList = parseRawData();
-            }
-
+            const todayStr = getTodayDateStr();
             const now = window.getNow();
             const nowMinutes = now.getHours() * 60 + now.getMinutes();
-            const todayStr = getTodayDateStr();
 
-            // 🌟 核心規則 1：晚上 22:00（10點）後封存檔案，禁止圖庫再自動覆蓋今天紀錄
-            if (currentPatrolDate === todayStr && nowMinutes >= 22 * 60) {
+            // 🌟 晚上 22:00 之後或過去歷史日期已封存，不再更動
+            if (currentPatrolDate < todayStr || (currentPatrolDate === todayStr && nowMinutes >= 22 * 60)) {
                 return 0;
             }
 
-            // 🌟 核心規則 2：過去日期的舊檔案已被永久保存，不再跟隨圖庫更新
-            if (currentPatrolDate < todayStr) {
-                return 0;
+            if (!patrolHistoryStore[currentPatrolDate]) {
+                patrolHistoryStore[currentPatrolDate] = {};
             }
 
-            // 🌟 核心規則 3：街市早上 07:00 開檔前，一律不觸發任何自動剔選判定
-            if (nowMinutes < 7 * 60) {
-                // 如果今天紀錄裡誤存了收工資料，在清晨自動清洗抹除乾淨
-                if (patrolHistoryStore[currentPatrolDate]) {
-                    let cleaned = false;
-                    Object.keys(patrolHistoryStore[currentPatrolDate]).forEach(k => {
-                        PATROL_TIME_SLOTS.forEach(slotKey => {
-                            if (patrolHistoryStore[currentPatrolDate][k]?.[`${slotKey}_reason`]) {
-                                delete patrolHistoryStore[currentPatrolDate][k][slotKey];
-                                delete patrolHistoryStore[currentPatrolDate][k][`${slotKey}_reason`];
-                                cleaned = true;
-                            }
-                        });
-                        if (Object.keys(patrolHistoryStore[currentPatrolDate][k] || {}).length === 0) {
-                            delete patrolHistoryStore[currentPatrolDate][k];
-                        }
-                    });
-                    if (cleaned) {
-                        patrolState = patrolHistoryStore[currentPatrolDate] || {};
-                        safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
-                        safeSetLocal('work_cache_patrol_records', patrolState);
-                        syncConfig('patrol_history', { history: patrolHistoryStore }, true);
-                        syncConfig('patrol_records_' + currentPatrolDate, { records: patrolState });
-                    }
-                }
-                return 0;
-            }
-
-            // 🌟 防線 2：嚴格比對照片的拍攝建立日期
-            const closedPhotos = galleryItems.filter(item => {
+            // 1. 找出今天有效（未刪除、屬於收工/清潔）的相片
+            const validClosedPhotos = (galleryItems || []).filter(item => {
                 if (item.isDeleted) return false;
-                const cat = item.category;
+                const cat = item.category || '';
                 if (cat !== '提早收工' && cat !== '清潔' && cat !== '收工') return false;
-                
                 if (!item.createdAt) return false;
                 const itemD = new Date(item.createdAt);
                 const itemDateStr = `${itemD.getFullYear()}-${String(itemD.getMonth() + 1).padStart(2, '0')}-${String(itemD.getDate()).padStart(2, '0')}`;
                 return itemDateStr === currentPatrolDate;
             });
 
-            if (!closedPhotos.length) return 0;
+            // 建立「當前相片應該自動判定為 0」的對照表：Map<stallKey, Set<slotKey>>
+            const photoExpectedZeros = new Map();
 
-            if (!patrolHistoryStore[currentPatrolDate]) {
-                patrolHistoryStore[currentPatrolDate] = {};
+            if (nowMinutes >= 7 * 60) { // 早上 7 點開檔後才生效
+                validClosedPhotos.forEach(photo => {
+                    const title = (photo.title || '').trim().replace(/^#/, '');
+                    const photoTime = photo.time || '12:00';
+                    const [phH, phM] = photoTime.split(':').map(Number);
+                    const photoMins = (isNaN(phH) ? 12 : phH) * 60 + (isNaN(phM) ? 0 : phM);
+
+                    if (photoMins > nowMinutes) return; // 未到時間不判定
+
+                    const matchedStalls = RAW_PATROL_STALLS.filter(s => {
+                        const sId = s.id.trim();
+                        if (title === sId) return true;
+                        let titlePrefix = '';
+                        if (/^1-?/i.test(title)) titlePrefix = '一樓';
+                        else if (/^R-?/i.test(title)) titlePrefix = '地下';
+                        else if (/^J-?/i.test(title)) titlePrefix = '花園仔';
+                        const sNum = sId.replace(/\D/g, '').replace(/^0+/, '');
+                        const titleNum = title.replace(/\D/g, '').replace(/^0+/, '');
+                        if (sNum && titleNum && sNum === titleNum) {
+                            if (titlePrefix) return s.floor === titlePrefix;
+                            if (photo.floor) return s.floor.includes(photo.floor);
+                            return true;
+                        }
+                        return false;
+                    });
+
+                    matchedStalls.forEach(stall => {
+                        const k = window.getPatrolKey(stall);
+                        if (!photoExpectedZeros.has(k)) photoExpectedZeros.set(k, new Map());
+                        PATROL_TIME_SLOTS.forEach(slotKey => {
+                            const slotMins = PATROL_SLOT_MINUTES[slotKey] || 720;
+                            if (slotMins >= photoMins) {
+                                photoExpectedZeros.get(k).set(slotKey, `${photoTime} ${photo.category}`);
+                            }
+                        });
+                    });
+                });
             }
 
+            let changed = false;
             let autoFilledCount = 0;
+            const dayRecords = patrolHistoryStore[currentPatrolDate];
 
-            closedPhotos.forEach(photo => {
-                const title = (photo.title || '').trim().replace(/^#/, '');
-                const photoTime = photo.time || '12:00';
-                const [phH, phM] = photoTime.split(':').map(Number);
-                const photoMins = (isNaN(phH) ? 12 : phH) * 60 + (isNaN(phM) ? 0 : phM);
-
-                // 🌟 防線 3：照片上的時間如果還沒到（不可能未卜先知），絕不允許提早判定
-                if (photoMins > nowMinutes) return;
-
-                const matchedStalls = RAW_PATROL_STALLS.filter(s => {
-                    const sId = s.id.trim();
-                    if (title === sId) return true;
-
-                    let titlePrefix = '';
-                    if (/^1-?/i.test(title)) titlePrefix = '一樓';
-                    else if (/^R-?/i.test(title)) titlePrefix = '地下';
-                    else if (/^J-?/i.test(title)) titlePrefix = '花園仔';
-
-                    const sNum = sId.replace(/\D/g, '').replace(/^0+/, '');
-                    const titleNum = title.replace(/\D/g, '').replace(/^0+/, '');
-
-                    if (sNum && titleNum && sNum === titleNum) {
-                        if (titlePrefix) return s.floor === titlePrefix;
-                        if (photo.floor) return s.floor.includes(photo.floor);
-                        return true;
+            // 🌟 2. 取消與復原清理：如果以前因相片填入過「0」，但相片已被刪除/改分類/取消，立刻清除還原
+            Object.keys(dayRecords).forEach(stallKey => {
+                PATROL_TIME_SLOTS.forEach(slotKey => {
+                    const reason = dayRecords[stallKey]?.[`${slotKey}_reason`];
+                    // 只要帶有相片原因標記，且相片已不存在於預期清單中
+                    if (reason && (!photoExpectedZeros.has(stallKey) || !photoExpectedZeros.get(stallKey).has(slotKey))) {
+                        delete dayRecords[stallKey][slotKey];
+                        delete dayRecords[stallKey][`${slotKey}_reason`];
+                        changed = true;
                     }
-                    return false;
                 });
+                if (Object.keys(dayRecords[stallKey] || {}).length === 0) {
+                    delete dayRecords[stallKey];
+                }
+            });
 
-                matchedStalls.forEach(stall => {
-                    const k = window.getPatrolKey(stall);
-                    if (!patrolHistoryStore[currentPatrolDate][k]) {
-                        patrolHistoryStore[currentPatrolDate][k] = {};
-                    }
-
-                    PATROL_TIME_SLOTS.forEach(slotKey => {
-                        const slotMins = PATROL_SLOT_MINUTES[slotKey] || 720;
-                        if (slotMins >= photoMins) {
-                            const currentVal = patrolHistoryStore[currentPatrolDate][k][slotKey];
-                            if (!currentVal) {
-                                patrolHistoryStore[currentPatrolDate][k][slotKey] = '0';
-                                patrolHistoryStore[currentPatrolDate][k][`${slotKey}_reason`] = `${photoTime} ${photo.category}`;
-                                autoFilledCount++;
-                            }
+            // 🌟 3. 新增與覆蓋更新：將符合當前相片的項目補上「0」
+            photoExpectedZeros.forEach((slotMap, stallKey) => {
+                if (!dayRecords[stallKey]) dayRecords[stallKey] = {};
+                slotMap.forEach((reasonStr, slotKey) => {
+                    // 若尚未填寫，或原本就是相片自動填入的，予以套用
+                    if (!dayRecords[stallKey][slotKey] || dayRecords[stallKey][`${slotKey}_reason`]) {
+                        if (dayRecords[stallKey][slotKey] !== '0' || dayRecords[stallKey][`${slotKey}_reason`] !== reasonStr) {
+                            dayRecords[stallKey][slotKey] = '0';
+                            dayRecords[stallKey][`${slotKey}_reason`] = reasonStr;
+                            autoFilledCount++;
+                            changed = true;
                         }
-                    });
+                    }
                 });
             });
 
-                        if (autoFilledCount > 0) {
+            // 4. 若有任何變動，立即保存與同步
+            if (changed) {
                 patrolState = patrolHistoryStore[currentPatrolDate];
                 safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
                 safeSetLocal('work_cache_patrol_records', patrolState);
 
-                // 只把有改到的檔逐一上傳
-                const day = patrolHistoryStore[currentPatrolDate] || {};
-                Object.keys(day).forEach(stallKey => {
-                    window.syncPatrolStallToCloud(currentPatrolDate, stallKey);
-                });
+                // 同步雲端
+                if (currentUser && db) {
+                    syncConfig('patrol_history', { history: patrolHistoryStore }, true);
+                }
 
-                if (!silent) {
-                    window.showToast(`⚡ 依今日收工/清潔照片，已自動判定 ${autoFilledCount} 個時段為【無人】！`);
+                // 若目前在剔檔畫面，立即重繪
+                if (!$('patrolPage')?.classList.contains('hidden')) {
+                    window.renderPatrol();
+                }
+
+                if (!silent && autoFilledCount > 0) {
+                    window.showToast(`⚡ 依相片變動，剔檔已即時同步更新！`);
                 }
             }
             return autoFilledCount;
@@ -2630,6 +2619,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
             window._lastRenderFingerprint = '';
             await window.renderGallery();
+window.autoSyncClosedStallsToPatrol(true); // 🌟 照片被取消/刪除，剔檔立即跟著取消
             window.showToast("🗑️ 圖片已移至垃圾桶");
         };
 
@@ -2673,6 +2663,8 @@ window.deleteSelectedGalleryItems = () => {
         window.selectedGalleryIds.clear();
         window._lastRenderFingerprint = '';
         await window.renderGallery();
+
+window.autoSyncClosedStallsToPatrol(true); // 🌟 批次取消，剔檔同步還原
 
         // 4. 若還原彈窗目前開啟中，同步刷新清單
         if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
@@ -3108,6 +3100,7 @@ window.deleteSelectedGalleryItems = () => {
             $('galleryItemEditModal')?.remove();
             window._lastRenderFingerprint = '';
             window.renderGallery();
+window.autoSyncClosedStallsToPatrol(true); // 🌟 改分類時即時更新剔檔
             window.showToast(`✅ 已儲存！分類確定為「${newCat}」`);
         };
 
@@ -3711,6 +3704,8 @@ window.deleteSelectedGalleryItems = () => {
                 // 立即刷新介面
                 window._lastRenderFingerprint = '';
                 window.renderGallery();
+
+window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
                 // 寫入離線待同步佇列
                 window._uploadQueue = [...window._uploadQueue, ...items];
