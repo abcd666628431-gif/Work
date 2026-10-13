@@ -5017,21 +5017,37 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         };
 
         // ====== 手機版專屬：點擊格子直接填入或清除排班名字 ======
+        window._lastCellTapTime = 0;
+        window._lastCellTapKey = '';
+
         window.handleCellMobileClick = (tdEl, locId, start, end) => {
             if (!activeGridMember) {
                 window.showToast("請先在上方點選上方成員或橡皮擦！", true);
                 return;
             }
+
+            // 🌟 防幽靈連點：350毫秒內同一格不重複觸發，徹底解決「出現一下就彈回」的問題
+            const now = Date.now();
+            const cellKey = `${locId}_${start}_${end}`;
+            if (window._lastCellTapKey === cellKey && (now - window._lastCellTapTime) < 350) {
+                return;
+            }
+            window._lastCellTapTime = now;
+            window._lastCellTapKey = cellKey;
             
             const displayDiv = tdEl.querySelector('.grid-input-display');
             if (!displayDiv) return;
 
+            window._tempGridValues = window._tempGridValues || {};
+
             if (activeGridMember === 'ERASER') {
                 // 橡皮擦模式：直接清空
                 displayDiv.textContent = '';
+                window._tempGridValues[cellKey] = '';
+                tdEl.className = tdEl.className.replace(/bg-\S+/g, '') + ' bg-white';
                 window.showToast("🧹 已清除此格");
             } else {
-                // 成員填入模式：點擊即寫入該成員名字
+                // 成員填入模式
                 let currentText = displayDiv.textContent.trim();
                 let names = currentText ? currentText.split(/[\n\s]+/).filter(Boolean) : [];
                 
@@ -5042,7 +5058,19 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     names.push(activeGridMember);
                     window.showToast(`➕ 已指派「${activeGridMember}」`);
                 }
-                displayDiv.textContent = names.join('\n');
+                const finalStr = names.join('\n');
+                displayDiv.textContent = finalStr;
+
+                // 🌟 同步保存到暫存字典中，防止重繪時消失
+                window._tempGridValues[cellKey] = finalStr;
+
+                // 🌟 同步更新底色（有名字時顯示成員專屬顏色）
+                if (names.length > 0) {
+                    const col = window.getMemberColorClass(names[0]);
+                    tdEl.className = tdEl.className.replace(/bg-\S+/g, '') + ` ${col.bg}`;
+                } else {
+                    tdEl.className = tdEl.className.replace(/bg-\S+/g, '') + ' bg-white';
+                }
             }
         };
 
@@ -5073,9 +5101,29 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
         window.saveGridSchedule = () => {
             let newScheds = [], locKeys = Object.keys(mapData.points);
+            
+            // 1. 抓取半小時切割格 (textarea)
             document.querySelectorAll('.grid-input').forEach(i => {
-                const { loc, start, end } = i.dataset, text = i.value.trim();
-                if (text && start && end) { text.split(/[\n\s]+/).forEach(r => { let clean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim(); if (clean && !clean.includes('休')) newScheds.push({ id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5), name: clean, locationId: loc, start, end }); }); }
+                const { loc, start, end } = i.dataset, text = (i.value || '').trim();
+                if (text && start && end) { 
+                    text.split(/[\n\s]+/).forEach(r => { 
+                        let clean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim(); 
+                        if (clean && !clean.includes('休')) newScheds.push({ id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5), name: clean, locationId: loc, start, end }); 
+                    }); 
+                }
+            });
+
+            // 2. 🌟 抓取一般 1 小時整格 (手機點選的 td)
+            document.querySelectorAll('td[data-loc]').forEach(td => {
+                const { loc, start, end } = td.dataset;
+                const display = td.querySelector('.grid-input-display');
+                const text = display ? display.textContent.trim() : '';
+                if (text && start && end) {
+                    text.split(/[\n\s]+/).forEach(r => {
+                        let clean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim();
+                        if (clean && !clean.includes('休')) newScheds.push({ id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5), name: clean, locationId: loc, start, end });
+                    });
+                }
             });
             let merged = [];
             locKeys.forEach(locId => {
