@@ -1129,9 +1129,13 @@ window.syncPatrolStallToCloud = async (dateKey, stallKey) => {
     }
 };
 
-        window.setPatrolStatus = (stall, status, slot) => {
+       window.setPatrolStatus = (stall, status, slot) => {
             const targetSlot = slot || patrolSlot;
             const key = window.getPatrolKey(stall);
+            
+            // 🌟 關鍵防護：標記本機正在操作，鎖定 600 毫秒內不被雲端舊回音覆蓋
+            window._lastPatrolInputTime = Date.now();
+
             if (!patrolHistoryStore[currentPatrolDate]) {
                 patrolHistoryStore[currentPatrolDate] = {};
             }
@@ -1187,14 +1191,15 @@ window.syncPatrolStallToCloud = async (dateKey, stallKey) => {
                 }
             }
 
-                        patrolState = patrolHistoryStore[currentPatrolDate] || {};
+            patrolState = patrolHistoryStore[currentPatrolDate] || {};
             safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
             safeSetLocal('work_cache_patrol_records', patrolState);
 
-            // 只上傳這一檔，不整包覆蓋
-            window.syncPatrolStallToCloud(currentPatrolDate, key);
-
+            // 🌟 立即重新渲染畫面，讓手機使用者獲得「零延遲」的視覺反饋
             window.renderPatrol();
+
+            // 非同步上傳至雲端
+            window.syncPatrolStallToCloud(currentPatrolDate, key);
         };
 
         window.updatePatrolDateInputUI = () => {
@@ -6851,21 +6856,26 @@ setInterval(() => {
         function setupPatrolSync() {
             if (!currentUser) return;
             onSnapshot(cfgDoc('patrol_history'), (snap) => {
+                // 🌟 如果本機在 800 毫秒內才剛點擊過剔選，暫時忽略雲端快照，防止舊資料覆蓋
+                if (window._lastPatrolInputTime && (Date.now() - window._lastPatrolInputTime) < 800) {
+                    return;
+                }
+
                 if (!snap.exists()) return;
                 const data = snap.data();
                 const remote = data?.history || {};
 
-                // 完整替換，確保另一台手機清除某日紀錄時，本機也會同步清除
                 patrolHistoryStore = { ...remote };
-
                 patrolState = patrolHistoryStore[currentPatrolDate] || {};
+                
                 safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
-        safeSetLocal('work_cache_patrol_records', patrolState);
-        if (!$('patrolPage')?.classList.contains('hidden')) {
-            window.renderPatrol();
+                safeSetLocal('work_cache_patrol_records', patrolState);
+                
+                if (!$('patrolPage')?.classList.contains('hidden')) {
+                    window.renderPatrol();
+                }
+            }, console.error);
         }
-    }, console.error);
-}
 
         onAuthStateChanged(auth, (user) => {
             currentUser = user; const dot = $('connectionDot'), st = $('connectionStatus');
