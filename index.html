@@ -638,7 +638,11 @@ const tabMetadataMap = {
 
         // 選取目標測溫卡片並彈出數字盤
         window.selectTempPointTarget = (pointId, e) => {
-            if (e) e.stopPropagation();
+            if (e) {
+                e.preventDefault?.();
+                e.stopPropagation?.();
+            }
+            window._keypadOpenedAt = Date.now();
             window.activeTempKeypadPointId = pointId;
             
             document.querySelectorAll('[id^="tempDisplay-"]').forEach(el => {
@@ -655,7 +659,7 @@ const tabMetadataMap = {
                 titleEl.innerText = pt.name;
             }
 
-            // 🌟 讀取既有溫度並同步至彈窗顯示框
+            // 讀取既有溫度並同步至彈窗顯示框
             const curSlotTemps = (patrolTempRecords[currentPatrolDate] || {})[patrolSlot] || {};
             const curVal = curSlotTemps[pointId] || '';
             const popupDisplay = $('tempKeypadCurrentDisplay');
@@ -670,8 +674,11 @@ const tabMetadataMap = {
             }
         };
 
-        // 關閉溫度數字盤
-        window.closeTempKeypadModal = () => {
+        // 關閉溫度數字盤（加入防觸控穿透保護）
+        window.closeTempKeypadModal = (force = false) => {
+            if (!force && window._keypadOpenedAt && (Date.now() - window._keypadOpenedAt) < 350) {
+                return;
+            }
             const modal = $('tempKeypadModal');
             if (modal) {
                 modal.classList.add('hidden');
@@ -684,6 +691,7 @@ const tabMetadataMap = {
 
         // 溫度專屬虛擬鍵盤點擊處理
         window.onTempKeypadPress = (key) => {
+            window._lastTempInputTime = Date.now(); // 標記本機正在輸入，阻擋雲端舊回音閃回
             const pointId = window.activeTempKeypadPointId || 'p1';
             const date = currentPatrolDate;
             const slot = patrolSlot;
@@ -711,15 +719,21 @@ const tabMetadataMap = {
 
             safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
             
-            // 🌟 點路徑獨立更新，杜絕多人同時輸入時覆蓋整表
+            // 🌟 關鍵修復：setDoc + merge 必須使用「巢狀物件結構」，才會真正寫入 records 內且不覆蓋他人數據
             if (currentUser && db) {
                 const ref = cfgDoc('patrol_temp_records');
-                const fieldPath = `records.${date}.${slot}.${pointId}`;
-                const updatePayload = val === '' ? { [fieldPath]: deleteField() } : { [fieldPath]: val };
-                setDoc(ref, updatePayload, { merge: true }).catch(() => {});
+                setDoc(ref, {
+                    records: {
+                        [date]: {
+                            [slot]: {
+                                [pointId]: val === '' ? deleteField() : val
+                            }
+                        }
+                    }
+                }, { merge: true }).catch(() => {});
             }
 
-            // 🌟 1. 同步彈窗內顯示框
+            // 1. 同步彈窗內顯示框
             const popupDisplay = $('tempKeypadCurrentDisplay');
             if (popupDisplay) {
                 popupDisplay.innerText = val || '---';
@@ -728,7 +742,7 @@ const tabMetadataMap = {
             // 2. 同步底層卡片數值
             const displayEl = $(`tempDisplay-${pointId}`);
             if (displayEl) {
-                displayEl.innerHTML = val ? `${val}<span class="text-xs font-black text-slate-500 ml-0.5">°C</span>` : `---`;
+                displayEl.innerHTML = val ? `${val}<span class="text-[10px] font-bold text-slate-500 ml-0.5">°C</span>` : `---`;
             }
 
             // 3. 更新進度
@@ -741,7 +755,8 @@ const tabMetadataMap = {
             if ($('tempModalProgress'))$('tempModalProgress').innerText = `${filledCount}/${total}`;
         };
 
-                window.setPointTempRecorder = (val) => {
+        window.setPointTempRecorder = (val) => {
+            window._lastTempInputTime = Date.now();
             const date = currentPatrolDate;
             const slot = patrolSlot;
             if (!patrolTempRecords[date]) patrolTempRecords[date] = {};
@@ -749,9 +764,18 @@ const tabMetadataMap = {
             patrolTempRecords[date][slot]['recorder'] = val;
             safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
             
+            // 🌟 關鍵修復：使用巢狀物件結構寫入記錄者姓名
             if (currentUser && db) {
                 const ref = cfgDoc('patrol_temp_records');
-                setDoc(ref, { [`records.${date}.${slot}.recorder`]: val }, { merge: true }).catch(() => {});
+                setDoc(ref, {
+                    records: {
+                        [date]: {
+                            [slot]: {
+                                recorder: val
+                            }
+                        }
+                    }
+                }, { merge: true }).catch(() => {});
             }
         };
 
@@ -4791,6 +4815,10 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
             // 🌟 溫度統計表獨立雙向即時同步
             bindSync('patrol_temp_records', 'work_cache_patrol_temp_records', d => {
+                // 若本機正在連續點選小鍵盤 (800毫秒內)，忽略雲端回傳的舊回音，徹底防止數字閃回
+                if (window._lastTempInputTime && (Date.now() - window._lastTempInputTime) < 800) {
+                    return;
+                }
                 if (d && d.records) {
                     patrolTempRecords = d.records;
                     safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
