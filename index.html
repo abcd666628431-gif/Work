@@ -619,7 +619,7 @@ const tabMetadataMap = {
 
         // ====== 紅街市溫度統計表 12 測溫點 (純名稱精簡版) ======
         const RAW_TEMPERATURE_POINTS = [
-            { id: "p1", name: "一樓稽查室對面" },
+            { id: "p1", name: "一樓客服室側" },
             { id: "p2", name: "一樓23號對面" },
             { id: "p3", name: "地面73號對面" },
             { id: "p4", name: "地面40號對面" },
@@ -960,7 +960,6 @@ window.applyAutoPatrolSlot = (force = false) => {
             const now = window.getNow();
             const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
-            // 🌟 晚上 22:00（10點）後封存，或是過去日期，不再改動
             if (currentPatrolDate < todayStr || (currentPatrolDate === todayStr && nowMinutes >= 22 * 60)) {
                 return 0;
             }
@@ -980,7 +979,7 @@ window.applyAutoPatrolSlot = (force = false) => {
                 return itemDateStr === currentPatrolDate;
             });
 
-            // 2. 建立當前有效照片對應的「預期填入 0」清單
+            // 2. 建立當前有效照片對應的「預期填入 0」清單（依照片上傳時間點，將打後的時段自動填 0）
             const currentExpectedMap = new Map();
 
             if (nowMinutes >= 7 * 60) {
@@ -992,7 +991,6 @@ window.applyAutoPatrolSlot = (force = false) => {
 
                     if (photoMins > nowMinutes) return;
 
-                    // 🌟 正確提取純檔號 (去除 1-、R-、J- 前綴)
                     const matchedStalls = RAW_PATROL_STALLS.filter(s => {
                         const sId = s.id.trim();
                         if (title === sId) return true;
@@ -1014,8 +1012,11 @@ window.applyAutoPatrolSlot = (force = false) => {
                     matchedStalls.forEach(stall => {
                         const k = window.getPatrolKey(stall);
                         if (!currentExpectedMap.has(k)) currentExpectedMap.set(k, new Map());
+                        
+                        // 🌟 核心規則：照片上傳時間點「之後」的剔檔時段，全部自動選取 0
                         PATROL_TIME_SLOTS.forEach(slotKey => {
                             const slotMins = PATROL_SLOT_MINUTES[slotKey] || 720;
+                            // 只要時段的時間 >= 照片拍攝上傳的時間，就自動填入 0
                             if (slotMins >= photoMins) {
                                 currentExpectedMap.get(k).set(slotKey, `${photoTime} ${photo.category}`);
                             }
@@ -1029,7 +1030,7 @@ window.applyAutoPatrolSlot = (force = false) => {
             let autoFilledCount = 0;
             const affectedStallKeys = new Set();
 
-            // 3. 🌟【核心撤銷操作】：檢查原先被自動填入 0 的紀錄，如果照片已被取消/刪除/改分類，立即撤銷還原！
+            // 3. 撤銷操作：照片被刪除或改分類時，自動清除原本因它而填入的 0
             Object.keys(dayRecords).forEach(stallKey => {
                 PATROL_TIME_SLOTS.forEach(slotKey => {
                     const reasonKey = `${slotKey}_reason`;
@@ -1037,7 +1038,6 @@ window.applyAutoPatrolSlot = (force = false) => {
 
                     if (hasAutoReason) {
                         const isStillValid = currentExpectedMap.has(stallKey) && currentExpectedMap.get(stallKey).has(slotKey);
-                        // 照片已被刪除或改分類，撤銷這項操作！
                         if (!isStillValid) {
                             delete dayRecords[stallKey][slotKey];
                             delete dayRecords[stallKey][reasonKey];
@@ -1052,16 +1052,23 @@ window.applyAutoPatrolSlot = (force = false) => {
                 }
             });
 
-            // 4. 套用目前依然有效的照片判定
+            // 4. 自動填入與手動保護邏輯
             currentExpectedMap.forEach((slots, stallKey) => {
                 if (!dayRecords[stallKey]) dayRecords[stallKey] = {};
                 slots.forEach((reasonStr, slotKey) => {
                     const reasonKey = `${slotKey}_reason`;
-                    if (!dayRecords[stallKey][slotKey] || dayRecords[stallKey][reasonKey]) {
-                        if (dayRecords[stallKey][slotKey] !== '0' || dayRecords[stallKey][reasonKey] !== reasonStr) {
-                            dayRecords[stallKey][slotKey] = '0';
+                    const curVal = dayRecords[stallKey][slotKey];
+                    const hasReason = !!dayRecords[stallKey][reasonKey];
+
+                    if (!curVal) {
+                        dayRecords[stallKey][slotKey] = '0';
+                        dayRecords[stallKey][reasonKey] = reasonStr;
+                        autoFilledCount++;
+                        changed = true;
+                        affectedStallKeys.add(stallKey);
+                    } else if (hasReason) {
+                        if (dayRecords[stallKey][reasonKey] !== reasonStr) {
                             dayRecords[stallKey][reasonKey] = reasonStr;
-                            autoFilledCount++;
                             changed = true;
                             affectedStallKeys.add(stallKey);
                         }
@@ -1069,13 +1076,11 @@ window.applyAutoPatrolSlot = (force = false) => {
                 });
             });
 
-            // 5. 若有撤銷或新增，立即保存本地並同步清除/更新雲端
             if (changed) {
                 patrolState = patrolHistoryStore[currentPatrolDate];
                 safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
                 safeSetLocal('work_cache_patrol_records', patrolState);
 
-                // 🌟 合併成單一請求同步至雲端，徹底杜絕並發寫入衝突
                 if (currentUser && db && affectedStallKeys.size > 0) {
                     const ref = cfgDoc('patrol_history');
                     const updates = {};
@@ -1095,10 +1100,6 @@ window.applyAutoPatrolSlot = (force = false) => {
 
                 if (!$('patrolPage')?.classList.contains('hidden')) {
                     window.renderPatrol();
-                }
-
-                if (!silent && autoFilledCount > 0) {
-                    window.showToast(`⚡ 依相片變動，剔檔已即時同步更新！`);
                 }
             }
             return autoFilledCount;
