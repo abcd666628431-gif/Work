@@ -745,13 +745,10 @@ const tabMetadataMap = {
                 displayEl.innerHTML = val ? `${val}<span class="text-[10px] font-bold text-slate-500 ml-0.5">°C</span>` : `---`;
             }
 
-            // 3. 更新進度
+            // 3. 更新溫度彈窗進度（不干擾底層剔檔進度條）
             const curSlotTemps = patrolTempRecords[date][slot] || {};
             const filledCount = RAW_TEMPERATURE_POINTS.filter(pt => curSlotTemps[pt.id]).length;
             const total = RAW_TEMPERATURE_POINTS.length;
-            if ($('patrolProgressText'))$('patrolProgressText').innerText = `${filledCount} / ${total} (溫度)`;
-            if ($('patrolProgressBar'))$('patrolProgressBar').style.width = `${Math.round((filledCount / total) * 100)}%`;
-            if ($('patrolUnfilledBadge'))$('patrolUnfilledBadge').innerText = total - filledCount;
             if ($('tempModalProgress'))$('tempModalProgress').innerText = `${filledCount}/${total}`;
         };
 
@@ -1988,7 +1985,7 @@ $('focusCheck0')?.setAttribute('class', status === '0' ? 'w-5 h-5 text-white' : 
             { bg: 'bg-pink-100', text: 'text-pink-700', border: 'border-pink-300', activeBg: 'bg-pink-500' },
             { bg: 'bg-lime-100', text: 'text-lime-800', border: 'border-lime-300', activeBg: 'bg-lime-500' },
             { bg: 'bg-cyan-100', text: 'text-cyan-800', border: 'border-cyan-300', activeBg: 'bg-cyan-500' },
-            { bg: 'fuchsia-100', text: 'text-fuchsia-700', border: 'border-fuchsia-300', activeBg: 'bg-fuchsia-500' }
+            { bg: 'bg-fuchsia-100', text: 'text-fuchsia-700', border: 'border-fuchsia-300', activeBg: 'bg-fuchsia-500' }
         ];
 
         window.getMemberColorClass = (name) => {
@@ -2135,9 +2132,11 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
         window.toggleSettingsMenu = (e) => { if (e) e.stopPropagation(); $('settingsDropdown')?.classList.toggle('hidden'); };
         document.addEventListener('click', (e) => {
-            const dropdown = $('settingsDropdown'), btn =$('settingsMenuBtn');
-            if (dropdown && !dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && e.target !== btn) dropdown.classList.add('hidden');
-        });
+         const dropdown = $('settingsDropdown'), btn = $('settingsMenuBtn');
+         if (dropdown && !dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && e.target !== btn) dropdown.classList.add('hidden');
+         const calPop = $('patrolCalendarPopover'), calBtn = $('btnTogglePatrolCal');
+         if (calPop && !calPop.classList.contains('hidden') && !calPop.contains(e.target) && e.target !== calBtn) calPop.classList.add('hidden');
+     });
 
         const getNowInputStrs = (targetMs) => {
             const d = targetMs ? new Date(targetMs) : window.getNow();
@@ -2387,7 +2386,8 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             memoryImageCache.set(key, val);
         };
 
-        const getLowResThumbUrlAsync = async (item) => {
+
+        const getLowResThumbUrlAsync = window.getLowResThumbUrlAsync = async (item) => {
             const id = item.id;
             // 關鍵 1：縮圖 Key 必須加上 updatedAt 版本號，旋轉後才會生成全新縮圖
             const verKey = `thumb_${id}_v_${item.updatedAt || item.createdAt || 0}`;
@@ -3228,11 +3228,11 @@ window.deleteSelectedGalleryItems = () => {
             const newCat = $('editModalCatInput')?.value || '提早收工';
             const newTime = $('editModalTimeInput')?.value || '12:00';
 
-            item.title = newTitle;
+           item.title = newTitle;
             item.category = newCat;
             item.time = newTime;
 
-            safeSetLocal('work_cache_gallery_items', galleryItems);
+            await saveGalleryItemsSafe(galleryItems);
             if (currentUser) {
                 setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), {
                     title: newTitle,
@@ -3509,9 +3509,14 @@ window.deleteSelectedGalleryItems = () => {
             link.download = `攤販提早收工資料表_${new Date().toISOString().slice(0, 10)}.csv`;
             link.click();
 
-            // 🌟 標記已成功導出並重新整理畫面
+           // 🌟 標記已成功導出並同步至雲端與本機
             targetItems.forEach(item => {
                 item.isExported = true;
+                if (currentUser && db) {
+                    setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(item.id)), {
+                        isExported: true
+                    }, { merge: true }).catch(() => {});
+                }
             });
             saveGalleryItemsSafe(galleryItems);
             window._lastRenderFingerprint = '';
@@ -3855,6 +3860,8 @@ window.deleteSelectedGalleryItems = () => {
             try {
                 for (let it of items) {
                     const nowTs = Date.now();
+                    it.createdAt = nowTs;
+                    it.updatedAt = nowTs;
                     const verKey = `${it.tempId}_v_${nowTs}`;
                     
                     // 雙寫入：基本 ID 與版本化 Key 同步寫入記憶體與 IndexedDB
@@ -5270,6 +5277,10 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             const stateKey = `${locId}_${hourStr}`, willBeSplit = !splitHoursState[stateKey];
             window._tempGridValues = window._tempGridValues || {};
             document.querySelectorAll('.grid-input').forEach(i => window._tempGridValues[`${i.dataset.loc}_${i.dataset.start}_${i.dataset.end}`] = i.value);
+            document.querySelectorAll('td[data-loc]').forEach(td => {
+                const disp = td.querySelector('.grid-input-display');
+                if (disp) window._tempGridValues[`${td.dataset.loc}_${td.dataset.start}_${td.dataset.end}`] = disp.textContent.trim();
+            });
             const fullKey = `${locId}_${hourStr}_${endH}:00`, hA = `${locId}_${startH}:00_${startH}:30`, hB = `${locId}_${startH}:30_${endH}:00`;
             if (willBeSplit) { const val = window._tempGridValues[fullKey] || ''; window._tempGridValues[hA] = val; window._tempGridValues[hB] = val; delete window._tempGridValues[fullKey]; }
             else { const names = Array.from(new Set([...(window._tempGridValues[hA]||'').split(/[\n\s]+/), ...(window._tempGridValues[hB]||'').split(/[\n\s]+/)])).map(n => n.trim()).filter(Boolean); window._tempGridValues[fullKey] = names.join('\n'); delete window._tempGridValues[hA]; delete window._tempGridValues[hB]; }
