@@ -2377,13 +2377,14 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         // ====== 輕量高清縮圖 (360px、品質 0.75，視網膜清晰度且不卡頓) ======
         let thumbImageCache = new Map();
 
-        // 🌟 限制記憶體快取數量，避免長時間使用造成手機 OOM 崩潰
-        const setMemoryImageSafe = (key, val) => {
-            if (memoryImageCache.size >= 40) {
+        // 🌟 自動限制記憶體快取數量最多 40 張，避免長時間使用造成手機 OOM 閃退
+        const _origCacheSet = memoryImageCache.set.bind(memoryImageCache);
+        memoryImageCache.set = (key, val) => {
+            if (memoryImageCache.size >= 40 && !memoryImageCache.has(key)) {
                 const oldestKey = memoryImageCache.keys().next().value;
                 memoryImageCache.delete(oldestKey);
             }
-            memoryImageCache.set(key, val);
+            return _origCacheSet(key, val);
         };
 
 
@@ -2777,6 +2778,8 @@ window.deleteSelectedGalleryItems = () => {
                 console.error("批次刪除同步失敗:", err);
             }
         }
+
+        window.writeGalleryLog('批次移至垃圾桶', `${count} 張圖片`, '多選移至還原清單');
 
         // 3. 重置選取模式並刷新畫面
         window.isGallerySelectMode = false;
@@ -3240,6 +3243,8 @@ window.deleteSelectedGalleryItems = () => {
                     time: newTime
                 }, { merge: true });
             }
+
+            window.writeGalleryLog('修改圖片', newTitle, `分類: ${newCat} · 時間: ${newTime}`);
 
             $('galleryItemEditModal')?.remove();
             window._lastRenderFingerprint = '';
@@ -4577,6 +4582,22 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                     const item = window._uploadQueue[0];
                     const docId = item.tempId;
 
+                    // 🌟 若離線期間曾重新整理網頁，自動從 IndexedDB 還原原圖與切片
+                    if (!item.src) {
+                        item.src = await idbGet(docId);
+                    }
+                    if (!item.chunks && item.src) {
+                        const blob = dataURLToBlob(item.src);
+                        if (blob) {
+                            const res = await splitImageTo4ChunksAsync(blob);
+                            item.chunks = res.chunks;
+                        }
+                    }
+                    if (!item.chunks || !item.chunks.length) {
+                        window._uploadQueue.shift();
+                        continue;
+                    }
+
                     await idbSet(docId, item.src);
                     memoryImageCache.set(docId, item.src);
 
@@ -4602,9 +4623,15 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
                     await singleBatch.commit();
 
-                    // 上傳成功後移出佇列並更新快取
+                    // 上傳成功後移出佇列並以輕量格式更新快取
                     window._uploadQueue.shift();
-                    safeSetLocal('work_pending_offline_uploads', window._uploadQueue);
+                    const remainSafe = window._uploadQueue.map(q => {
+                        const copy = { ...q };
+                        delete copy.src;
+                        delete copy.chunks;
+                        return copy;
+                    });
+                    safeSetLocal('work_pending_offline_uploads', remainSafe);
 
                     const finishedCount = total - window._uploadQueue.length;
                     const currentPercent = ((finishedCount / total) * 100).toFixed(1);
@@ -4895,6 +4922,18 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                         map.set(it.id, it); 
                     }
                 }
+
+                // 🌟 保留尚在排隊上傳中的本機照片，避免雲端快照回傳時短暫消失
+                const pendingOffline = getLocal('work_pending_offline_uploads', []);
+                const pendingIds = new Set([
+                    ...(window._uploadQueue || []).map(q => q.tempId || q.id),
+                    ...pendingOffline.map(q => q.tempId || q.id)
+                ]);
+                galleryItems.forEach(localIt => {
+                    if (localIt?.id && pendingIds.has(localIt.id) && !map.has(localIt.id)) {
+                        map.set(localIt.id, localIt);
+                    }
+                });
 
                 galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
                 await saveGalleryItemsSafe(galleryItems);
@@ -6692,7 +6731,17 @@ setInterval(() => {
                 setupPatrolSync();
                 window.autoCleanupGalleryToTrash();
                 window.autoSyncClosedStallsToPatrol(true);
-            } else { 
+
+                // 🌟 重開網頁連上雲端時，自動檢查並補傳離線期間拍的照片
+                const offlinePending = getLocal('work_pending_offline_uploads', []);
+                if (offlinePending.length > 0 && !window._uploadQueue.length) {
+                    window._uploadQueue = offlinePending;
+                    window._totalUploadCount = offlinePending.length;
+                }
+                if (window._uploadQueue.length > 0 && navigator.onLine) {
+                    window.resumeBatchUploadQueue();
+                }
+            } else {
                 dot?.classList.replace('bg-green-500', 'bg-red-500'); 
                 if (st) st.textContent = '連線中...'; 
             }
@@ -6830,9 +6879,21 @@ setTimeout(() => {
                         console.error("開會記錄雲端同步失敗:", err);
                     }
                 }
+            } else if (event.data?.type === 'DELETE_MEETING_REPORT') {
+                const { dateKey } = event.data;
+                if (!dateKey) return;
+                let all = getLocal('market_reports_all_data', {});
+                delete all[dateKey];
+                safeSetLocal('market_reports_all_data', all);
+                localStorage.removeItem('market_report_' + dateKey);
+                let index = getLocal('market_reports_index', []).filter(k => k !== dateKey);
+                safeSetLocal('market_reports_index', index);
+                if (currentUser && db) {
+                    updateDoc(cfgDoc('meeting_report_data'), { [`reports.${dateKey}`]: deleteField() }).catch(() => {});
+                }
             } else if (event.data?.type === 'REQUEST_MEETING_REPORTS') {
-    window.pushMeetingReportsToAllIframes(getLocal('market_reports_all_data', {}));
-}
+                window.pushMeetingReportsToAllIframes(getLocal('market_reports_all_data', {}));
+            }
         });
 
 // 同時把開會記錄推給「分頁 iframe」和「彈窗 iframe」
@@ -7534,71 +7595,111 @@ window.pushMeetingReportsToAllIframes = (reports) => {
       setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 2500);
     }
 
+    // 🌟 備份每個展開框的初始結構，確保切換日期或清空時能完美還原
+    const initialBoxTemplates = {};
+    document.querySelectorAll('.remark-box').forEach(function(box) {
+      if (box.id) initialBoxTemplates[box.id] = box.innerHTML;
+    });
+    function restoreInitialBoxTemplates() {
+      document.querySelectorAll('.remark-box').forEach(function(box) {
+        if (box.id && initialBoxTemplates[box.id] !== undefined) {
+          box.innerHTML = initialBoxTemplates[box.id];
+        }
+      });
+    }
+
+    // 🌟 根據前面的次數輸入框，動態建立或調整對應數量的說明框（保留既有文字）
+    function syncMultiBoxesForRow(row, forceCount) {
+      if (!row) return;
+      const btn = row.querySelector('.toggle-btn');
+      if (!btn) return;
+      const targetId = btn.getAttribute('data-target');
+      if (!targetId || targetId.indexOf('box_cs_inquiry_desc_') === 0 || targetId === 'box_sp_tour') return;
+      const box = document.getElementById(targetId);
+      if (!box) return;
+
+      const triggerId = row.getAttribute('data-trigger');
+      const triggerEl = triggerId ? document.getElementById(triggerId) : null;
+      const countVal = forceCount !== undefined ? forceCount : (triggerEl ? parseInt(triggerEl.innerText.trim(), 10) : 1);
+      const targetCount = (!isNaN(countVal) && countVal > 0) ? Math.min(countVal, 20) : 1;
+
+      const baseId = targetId.replace('box_', '');
+      window._reportMultiStore = window._reportMultiStore || {};
+      const savedList = window._reportMultiStore[baseId] ? window._reportMultiStore[baseId].slice() : [];
+
+      box.querySelectorAll('.expand-input').forEach(function(inp, idx) {
+        savedList[idx] = inp.innerText.trim();
+      });
+      window._reportMultiStore[baseId] = savedList;
+
+      let html = '';
+      for (let i = 0; i < targetCount; i++) {
+        const val = savedList[i] || '';
+        const hasTextCls = (val && val !== '無') ? 'has-text' : '';
+        html += '<span class="inline-flex items-baseline my-0.5"><span contenteditable="true" id="' + baseId + '_multi_' + i + '" data-group="' + baseId + '" class="expand-input detail-input ' + hasTextCls + '">' + val + '</span></span>';
+      }
+      box.innerHTML = html;
+    }
+
+    // 🌟 從存檔或雲端資料還原 _multi_ 多格輸入框
+    function ensureMultiInputsFromData(dataObj) {
+      if (!dataObj) return;
+      const groupedCounts = {};
+      Object.keys(dataObj).forEach(function(k) {
+        if (k.indexOf('_multi_') !== -1) {
+          const parts = k.split('_multi_');
+          const baseId = parts[0];
+          const idx = parseInt(parts[1], 10);
+          if (!isNaN(idx)) {
+            groupedCounts[baseId] = Math.max(groupedCounts[baseId] || 0, idx + 1);
+          }
+        }
+      });
+
+      Object.keys(groupedCounts).forEach(function(baseId) {
+        const box = document.getElementById('box_' + baseId);
+        if (!box || box.id === 'box_sp_tour' || box.id.indexOf('box_cs_inquiry_desc_') === 0) return;
+        const count = groupedCounts[baseId];
+        window._reportMultiStore = window._reportMultiStore || {};
+        window._reportMultiStore[baseId] = [];
+        let html = '';
+        for (let i = 0; i < count; i++) {
+          const k = baseId + '_multi_' + i;
+          const val = dataObj[k] !== undefined ? dataObj[k] : '';
+          window._reportMultiStore[baseId][i] = val;
+          const hasTextCls = (val && val !== '無') ? 'has-text' : '';
+          html += '<span class="inline-flex items-baseline my-0.5"><span contenteditable="true" id="' + k + '" data-group="' + baseId + '" class="expand-input detail-input ' + hasTextCls + '">' + val + '</span></span>';
+        }
+        box.innerHTML = html;
+      });
+    }
+
     function setupToggleButtons() {
-      toggleBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
+      toggleBtns.forEach(function(btn) {
+        btn.addEventListener('click', function() {
           const targetId = btn.getAttribute('data-target');
           const box = document.getElementById(targetId);
           if (!box) return;
 
-          // 判斷是否為「諮詢協助」（諮詢協助維持固定 6 個按鈕個別控制不變）
-          const isCsInquiry = targetId.indexOf('box_cs_inquiry_desc_') === 0;
-
+          const isCsInquiry = targetId.indexOf('box_cs_inquiry_desc_') === 0 || targetId === 'box_sp_tour';
           const isOpen = box.classList.toggle('open');
+
           if (isOpen) {
             btn.classList.add('active');
             btn.innerText = '－';
-
             if (!isCsInquiry) {
-              // 取得同行前面的次數/數量輸入框數值
-              const row = btn.closest('[data-trigger]');
-              const triggerId = row ? row.getAttribute('data-trigger') : null;
-              const triggerEl = triggerId ? document.getElementById(triggerId) : null;
-              const countVal = triggerEl ? parseInt(triggerEl.innerText.trim(), 10) : 1;
-              const targetCount = (!isNaN(countVal) && countVal > 0) ? countVal : 1;
-
-              // 讀取當前或暫存的輸入資料
-              const baseId = targetId.replace('box_', '');
-              let savedList = (window._reportMultiStore && window._reportMultiStore[baseId]) ? window._reportMultiStore[baseId] : [];
-              box.querySelectorAll('.expand-input').forEach(inp => {
-                const txt = inp.innerText.trim();
-                if (txt && savedList.indexOf(txt) === -1) savedList.push(txt);
-              });
-
-              // 根據前面輸入的次數，動態生成對應數量的輸入框
-              let html = '';
-              for (let i = 0; i < targetCount; i++) {
-                const val = savedList[i] || '';
-                const hasTextCls = val ? 'has-text' : '';
-                html += '<span class="inline-flex items-baseline my-0.5"><span contenteditable="true" id="' + baseId + '_multi_' + i + '" data-group="' + baseId + '" class="expand-input detail-input ' + hasTextCls + '">' + val + '</span></span>';
-              }
-              box.innerHTML = html;
-
-              // 重新為新生成的輸入框綁定事件
-              box.querySelectorAll('.expand-input').forEach(el => {
-                el.addEventListener('input', () => {
-                  updateTextColor(el);
-                  updateBracketStates();
-                  saveCurrentDayReport();
-                });
-                el.addEventListener('keydown', (e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
-                });
-              });
+              syncMultiBoxesForRow(btn.closest('[data-trigger]'));
             }
-
             const input = box.querySelector('.expand-input');
-            if (input) setTimeout(() => input.focus(), 50);
+            if (input) setTimeout(function() { input.focus(); }, 50);
           } else {
             btn.classList.remove('active');
             btn.innerText = '＋';
-            
-            // 收起時暫存資料，不丟失使用者打好的文字
             if (!isCsInquiry) {
               const baseId = targetId.replace('box_', '');
               window._reportMultiStore = window._reportMultiStore || {};
               const vals = [];
-              box.querySelectorAll('.expand-input').forEach(inp => vals.push(inp.innerText.trim()));
+              box.querySelectorAll('.expand-input').forEach(function(inp) { vals.push(inp.innerText.trim()); });
               window._reportMultiStore[baseId] = vals;
             }
           }
@@ -7612,232 +7713,281 @@ window.pushMeetingReportsToAllIframes = (reports) => {
       const y = (metaYear.innerText.trim() || String(today.getFullYear())).padStart(4, '0');
       const m = (metaMonth.innerText.trim() || String(today.getMonth() + 1)).padStart(2, '0');
       const d = (metaDay.innerText.trim() || String(today.getDate())).padStart(2, '0');
-      return \`\${y}-\${m}-\${d}\`;
+      return y + '-' + m + '-' + d;
     }
 
     function updateSaveStatusIndicator() {
-          const statusEl = document.getElementById('save-status-text');
-          if (!statusEl) return;
-          const now = new Date();
-          statusEl.innerText = '已於 ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ':' + String(now.getSeconds()).padStart(2, '0') + ' 自動保存';
+      const statusEl = document.getElementById('save-status-text');
+      if (!statusEl) return;
+      const now = new Date();
+      statusEl.innerText = '已於 ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ':' + String(now.getSeconds()).padStart(2, '0') + ' 自動保存';
+    }
+
+    function getArchiveIndex() {
+      try { return JSON.parse(localStorage.getItem('market_reports_index') || '[]'); }
+      catch (e) { return []; }
+    }
+
+    function updateHistoryCountBadge() {
+      const badge = document.getElementById('history-badge-count');
+      if (badge) badge.innerText = getArchiveIndex().length;
+    }
+
+    let autoSaveTimer = null;
+    let pendingCloudPayload = null;
+    let lastUserEditTime = 0;
+
+    // 🌟 立即組裝當下畫面資料並存入本機（0 延遲，切換日期或關閉視窗絕不丟失）
+    function buildAndSaveLocalReport(isInheritedDraft) {
+      const dateKey = getCurrentDateKey();
+      const data = {};
+      document.querySelectorAll('.expand-input').forEach(function(el) {
+        if (el.id) data[el.id] = el.innerText;
+      });
+      const activeTags = [];
+      document.querySelectorAll('.pick-tag.selected').forEach(function(tag) {
+        activeTags.push(tag.getAttribute('data-tag'));
+      });
+      const openBoxes = [];
+      document.querySelectorAll('.remark-box.open').forEach(function(box) {
+        openBoxes.push(box.id);
+      });
+
+      // 若是自動繼承尚未手動修改的草稿，時間戳設為 1970，讓雲端今日真實匯報永遠優先覆蓋它
+      const timestamp = isInheritedDraft ? new Date(0).toISOString() : new Date().toISOString();
+      const reportObject = { dateKey: dateKey, updatedAt: timestamp, data: data, tags: activeTags, boxes: openBoxes };
+
+      try {
+        localStorage.setItem('market_report_' + dateKey, JSON.stringify(reportObject));
+        let index = getArchiveIndex();
+        if (!index.includes(dateKey)) {
+          index.push(dateKey);
+          index.sort(function(a, b) { return b.localeCompare(a); });
+          localStorage.setItem('market_reports_index', JSON.stringify(index));
         }
+      } catch(e) {}
 
-        function getArchiveIndex() {
-          try { return JSON.parse(localStorage.getItem('market_reports_index') || '[]'); }
-          catch (e) { return []; }
-        }
+      updateHistoryCountBadge();
+      return { dateKey: dateKey, report: reportObject };
+    }
 
-        function updateHistoryCountBadge() {
-          const badge = document.getElementById('history-badge-count');
-          if (badge) badge.innerText = getArchiveIndex().length;
-        }
+    function flushPendingCloudSave() {
+      if (autoSaveTimer) {
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+      }
+      if (pendingCloudPayload) {
+        try {
+          window.parent.postMessage({
+            type: 'SAVE_MEETING_REPORT',
+            dateKey: pendingCloudPayload.dateKey,
+            report: pendingCloudPayload.report
+          }, '*');
+        } catch(e) {}
+        pendingCloudPayload = null;
+      }
+    }
 
-        // 👇 ====== 【從這裡開始替換：即時同步核心】 ====== 👇
+    function saveCurrentDayReport() {
+      lastUserEditTime = Date.now();
+      const payload = buildAndSaveLocalReport(false);
+      pendingCloudPayload = payload;
+      updateSaveStatusIndicator();
 
-        let autoSaveTimer = null;
-        function saveCurrentDayReport() {
-          clearTimeout(autoSaveTimer);
-          // 縮短為 80 毫秒防抖，每打一個字即時送出雲端
-          autoSaveTimer = setTimeout(() => {
-            const dateKey = getCurrentDateKey();
-            const data = {};
-            // 動態取得所有輸入框（包含加號展開出來的多個輸入框）
-            document.querySelectorAll('.expand-input').forEach(el => { 
-              if (el.id) data[el.id] = el.innerText; 
-            });
-            const activeTags = [];
-            document.querySelectorAll('.pick-tag.selected').forEach(tag => activeTags.push(tag.getAttribute('data-tag')));
-            const openBoxes = [];
-            document.querySelectorAll('.remark-box.open').forEach(box => openBoxes.push(box.id));
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(function() {
+        flushPendingCloudSave();
+      }, 350);
+    }
 
-            const reportObject = { dateKey: dateKey, updatedAt: new Date().toISOString(), data: data, tags: activeTags, boxes: openBoxes };
-            
-            try {
-              localStorage.setItem('market_report_' + dateKey, JSON.stringify(reportObject));
-              let index = getArchiveIndex();
-              if (!index.includes(dateKey)) {
-                index.push(dateKey);
-                index.sort((a, b) => b.localeCompare(a));
-                localStorage.setItem('market_reports_index', JSON.stringify(index));
-              }
-            } catch(e) {}
+    // 全域委託監聽：打字、中文輸入完成、按 Enter
+    document.addEventListener('input', function(e) {
+      if (e.target && e.target.classList && e.target.classList.contains('expand-input')) {
+        updateTextColor(e.target);
+        updateBracketStates();
+        updateToggleBtnVisibility();
 
-            try {
-              window.parent.postMessage({
-                type: 'SAVE_MEETING_REPORT',
-                dateKey: dateKey,
-                report: reportObject
-              }, '*');
-            } catch(e) {}
-
-            updateSaveStatusIndicator();
-            updateHistoryCountBadge();
-          }, 800);
-        }
-
-        // 全域委託監聽：任何輸入框打字、中文選字完成，即時觸發同步
-        document.addEventListener('input', (e) => {
-          if (e.target && e.target.classList && e.target.classList.contains('expand-input')) {
-            updateTextColor(e.target);
-            updateBracketStates();
-            updateToggleBtnVisibility();
-            saveCurrentDayReport();
+        // 若修改的是前面的數量框，且後方的 ＋ 號說明框已經處於展開狀態，即時增減輸入框數量
+        const row = e.target.closest('[data-trigger]');
+        if (row && row.getAttribute('data-trigger') === e.target.id) {
+          const btn = row.querySelector('.toggle-btn');
+          const targetId = btn ? btn.getAttribute('data-target') : null;
+          const box = targetId ? document.getElementById(targetId) : null;
+          if (box && box.classList.contains('open')) {
+            syncMultiBoxesForRow(row);
           }
-        });
-        document.addEventListener('compositionend', (e) => {
-          if (e.target && e.target.classList && e.target.classList.contains('expand-input')) {
-            updateTextColor(e.target);
-            saveCurrentDayReport();
-          }
-        });
-
-        window.addEventListener('message', (event) => {
-  if (event.data?.type !== 'SYNC_MEETING_REPORTS') return;
-  const reports = event.data.reports || {};
-  try {
-    // 合併索引：雲端 + 本機，不要只用雲端蓋掉
-    let index = [];
-    try { index = JSON.parse(localStorage.getItem('market_reports_index') || '[]'); } catch(e) {}
-    Object.keys(reports).forEach(k => {
-      if (!index.includes(k)) index.push(k);
-    });
-    index.sort((a, b) => b.localeCompare(a));
-    localStorage.setItem('market_reports_index', JSON.stringify(index));
-
-    // 合併各日：只在雲端較新（或本機沒有）時才寫入
-    Object.keys(reports).forEach((k) => {
-      const remote = reports[k];
-      if (!remote) return;
-      let local = null;
-      try { local = JSON.parse(localStorage.getItem('market_report_' + k) || 'null'); } catch(e) {}
-      const remoteTime = remote.updatedAt ? new Date(remote.updatedAt).getTime() : 0;
-      const localTime = local?.updatedAt ? new Date(local.updatedAt).getTime() : 0;
-      if (!local || remoteTime >= localTime) {
-        localStorage.setItem('market_report_' + k, JSON.stringify(remote));
+        }
+        saveCurrentDayReport();
       }
     });
-  } catch(e) {}
 
-          const currentKey = getCurrentDateKey();
-          const currentReport = reports[currentKey];
-          if (!currentReport || !currentReport.data) {
-            updateHistoryCountBadge();
-            return;
-          }
+    document.addEventListener('compositionend', function(e) {
+      if (e.target && e.target.classList && e.target.classList.contains('expand-input')) {
+        updateTextColor(e.target);
+        saveCurrentDayReport();
+      }
+    });
 
-          // 1. 同步標籤選取
-          if (currentReport.tags) {
-            pickTags.forEach(tag => {
-              const id = tag.getAttribute('data-tag');
-              if (currentReport.tags.includes(id)) tag.classList.add('selected');
-              else tag.classList.remove('selected');
-            });
-          }
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && e.target && e.target.classList && e.target.classList.contains('expand-input')) {
+        e.preventDefault();
+        e.target.blur();
+      }
+    });
 
-          // 2. 同步展開框
-          if (currentReport.boxes) {
-            document.querySelectorAll('.remark-box').forEach(box => {
-              const btn = document.querySelector('.toggle-btn[data-target="' + box.id + '"]');
-              if (currentReport.boxes.includes(box.id)) {
-                box.classList.add('open');
-                if (btn) { btn.classList.add('active'); btn.innerText = '－'; }
-              } else {
-                box.classList.remove('open');
-                if (btn) { btn.classList.remove('active'); btn.innerText = '＋'; }
-              }
-            });
-          }
-
-          // 3. 欄位級同步：排除自己目前正在輸入的格子，其他格子即時變動
-          document.querySelectorAll('.expand-input').forEach(el => {
-            if (!el.id || el.id === 'meta_year' || el.id === 'meta_month' || el.id === 'meta_day') return;
-            if (document.activeElement === el) return; // 保護當前打字游標不跳動
-
-            const remoteVal = currentReport.data[el.id] !== undefined ? currentReport.data[el.id] : (el.classList.contains('num-input') ? '無' : '');
-            if (el.innerText !== remoteVal) {
-              el.innerText = remoteVal;
-              updateTextColor(el);
-            }
-          });
-
-          updateBracketStates();
-          updateToggleBtnVisibility();
-          updateHistoryCountBadge();
+    window.addEventListener('message', function(event) {
+      if (event.data?.type !== 'SYNC_MEETING_REPORTS') return;
+      const reports = event.data.reports || {};
+      try {
+        let index = [];
+        try { index = JSON.parse(localStorage.getItem('market_reports_index') || '[]'); } catch(e) {}
+        Object.keys(reports).forEach(function(k) {
+          if (!index.includes(k)) index.push(k);
         });
+        index.sort(function(a, b) { return b.localeCompare(a); });
+        localStorage.setItem('market_reports_index', JSON.stringify(index));
 
-        // 👆 ====== 【替換到這裡結束】 ====== 👆
-
-        try {
-          window.parent.postMessage({ type: 'REQUEST_MEETING_REPORTS' }, '*');
-        } catch(e) {}
-
-        function loadReportByDate(targetDateKey) {
-          const parts = targetDateKey.split('-');
-          if (parts.length === 3) {
-            metaYear.innerText = parts[0]; metaMonth.innerText = parts[1]; metaDay.innerText = parts[2];
-            updateTextColor(metaYear); updateTextColor(metaMonth); updateTextColor(metaDay);
+        Object.keys(reports).forEach(function(k) {
+          const remote = reports[k];
+          if (!remote) return;
+          let local = null;
+          try { local = JSON.parse(localStorage.getItem('market_report_' + k) || 'null'); } catch(e) {}
+          const remoteTime = remote.updatedAt ? new Date(remote.updatedAt).getTime() : 0;
+          const localTime = local?.updatedAt ? new Date(local.updatedAt).getTime() : 0;
+          if (!local || remoteTime >= localTime) {
+            localStorage.setItem('market_report_' + k, JSON.stringify(remote));
           }
+        });
+      } catch(e) {}
+
+      // 若本機正在連續打字中（600ms 內），暫緩覆蓋當前畫面，避免游標與剛點的按鈕閃回
+      if (Date.now() - lastUserEditTime < 600) {
+        updateHistoryCountBadge();
+        return;
+      }
+
+      const currentKey = getCurrentDateKey();
+      const currentReport = reports[currentKey];
+      if (!currentReport || !currentReport.data) {
+        updateHistoryCountBadge();
+        return;
+      }
+
+      // 確認雲端版本是否不舊於本機版本
+      let localCur = null;
+      try { localCur = JSON.parse(localStorage.getItem('market_report_' + currentKey) || 'null'); } catch(e) {}
+      const rTime = currentReport.updatedAt ? new Date(currentReport.updatedAt).getTime() : 0;
+      const lTime = localCur?.updatedAt ? new Date(localCur.updatedAt).getTime() : 0;
+      if (localCur && rTime < lTime) return;
+
+      // 1. 先動態補齊雲端傳來的 _multi_ 節點
+      ensureMultiInputsFromData(currentReport.data);
+
+      // 2. 同步標籤選取
+      if (currentReport.tags) {
+        pickTags.forEach(function(tag) {
+          const id = tag.getAttribute('data-tag');
+          if (currentReport.tags.includes(id)) tag.classList.add('selected');
+          else tag.classList.remove('selected');
+        });
+      }
+
+      // 3. 同步展開框
+      if (currentReport.boxes) {
+        document.querySelectorAll('.remark-box').forEach(function(box) {
+          const btn = document.querySelector('.toggle-btn[data-target="' + box.id + '"]');
+          if (currentReport.boxes.includes(box.id)) {
+            box.classList.add('open');
+            if (btn) { btn.classList.add('active'); btn.innerText = '－'; }
+          } else {
+            box.classList.remove('open');
+            if (btn) { btn.classList.remove('active'); btn.innerText = '＋'; }
+          }
+        });
+      }
+
+      // 4. 欄位級同步：保護當前打字游標不跳動
+      document.querySelectorAll('.expand-input').forEach(function(el) {
+        if (!el.id || el.id === 'meta_year' || el.id === 'meta_month' || el.id === 'meta_day') return;
+        if (document.activeElement === el) return;
+
+        const fallback = (el.id === 'oth_staff_count' || el.id === 'oth_attendance_count') ? '正常' : (el.classList.contains('num-input') ? '無' : '');
+        const remoteVal = currentReport.data[el.id] !== undefined ? currentReport.data[el.id] : fallback;
+        if (el.innerText !== remoteVal) {
+          el.innerText = remoteVal;
+          updateTextColor(el);
+        }
+      });
+
+      updateBracketStates();
+      updateToggleBtnVisibility();
+      updateHistoryCountBadge();
+    });
+
+    try {
+      window.parent.postMessage({ type: 'REQUEST_MEETING_REPORTS' }, '*');
+    } catch(e) {}
+
+    function loadReportByDate(targetDateKey) {
+      // 切換日期前，先強制把上一筆尚未送出的修改推上雲端
+      flushPendingCloudSave();
+
+      const parts = targetDateKey.split('-');
+      if (parts.length === 3) {
+        metaYear.innerText = parts[0]; metaMonth.innerText = parts[1]; metaDay.innerText = parts[2];
+        updateTextColor(metaYear); updateTextColor(metaMonth); updateTextColor(metaDay);
+      }
 
       let savedRaw = localStorage.getItem('market_report_' + targetDateKey);
       let isInherited = false;
 
-      // 若當天尚無記錄，自動尋找最近一筆有資料的日期繼承
-if (!savedRaw) {
-  let index = getArchiveIndex();
-  // 補掃 localStorage，避免索引被雲端洗掉後找不到
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith('market_report_')) {
-        const dk = k.replace('market_report_', '');
-        if (/^\d{4}-\d{2}-\d{2}$/.test(dk) && !index.includes(dk)) index.push(dk);
+      if (!savedRaw) {
+        let index = getArchiveIndex();
+        try {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith('market_report_')) {
+              const dk = k.replace('market_report_', '');
+              if (/^\d{4}-\d{2}-\d{2}$/.test(dk) && !index.includes(dk)) index.push(dk);
+            }
+          }
+        } catch(e) {}
+        index = index.filter(function(k) { return k < targetDateKey; }).sort(function(a, b) { return b.localeCompare(a); });
+        const prevDateKey = index[0];
+        if (prevDateKey) {
+          const prevRaw = localStorage.getItem('market_report_' + prevDateKey);
+          if (prevRaw) {
+            savedRaw = prevRaw;
+            isInherited = true;
+          }
+        }
       }
-    }
-  } catch(e) {}
-  index = index.filter(k => k < targetDateKey).sort((a, b) => b.localeCompare(a));
-  const prevDateKey = index[0];
-  if (prevDateKey) {
-    const prevRaw = localStorage.getItem('market_report_' + prevDateKey);
-    if (prevRaw) {
-      savedRaw = prevRaw;
-      isInherited = true;
-    }
-  }
-}
 
       if (savedRaw) {
         try {
           const report = JSON.parse(savedRaw);
-          // 🌟 1. 檢查存檔：若有動態新增的輸入框 (_multi_)，先補齊節點（安全純字串拼接）
-          if (report.data) {
-            Object.keys(report.data).forEach(function(k) {
-              if (k.indexOf('_multi_') !== -1 && !document.getElementById(k)) {
-                var baseId = k.split('_multi_')[0];
-                var box = document.getElementById('box_' + baseId);
-                if (box) {
-                  var span = document.createElement('span');
-                  span.className = 'inline-flex items-baseline my-0.5';
-                  span.innerHTML = '<span contenteditable="true" id="' + k + '" data-group="' + baseId + '" class="expand-input detail-input"></span>';
-                  box.appendChild(span);
-                }
-              }
-            });
-          }
+          window._reportMultiStore = {};
+          if (typeof restoreInitialBoxTemplates === 'function') restoreInitialBoxTemplates();
 
-          // 🌟 2. 重新讀取所有輸入框並填入內容
+          // 1. 補齊 _multi_ 動態輸入框
+          ensureMultiInputsFromData(report.data);
+
+          // 2. 填入所有欄位文字
           document.querySelectorAll('.expand-input').forEach(function(el) {
             if (el.id && el.id !== 'meta_year' && el.id !== 'meta_month' && el.id !== 'meta_day') {
-              el.innerText = report.data && report.data[el.id] !== undefined ? report.data[el.id] : '無';
+              var fallback = (el.id === 'oth_staff_count' || el.id === 'oth_attendance_count') ? '正常' : (el.classList.contains('num-input') ? '無' : '');
+              el.innerText = (report.data && report.data[el.id] !== undefined) ? report.data[el.id] : fallback;
               updateTextColor(el);
             }
           });
-          pickTags.forEach(tag => {
+
+          pickTags.forEach(function(tag) {
             const id = tag.getAttribute('data-tag');
             if (report.tags && report.tags.includes(id)) tag.classList.add('selected');
             else tag.classList.remove('selected');
           });
-          document.querySelectorAll('.remark-box').forEach(box => {
-            // 純字串相加，絕不觸發外層反引號解析錯誤
+
+          document.querySelectorAll('.remark-box').forEach(function(box) {
             const btn = document.querySelector('.toggle-btn[data-target="' + box.id + '"]');
             if (report.boxes && report.boxes.includes(box.id)) {
               box.classList.add('open');
@@ -7847,11 +7997,13 @@ if (!savedRaw) {
               if (btn) { btn.classList.remove('active'); btn.innerText = '＋'; }
             }
           });
-          updateBracketStates();
 
-          // 若為繼承過來的資料，自動存為今天草稿
+          updateBracketStates();
+          updateToggleBtnVisibility();
+
+          // 若為自動繼承前日資料，僅存為本機低優先級草稿，不主動覆寫雲端
           if (isInherited) {
-            saveCurrentDayReport();
+            buildAndSaveLocalReport(true);
             showToast('📋 已自動繼承前日匯報資料！');
           }
           return;
@@ -7863,7 +8015,9 @@ if (!savedRaw) {
     }
 
     function resetFieldsWithoutDate() {
-      editableElements.forEach(el => {
+      window._reportMultiStore = {};
+      if (typeof restoreInitialBoxTemplates === 'function') restoreInitialBoxTemplates();
+      document.querySelectorAll('.expand-input').forEach(function(el) {
         if (el.id !== 'meta_year' && el.id !== 'meta_month' && el.id !== 'meta_day') {
           if (el.id === 'oth_staff_count' || el.id === 'oth_attendance_count') el.innerText = '正常';
           else if (el.classList.contains('num-input')) el.innerText = '無';
@@ -7871,9 +8025,9 @@ if (!savedRaw) {
           updateTextColor(el);
         }
       });
-      pickTags.forEach(tag => tag.classList.remove('selected'));
-      document.querySelectorAll('.remark-box').forEach(box => box.classList.remove('open'));
-      toggleBtns.forEach(btn => { btn.classList.remove('active'); btn.innerText = '＋'; });
+      pickTags.forEach(function(tag) { tag.classList.remove('selected'); });
+      document.querySelectorAll('.remark-box').forEach(function(box) { box.classList.remove('open'); });
+      toggleBtns.forEach(function(btn) { btn.classList.remove('active'); btn.innerText = '＋'; });
       updateToggleBtnVisibility();
     }
 
@@ -7889,11 +8043,11 @@ if (!savedRaw) {
     let calViewMonth = today.getMonth();
 
     function renderCalendarGrid() {
-      calMonthTitle.innerText = \`\${calViewYear}年 \${calViewMonth + 1}月\`;
+      calMonthTitle.innerText = calViewYear + '年 ' + (calViewMonth + 1) + '月';
       calDaysGrid.innerHTML = '';
       const archiveIndex = getArchiveIndex();
       const currentSelectedKey = getCurrentDateKey();
-      const todayStr = \`\${today.getFullYear()}-\${String(today.getMonth() + 1).padStart(2, '0')}-\${String(today.getDate()).padStart(2, '0')}\`;
+      const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
       const firstDayIndex = new Date(calViewYear, calViewMonth, 1).getDay();
       const totalDaysInMonth = new Date(calViewYear, calViewMonth + 1, 0).getDate();
 
@@ -7906,22 +8060,22 @@ if (!savedRaw) {
       for (let day = 1; day <= totalDaysInMonth; day++) {
         const dayStr = String(day).padStart(2, '0');
         const monthStr = String(calViewMonth + 1).padStart(2, '0');
-        const cellDateKey = \`\${calViewYear}-\${monthStr}-\${dayStr}\`;
+        const cellDateKey = calViewYear + '-' + monthStr + '-' + dayStr;
         const isSelected = (cellDateKey === currentSelectedKey);
         const isToday = (cellDateKey === todayStr);
         const hasSavedRecord = archiveIndex.includes(cellDateKey);
 
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = \`h-8 w-full rounded-xl flex flex-col items-center justify-center relative font-medium transition-all \${
+        btn.className = 'h-8 w-full rounded-xl flex flex-col items-center justify-center relative font-medium transition-all ' + (
           isSelected 
             ? 'bg-blue-600 text-white font-bold shadow-md shadow-blue-500/20' 
             : isToday
               ? 'border border-blue-500 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'
               : 'hover:bg-slate-100 dark:hover:bg-slate-700/60 text-slate-800 dark:text-slate-200'
-        }\`;
-        btn.innerHTML = \`<span class="text-xs leading-none">\${day}</span>\${hasSavedRecord ? \`<span class="w-1.5 h-1.5 rounded-full \${isSelected ? 'bg-amber-300' : 'bg-emerald-500'} absolute bottom-1"></span>\` : ''}\`;
-        btn.addEventListener('click', () => {
+        );
+        btn.innerHTML = '<span class="text-xs leading-none">' + day + '</span>' + (hasSavedRecord ? '<span class="w-1.5 h-1.5 rounded-full ' + (isSelected ? 'bg-amber-300' : 'bg-emerald-500') + ' absolute bottom-1"></span>' : '');
+        btn.addEventListener('click', function() {
           loadReportByDate(cellDateKey);
           calPopover.classList.add('hidden');
         });
@@ -7929,7 +8083,7 @@ if (!savedRaw) {
       }
     }
 
-    btnToggleCal.addEventListener('click', (e) => {
+    btnToggleCal.addEventListener('click', function(e) {
       e.stopPropagation();
       if (calPopover.classList.contains('hidden')) {
         const curY = parseInt(metaYear.innerText.trim(), 10);
@@ -7943,48 +8097,40 @@ if (!savedRaw) {
       }
     });
 
-    [metaYear, metaMonth, metaDay].forEach(el => {
-      el.addEventListener('click', () => {
+    [metaYear, metaMonth, metaDay].forEach(function(el) {
+      el.addEventListener('click', function() {
         if (calPopover.classList.contains('hidden')) btnToggleCal.click();
       });
     });
 
-    calPrevMonth.addEventListener('click', (e) => {
+    calPrevMonth.addEventListener('click', function(e) {
       e.stopPropagation();
       calViewMonth--;
       if (calViewMonth < 0) { calViewMonth = 11; calViewYear--; }
       renderCalendarGrid();
     });
 
-    calNextMonth.addEventListener('click', (e) => {
+    calNextMonth.addEventListener('click', function(e) {
       e.stopPropagation();
       calViewMonth++;
       if (calViewMonth > 11) { calViewMonth = 0; calViewYear++; }
       renderCalendarGrid();
     });
 
-    calBtnCurToday.addEventListener('click', (e) => {
+    calBtnCurToday.addEventListener('click', function(e) {
       e.stopPropagation();
       const now = new Date();
       calViewYear = now.getFullYear();
       calViewMonth = now.getMonth();
-      const todayKey = \`\${calViewYear}-\${String(calViewMonth + 1).padStart(2, '0')}-\${String(now.getDate()).padStart(2, '0')}\`;
+      const todayKey = calViewYear + '-' + String(calViewMonth + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
       loadReportByDate(todayKey);
       calPopover.classList.add('hidden');
     });
 
-    document.addEventListener('click', (e) => {
+    document.addEventListener('click', function(e) {
       if (!calPopover.contains(e.target) && e.target !== btnToggleCal) {
         calPopover.classList.add('hidden');
       }
-    });
-
-    [metaYear, metaMonth, metaDay].forEach(el => {
-      el.addEventListener('blur', () => {
-        const targetKey = getCurrentDateKey();
-        if (localStorage.getItem(\`market_report_\${targetKey}\`)) loadReportByDate(targetKey);
-        else saveCurrentDayReport();
-      });
     });
 
     const historyModal = document.getElementById('history-modal');
@@ -7994,59 +8140,60 @@ if (!savedRaw) {
       const index = getArchiveIndex();
       historyList.innerHTML = '';
       if (index.length === 0) {
-        historyList.innerHTML = \`<div class="text-center py-8 text-slate-400">目前尚無過往儲存的匯報</div>\`;
+        historyList.innerHTML = '<div class="text-center py-8 text-slate-400">目前尚無過往儲存的匯報</div>';
         return;
       }
       const currentKey = getCurrentDateKey();
-      index.forEach(dateKey => {
+      index.forEach(function(dateKey) {
         let summary = '無內容';
         try {
-          const raw = localStorage.getItem(\`market_report_\${dateKey}\`);
+          const raw = localStorage.getItem('market_report_' + dateKey);
           if (raw) {
             const obj = JSON.parse(raw);
-            summary = \`保安事件: \${obj.data.sec_cases || '無'} | 清潔問題: \${obj.data.clean_cases || '無'} | 報修: \${obj.data.rep_comp_total || '無'}\`;
+            summary = '保安事件: ' + (obj.data.sec_cases || '無') + ' | 清潔問題: ' + (obj.data.clean_cases || '無') + ' | 報修: ' + (obj.data.rep_comp_total || '無');
           }
         } catch(e) {}
 
         const item = document.createElement('div');
         const isCurrent = (dateKey === currentKey);
-        item.className = \`p-3 rounded-xl border flex items-center justify-between gap-2 transition-all \${
+        item.className = 'p-3 rounded-xl border flex items-center justify-between gap-2 transition-all ' + (
           isCurrent ? 'bg-blue-50/80 dark:bg-blue-950/40 border-blue-300 dark:border-blue-700' : 'bg-white dark:bg-slate-700/60 border-slate-200 dark:border-slate-600 hover:border-blue-300'
-        }\`;
-        item.innerHTML = \`
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="font-bold text-black dark:text-white">\${dateKey}</span>
-              \${isCurrent ? '<span class="text-[11px] px-1.5 py-0.5 rounded bg-blue-600 text-white font-medium">當前編輯</span>' : ''}
-            </div>
-            <div class="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">\${summary}</div>
-          </div>
-          <div class="flex items-center gap-1.5 shrink-0">
-            <button class="btn-load-record px-2.5 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors" data-date="\${dateKey}">查看/編輯</button>
-            <button class="btn-del-record p-1 text-slate-400 hover:text-rose-600 transition-colors" title="刪除此日記錄" data-date="\${dateKey}">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-            </button>
-          </div>
-        \`;
+        );
+        item.innerHTML = '<div class="flex-1 min-w-0">' +
+          '<div class="flex items-center gap-2">' +
+            '<span class="font-bold text-black dark:text-white">' + dateKey + '</span>' +
+            (isCurrent ? '<span class="text-[11px] px-1.5 py-0.5 rounded bg-blue-600 text-white font-medium">當前編輯</span>' : '') +
+          '</div>' +
+          '<div class="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">' + summary + '</div>' +
+        '</div>' +
+        '<div class="flex items-center gap-1.5 shrink-0">' +
+          '<button class="btn-load-record px-2.5 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors" data-date="' + dateKey + '">查看/編輯</button>' +
+          '<button class="btn-del-record p-1 text-slate-400 hover:text-rose-600 transition-colors" title="刪除此日記錄" data-date="' + dateKey + '">' +
+            '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>' +
+          '</button>' +
+        '</div>';
         historyList.appendChild(item);
       });
 
-      historyList.querySelectorAll('.btn-load-record').forEach(btn => {
-        btn.addEventListener('click', () => {
+      historyList.querySelectorAll('.btn-load-record').forEach(function(btn) {
+        btn.addEventListener('click', function() {
           loadReportByDate(btn.getAttribute('data-date'));
           historyModal.classList.add('hidden');
         });
       });
 
-      historyList.querySelectorAll('.btn-del-record').forEach(btn => {
-        btn.addEventListener('click', () => {
+      historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
+        btn.addEventListener('click', function() {
           const d = btn.getAttribute('data-date');
-          localStorage.removeItem(\`market_report_\${d}\`);
-          let idx = getArchiveIndex().filter(item => item !== d);
+          localStorage.removeItem('market_report_' + d);
+          let idx = getArchiveIndex().filter(function(item) { return item !== d; });
           localStorage.setItem('market_reports_index', JSON.stringify(idx));
+          try {
+            window.parent.postMessage({ type: 'DELETE_MEETING_REPORT', dateKey: d }, '*');
+          } catch(e) {}
           renderHistoryModal();
           updateHistoryCountBadge();
-          showToast(\`已刪除 \${d} 的匯報記錄\`);
+          showToast('已刪除 ' + d + ' 的匯報記錄');
         });
       });
     }
