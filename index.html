@@ -1456,28 +1456,12 @@ window.clearTodayPatrolData = (e) => {
             }
         };
 
-        window.setPatrolViewMode = (mode) => {
-            patrolViewMode = mode;
+        window.setPatrolViewMode = () => {
+            patrolViewMode = 'card';
             window.clearFocusAutoTimer();
-            const cardBtn = $('patrolModeCardBtn');
-            const focusBtn = $('patrolModeFocusBtn');
-
-            if (cardBtn) {
-                cardBtn.className = (mode === 'card')
-                    ? "px-2.5 py-0.5 rounded-md font-black bg-indigo-600 text-white shadow-xs transition-all"
-                    : "px-2.5 py-0.5 rounded-md font-bold text-slate-600 hover:text-slate-900 transition-all";
-            }
-
-            if (focusBtn) {
-                focusBtn.className = (mode === 'focus')
-                    ? "px-2.5 py-0.5 rounded-md font-black bg-rose-600 text-white shadow-xs transition-all"
-                    : "px-2.5 py-0.5 rounded-md font-bold text-slate-600 hover:text-slate-900 transition-all";
-            }
-
-            $('patrolCardContainer')?.classList.toggle('hidden', mode !== 'card');
-            $('patrolFocusContainer')?.classList.toggle('hidden', mode !== 'focus');
+            $('patrolCardContainer')?.classList.remove('hidden');
             window.renderPatrol();
-            window.updatePatrolCardScaleUI(); // 👈 加在這行
+            window.updatePatrolCardScaleUI();
         };
 
         window.getFilteredPatrolStalls = () => {
@@ -1509,8 +1493,8 @@ window.clearTodayPatrolData = (e) => {
                     return `
                     <button type="button" onclick="window.jumpToPatrolStall('${stall.floor}','${stall.id}')"
                         class="w-full flex items-center justify-between p-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 rounded-xl text-left active:scale-[0.98] transition-all">
-                        <div class="flex items-center space-x-2 min-w-0">
-                            <span class="bg-slate-900 text-white font-black text-xs px-2 py-0.5 rounded-lg shrink-0">${stall.id}</span>
+                        <div class="flex items-center space-x-1.5 min-w-0">
+                            <span class="bg-slate-900 text-white font-black text-xs px-1.5 py-0.5 rounded-md shrink-0 tracking-tighter">${stall.id}</span>
                             <span class="text-[11px] font-bold text-slate-600 truncate">${stall.floor} · ${stall.name || ''}</span>
                         </div>
                         <div class="flex items-center space-x-1.5 shrink-0">
@@ -1528,32 +1512,27 @@ window.clearTodayPatrolData = (e) => {
             $('patrolFilledModal')?.classList.replace('flex', 'hidden');
         };
 
+        // 點擊已剔選清單項目時，直接滑動定位至該張卡片並閃爍藍框
         window.jumpToPatrolStall = (floor, id) => {
             window.closePatrolFilledList();
-            const stalls = window.getFilteredPatrolStalls ? window.getFilteredPatrolStalls() : RAW_PATROL_STALLS;
-            const idx = stalls.findIndex(s => s.floor === floor && s.id === id);
-            if (idx >= 0) {
-                patrolFocusIndex = idx;
-                if (patrolViewMode !== 'focus') window.setPatrolViewMode('focus');
-                else window.renderPatrol();
-            }
+            window.renderPatrol();
+            setTimeout(() => {
+                const el = $(`patrol-card-${floor}-${id}`);
+                if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    el.classList.add('ring-4', 'ring-blue-500');
+                    setTimeout(() => el.classList.remove('ring-4', 'ring-blue-500'), 1500);
+                }
+            }, 80);
         };
 
         window.renderPatrol = () => {
-            // 🌟 溫度模式專屬卡片清單渲染 (去標籤 + 圖片上傳同款數字盤)
-            // 🌟 溫度模式專屬卡片清單渲染 (點擊溫度框才彈出數字盤)
-            
-
-            // 原本的程式碼從這裡繼續：
             const stalls = window.getFilteredPatrolStalls();
             const total = stalls.length;
             let filledCount = 0;
             let unfilledStalls = [];
 
-
-
             stalls.forEach(s => {
-
                 const status = window.getPatrolStatus(s, patrolSlot);
                 if (status) filledCount++;
                 else unfilledStalls.push(s);
@@ -1564,132 +1543,88 @@ window.clearTodayPatrolData = (e) => {
             if ($('patrolProgressBar'))$('patrolProgressBar').style.width = `${pct}%`;
             if ($('patrolUnfilledBadge'))$('patrolUnfilledBadge').innerText = unfilledStalls.length;
 
-                       // 已剔選：淡底，但不要整卡 opacity（避免中間狀態標籤變透明）
             const cardBg = 'bg-slate-100 border-slate-300 shadow-none';
             const cardUnfilledBg = 'bg-white border-amber-400 shadow-sm';
 
-            if (patrolViewMode === 'card') {
-                const container = $('patrolCardList');
-                if (!container) return;
-                container.innerHTML = stalls.map((stall, idx) => {
-                    const status = window.getPatrolStatus(stall, patrolSlot);
-                    const isFilled = status !== '';
-                    const dateRecords = patrolHistoryStore[currentPatrolDate] || {};
-                    const autoReason = dateRecords[window.getPatrolKey(stall)]?.[`${patrolSlot}_reason`] || '';
+            const container = $('patrolCardList');
+            if (!container) return;
 
-                    let statusBadge = `<span class="text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-300 px-1.5 py-0.5 rounded-full leading-none">未填</span>`;
-if (status === 'A') statusBadge = `<span class="bg-emerald-500 text-white font-black pl-1 pr-1.5 py-0.5 rounded-full text-[10px] shadow-xs leading-none">[A] 檔主</span>`;
-else if (status === '1') statusBadge = `<span class="bg-amber-500 text-white font-black pl-1 pr-1.5 py-0.5 rounded-full text-[10px] shadow-xs leading-none">[1] 協作</span>`;
-else if (status === '0') {
-    statusBadge = autoReason
-        ? `<span class="bg-slate-700 text-white font-black pl-1 pr-1.5 py-0.5 rounded-full text-[9px] shadow-xs flex items-center leading-none">[0] 無人</span>`
-        : `<span class="bg-slate-600 text-white font-black pl-1 pr-1.5 py-0.5 rounded-full text-[10px] shadow-xs leading-none">[0] 無人</span>`;
-}
+            container.innerHTML = stalls.map((stall, idx) => {
+                const status = window.getPatrolStatus(stall, patrolSlot);
+                const isFilled = status !== '';
 
-                    const genderTag = stall.gender === '男' 
-                        ? `<span class="bg-blue-600 text-white font-black text-xs px-1.5 py-0.5 rounded-md shrink-0 shadow-xs leading-none">[男]</span>`
-                        : `<span class="bg-rose-500 text-white font-black text-xs px-1.5 py-0.5 rounded-md shrink-0 shadow-xs leading-none">[女]</span>`;
+                const btnClsA = status === 'A'
+                    ? 'bg-emerald-500 text-white border-emerald-500 shadow-sm ring-1 ring-emerald-300'
+                    : 'bg-white text-emerald-600 border-emerald-400 hover:bg-emerald-50 shadow-2xs';
 
-                    const btnClsA = status === 'A'
-                        ? 'bg-emerald-500 text-white border-emerald-500 shadow-sm ring-1 ring-emerald-300'
-                        : 'bg-white text-emerald-600 border-emerald-400 hover:bg-emerald-50 shadow-2xs';
+                const btnCls1 = status === '1'
+                    ? 'bg-amber-500 text-white border-amber-500 shadow-sm ring-1 ring-amber-300'
+                    : 'bg-white text-amber-700 border-amber-300 hover:bg-amber-50 shadow-2xs';
 
-                    const btnCls1 = status === '1'
-                        ? 'bg-amber-500 text-white border-amber-500 shadow-sm ring-1 ring-amber-300'
-                        : 'bg-white text-amber-700 border-amber-300 hover:bg-amber-50 shadow-2xs';
+                const btnCls0 = status === '0'
+                    ? 'bg-slate-700 text-white border-slate-700 shadow-sm ring-1 ring-slate-400'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 shadow-2xs';
 
-                                                            const btnCls0 = status === '0'
-                        ? 'bg-slate-700 text-white border-slate-700 shadow-sm ring-1 ring-slate-400'
-                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 shadow-2xs';
+                const scale = patrolCardScale || '100';
 
-                                        const scale = patrolCardScale || '100';
+                // 🌟 檔號黑藥丸左右收窄為 px-1.5，性別標籤收窄為 px-1
+                const S = scale === '150' ? {
+                    card: 'p-2 px-2.5 gap-1.5 w-full',
+                    id: 'text-[27px] px-1.5 py-0.5 rounded-lg',
+                    gender: 'text-[18px] px-1.5 py-0.5',
+                    name: 'text-sm font-black',
+                    sub: 'text-[11px]',
+                    badge: 'text-[10px] px-1.5 py-0.5',
+                    btn: 'w-10 h-10 rounded-lg',
+                    btnMain: 'text-sm',
+                    btnSub: 'text-[9px] mt-0.5 scale-90',
+                    layout: 'stack'
+                } : scale === '125' ? {
+                    card: 'p-2 px-2.5 gap-1.5 w-full',
+                    id: 'text-[22.5px] px-1.5 py-0.5 rounded-md',
+                    gender: 'text-[15px] px-1 py-0.5',
+                    name: 'text-sm font-black',
+                    sub: 'text-[11px]',
+                    badge: 'text-[10px] px-1.5 py-0.5',
+                    btn: 'w-10 h-10 rounded-lg',
+                    btnMain: 'text-sm',
+                    btnSub: 'text-[9px] mt-0.5 scale-90',
+                    layout: 'stack'
+                } : {
+                    card: 'p-2 px-2 gap-1 w-full',
+                    id: 'text-lg px-1.5 py-0.5 rounded-md',
+                    gender: 'text-xs px-1 py-0.5',
+                    name: 'text-sm font-black',
+                    sub: 'text-[11px]',
+                    badge: 'text-[10px] px-1.5 py-0.5',
+                    btn: 'w-10 h-10 rounded-lg',
+                    btnMain: 'text-sm',
+                    btnSub: 'text-[9px] mt-0.5 scale-90',
+                    layout: 'inline'
+                };
 
-                    // 基準「小」(100%)：
-                    // id: 18px (text-lg) | gender: 12px (text-xs) | name: 14px (text-sm) 固定不變 | sub: 11px 固定不變
-                    // 按鍵 A, 1, 0 全部固定跟「小」一模一樣 (w-10 h-10，字體 text-sm / 9px)
-                    const S = scale === '150' ? {
-                        card: 'p-2 px-2.5 gap-1.5 w-full',
-                        id: 'text-[27px] px-2.5 py-0.5 rounded-xl',    // 18px * 150% = 27px
-                        gender: 'text-[18px] px-2 py-0.5',             // 12px * 150% = 18px
-                        name: 'text-sm font-black',                    // 姓名固定不變
-                        sub: 'text-[11px]',                            // 固定 11px 不放大
-                        badge: 'text-[10px] px-1.5 py-0.5',
-                        btn: 'w-10 h-10 rounded-lg',                   // 跟「小」完全一樣
-                        btnMain: 'text-sm',                            // 跟「小」完全一樣
-                        btnSub: 'text-[9px] mt-0.5 scale-90',          // 跟「小」完全一樣
-                        layout: 'stack'
-                    } : scale === '125' ? {
-                        card: 'p-2 px-2.5 gap-1.5 w-full',
-                        id: 'text-[22.5px] px-2.5 py-0.5 rounded-lg',  // 18px * 125% = 22.5px
-                        gender: 'text-[15px] px-1.5 py-0.5',           // 12px * 125% = 15px
-                        name: 'text-sm font-black',                    // 姓名固定不變
-                        sub: 'text-[11px]',                            // 固定 11px 不放大
-                        badge: 'text-[10px] px-1.5 py-0.5',
-                        btn: 'w-10 h-10 rounded-lg',                   // 跟「小」完全一樣
-                        btnMain: 'text-sm',                            // 跟「小」完全一樣
-                        btnSub: 'text-[9px] mt-0.5 scale-90',          // 跟「小」完全一樣
-                        layout: 'stack'
-                    } : {
-                        card: 'p-2 px-2 gap-1 w-full',
-                        id: 'text-lg px-2.5 py-0.5 rounded-lg',        // 基準 18px
-                        gender: 'text-xs px-1.5 py-0.5',               // 基準 12px
-                        name: 'text-sm font-black',                    // 基準 14px
-                        sub: 'text-[11px]',                            // 基準 11px
-                        badge: 'text-[10px] px-1.5 py-0.5',
-                        btn: 'w-10 h-10 rounded-lg',                   // 基準尺寸
-                        btnMain: 'text-sm',
-                        btnSub: 'text-[9px] mt-0.5 scale-90',
-                        layout: 'inline'
-                    };
+                const genderTagScaled = stall.gender === '男'
+                    ? `<span class="bg-blue-600 text-white font-black ${S.gender} rounded-md shrink-0 shadow-xs leading-none">男</span>`
+                    : `<span class="bg-rose-500 text-white font-black ${S.gender} rounded-md shrink-0 shadow-xs leading-none">女</span>`;
 
-                    const genderTagScaled = stall.gender === '男'
-                        ? `<span class="bg-blue-600 text-white font-black ${S.gender} rounded-md shrink-0 shadow-xs leading-none">男</span>`
-                        : `<span class="bg-rose-500 text-white font-black ${S.gender} rounded-md shrink-0 shadow-xs leading-none">女</span>`;
+                let statusBadgeScaled = `<span class="font-bold text-rose-600 bg-rose-50 border border-rose-300 ${S.badge} rounded-full leading-none whitespace-nowrap">未填</span>`;
+                if (status === 'A') statusBadgeScaled = `<span class="bg-emerald-500 text-white font-black ${S.badge} rounded-full shadow-xs leading-none whitespace-nowrap">[A] 檔主</span>`;
+                else if (status === '1') statusBadgeScaled = `<span class="bg-amber-500 text-white font-black ${S.badge} rounded-full shadow-xs leading-none whitespace-nowrap">[1] 協作</span>`;
+                else if (status === '0') statusBadgeScaled = `<span class="bg-slate-600 text-white font-black ${S.badge} rounded-full shadow-xs leading-none whitespace-nowrap">[0] 無人</span>`;
 
-                    let statusBadgeScaled = `<span class="font-bold text-rose-600 bg-rose-50 border border-rose-300 ${S.badge} rounded-full leading-none whitespace-nowrap">未填</span>`;
-                    if (status === 'A') statusBadgeScaled = `<span class="bg-emerald-500 text-white font-black ${S.badge} rounded-full shadow-xs leading-none whitespace-nowrap">[A] 檔主</span>`;
-                    else if (status === '1') statusBadgeScaled = `<span class="bg-amber-500 text-white font-black ${S.badge} rounded-full shadow-xs leading-none whitespace-nowrap">[1] 協作</span>`;
-                    else if (status === '0') statusBadgeScaled = `<span class="bg-slate-600 text-white font-black ${S.badge} rounded-full shadow-xs leading-none whitespace-nowrap">[0] 無人</span>`;
-
-                    // 中／大：姓名在性別下方；未填與 A/1/0 綁在一起靠右
-                                        if (S.layout === 'stack') {
-                        return `
-                        <div id="patrol-card-${stall.floor}-${stall.id}" class="${S.card} rounded-2xl border transition-all flex items-center justify-between ${isFilled ? cardBg : cardUnfilledBg}">
-                            <div class="flex flex-col justify-center min-w-0 flex-1 pr-2 ${isFilled ? 'opacity-45' : ''}">
-                                <div class="flex items-center space-x-1.5 mb-0.5">
-                                    <span class="bg-slate-950 text-white font-black ${S.id} shrink-0 shadow-xs leading-none tracking-tight">${stall.id}</span>
-                                    ${genderTagScaled}
-                                </div>
-                                <div class="flex items-center gap-1.5 min-w-0">
-                                    <span class="${S.sub} text-slate-500 font-bold truncate shrink-0">${stall.floor} · ${stall.type}</span>
-                                    <span class="${S.name} font-black text-slate-900 truncate">${stall.name || '無'}</span>
-                                </div>
-                            </div>
-                            <div class="flex items-center gap-1.5 shrink-0">
-                                <div class="flex items-center">${statusBadgeScaled}</div>
-                                <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, 'A')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnClsA}">
-                                    <span class="${S.btnMain} leading-none">A</span><span class="${S.btnSub} font-bold">檔主</span>
-                                </button>
-                                <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, '1')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnCls1}">
-                                    <span class="${S.btnMain} leading-none">1</span><span class="${S.btnSub} font-bold">協作</span>
-                                </button>
-                                <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, '0')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnCls0}">
-                                    <span class="${S.btnMain} leading-none">0</span><span class="${S.btnSub} font-bold">無人</span>
-                                </button>
-                            </div>
-                        </div>`;
-                    }
-
-                    // 小：姓名在性別右邊（原橫向）
+                // 中／大：檔號與性別間距收窄為 gap-1
+                if (S.layout === 'stack') {
                     return `
                     <div id="patrol-card-${stall.floor}-${stall.id}" class="${S.card} rounded-2xl border transition-all flex items-center justify-between ${isFilled ? cardBg : cardUnfilledBg}">
-                        <div class="flex flex-col justify-center min-w-0 pr-1 flex-1 ${isFilled ? 'opacity-45' : ''}">
-                            <div class="flex items-center space-x-1.5 mb-0.5 min-w-0">
-                                <span class="bg-slate-950 text-white font-black ${S.id} shrink-0 shadow-xs leading-none tracking-tight">${stall.id}</span>
+                        <div class="flex flex-col justify-center min-w-0 flex-1 pr-2 ${isFilled ? 'opacity-45' : ''}">
+                            <div class="flex items-center gap-1 mb-0.5">
+                                <span class="bg-slate-950 text-white font-black ${S.id} shrink-0 shadow-xs leading-none tracking-tighter">${stall.id}</span>
                                 ${genderTagScaled}
+                            </div>
+                            <div class="flex items-center gap-1.5 min-w-0">
+                                <span class="${S.sub} text-slate-500 font-bold truncate shrink-0">${stall.floor} · ${stall.type}</span>
                                 <span class="${S.name} font-black text-slate-900 truncate">${stall.name || '無'}</span>
                             </div>
-                            <div class="${S.sub} text-slate-500 font-bold truncate pl-0.5">${stall.floor} · ${stall.type}</div>
                         </div>
                         <div class="flex items-center gap-1.5 shrink-0">
                             <div class="flex items-center">${statusBadgeScaled}</div>
@@ -1704,75 +1639,36 @@ else if (status === '0') {
                             </button>
                         </div>
                     </div>`;
-                }).join('');
-            } else {
-                if (stalls.length === 0) return;
-                if (patrolFocusIndex >= stalls.length) patrolFocusIndex = stalls.length - 1;
-                if (patrolFocusIndex < 0) patrolFocusIndex = 0;
-
-                const stall = stalls[patrolFocusIndex];
-                const status = window.getPatrolStatus(stall, patrolSlot);
-                const dateRecords = patrolHistoryStore[currentPatrolDate] || {};
-                const autoReason = dateRecords[window.getPatrolKey(stall)]?.[`${patrolSlot}_reason`] || '';
-
-                $('focusStallCounter').innerText = `第 ${patrolFocusIndex + 1} / ${stalls.length} 檔`;
-                $('focusStallBadge').innerText = `${stall.floor} · ${stall.type}`;
-                $('focusStallId').innerText = stall.id;
-                
-                const focusGenderEl = $('focusStallGender');
-                if (focusGenderEl) {
-                    focusGenderEl.innerHTML = stall.gender === '男'
-                        ? `<span class="bg-blue-600 text-white font-black text-lg px-3 py-1 rounded-xl shadow-xs leading-none">[男]</span>`
-                        : `<span class="bg-rose-500 text-white font-black text-lg px-3 py-1 rounded-xl shadow-xs leading-none">[女]</span>`;
                 }
 
-                $('focusStallName').innerText = `檔主: ${stall.name}`;
+                // 小：檔號、性別與姓名間距收窄為 gap-1
+                return `
+                <div id="patrol-card-${stall.floor}-${stall.id}" class="${S.card} rounded-2xl border transition-all flex items-center justify-between ${isFilled ? cardBg : cardUnfilledBg}">
+                    <div class="flex flex-col justify-center min-w-0 pr-1 flex-1 ${isFilled ? 'opacity-45' : ''}">
+                        <div class="flex items-center gap-1 mb-0.5 min-w-0">
+                            <span class="bg-slate-950 text-white font-black ${S.id} shrink-0 shadow-xs leading-none tracking-tighter">${stall.id}</span>
+                            ${genderTagScaled}
+                            <span class="${S.name} font-black text-slate-900 truncate ml-0.5">${stall.name || '無'}</span>
+                        </div>
+                        <div class="${S.sub} text-slate-500 font-bold truncate pl-0.5">${stall.floor} · ${stall.type}</div>
+                    </div>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        <div class="flex items-center">${statusBadgeScaled}</div>
+                        <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, 'A')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnClsA}">
+                            <span class="${S.btnMain} leading-none">A</span><span class="${S.btnSub} font-bold">檔主</span>
+                        </button>
+                        <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, '1')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnCls1}">
+                            <span class="${S.btnMain} leading-none">1</span><span class="${S.btnSub} font-bold">協作</span>
+                        </button>
+                        <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, '0')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnCls0}">
+                            <span class="${S.btnMain} leading-none">0</span><span class="${S.btnSub} font-bold">無人</span>
+                        </button>
+                    </div>
+                </div>`;
+            }).join('');
 
-                let statusText = `<span class="text-rose-600 font-bold">尚未填寫</span>`;
-                if (status === 'A') statusText = `<span class="text-emerald-600 font-black">【A】檔主在場</span>`;
-                else if (status === '1') statusText = `<span class="text-amber-600 font-black">【1】協作人在場</span>`;
-                else if (status === '0') {
-                    statusText = autoReason
-                        ? `<div class="flex flex-col items-center justify-center gap-1">
-                             <span class="text-slate-800 font-black text-sm">【0】無人</span>
-                             <span class="text-[11px] font-bold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300 shadow-2xs whitespace-nowrap">⚡ 因 ${autoReason} 自動登記</span>
-                           </div>`
-                        : `<span class="text-slate-700 font-black">【0】未營業 / 無人</span>`;
-                }
-
-                $('focusStallStatusText').innerHTML = statusText;
-
-                const focusBtnA = $('focusBtnA');
-                const focusBtn1 = $('focusBtn1');
-                const focusBtn0 = $('focusBtn0');
-
-                if (focusBtnA && focusBtn1 && focusBtn0) {
-                    focusBtnA.className = status === 'A'
-                        ? 'btn-style-capsule w-full py-3.5 px-4 rounded-full font-black text-base flex items-center justify-between cursor-pointer select-none bg-emerald-500 text-white border-emerald-500 shadow-md ring-2 ring-emerald-300'
-                        : 'btn-style-capsule w-full py-3.5 px-4 rounded-full font-black text-base flex items-center justify-between cursor-pointer select-none bg-white text-emerald-700 border-emerald-400 hover:bg-emerald-50 shadow-sm';
-
-                    focusBtn1.className = status === '1'
-                        ? 'btn-style-capsule w-full py-3.5 px-4 rounded-full font-black text-base flex items-center justify-between cursor-pointer select-none bg-amber-500 text-white border-amber-500 shadow-md ring-2 ring-amber-300'
-                        : 'btn-style-capsule w-full py-3.5 px-4 rounded-full font-black text-base flex items-center justify-between cursor-pointer select-none bg-white text-amber-800 border-amber-300 hover:bg-amber-50 shadow-sm';
-
-                    focusBtn0.className = status === '0'
-                        ? 'btn-style-capsule w-full py-3.5 px-4 rounded-full font-black text-base flex items-center justify-between cursor-pointer select-none bg-slate-700 text-white border-slate-700 shadow-md ring-2 ring-slate-400'
-                        : 'btn-style-capsule w-full py-3.5 px-4 rounded-full font-black text-base flex items-center justify-between cursor-pointer select-none bg-white text-slate-800 border-slate-300 hover:bg-slate-50 shadow-sm';
-
-                    $('focusBadgeA')?.setAttribute('class', status === 'A' ? 'w-9 h-9 bg-white text-emerald-600 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs' : 'w-9 h-9 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs');
-                    $('focusBadge1')?.setAttribute('class', status === '1' ? 'w-9 h-9 bg-white text-amber-600 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs' : 'w-9 h-9 bg-amber-100 text-amber-800 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs');$('focusBadge0')?.setAttribute('class', status === '0' ? 'w-9 h-9 bg-white text-slate-700 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs' : 'w-9 h-9 bg-slate-100 text-slate-800 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs');
-
-                    $('focusCheckA')?.setAttribute('class', status === 'A' ? 'w-5 h-5 text-white' : 'w-5 h-5 text-emerald-500 hidden');
-$('focusCheck1')?.setAttribute('class', status === '1' ? 'w-5 h-5 text-white' : 'w-5 h-5 text-amber-600 hidden');
-$('focusCheck0')?.setAttribute('class', status === '0' ? 'w-5 h-5 text-white' : 'w-5 h-5 text-slate-600 hidden');
-                }
-            }
             if (window.lucide) lucide.createIcons();
-
-            // 卡片重畫後重新套用 小/中/大 縮放
-            if (patrolViewMode === 'card') {
-                window.updatePatrolCardScaleUI();
-            }
+            window.updatePatrolCardScaleUI();
         };
 
         window.setPatrolStatusByFilteredIndex = (idx, status) => {
@@ -1781,52 +1677,16 @@ $('focusCheck0')?.setAttribute('class', status === '0' ? 'w-5 h-5 text-white' : 
             if (stall) window.setPatrolStatus(stall, status);
         };
 
-        window.patrolFocusPrev = () => {
-            window.clearFocusAutoTimer();
-            if (patrolFocusIndex > 0) {
-                patrolFocusIndex--;
-                window.renderPatrol();
-            } else {
-                window.showToast("已是第一檔");
-            }
-        };
-
-        window.patrolFocusNext = (isAuto = false) => {
-            window.clearFocusAutoTimer();
-            const stalls = window.getFilteredPatrolStalls();
-            if (patrolFocusIndex < stalls.length - 1) {
-                patrolFocusIndex++;
-                window.renderPatrol();
-            } else {
-                window.showToast(isAuto ? "🎉 本組所有攤位已確認完成！" : "已是最後一檔");
-            }
-        };
-
-        window.patrolFocusChoose = (status) => {
-            const stalls = window.getFilteredPatrolStalls();
-            const stall = stalls[patrolFocusIndex];
-            if (stall) {
-                window.setPatrolStatus(stall, status);
-            }
-        };
-
         window.jumpToNextUnfilledPatrol = () => {
-            window.clearFocusAutoTimer();
             const stalls = window.getFilteredPatrolStalls();
             for (let i = 0; i < stalls.length; i++) {
                 if (!window.getPatrolStatus(stalls[i], patrolSlot)) {
-                    if (patrolViewMode === 'focus') {
-                        patrolFocusIndex = i;
-                        window.renderPatrol();
+                    const el = $(`patrol-card-${stalls[i].floor}-${stalls[i].id}`);
+                    if (el) {
+                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        el.classList.add('ring-4', 'ring-rose-500');
+                        setTimeout(() => el.classList.remove('ring-4', 'ring-rose-500'), 1500);
                         window.showToast(`已跳至未填：${stalls[i].id} ${stalls[i].name}`);
-                    } else {
-                        const el = $(`patrol-card-${stalls[i].floor}-${stalls[i].id}`);
-                        if (el) {
-                            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            el.classList.add('ring-4', 'ring-rose-500');
-                            setTimeout(() => el.classList.remove('ring-4', 'ring-rose-500'), 1500);
-                            window.showToast(`已跳至未填：${stalls[i].id} ${stalls[i].name}`);
-                        }
                     }
                     return;
                 }
@@ -1930,25 +1790,17 @@ $('focusCheck0')?.setAttribute('class', status === '0' ? 'w-5 h-5 text-white' : 
         };
 
                         window.exportPatrolExcelCSV = () => {
-            if (typeof XLSX === 'undefined') {
-                window.showToast('Excel 元件尚未載入，請稍後再試', true);
-                return;
-            }
-
-            const date = currentPatrolDate;
-            const currentRecords = patrolHistoryStore[date] || {};
-            const tempDay = (patrolTempRecords && patrolTempRecords[date]) || {};
-
-            // ===== 工作表1：巡查剔檔 =====
-            const patrolAoA = [
-                ['巡查日期', date],
-                [],
+            const csvRows = [
+                ['巡查日期', currentPatrolDate],
                 ['樓層', '攤位編號', '售賣種類', '承租人姓名', '性別', '上午9點', '上午11點', '下午4點', '下午6點']
             ];
+
+            const currentRecords = patrolHistoryStore[currentPatrolDate] || {};
+
             RAW_PATROL_STALLS.forEach(s => {
                 const k = window.getPatrolKey(s);
                 const d = currentRecords[k] || {};
-                patrolAoA.push([
+                csvRows.push([
                     s.floor, s.id, s.type, s.name, s.gender,
                     d['上午9點'] || '',
                     d['上午11點'] || '',
@@ -1957,35 +1809,16 @@ $('focusCheck0')?.setAttribute('class', status === '0' ? 'w-5 h-5 text-white' : 
                 ]);
             });
 
-            // ===== 工作表2：溫度（橫式 + 記錄者在最後一欄）=====
-            const tempHeader = [
-                '時段',
-                ...RAW_TEMPERATURE_POINTS.map(p => p.name),
-                '記錄者姓名'
-            ];
-            const tempAoA = [tempHeader];
-
-            PATROL_TIME_SLOTS.forEach(slot => {
-                const slotData = tempDay[slot] || {};
-                const row = [
-                    slot,
-                    ...RAW_TEMPERATURE_POINTS.map(p => {
-                        const v = slotData[p.id];
-                        return (v !== undefined && v !== null && v !== '') ? v : '';
-                    }),
-                    slotData.recorder || ''
-                ];
-                tempAoA.push(row);
-            });
-
-            const wb = XLSX.utils.book_new();
-            const ws1 = XLSX.utils.aoa_to_sheet(patrolAoA);
-            const ws2 = XLSX.utils.aoa_to_sheet(tempAoA);
-            XLSX.utils.book_append_sheet(wb, ws1, '巡查剔檔');
-            XLSX.utils.book_append_sheet(wb, ws2, '溫度');
-
-            XLSX.writeFile(wb, `紅街市巡查與溫度報表_${date}.xlsx`);
-            window.showToast(`✅ 已匯出 ${date}（含溫度工作表）！`);
+            const csvContent = "\uFEFF" + csvRows.map(e => e.join(",")).join("\n");
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            
+            // 🌟 這裡已改為新的檔案名稱格式
+            link.download = `剔檔與溫度表_${currentPatrolDate}.csv`;
+            
+            link.click();
+            window.showToast(`✅ 已匯出 ${currentPatrolDate} 剔檔與溫度表！`);
         };
 
         window.demoFillCurrentPatrolSlot = () => {
@@ -8600,11 +8433,10 @@ window.pushMeetingReportsToAllIframes = (reports) => {
                         <button type="button" id="patrol-flt-first" onclick="window.filterPatrolFloor('一樓')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1">一樓</button>
                     </div>
 
-                    <!-- 模式切換：卡片 / 專注 -->
-                    <div class="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[14px] shrink-0">
-                        <button id="patrolModeCardBtn" onclick="window.setPatrolViewMode('card')" class="px-2.5 py-0.5 rounded-md font-bold text-slate-600 hover:text-slate-900 transition-all">卡片</button>
-                        <button id="patrolModeFocusBtn" onclick="window.setPatrolViewMode('focus')" class="px-2.5 py-0.5 rounded-md font-black bg-rose-600 text-white shadow-xs transition-all">專注</button>
-                    </div>
+                    <!-- 匯出報表按鍵（移至原切換鍵位置） -->
+                    <button type="button" onclick="window.exportPatrolExcelCSV()" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 flex items-center shrink-0">
+                        <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5 mr-1"></i>匯出
+                    </button>
                 </div>
 
                 <div class="border-t-2 border-slate-200/90 my-1"></div>
@@ -8667,120 +8499,29 @@ window.pushMeetingReportsToAllIframes = (reports) => {
                 </div>
             </div>
 
-           <div id="patrolCardContainer" class="hidden flex-1 overflow-y-auto overflow-x-hidden px-1 py-1.5 scrollbar-hide pb-20">
-    <div id="patrolCardList" class="flex flex-col space-y-2 origin-top-left"></div>
-</div>
-
-            <!-- 專注模式 (一攤一按) -->
-            <div id="patrolFocusContainer" class="flex-1 overflow-y-auto px-3 pt-1 pb-16 flex flex-col justify-between scrollbar-hide">
-                <div>
-                    <!-- 頂部標題區：收緊上下間距 (mb-1.5) -->
-                    <div class="text-center mb-1.5">
-                        <div id="focusStallCounter" class="text-[13px] font-black text-slate-900 tracking-tight leading-none">第 1 / 69 檔</div>
-                        <div id="focusStallBadge" class="text-[17px] font-black text-slate-800 tracking-tight leading-tight mt-0.5">魚檔 · 魚類</div>
-                    </div>
-
-                    <!-- 攤位黃框卡片：底部外距由 mb-4 縮窄為 mb-1.5，內邊距收整為 p-2.5 -->
-                    <div class="relative bg-amber-50 border-2 border-amber-300 rounded-2xl p-2.5 text-center shadow-sm mb-1.5 flex items-center justify-between">
-                        <button type="button" onclick="window.patrolFocusPrev()" class="h-14 w-10 rounded-full bg-white hover:bg-slate-100 text-slate-700 border-2 border-slate-300 shadow-sm flex flex-col items-center justify-center active:scale-90 transition-all shrink-0 z-10" title="上一檔">
-                            <i data-lucide="chevron-up" class="w-4 h-4 pointer-events-none mb-0.5"></i>
-                            <span class="text-[11px] font-black leading-none pointer-events-none">上</span>
-                            <span class="text-[11px] font-black leading-none pointer-events-none">檔</span>
-                        </button>
-
-                        <div class="flex-1 px-1">
-                            <div class="flex justify-center items-center">
-                                <span id="focusStallId" class="bg-slate-950 text-white font-black text-2xl sm:text-3xl px-3.5 py-0.5 rounded-xl shadow-sm leading-none tracking-wide">J-002</span>
-                            </div>
-                            <div id="focusStallGender" class="my-1 flex justify-center">
-                                <span class="bg-blue-600 text-white font-black text-sm px-2.5 py-0.5 rounded-lg shadow-xs leading-none">[男]</span>
-                            </div>
-                            <div id="focusStallName" class="text-xs font-bold text-slate-500 my-0.5 tracking-wide leading-tight">檔主: 盧錦棠</div>
-                            
-                            <div id="focusStallStatusText" class="mt-1 inline-flex items-center justify-center bg-white px-3 py-1 rounded-xl border border-slate-200 text-xs font-bold shadow-2xs">
-                                尚未填寫
-                            </div>
-                        </div>
-
-                        <button type="button" onclick="window.patrolFocusNext()" class="h-14 w-10 rounded-full bg-white hover:bg-slate-100 text-slate-700 border-2 border-slate-300 shadow-sm flex flex-col items-center justify-center active:scale-90 transition-all shrink-0 z-10" title="下一檔">
-                            <i data-lucide="chevron-down" class="w-4 h-4 pointer-events-none mb-0.5"></i>
-                            <span class="text-[11px] font-black leading-none pointer-events-none">下</span>
-                            <span class="text-[11px] font-black leading-none pointer-events-none">檔</span>
-                        </button>
-                    </div>
-
-                    <!-- 下方倒數進度條：移除過高的固定佔位 (收窄為 mb-1.5，有倒數時才自然展開) -->
-                    <div class="mb-1.5 px-0.5 min-h-[18px] flex flex-col justify-center">
-                        <div id="focusCountdownBar" class="opacity-0 pointer-events-none transition-opacity duration-200">
-                            <div class="flex justify-between items-center text-[11px] font-bold text-emerald-700 mb-0.5 px-0.5">
-                                <span class="flex items-center"><i data-lucide="check-circle" class="w-3 h-3 mr-1 text-emerald-600"></i>已確認記錄</span>
-                                <span class="font-mono text-emerald-800 text-[10.5px]">5秒後自動下一檔...</span>
-                            </div>
-                            <div class="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden shadow-inner">
-                                <div id="focusCountdownInner" class="bg-emerald-500 h-full w-full rounded-full transition-none"></div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="space-y-3">
-                        <button id="focusBtnA" onclick="window.patrolFocusChoose('A')" class="btn-style-capsule w-full py-3.5 px-4 rounded-full font-black text-base flex items-center justify-between cursor-pointer select-none bg-white text-emerald-800 border-emerald-300 hover:bg-emerald-50 shadow-sm">
-                            <span class="flex items-center space-x-3">
-                                <span id="focusBadgeA" class="w-9 h-9 bg-emerald-100 text-emerald-800 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs">A</span>
-                                <span class="text-left leading-tight">
-                                    <div class="text-lg">【A】檔主在場</div>
-                                    
-                                </span>
-                            </span>
-                            <i id="focusCheckA" data-lucide="check" class="w-5 h-5 text-emerald-600 hidden"></i>
-                        </button>
-
-                        <button id="focusBtn1" onclick="window.patrolFocusChoose('1')" class="btn-style-capsule w-full py-3.5 px-4 rounded-full font-black text-base flex items-center justify-between cursor-pointer select-none bg-white text-amber-800 border-amber-300 hover:bg-amber-50 shadow-sm">
-                            <span class="flex items-center space-x-3">
-                                <span id="focusBadge1" class="w-9 h-9 bg-amber-100 text-amber-800 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs">1</span>
-                                <span class="text-left leading-tight">
-                                    <div class="text-lg">【1】協作人在場</div>
-                                    
-                                </span>
-                            </span>
-                            <i id="focusCheck1" data-lucide="check" class="w-5 h-5 text-amber-600 hidden"></i>
-                        </button>
-
-                        <button id="focusBtn0" onclick="window.patrolFocusChoose('0')" class="btn-style-capsule w-full py-3.5 px-4 rounded-full font-black text-base flex items-center justify-between cursor-pointer select-none bg-white text-slate-800 border-slate-300 hover:bg-slate-50 shadow-sm">
-                            <span class="flex items-center space-x-3">
-                                <span id="focusBadge0" class="w-9 h-9 bg-slate-100 text-slate-800 rounded-full flex items-center justify-center text-xl font-black shrink-0 shadow-xs">0</span>
-                                <span class="text-left leading-tight">
-                                    <div class="text-lg">【0】無人在場</div>
-                                    
-                                </span>
-                            </span>
-                            <i id="focusCheck0" data-lucide="check" class="w-5 h-5 text-slate-600 hidden"></i>
-                        </button>
-                    </div>
-                </div>
+           <!-- 1. 卡片列表容器（拿掉了 hidden，讓卡片直接顯示） -->
+            <div id="patrolCardContainer" class="flex-1 overflow-y-auto overflow-x-hidden px-1 py-1.5 scrollbar-hide pb-20">
+                <div id="patrolCardList" class="flex flex-col space-y-2 origin-top-left"></div>
             </div>
 
-            <!-- 🌟 溫度浮窗鍵：改為 fixed 定位，完美懸浮於右下角並隨頁面滑動跟隨 -->
+            <!-- 2. 🌟 溫度浮窗鍵（中間整塊 patrolFocusContainer 專注模式已移除） -->
             <button id="floatingTempBtn" type="button" onclick="window.openTempModal()"
-                    class="fixed right-5 bottom-20 sm:bottom-16 z-[100] w-12 h-12 rounded-full p-[2.5px] bg-[#bae6fd] border border-[#7dd3fc] flex items-center justify-center transition-transform active:scale-90 cursor-pointer group select-none shadow-xl">
-                <div id="floatingTempInner" class="w-full h-full rounded-full bg-[#38bdf8] border-2 border-white flex flex-col items-center justify-center pt-0.5 pointer-events-none">
+                    class="absolute right-3.5 bottom-[58px] z-30 w-12 h-12 rounded-full p-[2.5px] bg-[#bae6fd] border border-[#7dd3fc] flex items-center justify-center transition-transform active:scale-90 cursor-pointer group select-none shadow-md">
+                <div id="floatingTempInner" class="w-full h-full rounded-full bg-[#38bdf8] border-2 border-white flex flex-col items-center justify-center pt-0.5">
                     <i data-lucide="thermometer" id="floatingTempIcon" class="w-[18px] h-[18px] text-white stroke-[2.4] pointer-events-none"></i>
                     <span id="floatingTempBadge" class="text-[8px] font-mono font-black text-white leading-none tracking-tighter mt-0.5">°C</span>
                 </div>
             </button>
 
-            <!-- 底部常駐工具列 -->
+            <!-- 3. 底部常駐工具列（移除了底下重複的「匯出報表」按鈕，只留「搜尋」） -->
             <div class="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 px-3 py-2 flex items-center justify-end shadow-lg z-20">
                 <div class="flex items-center space-x-2">
                     <button type="button" onclick="window.openPatrolSearchModal()" class="px-3.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold active:scale-95 flex items-center shadow-2xs">
                         <i data-lucide="search" class="w-3.5 h-3.5 mr-1 text-blue-600"></i>搜尋
                     </button>
-                    <button type="button" onclick="window.exportPatrolExcelCSV()" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 flex items-center">
-                        <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5 mr-1"></i>匯出報表
-                    </button>
                 </div>
             </div>
-
-</main>
+        </main>
 
 <!-- 溫度數字盤（附同步輸入顯示框） -->
 <div id="tempKeypadModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-[10050] flex flex-col items-center justify-center p-4" onclick="window.closeTempKeypadModal()">
