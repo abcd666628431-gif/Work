@@ -1105,24 +1105,24 @@ window.applyAutoPatrolSlot = (force = false) => {
             return autoFilledCount;
         };
 
-// 只上傳「某一天、某一檔」到雲端（不整包覆蓋）
 window.syncPatrolStallToCloud = async (dateKey, stallKey) => {
-    if (!currentUser || !db || !dateKey || !stallKey) return;
+    if (!currentUser || !db) return;
     const ref = cfgDoc('patrol_history');
     const stallData = patrolHistoryStore[dateKey]?.[stallKey];
     const path = `history.${dateKey}.${stallKey}`;
     try {
         if (!stallData || Object.keys(stallData).length === 0) {
-            // 該檔已清空 → 刪除雲端這個欄位
             await updateDoc(ref, { [path]: deleteField() }).catch(async () => {
+                // 文件不存在時建立空殼即可，不要寫入殘缺 history
                 await setDoc(ref, { history: {} }, { merge: true });
             });
         } else {
-            // 只更新這一檔
             await updateDoc(ref, { [path]: stallData }).catch(async () => {
+                // 文件不存在：用 update 路徑等價的巢狀寫法，避免整包覆蓋
                 await setDoc(ref, {
                     history: { [dateKey]: { [stallKey]: stallData } }
                 }, { merge: true });
+                // 注意：若文件已存在且已有其他檔，不要走這段；上面 updateDoc 成功即可
             });
         }
     } catch (e) {
