@@ -6,6 +6,7 @@
     <title>工作記錄本</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
@@ -1928,18 +1929,26 @@ $('focusCheck0')?.setAttribute('class', status === '0' ? 'w-5 h-5 text-white' : 
             }
         };
 
-        window.exportPatrolExcelCSV = () => {
-            const csvRows = [
-                ['巡查日期', currentPatrolDate],
+                        window.exportPatrolExcelCSV = () => {
+            if (typeof XLSX === 'undefined') {
+                window.showToast('Excel 元件尚未載入，請稍後再試', true);
+                return;
+            }
+
+            const date = currentPatrolDate;
+            const currentRecords = patrolHistoryStore[date] || {};
+            const tempDay = (patrolTempRecords && patrolTempRecords[date]) || {};
+
+            // ===== 工作表1：巡查剔檔 =====
+            const patrolAoA = [
+                ['巡查日期', date],
+                [],
                 ['樓層', '攤位編號', '售賣種類', '承租人姓名', '性別', '上午9點', '上午11點', '下午4點', '下午6點']
             ];
-
-            const currentRecords = patrolHistoryStore[currentPatrolDate] || {};
-
             RAW_PATROL_STALLS.forEach(s => {
                 const k = window.getPatrolKey(s);
                 const d = currentRecords[k] || {};
-                csvRows.push([
+                patrolAoA.push([
                     s.floor, s.id, s.type, s.name, s.gender,
                     d['上午9點'] || '',
                     d['上午11點'] || '',
@@ -1948,13 +1957,35 @@ $('focusCheck0')?.setAttribute('class', status === '0' ? 'w-5 h-5 text-white' : 
                 ]);
             });
 
-            const csvContent = "\uFEFF" + csvRows.map(e => e.join(",")).join("\n");
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement("a");
-            link.href = URL.createObjectURL(blob);
-            link.download = `紅街市承租人親身經營巡查報表_${currentPatrolDate}.csv`;
-            link.click();
-            window.showToast(`✅ 已匯出 ${currentPatrolDate} 巡查報表！`);
+            // ===== 工作表2：溫度（橫式 + 記錄者在最後一欄）=====
+            const tempHeader = [
+                '時段',
+                ...RAW_TEMPERATURE_POINTS.map(p => p.name),
+                '記錄者姓名'
+            ];
+            const tempAoA = [tempHeader];
+
+            PATROL_TIME_SLOTS.forEach(slot => {
+                const slotData = tempDay[slot] || {};
+                const row = [
+                    slot,
+                    ...RAW_TEMPERATURE_POINTS.map(p => {
+                        const v = slotData[p.id];
+                        return (v !== undefined && v !== null && v !== '') ? v : '';
+                    }),
+                    slotData.recorder || ''
+                ];
+                tempAoA.push(row);
+            });
+
+            const wb = XLSX.utils.book_new();
+            const ws1 = XLSX.utils.aoa_to_sheet(patrolAoA);
+            const ws2 = XLSX.utils.aoa_to_sheet(tempAoA);
+            XLSX.utils.book_append_sheet(wb, ws1, '巡查剔檔');
+            XLSX.utils.book_append_sheet(wb, ws2, '溫度');
+
+            XLSX.writeFile(wb, `紅街市巡查與溫度報表_${date}.xlsx`);
+            window.showToast(`✅ 已匯出 ${date}（含溫度工作表）！`);
         };
 
         window.demoFillCurrentPatrolSlot = () => {
