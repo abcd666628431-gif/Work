@@ -999,20 +999,44 @@ window.getAutoPatrolSlot = () => {
     return '上午9點';                        // 09:00 前預設
 };
 
-// 套用自動時段（支援強制切換或定時跨時段自動跳轉）
+let patrolSlotTimer = null;
+
+// 套用自動時段並預約下一個整點鬧鐘（平時 0 資源消耗）
 window.applyAutoPatrolSlot = (force = false) => {
     const autoSlot = window.getAutoPatrolSlot();
     if (force) {
         lastAutoTriggeredSlot = autoSlot;
         window.setPatrolSlot(autoSlot);
     } else if (autoSlot !== lastAutoTriggeredSlot) {
-        // 現實時間剛好跨入新時段（09:00 / 11:00 / 16:00 / 18:00）時自動切換
         lastAutoTriggeredSlot = autoSlot;
         if (patrolSlot !== autoSlot) {
             window.setPatrolSlot(autoSlot);
         }
     }
+    window.scheduleNextPatrolSlotSwitch();
 };
+
+window.scheduleNextPatrolSlotSwitch = () => {
+    if (patrolSlotTimer) clearTimeout(patrolSlotTimer);
+    const now = window.getNow ? window.getNow() : new Date();
+    const curSecs = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+    const targets = [9 * 3600, 11 * 3600, 16 * 3600, 18 * 3600]; // 09:00, 11:00, 16:00, 18:00
+    let nextSecs = targets.find(t => t > curSecs);
+    let waitMs = nextSecs !== undefined
+        ? (nextSecs - curSecs) * 1000
+        : (24 * 3600 - curSecs + targets[0]) * 1000; // 跨日到隔天 09:00
+
+    patrolSlotTimer = setTimeout(() => {
+        window.applyAutoPatrolSlot(false);
+    }, waitMs + 500);
+};
+
+// 手機從背景喚醒或解鎖時，自動對齊一次當前時段
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+        window.applyAutoPatrolSlot(false);
+    }
+});
         window.getPatrolKey = (stall) => `${stall.floor}-${stall.id}`;
         window.getPatrolStatus = (stall, slot) => {
             const dateRecords = patrolHistoryStore[currentPatrolDate] || {};
@@ -1186,104 +1210,210 @@ window.applyAutoPatrolSlot = (force = false) => {
             return autoFilledCount;
         };
 
-window.syncPatrolStallToCloud = async (dateKey, stallKey) => {
-    if (!currentUser || !db) return;
-    const ref = cfgDoc('patrol_history');
-    const stallData = patrolHistoryStore[dateKey]?.[stallKey];
-    const path = `history.${dateKey}.${stallKey}`;
-    try {
-        if (!stallData || Object.keys(stallData).length === 0) {
-            await updateDoc(ref, { [path]: deleteField() }).catch(async () => {
-                // 文件不存在時建立空殼即可，不要寫入殘缺 history
-                await setDoc(ref, { history: {} }, { merge: true });
-            });
-        } else {
-            await updateDoc(ref, { [path]: stallData }).catch(async () => {
-                // 文件不存在：用 update 路徑等價的巢狀寫法，避免整包覆蓋
-                await setDoc(ref, {
-                    history: { [dateKey]: { [stallKey]: stallData } }
-                }, { merge: true });
-                // 注意：若文件已存在且已有其他檔，不要走這段；上面 updateDoc 成功即可
-            });
+// 🌟 記錄本機尚未完成雲端同步的單檔變更（防止網路延遲或重連時被雲端舊快照洗掉回退）
+window._pendingPatrolWrites = getLocal('work_pending_patrol_writes', {});
+
+window.savePendingPatrolWrite = (dateKey, stallKey, stallData) => {
+    if (!window._pendingPatrolWrites[dateKey]) window._pendingPatrolWrites[dateKey] = {};
+    window._pendingPatrolWrites[dateKey][stallKey] = {
+        data: stallData ? JSON.parse(JSON.stringify(stallData)) : null,
+        ts: Date.now()
+    };
+    safeSetLocal('work_pending_patrol_writes', window._pendingPatrolWrites);
+};
+
+window.clearPendingPatrolWrite = (dateKey, stallKey, writeTs) => {
+    const pending = window._pendingPatrolWrites?.[dateKey]?.[stallKey];
+    // 只有當沒有更新的點擊發生時，才移除保護鎖
+    if (pending && pending.ts <= writeTs) {
+        delete window._pendingPatrolWrites[dateKey][stallKey];
+        if (Object.keys(window._pendingPatrolWrites[dateKey]).length === 0) {
+            delete window._pendingPatrolWrites[dateKey];
         }
-    } catch (e) {
-        console.error('剔檔單檔同步失敗:', e);
+        safeSetLocal('work_pending_patrol_writes', window._pendingPatrolWrites);
     }
 };
 
-       window.setPatrolStatus = (stall, status, slot) => {
-            const targetSlot = slot || patrolSlot;
-            const key = window.getPatrolKey(stall);
-            
-            // 🌟 關鍵防護：標記本機正在操作，鎖定 600 毫秒內不被雲端舊回音覆蓋
-            window._lastPatrolInputTime = Date.now();
+window.flushAllPendingPatrolWrites = async () => {
+    if (!currentUser || !db) return;
+    const dates = Object.keys(window._pendingPatrolWrites || {});
+    for (const dKey of dates) {
+        const stalls = Object.keys(window._pendingPatrolWrites[dKey] || {});
+        for (const sKey of stalls) {
+            await window.syncPatrolStallToCloud(dKey, sKey);
+        }
+    }
+};
 
-            if (!patrolHistoryStore[currentPatrolDate]) {
-                patrolHistoryStore[currentPatrolDate] = {};
-            }
-            if (!patrolHistoryStore[currentPatrolDate][key]) {
-                patrolHistoryStore[currentPatrolDate][key] = {};
-            }
+// ====== 剔檔專用離線佇列與防回退同步系統 (類似圖庫離線機制) ======
+window._patrolPendingQueue = getLocal('work_pending_patrol_queue', {});
+window._isSyncingPatrol = false;
+window._hasMorePatrolToSync = false;
 
-            const currentVal = patrolHistoryStore[currentPatrolDate][key][targetSlot];
-            const isCancelling = (currentVal === status);
+// 取得目前尚未同步的攤位總數
+window.getPendingPatrolCount = () => {
+    let count = 0;
+    Object.values(window._patrolPendingQueue || {}).forEach(dateMap => {
+        count += Object.keys(dateMap || {}).length;
+    });
+    return count;
+};
 
-            if (isCancelling) {
-                delete patrolHistoryStore[currentPatrolDate][key][targetSlot];
-                delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
-                if (Object.keys(patrolHistoryStore[currentPatrolDate][key]).length === 0) {
-                    delete patrolHistoryStore[currentPatrolDate][key];
-                }
-                window.showToast(`已取消 ${stall.floor} ${stall.id}`);
-                window.clearFocusAutoTimer();
-            } else {
-                patrolHistoryStore[currentPatrolDate][key][targetSlot] = status;
-                delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
-                const desc = status === 'A' ? 'A (檔主)' : status === '1' ? '1 (協作人)' : '0 (無人)';
-                const statusName = status === 'A' ? '檔主' : status === '1' ? '協作人' : '無人';
-                window.showToast(`${stall.id}：${desc}`);
-                
-                if ('speechSynthesis' in window) {
-                    try {
-                        window.speechSynthesis.cancel();
-                        const cleanNum = String(stall.id).replace(/^[A-Za-z0-9]-?/, '').replace(/^0+/, '') || String(stall.id).replace(/\D/g, '').replace(/^0+/, '');
-                        const speechText = `${stall.floor} ${cleanNum}號 ${statusName}`;
-                        const utt = new SpeechSynthesisUtterance(speechText);
-                        utt.lang = 'zh-HK';
-                        utt.rate = 1.05;
-                        window.speechSynthesis.speak(utt);
-                    } catch(e) {}
-                }
+// 將單一攤位變更推入本機離線佇列（保證關網頁、斷網都不會消失）
+window.enqueuePatrolSync = (dateKey, stallKey) => {
+    const stallData = patrolHistoryStore[dateKey]?.[stallKey];
+    if (!window._patrolPendingQueue[dateKey]) window._patrolPendingQueue[dateKey] = {};
+    window._patrolPendingQueue[dateKey][stallKey] = {
+        data: (stallData && Object.keys(stallData).length > 0) ? JSON.parse(JSON.stringify(stallData)) : null,
+        ts: Date.now()
+    };
+    safeSetLocal('work_pending_patrol_queue', window._patrolPendingQueue);
+};
 
-                if (patrolViewMode === 'focus') {
-                    window.clearFocusAutoTimer();
-                    const bar = $('focusCountdownBar');
-                    const inner = $('focusCountdownInner');
-                    if (bar && inner) {
-                        bar.classList.remove('opacity-0', 'pointer-events-none');
-                        bar.classList.add('opacity-100');
-                        inner.classList.remove('animate-countdown-bar');
-                        void inner.offsetWidth;
-                        inner.classList.add('animate-countdown-bar');
+// 啟動或接續上傳佇列（有網路時自動打包上傳，無網路時安靜保留在本機）
+window.resumePatrolUploadQueue = async (showOnlineToast = false) => {
+    if (!navigator.onLine || !currentUser || !db) return;
+    if (window.getPendingPatrolCount() === 0) return;
+
+    if (window._isSyncingPatrol) {
+        window._hasMorePatrolToSync = true;
+        return;
+    }
+
+    window._isSyncingPatrol = true;
+    const ref = cfgDoc('patrol_history');
+
+    try {
+        do {
+            window._hasMorePatrolToSync = false;
+            const snapshotQueue = JSON.parse(JSON.stringify(window._patrolPendingQueue || {}));
+            const updates = {};
+            const fallbackNested = {};
+            let batchCount = 0;
+
+            Object.keys(snapshotQueue).forEach(dKey => {
+                const stalls = snapshotQueue[dKey] || {};
+                Object.keys(stalls).forEach(sKey => {
+                    const item = stalls[sKey];
+                    const path = `history.${dKey}.${sKey}`;
+                    if (!item.data || Object.keys(item.data).length === 0) {
+                        updates[path] = deleteField();
+                    } else {
+                        updates[path] = item.data;
+                        if (!fallbackNested[dKey]) fallbackNested[dKey] = {};
+                        fallbackNested[dKey][sKey] = item.data;
                     }
+                    batchCount++;
+                });
+            });
 
-                    focusAutoTimer = setTimeout(() => {
-                        window.patrolFocusNext(true);
-                    }, 5000);
+            if (batchCount === 0) break;
+
+            // 一次性批次寫入雲端
+            await updateDoc(ref, updates).catch(async () => {
+                await setDoc(ref, { history: fallbackNested }, { merge: true });
+            });
+
+            // 寫入成功後：比對時間戳，只清除「期間沒有被使用者再次點擊修改」的項目
+            Object.keys(snapshotQueue).forEach(dKey => {
+                const stalls = snapshotQueue[dKey] || {};
+                Object.keys(stalls).forEach(sKey => {
+                    const uploadedTs = stalls[sKey].ts;
+                    const currentPending = window._patrolPendingQueue?.[dKey]?.[sKey];
+                    if (currentPending && currentPending.ts <= uploadedTs) {
+                        delete window._patrolPendingQueue[dKey][sKey];
+                    }
+                });
+                if (window._patrolPendingQueue[dKey] && Object.keys(window._patrolPendingQueue[dKey]).length === 0) {
+                    delete window._patrolPendingQueue[dKey];
                 }
+            });
+
+            safeSetLocal('work_pending_patrol_queue', window._patrolPendingQueue);
+
+            if (showOnlineToast && window.getPendingPatrolCount() === 0) {
+                window.showToast(`✅ 離線剔檔紀錄（${batchCount} 筆）已自動同步至雲端！`);
             }
+        } while (window._hasMorePatrolToSync && navigator.onLine);
+    } catch (e) {
+        console.warn('剔檔處於離線或弱網狀態，已保存於本機佇列等待自動重試');
+    } finally {
+        window._isSyncingPatrol = false;
+    }
+};
 
-            patrolState = patrolHistoryStore[currentPatrolDate] || {};
-            safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
-            safeSetLocal('work_cache_patrol_records', patrolState);
+window.syncPatrolStallToCloud = async (dateKey, stallKey) => {
+    window.enqueuePatrolSync(dateKey, stallKey);
+    await window.resumePatrolUploadQueue(false);
+};
 
-            // 🌟 立即重新渲染畫面，讓手機使用者獲得「零延遲」的視覺反饋
-            window.renderPatrol();
+window._lastPatrolTapKey = '';
+window._lastPatrolTapTime = 0;
 
-            // 非同步上傳至雲端
-            window.syncPatrolStallToCloud(currentPatrolDate, key);
-        };
+window.setPatrolStatus = (stall, status, slot) => {
+    const targetSlot = slot || patrolSlot;
+    const key = window.getPatrolKey(stall);
 
+    // 🌟 防手機觸控彈跳（350ms 內同攤位同按鈕不重複觸發，防止剛剔選就誤觸取消）
+    const nowMs = Date.now();
+    const tapId = `${currentPatrolDate}_${key}_${targetSlot}_${status}`;
+    if (window._lastPatrolTapKey === tapId && (nowMs - window._lastPatrolTapTime) < 350) {
+        return;
+    }
+    window._lastPatrolTapKey = tapId;
+    window._lastPatrolTapTime = nowMs;
+
+    if (!patrolHistoryStore[currentPatrolDate]) {
+        patrolHistoryStore[currentPatrolDate] = {};
+    }
+    if (!patrolHistoryStore[currentPatrolDate][key]) {
+        patrolHistoryStore[currentPatrolDate][key] = {};
+    }
+
+    const currentVal = patrolHistoryStore[currentPatrolDate][key][targetSlot];
+    const isCancelling = (currentVal === status);
+
+    if (isCancelling) {
+        delete patrolHistoryStore[currentPatrolDate][key][targetSlot];
+        delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
+        if (Object.keys(patrolHistoryStore[currentPatrolDate][key]).length === 0) {
+            delete patrolHistoryStore[currentPatrolDate][key];
+        }
+        window.showToast(navigator.onLine ? `已取消 ${stall.floor} ${stall.id}` : `💾 已取消 ${stall.id} (離線待同步)`);
+        window.clearFocusAutoTimer();
+    } else {
+        patrolHistoryStore[currentPatrolDate][key][targetSlot] = status;
+        delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
+        const desc = status === 'A' ? 'A (檔主)' : status === '1' ? '1 (協作人)' : '0 (無人)';
+        const statusName = status === 'A' ? '檔主' : status === '1' ? '協作人' : '無人';
+        window.showToast(navigator.onLine ? `${stall.id}：${desc}` : `💾 ${stall.id}：${desc} (離線已存，連網自動上傳)`);
+        
+        if ('speechSynthesis' in window) {
+            try {
+                window.speechSynthesis.cancel();
+                const cleanNum = String(stall.id).replace(/^[A-Za-z0-9]-?/, '').replace(/^0+/, '') || String(stall.id).replace(/\D/g, '').replace(/^0+/, '');
+                const speechText = `${stall.floor} ${cleanNum}號 ${statusName}`;
+                const utt = new SpeechSynthesisUtterance(speechText);
+                utt.lang = 'zh-HK';
+                utt.rate = 1.05;
+                window.speechSynthesis.speak(utt);
+            } catch(e) {}
+        }
+    }
+
+    patrolState = patrolHistoryStore[currentPatrolDate] || {};
+    safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
+    safeSetLocal('work_cache_patrol_records', patrolState);
+
+    // 1. 先寫入離線佇列上鎖，確保畫面絕對不回退
+    window.enqueuePatrolSync(currentPatrolDate, key);
+
+    // 2. 立即渲染畫面
+    window.renderPatrol();
+
+    // 3. 背景觸發上傳（若無網路會自動留在佇列，等有網路時自動上傳）
+    window.resumePatrolUploadQueue(false);
+};
         window.updatePatrolDateInputUI = () => {
             const parts = currentPatrolDate.split('-');
             if (parts.length === 3) {
@@ -1870,17 +2000,18 @@ window.clearTodayPatrolData = (e) => {
         };
 
                         window.exportPatrolExcelCSV = () => {
-            const csvRows = [
+            const currentRecords = patrolHistoryStore[currentPatrolDate] || {};
+            const dayTemps = patrolTempRecords[currentPatrolDate] || {};
+
+            // 📄 分頁 1：剔檔表
+            const patrolRows = [
                 ['巡查日期', currentPatrolDate],
                 ['樓層', '攤位編號', '售賣種類', '承租人姓名', '性別', '上午9點', '上午11點', '下午4點', '下午6點']
             ];
-
-            const currentRecords = patrolHistoryStore[currentPatrolDate] || {};
-
             RAW_PATROL_STALLS.forEach(s => {
                 const k = window.getPatrolKey(s);
                 const d = currentRecords[k] || {};
-                csvRows.push([
+                patrolRows.push([
                     s.floor, s.id, s.type, s.name, s.gender,
                     d['上午9點'] || '',
                     d['上午11點'] || '',
@@ -1889,16 +2020,47 @@ window.clearTodayPatrolData = (e) => {
                 ]);
             });
 
-            const csvContent = "\uFEFF" + csvRows.map(e => e.join(",")).join("\n");
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement("a");
-            link.href = URL.createObjectURL(blob);
-            
-            // 🌟 這裡已改為新的檔案名稱格式
-            link.download = `剔檔與溫度表_${currentPatrolDate}.csv`;
-            
-            link.click();
-            window.showToast(`✅ 已匯出 ${currentPatrolDate} 剔檔與溫度表！`);
+            // 🌡️ 分頁 2：溫度（獨立工作表分頁）
+            const tempRows = [
+                ['巡查日期', currentPatrolDate],
+                ['測溫點編號', '測溫位置', '上午9點 (°C)', '上午11點 (°C)', '下午4點 (°C)', '下午6點 (°C)']
+            ];
+            RAW_TEMPERATURE_POINTS.forEach((pt, idx) => {
+                tempRows.push([
+                    `測溫點 ${idx + 1}`,
+                    pt.name,
+                    dayTemps['上午9點']?.[pt.id] || '',
+                    dayTemps['上午11點']?.[pt.id] || '',
+                    dayTemps['下午4點']?.[pt.id] || '',
+                    dayTemps['下午6點']?.[pt.id] || ''
+                ]);
+            });
+            tempRows.push([
+                '記錄者姓名',
+                '',
+                dayTemps['上午9點']?.recorder || '',
+                dayTemps['上午11點']?.recorder || '',
+                dayTemps['下午4點']?.recorder || '',
+                dayTemps['下午6點']?.recorder || ''
+            ]);
+
+            // 使用 SheetJS 建立雙分頁 Excel (.xlsx)
+            if (typeof XLSX !== 'undefined') {
+                const wb = XLSX.utils.book_new();
+                const wsPatrol = XLSX.utils.aoa_to_sheet(patrolRows);
+                const wsTemp = XLSX.utils.aoa_to_sheet(tempRows);
+
+                // 設定適當欄寬方便閱讀
+                wsPatrol['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 6 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }];
+                wsTemp['!cols'] = [{ wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
+
+                XLSX.utils.book_append_sheet(wb, wsPatrol, '剔檔表');
+                XLSX.utils.book_append_sheet(wb, wsTemp, '溫度');
+                XLSX.writeFile(wb, `剔檔與溫度表_${currentPatrolDate}.xlsx`);
+                window.showToast(`✅ 已匯出 ${currentPatrolDate} 雙分頁 Excel 報表！`);
+            } else {
+                window.showToast('Excel 模組尚未載入完成，請稍候再試', true);
+            }
         };
 
         window.demoFillCurrentPatrolSlot = () => {
@@ -4603,16 +4765,33 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             }
         };
 
-        // ====== 監聽連網事件：網路恢復時自動觸發離線補傳 ======
+        // ====== 監聽連網事件：網路恢復時自動觸發圖庫與剔檔離線補傳 ======
         window.addEventListener('online', () => {
-            window.showToast("🌐 網路已恢復連線，正在檢查未同步圖片...");
             const offlinePending = getLocal('work_pending_offline_uploads', []);
             if (offlinePending.length > 0 && !window._uploadQueue.length) {
                 window._uploadQueue = offlinePending;
                 window._totalUploadCount = offlinePending.length;
             }
-            if (window._uploadQueue.length > 0) {
+            const hasGalleryPending = window._uploadQueue.length > 0;
+            const hasPatrolPending = window.getPendingPatrolCount && window.getPendingPatrolCount() > 0;
+
+            if (hasGalleryPending || hasPatrolPending) {
+                window.showToast("🌐 網路已恢復，正在自動上傳離線資料...");
+            }
+            if (hasGalleryPending) {
                 window.resumeBatchUploadQueue();
+            }
+            if (hasPatrolPending) {
+                window.resumePatrolUploadQueue(true);
+            }
+        });
+
+        // 螢幕喚醒／切換回前景時，若已有網路也自動補傳未完成的剔檔
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && navigator.onLine) {
+                if (window.getPendingPatrolCount && window.getPendingPatrolCount() > 0) {
+                    window.resumePatrolUploadQueue(true);
+                }
             }
         });
 
@@ -6510,10 +6689,7 @@ window.crSaveData = () => {
 
 setInterval(() => { 
     if (!isFastForwarding) window.updateClockUI();
-    // 🌟 每秒背景檢查時間是否跨越 09:00 / 11:00 / 16:00 / 18:00，到達時即時切換
-    window.applyAutoPatrolSlot(false);
-}, 1000);
-        setInterval(() => {
+}, 1000);        setInterval(() => {
             checkAndResetDailySchedule();
             if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
             if (!$('memoPage')?.classList.contains('hidden')) window.updateMemoCountdowns();
@@ -6813,17 +6989,33 @@ setInterval(() => {
 
         function setupPatrolSync() {
             if (!currentUser) return;
+
+            // 剛連上雲端驗證成功時，若本機有離線期間累積的剔檔紀錄，立即自動上傳
+            if (window.getPendingPatrolCount && window.getPendingPatrolCount() > 0) {
+                window.resumePatrolUploadQueue(true);
+            }
+
             onSnapshot(cfgDoc('patrol_history'), (snap) => {
-                // 🌟 如果本機在 800 毫秒內才剛點擊過剔選，暫時忽略雲端快照，防止舊資料覆蓋
-                if (window._lastPatrolInputTime && (Date.now() - window._lastPatrolInputTime) < 800) {
-                    return;
-                }
+                const data = snap.exists() ? snap.data() : {};
+                const remote = JSON.parse(JSON.stringify(data?.history || {}));
 
-                if (!snap.exists()) return;
-                const data = snap.data();
-                const remote = data?.history || {};
+                // 🌟 防回退核心：將本機「待上傳佇列 (_patrolPendingQueue)」中的變更強制疊加在雲端資料之上
+                // 只要本機某攤位還沒完成雲端同步，舊的雲端快照絕對無法把它洗掉！
+                const pendingQueue = window._patrolPendingQueue || {};
+                Object.keys(pendingQueue).forEach(dKey => {
+                    if (!remote[dKey]) remote[dKey] = {};
+                    const stalls = pendingQueue[dKey] || {};
+                    Object.keys(stalls).forEach(sKey => {
+                        const pendingItem = stalls[sKey];
+                        if (pendingItem.data && Object.keys(pendingItem.data).length > 0) {
+                            remote[dKey][sKey] = pendingItem.data;
+                        } else {
+                            delete remote[dKey][sKey];
+                        }
+                    });
+                });
 
-                patrolHistoryStore = { ...remote };
+                patrolHistoryStore = remote;
                 patrolState = patrolHistoryStore[currentPatrolDate] || {};
                 
                 safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
