@@ -499,7 +499,75 @@ const tabMetadataMap = {
             'pt_5': { name: '整體巡邏', x: 50, y: 88 }, 'pt_6': { name: '地面層 大清點', x: 0, y: 0 },
             'pt_7': { name: '休息中', x: 0, y: 0 }
         };
+        const defaultCleanMapPoints = {
+            'pt_1': { name: '一樓+廁所', x: 50, y: 12 },
+            'pt_4': { name: '魚檔', x: 50, y: 46 },
+            'pt_8': { name: '花園仔(男廁)', x: 18, y: 86 },
+            'pt_3': { name: '花園仔', x: 50, y: 86 },
+            'pt_9': { name: '花園仔(女廁)+(傷健廁所)', x: 82, y: 86 },
+            'pt_6': { name: '機動', x: 0, y: 0 },
+            'pt_7': { name: '休息中', x: 0, y: 0 }
+        };
+        window.currentMapRole = 'cs'; // 'cs' = 客服, 'clean' = 清潔
         let mapData = { points: JSON.parse(JSON.stringify(defaultMapPoints)) }, memberSchedules = [], teamMembers = [];
+        let csSchedulesStore = [], cleanSchedulesStore = [];
+        let csMembersStore = [], cleanMembersStore = [];
+
+        window.toggleMapRoleMode = (forceMode) => {
+            if (window.currentMapRole === 'cs') {
+                csSchedulesStore = [...memberSchedules];
+                csMembersStore = [...teamMembers];
+            } else {
+                cleanSchedulesStore = [...memberSchedules];
+                cleanMembersStore = [...teamMembers];
+            }
+
+            window.currentMapRole = forceMode || (window.currentMapRole === 'cs' ? 'clean' : 'cs');
+            const isClean = window.currentMapRole === 'clean';
+
+            // 1. 切換右上角 2 字精簡版按鈕 (最上層 z-[60]，客服 [白底靛紫框] <-> 清潔 [白底翠綠框])
+            const roleBtn = $('mapRoleToggleBtn');
+            if (roleBtn) {
+                roleBtn.innerText = isClean ? '清潔' : '客服';
+                roleBtn.className = isClean
+                    ? 'absolute top-1.5 right-1.5 z-[60] bg-white hover:bg-teal-50 text-teal-700 font-black text-xs px-2 py-0.5 rounded-lg border border-teal-500 shadow-xs active:scale-95 transition-all cursor-pointer select-none tracking-wider leading-tight'
+                    : 'absolute top-1.5 right-1.5 z-[60] bg-white hover:bg-indigo-50 text-indigo-700 font-black text-xs px-2 py-0.5 rounded-lg border border-indigo-400 shadow-xs active:scale-95 transition-all cursor-pointer select-none tracking-wider leading-tight';
+            }
+
+            // 2. 切換地圖層 (客服 vs 清潔 3 層版)
+            $('mapCsLayer')?.classList.toggle('hidden', isClean);$('mapCleanLayer')?.classList.toggle('hidden', !isClean);
+
+            // 3. 外圍站點：取消「一樓大清點」，將「地面層大清點」改為「機動」，並讓「機動」與「休息中」變長且底部完美對齊
+            $('station-pt_2')?.classList.toggle('hidden', isClean);
+            const pt6Station = $('station-pt_6');
+            const pt6Title = $('stationPt6Title');
+            const restStation = $('station-pt_7');
+
+            if (pt6Title) {
+                pt6Title.innerHTML = isClean ? '機動' : '地面層<br>大清點';
+            }
+            if (pt6Station && restStation) {
+                if (isClean) {
+                    // 兩格各 139px + 間距 8px = 286px (與客服模式 90px*3 + 16px 完全同高對齊底部)
+                    pt6Station.classList.replace('min-h-[90px]', 'min-h-[139px]');
+                    restStation.classList.replace('min-h-[90px]', 'min-h-[139px]');
+                } else {
+                    pt6Station.classList.replace('min-h-[139px]', 'min-h-[90px]');
+                    restStation.classList.replace('min-h-[139px]', 'min-h-[90px]');
+                }
+            }
+
+            // 4. 切換對應排班與名單
+            if ($('scheduleBtnText'))$('scheduleBtnText').innerText = isClean ? '清潔排班' : '成員排班';
+            mapData.points = JSON.parse(JSON.stringify(isClean ? defaultCleanMapPoints : defaultMapPoints));
+            memberSchedules = isClean ? [...cleanSchedulesStore] : [...csSchedulesStore];
+            teamMembers = isClean ? [...cleanMembersStore] : [...csMembersStore];
+            window._tempGridValues = null;
+
+            const container = $('mapPointsContainer');
+            if (container) container.innerHTML = '';
+            window.updateMapSimulation();
+        };
         let activeGridMember = null, isEditingMembers = false, isGridDragging = false, gridDragAction = null, splitHoursState = {};
         window.lastTouchedEl = null;
 
@@ -4606,15 +4674,19 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             splitHoursState = getLocal('work_cache_split_hours', {});
             futureMemos = getLocal('work_cache_future_memos', []);
             mapData = getLocal('work_cache_map_data', { points: {} });
-            teamMembers = getLocal('work_cache_team_members', ['周靜儀', '蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲']);
+            csMembersStore = getLocal('work_cache_team_members', ['周靜儀', '蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲']);
+            cleanMembersStore = getLocal('work_cache_clean_members', ['清潔員A', '清潔員B', '清潔員C', '清潔員D', '清潔員E', '清潔員F']);
+            teamMembers = [...csMembersStore];
+
             crRecords = getLocal('coldRoomRecords', []);
             crItemTypes = getLocal('coldRoomTypes', ['海鮮', '肉類', '蔬果', '包裝冰', '其他']);
             if (!crItemTypes.includes('包裝冰')) crItemTypes.push('包裝冰');
 
-            if (!mapData.points || Object.keys(mapData.points).length === 0) mapData.points = JSON.parse(JSON.stringify(defaultMapPoints));
-            else Object.keys(defaultMapPoints).forEach(k => { if (mapData.points[k]) { mapData.points[k].x = defaultMapPoints[k].x; mapData.points[k].y = defaultMapPoints[k].y; } });
+            mapData.points = JSON.parse(JSON.stringify(defaultMapPoints));
 
-            memberSchedules = getLocal('work_cache_member_schedules', []);
+            csSchedulesStore = getLocal('work_cache_member_schedules', []);
+            cleanSchedulesStore = getLocal('work_cache_clean_schedules', []);
+            memberSchedules = [...csSchedulesStore];
             tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility);
             tabOrderList = getLocal('work_tab_order_ids', defaultTabOrder);
             checkAndResetDailySchedule(); 
@@ -5233,7 +5305,15 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             });
             memberSchedules = [...memberSchedules.filter(s => !s.id.startsWith('sch_grid_')), ...merged];
             const todayStr = getNowInputStrs().date; safeSetLocal('work_cache_schedule_date', todayStr);
-            syncConfig('member_schedules', { schedules: memberSchedules, date: todayStr });
+            if (window.currentMapRole === 'clean') {
+                cleanSchedulesStore = [...memberSchedules];
+                safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+                syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, date: todayStr });
+            } else {
+                csSchedulesStore = [...memberSchedules];
+                safeSetLocal('work_cache_member_schedules', csSchedulesStore);
+                syncConfig('member_schedules', { schedules: csSchedulesStore, date: todayStr });
+            }
             window._tempGridValues = null; window.showToast(`排班已儲存！共生效 ${merged.length} 筆時段。`); window.closeScheduleManager();
         };
 
@@ -5320,7 +5400,8 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
         const getLocColorClass = (id) => ({
             pt_1: 'bg-blue-50 text-blue-700 border-r border-blue-200', pt_3: 'bg-emerald-50 text-emerald-700 border-r border-emerald-200',
-            pt_4: 'bg-cyan-50 text-cyan-700 border-r border-cyan-200', pt_5: 'bg-purple-50 text-purple-700 border-r border-purple-200',
+            pt_4: 'bg-cyan-50 text-cyan-700 border-r border-cyan-200', pt_8: 'bg-sky-50 text-sky-700 border-r border-sky-200',
+            pt_9: 'bg-rose-50 text-rose-700 border-r border-rose-200', pt_5: 'bg-purple-50 text-purple-700 border-r border-purple-200',
             pt_2: 'bg-amber-50 text-amber-800 border-r border-amber-200', pt_6: 'bg-amber-100 text-amber-900 border-r border-amber-300',
             pt_7: 'bg-slate-100 text-slate-700 border-r border-slate-200'
         }[id] || 'bg-white text-slate-700');
@@ -5341,7 +5422,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 th += `<th class="p-1 border border-slate-200 w-[42px] min-w-[42px] text-[8.5px] font-bold ${isCurrentHour ? 'now-glowing-header bg-gradient-to-b from-sky-400 to-sky-500 text-white font-black shadow-md' : 'text-slate-500 bg-slate-50'} whitespace-nowrap text-center align-middle">${isCurrentHour ? '<div class="flex items-center justify-center space-x-0.5 mb-0.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-300 animate-ping"></span><span class="text-[7.5px] bg-amber-300 text-slate-900 px-1 py-0.2 rounded font-black tracking-tight leading-none shadow-xs">現在</span></div>' : ''}${ts}</th>`;
             });
 
-            const order = ['pt_3', 'pt_4', 'pt_5', 'pt_1', 'pt_2', 'pt_6', 'pt_7'];
+            const order = ['pt_1', 'pt_3', 'pt_4', 'pt_8', 'pt_9', 'pt_5', 'pt_2', 'pt_6', 'pt_7'];
             let sortedLocs = Object.entries(mapData.points).sort(([a], [b]) => (order.indexOf(a) === -1 ? 999 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 999 : order.indexOf(b)));
             let rows = '';
 
@@ -5356,7 +5437,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     const isHalfBActive = isCurrentHour && (curTotalMins >= (sH * 60 + sM) + 30);
                     const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border border-slate-200' : 'border border-slate-200';
 
-                    if ((locId === 'pt_2' || locId === 'pt_6') && !validCountSlots.includes(ts)) {
+                    if (window.currentMapRole !== 'clean' && (locId === 'pt_2' || locId === 'pt_6') && !validCountSlots.includes(ts)) {
                         rows += `<td class="p-0 border border-slate-200 bg-slate-200/60 pointer-events-none align-middle w-[40px] min-w-[40px]"><div class="w-full h-full ${hClass}"></div></td>`;
                     } else {
                         const [startH] = tStart.split(':'), [endH] = tEnd.split(':'), isSplit = !!splitHoursState[`${locId}_${tStart}`];
@@ -8417,12 +8498,10 @@ window.pushMeetingReportsToAllIframes = (reports) => {
                     </div>
                 </div>
 
-                <!-- 第二行：【全部, 花園仔, 地下, 一樓】靠左，【卡片, 專注】靠右，完美排在同一行 -->
+               <!-- 第二行：【全部, 花園仔, 地下, 一樓】靠左，【搜尋 + 匯出報表】靠右 -->
                 <div class="flex items-center justify-between gap-1 pt-0.5">
-                    <!-- 🌟 樓層滑動軌道（支援點擊 + 手指左右滑動拖曳） -->
-                    <!-- 🌟 樓層滑動軌道（固定適中寬度，不再被強行拉長） -->
+                    <!-- 樓層滑動軌道 -->
                     <div id="floorSliderTrack" class="relative bg-slate-200/90 p-0.5 rounded-xl flex items-center border border-slate-300/80 shadow-inner select-none w-[180px] h-[28px] overflow-hidden cursor-pointer touch-none">
-                        <!-- 滑動藍色底塊（採用精確 25% GPU transform 位移） -->
                         <div id="floorSliderThumb" class="absolute top-0.5 bottom-0.5 left-0 w-1/4 p-0.5 transition-transform duration-200 ease-out pointer-events-none">
                             <div class="w-full h-full bg-blue-600 rounded-[9px] shadow-sm"></div>
                         </div>
@@ -8433,10 +8512,15 @@ window.pushMeetingReportsToAllIframes = (reports) => {
                         <button type="button" id="patrol-flt-first" onclick="window.filterPatrolFloor('一樓')" class="relative z-10 flex-1 text-center text-[12.5px] font-bold text-slate-600 transition-colors duration-200 leading-none py-1">一樓</button>
                     </div>
 
-                    <!-- 匯出報表按鍵（移至原切換鍵位置） -->
-                    <button type="button" onclick="window.exportPatrolExcelCSV()" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 flex items-center shrink-0">
-                        <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5 mr-1"></i>匯出
-                    </button>
+                    <!-- 右側：搜尋按鍵 + 匯出報表按鍵 -->
+                    <div class="flex items-center space-x-1.5 shrink-0">
+                        <button type="button" onclick="window.openPatrolSearchModal()" class="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold active:scale-95 flex items-center shadow-2xs">
+                            <i data-lucide="search" class="w-3.5 h-3.5 mr-1 text-blue-600"></i>搜尋
+                        </button>
+                        <button type="button" onclick="window.exportPatrolExcelCSV()" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 flex items-center">
+                            <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5 mr-1"></i>匯出報表
+                        </button>
+                    </div>
                 </div>
 
                 <div class="border-t-2 border-slate-200/90 my-1"></div>
@@ -8504,23 +8588,14 @@ window.pushMeetingReportsToAllIframes = (reports) => {
                 <div id="patrolCardList" class="flex flex-col space-y-2 origin-top-left"></div>
             </div>
 
-            <!-- 2. 🌟 溫度浮窗鍵（中間整塊 patrolFocusContainer 專注模式已移除） -->
+            <!-- 2. 🌟 溫度浮窗鍵：fixed 固定在螢幕左下角，隨網頁滑動永遠跟隨 -->
             <button id="floatingTempBtn" type="button" onclick="window.openTempModal()"
-                    class="absolute right-3.5 bottom-[58px] z-30 w-12 h-12 rounded-full p-[2.5px] bg-[#bae6fd] border border-[#7dd3fc] flex items-center justify-center transition-transform active:scale-90 cursor-pointer group select-none shadow-md">
+                    class="fixed left-3.5 sm:left-[calc(50%-195px)] bottom-[58px] z-40 w-12 h-12 rounded-full p-[2.5px] bg-[#bae6fd] border border-[#7dd3fc] flex items-center justify-center transition-transform active:scale-90 cursor-pointer group select-none shadow-lg">
                 <div id="floatingTempInner" class="w-full h-full rounded-full bg-[#38bdf8] border-2 border-white flex flex-col items-center justify-center pt-0.5">
                     <i data-lucide="thermometer" id="floatingTempIcon" class="w-[18px] h-[18px] text-white stroke-[2.4] pointer-events-none"></i>
                     <span id="floatingTempBadge" class="text-[8px] font-mono font-black text-white leading-none tracking-tighter mt-0.5">°C</span>
                 </div>
             </button>
-
-            <!-- 3. 底部常駐工具列（移除了底下重複的「匯出報表」按鈕，只留「搜尋」） -->
-            <div class="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 px-3 py-2 flex items-center justify-end shadow-lg z-20">
-                <div class="flex items-center space-x-2">
-                    <button type="button" onclick="window.openPatrolSearchModal()" class="px-3.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold active:scale-95 flex items-center shadow-2xs">
-                        <i data-lucide="search" class="w-3.5 h-3.5 mr-1 text-blue-600"></i>搜尋
-                    </button>
-                </div>
-            </div>
         </main>
 
 <!-- 溫度數字盤（附同步輸入顯示框） -->
@@ -8635,19 +8710,67 @@ window.pushMeetingReportsToAllIframes = (reports) => {
                     <button type="button" class="sim-restore-btn hidden bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-md w-6 h-6 shadow-sm active:scale-95 flex items-center justify-center" onclick="window.restoreRealTime()"><i data-lucide="rotate-ccw" class="w-3.5 h-3.5 pointer-events-none"></i></button>
                     <button type="button" class="sim-toggle-btn bg-white border border-slate-200 text-slate-600 hover:text-blue-600 rounded-md w-6 h-6 shadow-sm active:scale-95 flex items-center justify-center" onclick="window.toggleSimulation()"><i data-lucide="fast-forward" class="w-3.5 h-3.5 pointer-events-none"></i></button>
                 </div>
-                <button onclick="window.openScheduleManager()" class="bg-slate-50 text-slate-600 border border-slate-200 px-2.5 py-1.5 rounded-lg flex items-center hover:bg-emerald-50 active:scale-95 text-[11px] font-bold tracking-wide transition-colors shrink-0 shadow-sm z-10"><i data-lucide="users" class="w-3.5 h-3.5 mr-1 text-emerald-500"></i> 成員排班</button>
+                <button onclick="window.openScheduleManager()" class="bg-slate-50 text-slate-600 border border-slate-200 px-2.5 py-1.5 rounded-lg flex items-center hover:bg-emerald-50 active:scale-95 text-[11px] font-bold tracking-wide transition-colors shrink-0 shadow-sm z-10"><i data-lucide="users" class="w-3.5 h-3.5 mr-1 text-emerald-500"></i> <span id="scheduleBtnText">成員排班</span></button>
             </div>
             <div class="flex-1 min-h-0 flex overflow-hidden relative">
                 <div class="flex-1 min-h-0 flex flex-col p-2 overflow-hidden relative" id="mapScrollContainer">
                     <div id="mapWrapper" class="relative w-full h-[320px] bg-[#fdfbf7] rounded-xl overflow-hidden shadow-inner border-2 border-slate-300 transition-colors shrink-0">
-                        <div class="absolute top-0 left-0 right-0 h-[40%] bg-blue-50/60 border-b-2 border-slate-300 pointer-events-none transition-colors"><div class="absolute top-2 left-3 text-blue-300/80 font-black text-xl tracking-widest select-none">1/F</div></div>
-                        <div class="absolute top-[40%] left-0 right-0 bottom-0 bg-emerald-50/60 border-t-2 border-slate-300 pointer-events-none transition-colors"><div class="absolute top-2 left-3 text-emerald-300/80 font-black text-xl tracking-widest select-none">地面層</div></div>
-                        <div class="absolute top-[8%] left-[50%] -translate-x-1/2 w-[38%] h-[24%] bg-blue-100/80 border-2 border-blue-400 rounded-lg flex flex-col justify-end pb-2 items-center shadow-inner pointer-events-none"><div class="text-blue-600 font-bold text-sm tracking-wider flex items-center"><i data-lucide="headphones" class="w-4 h-4 mr-1"></i>客服室</div></div>
-                        <div class="absolute top-[52%] left-[10%] w-[35%] h-[20%] bg-green-100/80 border-2 border-green-500 rounded-lg overflow-hidden flex flex-col justify-end pb-2 items-center shadow-inner pointer-events-none"><i data-lucide="flower-2" class="w-8 h-8 text-green-500/20 absolute top-1.5"></i><div class="text-green-700 font-bold text-sm tracking-wider relative z-10 flex items-center"><i data-lucide="leaf" class="w-3.5 h-3.5 mr-1"></i>花園仔</div></div>
-                        <div class="absolute top-[52%] right-[10%] w-[35%] h-[20%] bg-cyan-100/80 border-2 border-cyan-500 rounded-lg overflow-hidden flex flex-col justify-end pb-2 items-center shadow-inner pointer-events-none"><i data-lucide="fish" class="w-8 h-8 text-cyan-500/20 absolute top-1.5"></i><div class="text-cyan-700 font-bold text-sm tracking-wider relative z-10 flex items-center"><i data-lucide="droplets" class="w-3.5 h-3.5 mr-1"></i>魚檔</div></div>
-                        <div class="absolute top-[80%] left-[50%] -translate-x-1/2 w-[70%] h-[15%] bg-purple-100/80 border-2 border-purple-400 rounded-lg flex flex-col justify-end pb-1.5 items-center shadow-inner pointer-events-none"><div class="text-purple-600 font-bold text-sm tracking-wider flex items-center"><i data-lucide="shield" class="w-4 h-4 mr-1"></i>整體巡邏</div></div>
+                        
+                       <!-- 🌟 1/F 右上角：精簡版扁平圓角 2 字切換按鍵（最上層 z-[60] 不被人員穿過） -->
+                        <button id="mapRoleToggleBtn" type="button" onclick="window.toggleMapRoleMode()" class="absolute top-1.5 right-1.5 z-[60] bg-white hover:bg-indigo-50 text-indigo-700 font-black text-xs px-2 py-0.5 rounded-lg border border-indigo-400 shadow-xs active:scale-95 transition-all cursor-pointer select-none tracking-wider leading-tight">
+                            客服
+                        </button>
+
+                        <!-- 🅰️ 客服人員地圖圖層 (原版 2 層) -->
+                        <div id="mapCsLayer" class="absolute inset-0 pointer-events-none">
+                            <div class="absolute top-0 left-0 right-0 h-[40%] bg-blue-50/60 border-b-2 border-slate-300"><div class="absolute top-2 left-3 text-blue-300/80 font-black text-xl tracking-widest select-none">1/F</div></div>
+                            <div class="absolute top-[40%] left-0 right-0 bottom-0 bg-emerald-50/60"><div class="absolute top-2 left-3 text-emerald-300/80 font-black text-xl tracking-widest select-none">地面層</div></div>
+                            <div class="absolute top-[8%] left-[50%] -translate-x-1/2 w-[38%] h-[24%] bg-blue-100/80 border-2 border-blue-400 rounded-lg flex flex-col justify-end pb-2 items-center shadow-inner"><div class="text-blue-600 font-bold text-sm tracking-wider flex items-center"><i data-lucide="headphones" class="w-4 h-4 mr-1"></i>客服室</div></div>
+                            <div class="absolute top-[52%] left-[10%] w-[35%] h-[20%] bg-green-100/80 border-2 border-green-500 rounded-lg overflow-hidden flex flex-col justify-end pb-2 items-center shadow-inner"><i data-lucide="flower-2" class="w-8 h-8 text-green-500/20 absolute top-1.5"></i><div class="text-green-700 font-bold text-sm tracking-wider relative z-10 flex items-center"><i data-lucide="leaf" class="w-3.5 h-3.5 mr-1"></i>花園仔</div></div>
+                            <div class="absolute top-[52%] right-[10%] w-[35%] h-[20%] bg-cyan-100/80 border-2 border-cyan-500 rounded-lg overflow-hidden flex flex-col justify-end pb-2 items-center shadow-inner"><i data-lucide="fish" class="w-8 h-8 text-cyan-500/20 absolute top-1.5"></i><div class="text-cyan-700 font-bold text-sm tracking-wider relative z-10 flex items-center"><i data-lucide="droplets" class="w-3.5 h-3.5 mr-1"></i>魚檔</div></div>
+                            <div class="absolute top-[80%] left-[50%] -translate-x-1/2 w-[70%] h-[15%] bg-purple-100/80 border-2 border-purple-400 rounded-lg flex flex-col justify-end pb-1.5 items-center shadow-inner"><div class="text-purple-600 font-bold text-sm tracking-wider flex items-center"><i data-lucide="shield" class="w-4 h-4 mr-1"></i>整體巡邏</div></div>
+                        </div>
+
+                        <!-- 🅱️ 清潔人員地圖圖層 (分 3 層：一樓、G層地面、花園仔) -->
+                        <div id="mapCleanLayer" class="hidden absolute inset-0 pointer-events-none">
+                            <!-- 第 1 層：一樓 (佔 22%) -->
+                            <div class="absolute top-0 left-0 right-0 h-[22%] bg-blue-50/60 border-b-2 border-slate-300">
+                                <div class="absolute top-1.5 left-2.5 text-blue-300/90 font-black text-sm tracking-widest select-none">一樓</div>
+                            </div>
+                            <div class="absolute top-[3%] left-[50%] -translate-x-1/2 w-[42%] h-[16%] bg-blue-100/85 border-2 border-blue-400 rounded-lg flex flex-col justify-end pb-1 items-center shadow-inner">
+                                <div class="text-blue-700 font-black text-xs tracking-wide flex items-center"><i data-lucide="sparkles" class="w-3 h-3 mr-1"></i>一樓+廁所</div>
+                            </div>
+
+                            <!-- 第 2 層：G層地面 (魚檔方框適度縮小為 w-[52%] h-[24%]) -->
+                            <div class="absolute top-[22%] left-0 right-0 h-[42%] bg-cyan-50/40 border-b-2 border-slate-300">
+                                <div class="absolute top-1.5 left-2.5 text-cyan-400/80 font-black text-sm tracking-widest select-none">G層地面</div>
+                            </div>
+                            <div class="absolute top-[31%] left-[50%] -translate-x-1/2 w-[52%] h-[24%] bg-cyan-100/80 border-2 border-cyan-500 rounded-lg overflow-hidden flex flex-col justify-end pb-1.5 items-center shadow-inner">
+                                <i data-lucide="fish" class="w-7 h-7 text-cyan-500/15 absolute top-1.5"></i>
+                                <div class="text-cyan-800 font-black text-sm tracking-widest relative z-10 flex items-center"><i data-lucide="droplets" class="w-3.5 h-3.5 mr-1"></i>魚檔</div>
+                            </div>
+
+                            <!-- 第 3 層：花園仔 (佔 36%，排列：男廁 [左] / 花園仔 [中間] / 女廁+傷健 [右]) -->
+                            <div class="absolute top-[64%] left-0 right-0 bottom-0 bg-emerald-50/60">
+                                <div class="absolute top-1 left-2.5 text-emerald-400/80 font-black text-sm tracking-widest select-none">花園仔</div>
+                            </div>
+                            <!-- 左：花園仔(男廁) -->
+                            <div class="absolute top-[73%] left-[3%] w-[30%] h-[23%] bg-sky-100/85 border-2 border-sky-500 rounded-lg overflow-hidden flex flex-col justify-end pb-1.5 items-center shadow-inner px-0.5">
+                                <div class="text-sky-800 font-black text-[10.5px] tracking-tighter text-center leading-tight">花園仔(男廁)</div>
+                            </div>
+                            <!-- 中：花園仔 -->
+                            <div class="absolute top-[73%] left-[50%] -translate-x-1/2 w-[28%] h-[23%] bg-green-100/85 border-2 border-green-500 rounded-lg overflow-hidden flex flex-col justify-end pb-1.5 items-center shadow-inner">
+                                <div class="text-green-800 font-black text-xs tracking-wider">花園仔</div>
+                            </div>
+                            <!-- 右：花園仔(女廁)+(傷健廁所) -->
+                            <div class="absolute top-[73%] right-[3%] w-[30%] h-[23%] bg-rose-100/85 border-2 border-rose-400 rounded-lg overflow-hidden flex flex-col justify-end pb-1 items-center shadow-inner px-0.5">
+                                <div class="text-rose-800 font-black text-[9.5px] tracking-tighter text-center leading-tight">花園仔(女廁)<br>+(傷健廁所)</div>
+                            </div>
+                        </div>
+
                         <div id="mapPointsContainer" class="absolute inset-0 pointer-events-none overflow-hidden z-30"></div>
                     </div>
+
                     <div id="todayDutyStaffPanel" class="mt-2 flex-1 min-h-[200px] w-full bg-white border border-slate-200 rounded-xl p-2.5 shadow-sm flex flex-col overflow-hidden">
                         <div class="pb-1 mb-1 border-b border-slate-100 flex items-center justify-between shrink-0">
                             <span id="dutyStaffPanelTitle" class="flex items-center text-[10px] font-black text-slate-800 tracking-wide">
@@ -8662,11 +8785,16 @@ window.pushMeetingReportsToAllIframes = (reports) => {
                         <div id="todayDutyStaffList" class="flex-1 min-h-0 flex flex-col space-y-1.5 overflow-y-auto scrollbar-hide pr-0.5"></div>
                     </div>
                 </div>
+
+                <!-- 右側外圍站點欄 -->
                 <div class="w-24 shrink-0 border-l border-[#e6e2d6] bg-[#f4f1eb] p-1.5 flex flex-col space-y-2 overflow-y-auto scrollbar-hide z-10 shadow-inner pt-2">
                     <div class="text-[10px] font-black tracking-widest text-slate-400 text-center mb-0.5">外圍站點</div>
+                    <!-- 1. 一樓大清點 (清潔模式時隱藏) -->
                     <div id="station-pt_2" class="relative w-full min-h-[90px] bg-amber-50/80 border-2 border-amber-400/60 rounded-lg p-1.5 flex flex-col items-center justify-start shadow-sm"><i data-lucide="clipboard-list" class="w-4 h-4 text-amber-500 mb-1"></i><span class="text-amber-700 font-bold text-[10px] text-center leading-tight">一樓<br>大清點</span><div class="ext-members-box w-full flex flex-wrap items-center justify-center gap-1.5 -mt-1 pt-0"></div></div>
-                    <div id="station-pt_6" class="relative w-full min-h-[90px] bg-amber-50/80 border-2 border-amber-400/60 rounded-lg p-1.5 flex flex-col items-center justify-start shadow-sm"><i data-lucide="clipboard-list" class="w-4 h-4 text-amber-500 mb-1"></i><span class="text-amber-700 font-bold text-[10px] text-center leading-tight">地面層<br>大清點</span><div class="ext-members-box w-full flex flex-wrap items-center justify-center gap-1.5 -mt-1 pt-0"></div></div>
-                    <div id="station-pt_7" class="relative w-full min-h-[90px] bg-slate-50/80 border-2 border-slate-300 rounded-lg p-1.5 flex flex-col items-center justify-start shadow-sm"><i data-lucide="coffee" class="w-4 h-4 text-slate-400 mb-1"></i><span class="text-slate-600 font-bold text-[10px] text-center leading-tight">人員<br>休息中</span><div class="ext-members-box w-full flex flex-wrap items-center justify-center gap-1.5 -mt-1 pt-0"></div></div>
+                    <!-- 2. 地面層大清點 (清潔模式時改為「機動」並加長為 min-h-[139px]) -->
+                    <div id="station-pt_6" class="relative w-full min-h-[90px] bg-amber-50/80 border-2 border-amber-400/60 rounded-lg p-1.5 flex flex-col items-center justify-start shadow-sm transition-all"><i id="stationPt6Icon" data-lucide="clipboard-list" class="w-4 h-4 text-amber-500 mb-1"></i><span id="stationPt6Title" class="text-amber-700 font-bold text-[10px] text-center leading-tight">地面層<br>大清點</span><div class="ext-members-box w-full flex flex-wrap items-center justify-center gap-1.5 -mt-1 pt-0"></div></div>
+                    <!-- 3. 人員休息中 (清潔模式時加長為 min-h-[139px]，底部剛好與客服模式對齊) -->
+                    <div id="station-pt_7" class="relative w-full min-h-[90px] bg-slate-50/80 border-2 border-slate-300 rounded-lg p-1.5 flex flex-col items-center justify-start shadow-sm transition-all"><i data-lucide="coffee" class="w-4 h-4 text-slate-400 mb-1"></i><span class="text-slate-600 font-bold text-[10px] text-center leading-tight">人員<br>休息中</span><div class="ext-members-box w-full flex flex-wrap items-center justify-center gap-1.5 -mt-1 pt-0"></div></div>
                 </div>
             </div>
         </main>
