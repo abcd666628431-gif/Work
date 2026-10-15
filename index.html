@@ -2020,46 +2020,43 @@ window.clearTodayPatrolData = (e) => {
                 ]);
             });
 
-            // 🌡️ 分頁 2：溫度（獨立工作表分頁）
+            // 🌡️ 分頁 2：溫度（橫版：上方為 12 個測溫點 + 記錄者姓名，左側為 4 個時段）
+            const tempHeader = ['時段', ...RAW_TEMPERATURE_POINTS.map(pt => pt.name), '記錄者姓名'];
             const tempRows = [
                 ['巡查日期', currentPatrolDate],
-                ['測溫點編號', '測溫位置', '上午9點 (°C)', '上午11點 (°C)', '下午4點 (°C)', '下午6點 (°C)']
+                tempHeader
             ];
-            RAW_TEMPERATURE_POINTS.forEach((pt, idx) => {
-                tempRows.push([
-                    `測溫點 ${idx + 1}`,
-                    pt.name,
-                    dayTemps['上午9點']?.[pt.id] || '',
-                    dayTemps['上午11點']?.[pt.id] || '',
-                    dayTemps['下午4點']?.[pt.id] || '',
-                    dayTemps['下午6點']?.[pt.id] || ''
-                ]);
+            PATROL_TIME_SLOTS.forEach(slot => {
+                const slotData = dayTemps[slot] || {};
+                const row = [
+                    slot,
+                    ...RAW_TEMPERATURE_POINTS.map(pt => slotData[pt.id] || ''),
+                    slotData.recorder || ''
+                ];
+                tempRows.push(row);
             });
-            tempRows.push([
-                '記錄者姓名',
-                '',
-                dayTemps['上午9點']?.recorder || '',
-                dayTemps['上午11點']?.recorder || '',
-                dayTemps['下午4點']?.recorder || '',
-                dayTemps['下午6點']?.recorder || ''
-            ]);
 
-            // 使用 SheetJS 建立雙分頁 Excel (.xlsx)
+            // 使用 SheetJS 匯出雙分頁 Excel (.xlsx)
             if (typeof XLSX !== 'undefined') {
                 const wb = XLSX.utils.book_new();
                 const wsPatrol = XLSX.utils.aoa_to_sheet(patrolRows);
                 const wsTemp = XLSX.utils.aoa_to_sheet(tempRows);
 
-                // 設定適當欄寬方便閱讀
+                // 設定欄位寬度與橫向列印屬性
                 wsPatrol['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 6 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }];
-                wsTemp['!cols'] = [{ wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
+                wsTemp['!cols'] = [
+                    { wch: 12 },
+                    ...RAW_TEMPERATURE_POINTS.map(pt => ({ wch: Math.max(10, pt.name.length * 2 + 2) })),
+                    { wch: 14 }
+                ];
+                wsTemp['!pageSetup'] = { orientation: 'landscape' }; // 預設橫向版面設定
 
                 XLSX.utils.book_append_sheet(wb, wsPatrol, '剔檔表');
                 XLSX.utils.book_append_sheet(wb, wsTemp, '溫度');
-                XLSX.writeFile(wb, `剔檔與溫度表_${currentPatrolDate}.xlsx`);
-                window.showToast(`✅ 已匯出 ${currentPatrolDate} 雙分頁 Excel 報表！`);
+                XLSX.writeFile(wb, `匯出報表_${currentPatrolDate}.xlsx`);
+                window.showToast(`✅ 已匯出報表 (${currentPatrolDate})！`);
             } else {
-                window.showToast('Excel 模組尚未載入完成，請稍候再試', true);
+                window.showToast('匯出模組尚未載入，請稍候再試', true);
             }
         };
 
@@ -8722,7 +8719,7 @@ window.pushMeetingReportsToAllIframes = (reports) => {
                             <i data-lucide="search" class="w-3.5 h-3.5 mr-1 text-blue-600"></i>搜尋
                         </button>
                         <button type="button" onclick="window.exportPatrolExcelCSV()" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 flex items-center">
-                            <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5 mr-1"></i>匯出報表
+                            <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5 mr-1"></i>匯出
                         </button>
                     </div>
                 </div>
