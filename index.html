@@ -7182,23 +7182,13 @@ setInterval(() => {
                 const data = snap.exists() ? snap.data() : {};
                 const remote = JSON.parse(JSON.stringify(data?.history || {}));
 
-                // 🌟 核心防護 1：將本機「待上傳佇列 (_patrolPendingQueue)」中的變更強制疊加在雲端資料之上
+                // 🌟 核心防護 1：取得本機尚未同步完成的暫存佇列
                 const pendingQueue = window._patrolPendingQueue || {};
-                Object.keys(pendingQueue).forEach(dKey => {
-                    if (!remote[dKey]) remote[dKey] = {};
-                    const stalls = pendingQueue[dKey] || {};
-                    Object.keys(stalls).forEach(sKey => {
-                        const pendingItem = stalls[sKey];
-                        if (pendingItem.data && Object.keys(pendingItem.data).length > 0) {
-                            remote[dKey][sKey] = pendingItem.data;
-                        } else {
-                            delete remote[dKey][sKey];
-                        }
-                    });
-                });
 
-                // 🌟 核心防護 2：深層合併，精細到每個攤位與時段，絕不讓空值覆蓋已有資料
+                // 🌟 核心防護 2：跨裝置深層合併（Deep Merge），精細到「每一天、每一個攤位、每一個時段」
                 const mergedHistory = { ...patrolHistoryStore };
+
+                // 先把雲端的所有日期抓進來
                 Object.keys(remote).forEach(dateKey => {
                     if (!mergedHistory[dateKey]) {
                         mergedHistory[dateKey] = remote[dateKey];
@@ -7208,14 +7198,40 @@ setInterval(() => {
                         const mergedDay = { ...localDay };
 
                         Object.keys(remoteDay).forEach(stallKey => {
-                            // 如果本機有該攤位的待上傳鎖，優先保留本機
-                            if (pendingQueue[dateKey]?.[stallKey]) return;
+                            // 如果這個攤位本機正在等待上傳同步，絕對優先保留本機，不被雲端覆蓋！
+                            if (pendingQueue[dateKey]?.[stallKey]) {
+                                return;
+                            }
 
                             if (!localDay[stallKey]) {
                                 mergedDay[stallKey] = remoteDay[stallKey];
                             } else {
-                                // 合併各時段（保留手動點選的 A、1、0）
-                                mergedDay[stallKey] = { ...remoteDay[stallKey], ...localDay[stallKey] };
+                                // 針對每一個時段進行欄位級合併（保留本機或雲端最新的狀態，手動點選優先）
+                                const localStall = localDay[stallKey];
+                                const remoteStall = remoteDay[stallKey];
+                                const mergedStall = { ...remoteStall, ...localStall };
+
+                                // 確保手動鎖定標記與狀態完整保留
+                                ['上午9點', '上午11點', '下午4點', '下午6點'].forEach(slotKey => {
+                                    const localVal = localStall[slotKey];
+                                    const remoteVal = remoteStall[slotKey];
+                                    const localLocked = localStall[`${slotKey}_locked`];
+                                    const remoteLocked = remoteStall[`${slotKey}_locked`];
+
+                                    if (localLocked) {
+                                        mergedStall[slotKey] = localVal;
+                                        mergedStall[`${slotKey}_locked`] = true;
+                                    } else if (remoteLocked) {
+                                        mergedStall[slotKey] = remoteVal;
+                                        mergedStall[`${slotKey}_locked`] = true;
+                                    } else if (localVal !== undefined) {
+                                        mergedStall[slotKey] = localVal;
+                                    } else if (remoteVal !== undefined) {
+                                        mergedStall[slotKey] = remoteVal;
+                                    }
+                                });
+
+                                mergedDay[stallKey] = mergedStall;
                             }
                         });
                         mergedHistory[dateKey] = mergedDay;
