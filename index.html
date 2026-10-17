@@ -1182,153 +1182,139 @@ document.addEventListener('visibilitychange', () => {
 };
 
        window.autoSyncClosedStallsToPatrol = async (silent = true) => {
-            const todayStr = getTodayDateStr();
-            const now = window.getNow();
-            const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const todayStr = getTodayDateStr();
+    const now = window.getNow();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
-            if (currentPatrolDate < todayStr || (currentPatrolDate === todayStr && nowMinutes >= 22 * 60)) {
-                return 0;
-            }
+    if (currentPatrolDate < todayStr || (currentPatrolDate === todayStr && nowMinutes >= 22 * 60)) {
+        return 0;
+    }
 
-            if (!patrolHistoryStore[currentPatrolDate]) {
-                patrolHistoryStore[currentPatrolDate] = {};
-            }
+    if (!patrolHistoryStore[currentPatrolDate]) {
+        patrolHistoryStore[currentPatrolDate] = {};
+    }
 
-            // 1. 抓取今日有效（未刪除、屬於提早收工/清潔）的照片
-            const validClosedPhotos = (galleryItems || []).filter(item => {
-                if (item.isDeleted) return false;
-                const cat = item.category || '';
-                if (cat !== '提早收工' && cat !== '清潔' && cat !== '收工') return false;
-                if (!item.createdAt) return false;
-                const itemD = new Date(item.createdAt);
-                const itemDateStr = `${itemD.getFullYear()}-${String(itemD.getMonth() + 1).padStart(2, '0')}-${String(itemD.getDate()).padStart(2, '0')}`;
-                return itemDateStr === currentPatrolDate;
+    // 1. 抓取今日有效（未刪除、屬於提早收工/清潔）的照片
+    const validClosedPhotos = (galleryItems || []).filter(item => {
+        if (item.isDeleted) return false;
+        const cat = item.category || '';
+        if (cat !== '提早收工' && cat !== '清潔' && cat !== '收工') return false;
+        if (!item.createdAt) return false;
+        const itemD = new Date(item.createdAt);
+        const itemDateStr = `${itemD.getFullYear()}-${String(itemD.getMonth() + 1).padStart(2, '0')}-${String(itemD.getDate()).padStart(2, '0')}`;
+        return itemDateStr === currentPatrolDate;
+    });
+
+    // 2. 建立當前有效照片對應的「預期填入 0」清單
+    const currentExpectedMap = new Map();
+
+    if (nowMinutes >= 7 * 60) {
+        validClosedPhotos.forEach(photo => {
+            const title = (photo.title || '').trim().replace(/^#/, '');
+            const photoTime = photo.time || '12:00';
+            const [phH, phM] = photoTime.split(':').map(Number);
+            const photoMins = (isNaN(phH) ? 12 : phH) * 60 + (isNaN(phM) ? 0 : phM);
+
+            const matchedStalls = RAW_PATROL_STALLS.filter(s => {
+                const sId = s.id.trim();
+                if (title.toUpperCase() === sId.toUpperCase()) return true;
+                let titlePrefix = '';
+                if (/^1-?/i.test(title)) titlePrefix = '一樓';
+                else if (/^R-?/i.test(title)) titlePrefix = '地下';
+                else if (/^J-?/i.test(title)) titlePrefix = '花園仔';
+
+                if (!titlePrefix && !photo.floor) return false;
+
+                const sNum = sId.replace(/^[1RJ]-?/i, '').replace(/\D/g, '').replace(/^0+/, '');
+                const titleNum = title.replace(/^[1RJ]-?/i, '').replace(/\D/g, '').replace(/^0+/, '');
+                if (sNum && titleNum && sNum === titleNum) {
+                    if (titlePrefix) return s.floor === titlePrefix;
+                    if (photo.floor) return s.floor.includes(photo.floor);
+                }
+                return false;
             });
 
-            // 2. 建立當前有效照片對應的「預期填入 0」清單
-            const currentExpectedMap = new Map();
+            matchedStalls.forEach(stall => {
+                const k = window.getPatrolKey(stall);
+                if (!currentExpectedMap.has(k)) currentExpectedMap.set(k, new Map());
 
-            if (nowMinutes >= 7 * 60) {
-                validClosedPhotos.forEach(photo => {
-                    const title = (photo.title || '').trim().replace(/^#/, '');
-                    const photoTime = photo.time || '12:00';
-                    const [phH, phM] = photoTime.split(':').map(Number);
-                    const photoMins = (isNaN(phH) ? 12 : phH) * 60 + (isNaN(phM) ? 0 : phM);
-
-                    if (photoMins > nowMinutes) return;
-
-                    const matchedStalls = RAW_PATROL_STALLS.filter(s => {
-                        const sId = s.id.trim();
-                        if (title.toUpperCase() === sId.toUpperCase()) return true;
-                        let titlePrefix = '';
-                        if (/^1-?/i.test(title)) titlePrefix = '一樓';
-                        else if (/^R-?/i.test(title)) titlePrefix = '地下';
-                        else if (/^J-?/i.test(title)) titlePrefix = '花園仔';
-
-                        // 必須具備樓層前綴才比對純數字，防止無前綴數字誤傷其他樓層同號攤位
-                        if (!titlePrefix && !photo.floor) return false;
-
-                        const sNum = sId.replace(/^[1RJ]-?/i, '').replace(/\D/g, '').replace(/^0+/, '');
-                        const titleNum = title.replace(/^[1RJ]-?/i, '').replace(/\D/g, '').replace(/^0+/, '');
-                        if (sNum && titleNum && sNum === titleNum) {
-                            if (titlePrefix) return s.floor === titlePrefix;
-                            if (photo.floor) return s.floor.includes(photo.floor);
-                        }
-                        return false;
-                    });
-
-                    matchedStalls.forEach(stall => {
-                        const k = window.getPatrolKey(stall);
-                        if (!currentExpectedMap.has(k)) currentExpectedMap.set(k, new Map());
-
-                        // 🌟 給予時段開始後 45 分鐘緩衝（例如 16:00~16:45 拍的收工相會同時自動填下午4點與下午6點；18:00~18:45 拍的也會填下午6點）
-                        PATROL_TIME_SLOTS.forEach(slotKey => {
-                            const slotMins = PATROL_SLOT_MINUTES[slotKey] || 720;
-                            if (slotMins + 45 >= photoMins) {
-                                currentExpectedMap.get(k).set(slotKey, `${photoTime} ${photo.category}`);
-                            }
-                        });
-                    });
-                });
-            }
-
-            const dayRecords = patrolHistoryStore[currentPatrolDate];
-            let changed = false;
-            let autoFilledCount = 0;
-            const affectedStallKeys = new Set();
-
-            // 3. 撤銷操作：照片被刪除或改分類時，自動清除原本因它而填入的 0（以及手動取消鎖）
-            Object.keys(dayRecords).forEach(stallKey => {
                 PATROL_TIME_SLOTS.forEach(slotKey => {
-                    const reasonKey = `${slotKey}_reason`;
-                    const manualClearKey = `${slotKey}_manualClear`;
-                    const hasAutoReason = !!dayRecords[stallKey]?.[reasonKey];
-                    const hasManualClear = !!dayRecords[stallKey]?.[manualClearKey];
-
-                    const isStillValid = currentExpectedMap.has(stallKey) && currentExpectedMap.get(stallKey).has(slotKey);
-                    if (!isStillValid) {
-                        if (hasAutoReason) {
-                            delete dayRecords[stallKey][slotKey];
-                            delete dayRecords[stallKey][reasonKey];
-                            changed = true;
-                            affectedStallKeys.add(stallKey);
-                        }
-                        if (hasManualClear) {
-                            delete dayRecords[stallKey][manualClearKey];
-                            changed = true;
-                            affectedStallKeys.add(stallKey);
-                        }
-                    }
-                });
-
-                if (Object.keys(dayRecords[stallKey] || {}).length === 0) {
-                    delete dayRecords[stallKey];
-                }
-            });
-
-            // 4. 自動填入與手動保護邏輯（若使用者曾手動取消過該時段的自動 0，尊重手動取消不再硬填）
-            currentExpectedMap.forEach((slots, stallKey) => {
-                if (!dayRecords[stallKey]) dayRecords[stallKey] = {};
-                slots.forEach((reasonStr, slotKey) => {
-                    const reasonKey = `${slotKey}_reason`;
-                    const manualClearKey = `${slotKey}_manualClear`;
-                    const curVal = dayRecords[stallKey][slotKey];
-                    const hasReason = !!dayRecords[stallKey][reasonKey];
-                    const isManuallyCleared = !!dayRecords[stallKey][manualClearKey];
-
-                    if (!curVal && !isManuallyCleared) {
-                        dayRecords[stallKey][slotKey] = '0';
-                        dayRecords[stallKey][reasonKey] = reasonStr;
-                        autoFilledCount++;
-                        changed = true;
-                        affectedStallKeys.add(stallKey);
-                    } else if (hasReason) {
-                        if (dayRecords[stallKey][reasonKey] !== reasonStr) {
-                            dayRecords[stallKey][reasonKey] = reasonStr;
-                            changed = true;
-                            affectedStallKeys.add(stallKey);
-                        }
+                    const slotMins = PATROL_SLOT_MINUTES[slotKey] || 720;
+                    if (slotMins + 45 >= photoMins) {
+                        currentExpectedMap.get(k).set(slotKey, `${photoTime} ${photo.category}`);
                     }
                 });
             });
+        });
+    }
 
-            if (changed) {
-                patrolState = patrolHistoryStore[currentPatrolDate];
-                safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
-                safeSetLocal('work_cache_patrol_records', patrolState);
+    const dayRecords = patrolHistoryStore[currentPatrolDate];
+    let changed = false;
+    let autoFilledCount = 0;
+    const affectedStallKeys = new Set();
 
-                // 🌟 推進離線佇列並觸發同步，確保無網路時自動填的 0 也不會丟失
-                affectedStallKeys.forEach(k => {
-                    if (window.enqueuePatrolSync) window.enqueuePatrolSync(currentPatrolDate, k);
-                });
-                if (window.resumePatrolUploadQueue) window.resumePatrolUploadQueue(false);
+    // 3. 檢查現有記錄：若照片被刪除，且該格是「自動填的 0」且沒有被手動鎖定，才允許清除
+    Object.keys(dayRecords).forEach(stallKey => {
+        PATROL_TIME_SLOTS.forEach(slotKey => {
+            const reasonKey = `${slotKey}_reason`;
+            const lockedKey = `${slotKey}_locked`;
+            const hasAutoReason = !!dayRecords[stallKey]?.[reasonKey];
+            const isUserLocked = !!dayRecords[stallKey]?.[lockedKey];
 
-                if (!$('patrolPage')?.classList.contains('hidden')) {
-                    window.renderPatrol();
+            const isStillValid = currentExpectedMap.has(stallKey) && currentExpectedMap.get(stallKey).has(slotKey);
+            
+            // 🌟 只有在非手動鎖定的情況下，照片刪除才連帶清除自動 0
+            if (!isStillValid && hasAutoReason && !isUserLocked) {
+                if (dayRecords[stallKey][slotKey] === '0') {
+                    delete dayRecords[stallKey][slotKey];
                 }
+                delete dayRecords[stallKey][reasonKey];
+                changed = true;
+                affectedStallKeys.add(stallKey);
             }
-            return autoFilledCount;
-        };
+        });
+
+        if (Object.keys(dayRecords[stallKey] || {}).length === 0) {
+            delete dayRecords[stallKey];
+        }
+    });
+
+    // 4. 自動填入 0：前提是該格完全沒有被使用者手動標記過 (`isUserLocked` 為 false)
+    currentExpectedMap.forEach((slots, stallKey) => {
+        if (!dayRecords[stallKey]) dayRecords[stallKey] = {};
+        slots.forEach((reasonStr, slotKey) => {
+            const reasonKey = `${slotKey}_reason`;
+            const lockedKey = `${slotKey}_locked`;
+            const curVal = dayRecords[stallKey][slotKey];
+            const isUserLocked = !!dayRecords[stallKey][lockedKey];
+
+            // 🌟 關鍵記憶防護：如果使用者已經手動點過（isUserLocked 為 true），絕對不覆蓋！
+            if (!curVal && !isUserLocked) {
+                dayRecords[stallKey][slotKey] = '0';
+                dayRecords[stallKey][reasonKey] = reasonStr;
+                autoFilledCount++;
+                changed = true;
+                affectedStallKeys.add(stallKey);
+            }
+        });
+    });
+
+    if (changed) {
+        patrolState = patrolHistoryStore[currentPatrolDate];
+        safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
+        safeSetLocal('work_cache_patrol_records', patrolState);
+
+        affectedStallKeys.forEach(k => {
+            if (window.enqueuePatrolSync) window.enqueuePatrolSync(currentPatrolDate, k);
+        });
+        if (window.resumePatrolUploadQueue) window.resumePatrolUploadQueue(false);
+
+        if (!$('patrolPage')?.classList.contains('hidden')) {
+            window.renderPatrol();
+        }
+    }
+    return autoFilledCount;
+};
 
 // 🌟 記錄本機尚未完成雲端同步的單檔變更（防止網路延遲或重連時被雲端舊快照洗掉回退）
 window._pendingPatrolWrites = getLocal('work_pending_patrol_writes', {});
@@ -1499,32 +1485,32 @@ window.setPatrolStatus = (stall, status, slot) => {
     const isCancelling = (currentVal === status);
 
     if (isCancelling) {
-            const hadAutoReason = !!patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
-            delete patrolHistoryStore[currentPatrolDate][key][targetSlot];
-            delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
-            if (hadAutoReason) {
-                // 若原本是由相片自動填 0，手動取消時打上標記，防止系統又自動填回 0
-                patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_manualClear`] = true;
-            }
-            if (Object.keys(patrolHistoryStore[currentPatrolDate][key]).length === 0) {
-                delete patrolHistoryStore[currentPatrolDate][key];
-            }
-            window.showToast(navigator.onLine ? `已取消 ${stall.floor} ${stall.id}` : `💾 已取消 ${stall.id} (離線待同步)`);
-            window.clearFocusAutoTimer();
-
-            // 🌟 記錄取消操作到日誌
-            window.writeGalleryLog('取消剔檔', `${stall.floor} ${stall.id}`, `時段: ${targetSlot}`);
-        } else {
-            patrolHistoryStore[currentPatrolDate][key][targetSlot] = status;
-            delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
-            delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_manualClear`];
-            const desc = status === 'A' ? 'A (檔主)' : status === '1' ? '1 (協作人)' : '0 (無人)';
-            const statusName = status === 'A' ? '檔主' : status === '1' ? '協作人' : '無人';
-            window.showToast(navigator.onLine ? `${stall.id}：${desc}` : `💾 ${stall.id}：${desc} (離線已存，連網自動上傳)`);
-
-            // 🌟 記錄剔檔操作到日誌
-            window.writeGalleryLog('剔檔標記', `${stall.floor} ${stall.id}`, `時段: ${targetSlot} · 狀態: [${status}] ${statusName}`);
+        // 🌟 取消時清除狀態，並解除手動鎖定
+        delete patrolHistoryStore[currentPatrolDate][key][targetSlot];
+        delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_locked`];
+        delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
         
+        if (Object.keys(patrolHistoryStore[currentPatrolDate][key]).length === 0) {
+            delete patrolHistoryStore[currentPatrolDate][key];
+        }
+        window.showToast(navigator.onLine ? `已取消 ${stall.floor} ${stall.id}` : `💾 已取消 ${stall.id} (離線待同步)`);
+        window.clearFocusAutoTimer();
+
+        // 🌟 記錄取消操作到日誌
+        window.writeGalleryLog('取消剔檔', `${stall.floor} ${stall.id}`, `時段: ${targetSlot}`);
+    } else {
+        // 🌟 核心記憶機制：手動點選，打上永久手動鎖定標記 (locked: true)
+        patrolHistoryStore[currentPatrolDate][key][targetSlot] = status;
+        patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_locked`] = true; 
+        delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
+
+        const desc = status === 'A' ? 'A (檔主)' : status === '1' ? '1 (協作人)' : '0 (無人)';
+        const statusName = status === 'A' ? '檔主' : status === '1' ? '協作人' : '無人';
+        window.showToast(navigator.onLine ? `${stall.id}：${desc}` : `💾 ${stall.id}：${desc} (離線已存，連網自動上傳)`);
+
+        // 🌟 記錄剔檔操作到日誌
+        window.writeGalleryLog('剔檔標記', `${stall.floor} ${stall.id}`, `時段: ${targetSlot} · 狀態: [${status}] ${statusName}`);
+      
         if ('speechSynthesis' in window) {
             try {
                 window.speechSynthesis.cancel();
@@ -6685,7 +6671,7 @@ window.crSaveData = () => {
             // 🌟 關鍵修正第 2 步：頁面已經移除 hidden 後，才執行對應的渲染函式
             ({
                 patrol: () => {
-                    window.applyAutoPatrolSlot(true); // 傳入 true，剛切換到剔檔頁面時強制對齊當前時間
+                    window.applyAutoPatrolSlot(false); // 🌟 改為 false：保留使用者當前正在查看的時段，絕不擅自跳轉
                     window.autoSyncClosedStallsToPatrol(true);
                     window.setPatrolViewMode('card');
                 },
@@ -7196,8 +7182,7 @@ setInterval(() => {
                 const data = snap.exists() ? snap.data() : {};
                 const remote = JSON.parse(JSON.stringify(data?.history || {}));
 
-                // 🌟 防回退核心：將本機「待上傳佇列 (_patrolPendingQueue)」中的變更強制疊加在雲端資料之上
-                // 只要本機某攤位還沒完成雲端同步，舊的雲端快照絕對無法把它洗掉！
+                // 🌟 核心防護 1：將本機「待上傳佇列 (_patrolPendingQueue)」中的變更強制疊加在雲端資料之上
                 const pendingQueue = window._patrolPendingQueue || {};
                 Object.keys(pendingQueue).forEach(dKey => {
                     if (!remote[dKey]) remote[dKey] = {};
@@ -7212,7 +7197,32 @@ setInterval(() => {
                     });
                 });
 
-                patrolHistoryStore = remote;
+                // 🌟 核心防護 2：深層合併，精細到每個攤位與時段，絕不讓空值覆蓋已有資料
+                const mergedHistory = { ...patrolHistoryStore };
+                Object.keys(remote).forEach(dateKey => {
+                    if (!mergedHistory[dateKey]) {
+                        mergedHistory[dateKey] = remote[dateKey];
+                    } else {
+                        const localDay = mergedHistory[dateKey];
+                        const remoteDay = remote[dateKey];
+                        const mergedDay = { ...localDay };
+
+                        Object.keys(remoteDay).forEach(stallKey => {
+                            // 如果本機有該攤位的待上傳鎖，優先保留本機
+                            if (pendingQueue[dateKey]?.[stallKey]) return;
+
+                            if (!localDay[stallKey]) {
+                                mergedDay[stallKey] = remoteDay[stallKey];
+                            } else {
+                                // 合併各時段（保留手動點選的 A、1、0）
+                                mergedDay[stallKey] = { ...remoteDay[stallKey], ...localDay[stallKey] };
+                            }
+                        });
+                        mergedHistory[dateKey] = mergedDay;
+                    }
+                });
+
+                patrolHistoryStore = mergedHistory;
                 patrolState = patrolHistoryStore[currentPatrolDate] || {};
                 
                 safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
