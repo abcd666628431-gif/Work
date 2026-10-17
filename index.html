@@ -2398,70 +2398,89 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             $('globalProgressText').textContent = text;
         };
 
-        const splitImageTo4ChunksAsync = (file, maxDim = CONFIG.maxDim, quality = CONFIG.quality) => new Promise((resolve, reject) => {
-            let blobUrl = null;
-            try { blobUrl = URL.createObjectURL(file); } catch (e) {}
+        const splitImageTo4ChunksAsync = async (file, maxDim = CONFIG.maxDim, quality = CONFIG.quality) => {
+            // 🌟 核心防護 1：優先使用現代瀏覽器提供的底層轉正 API (完美解決 OPPO/Android EXIF 方向錯位)
+            let imageSource = null;
+            let isBitmap = false;
 
-            const img = new Image();
-
-            const processCanvas = () => {
-                if (blobUrl) {
-                    try { URL.revokeObjectURL(blobUrl); } catch(e) {}
-                    blobUrl = null;
+            try {
+                if (window.createImageBitmap && (file instanceof Blob || file instanceof File)) {
+                    imageSource = await createImageBitmap(file, { imageOrientation: 'from-image' });
+                    isBitmap = true;
                 }
-                let w = img.naturalWidth || img.width || 800;
-                let h = img.naturalHeight || img.height || 600;
-                if (w > maxDim || h > maxDim) {
-                    const scale = maxDim / Math.max(w, h);
-                    w = Math.round(w * scale);
-                    h = Math.round(h * scale);
-                }
-                const canvas = document.createElement('canvas');
-                canvas.width = w; canvas.height = h;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, w, h);
+            } catch (err) {}
 
-                const chunkHeight = Math.floor(h / 4);
-                const chunks = [];
-                for (let i = 0; i < 4; i++) {
-                    const sub = document.createElement('canvas');
-                    const curH = (i === 3) ? (h - chunkHeight * 3) : chunkHeight;
-                    sub.width = w; sub.height = curH;
-                    sub.getContext('2d').drawImage(canvas, 0, i * chunkHeight, w, curH, 0, 0, w, curH);
-                    chunks.push(sub.toDataURL('image/jpeg', quality));
-                }
-                const previewUrl = canvas.toDataURL('image/jpeg', 0.5);
-                img.src = '';
-                resolve({ chunks, previewSrc: previewUrl, width: w, height: h });
-            };
-
-            img.onload = processCanvas;
-
-            // 🌟 舊手機防呆：如果 createObjectURL 載入失敗，自動啟動 FileReader 保底機制
-            img.onerror = () => {
-                if (blobUrl) {
-                    try { URL.revokeObjectURL(blobUrl); } catch(e) {}
-                    blobUrl = null;
-                }
-                const reader = new FileReader();
-                reader.onload = () => {
-                    img.onload = processCanvas;
-                    img.onerror = () => reject(new Error("圖片載入失敗"));
-                    img.src = reader.result;
-                };
-                reader.onerror = () => reject(new Error("檔案讀取失敗"));
-                reader.readAsDataURL(file);
-            };
-
-            if (blobUrl) {
-                img.src = blobUrl;
-            } else {
-                const reader = new FileReader();
-                reader.onload = () => { img.src = reader.result; };
-                reader.onerror = () => reject(new Error("檔案讀取失敗"));
-                reader.readAsDataURL(file);
+            if (!imageSource) {
+                imageSource = await new Promise((resolve, reject) => {
+                    let blobUrl = null;
+                    try { blobUrl = URL.createObjectURL(file); } catch (e) {}
+                    const img = new Image();
+                    img.onload = () => {
+                        if (blobUrl) try { URL.revokeObjectURL(blobUrl); } catch(e) {}
+                        resolve(img);
+                    };
+                    img.onerror = () => {
+                        if (blobUrl) try { URL.revokeObjectURL(blobUrl); } catch(e) {}
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            const fallbackImg = new Image();
+                            fallbackImg.onload = () => resolve(fallbackImg);
+                            fallbackImg.onerror = () => reject(new Error("圖片載入失敗"));
+                            fallbackImg.src = reader.result;
+                        };
+                        reader.onerror = () => reject(new Error("檔案讀取失敗"));
+                        reader.readAsDataURL(file);
+                    };
+                    if (blobUrl) img.src = blobUrl;
+                    else {
+                        const reader = new FileReader();
+                        reader.onload = () => { img.src = reader.result; };
+                        reader.onerror = () => reject(new Error("檔案讀取失敗"));
+                        reader.readAsDataURL(file);
+                    }
+                });
             }
-        });
+
+            let w = isBitmap ? imageSource.width : (imageSource.naturalWidth || imageSource.width || 800);
+            let h = isBitmap ? imageSource.height : (imageSource.naturalHeight || imageSource.height || 600);
+
+            if (w > maxDim || h > maxDim) {
+                const scale = maxDim / Math.max(w, h);
+                w = Math.round(w * scale);
+                h = Math.round(h * scale);
+            }
+
+            // 🌟 核心防護 2：建立主畫布，預設鋪白底防止任何透明區塊變黑
+            const canvas = document.createElement('canvas');
+            canvas.width = w; 
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(imageSource, 0, 0, w, h);
+
+            if (isBitmap && imageSource.close) {
+                imageSource.close();
+            }
+
+            // 4 等分水平切片
+            const chunkHeight = Math.floor(h / 4);
+            const chunks = [];
+            for (let i = 0; i < 4; i++) {
+                const sub = document.createElement('canvas');
+                const curH = (i === 3) ? (h - chunkHeight * 3) : chunkHeight;
+                sub.width = w; 
+                sub.height = curH;
+                const subCtx = sub.getContext('2d');
+                subCtx.fillStyle = '#ffffff';
+                subCtx.fillRect(0, 0, w, curH);
+                subCtx.drawImage(canvas, 0, i * chunkHeight, w, curH, 0, 0, w, curH);
+                chunks.push(sub.toDataURL('image/jpeg', quality));
+            }
+
+            const previewUrl = canvas.toDataURL('image/jpeg', 0.5);
+            return { chunks, previewSrc: previewUrl, width: w, height: h };
+        };
 
         const merge4ChunksAsync = async (chunks) => {
             if (!chunks?.length) return '';
@@ -3698,10 +3717,41 @@ window.deleteSelectedGalleryItems = () => {
         };
 
 // ====== 圖庫分類切換專屬函式（修正點擊無反應問題） ======
+        // 切換保持展開 / 收起分類側邊欄（推擠右側照片）
+        // 切換展開/收起狀態
+        window.toggleGallerySidebar = (forceState) => {
+            const wrapper = $('gallerySidebarWrapper');
+            const strip = $('gallerySidebarTriggerStrip');
+            const collapseBtn = $('gallerySidebarCollapseBtn');
+            if (!wrapper) return;
+
+            const isClosed = wrapper.classList.contains('w-0');
+            const shouldOpen = forceState !== undefined ? forceState : isClosed;
+
+            if (shouldOpen) {
+                // 1. 展開：整行白條隱藏，不佔空間
+                if (strip) strip.classList.add('hidden');
+                // 2. 面板寬度變為 75px 推擠版面，右側照片自動縮排
+                wrapper.classList.remove('w-0');
+                wrapper.classList.add('w-[75px]');
+                // 3. 邊緣露出獨立的小收合鍵 ❮
+                if (collapseBtn) collapseBtn.classList.replace('hidden', 'flex');
+            } else {
+                // 1. 收起：隱藏小收合鍵
+                if (collapseBtn) collapseBtn.classList.replace('flex', 'hidden');
+                // 2. 面板縮回 0px，右側照片恢復滿版
+                wrapper.classList.remove('w-[75px]');
+                wrapper.classList.add('w-0');
+                // 3. 重新顯示一整行直立白條 ❯
+                if (strip) strip.classList.remove('hidden');
+            }
+        };
+
         window.setGalleryCategory = (cat) => {
             currentGalleryCategory = cat;
-            window._lastRenderCategory = '';    // 重置分類快取，讓側邊欄按鈕能亮藍燈
-            window._lastRenderFingerprint = ''; // 重置渲染指紋，讓照片清單立刻過濾更新
+            window._lastRenderCategory = '';    // 重置分類快取讓按鈕變色
+            window._lastRenderFingerprint = ''; // 重置指紋即時過濾照片
+            // 🌟 保持展開狀態，不調用收合，右側照片維持等比縮排！
             window.renderGallery();
         };
 
@@ -9048,6 +9098,7 @@ window.pushMeetingReportsToAllIframes = (reports) => {
             <div class="flex-1 flex flex-col w-full h-full relative z-10 bg-[#fdfbf7]">
                 <!-- 工具列：文字加大 2px + 緊湊邊框版 -->
                 <div class="px-1.5 py-1.5 border-b border-[#e6e2d6] flex items-center justify-between bg-white shrink-0 shadow-2xs z-20 gap-1">
+
                     <div class="relative flex-1">
                         <i data-lucide="search" class="absolute left-2.5 top-2 w-3.5 h-3.5 text-slate-400"></i>
                         <input type="text" id="gallerySearchInput" placeholder="搜尋圖片..." oninput="window.renderGallery()" class="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-1.5 py-0.5 text-[13px] text-slate-800 font-bold placeholder-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none tracking-wide text-center">
@@ -9083,11 +9134,26 @@ window.pushMeetingReportsToAllIframes = (reports) => {
                     </div>
                 </div>
 
-                <div class="flex flex-1 overflow-hidden relative z-10">
-                    <!-- 側邊欄分類 (不會被遮蓋) -->
-                    <div class="w-[70px] shrink-0 border-r border-[#e6e2d6] bg-[#f4f1eb] overflow-y-auto flex flex-col items-center space-y-1.5 scrollbar-hide" id="gallerySidebar"></div>
-                    
-                    <!-- 中央照片區域 (僅此區域顯示藍色虛線框) -->
+               <div class="flex flex-1 overflow-hidden relative z-10">
+                    <!-- 🌟 收起時顯示：一整行直立白邊條（把手上移至 top-20，點擊展開） -->
+                    <div id="gallerySidebarTriggerStrip" onclick="window.toggleGallerySidebar(true)" class="w-[20px] shrink-0 bg-white hover:bg-slate-50 border-r border-[#e6e2d6] relative cursor-pointer select-none active:bg-blue-50 transition-colors z-20 shadow-2xs" title="點擊展開分類">
+                        <div class="absolute top-20 left-1/2 -translate-x-1/2 w-3 h-14 rounded-full bg-blue-100 border border-blue-300 flex items-center justify-center shadow-xs">
+                            <span class="text-blue-600 font-black text-[11px] leading-none select-none pointer-events-none">❯</span>
+                        </div>
+                    </div>
+
+                    <!-- 🌟 展開時容器：包含 75px 分類面板 + 邊緣一個小收合鍵（平時整體 w-0 隱藏，展開時右邊照片等比退讓縮排） -->
+                    <div id="gallerySidebarWrapper" class="w-0 shrink-0 relative transition-all duration-200 ease-out z-30">
+                        <!-- 75px 分類面板本體 -->
+                        <div id="gallerySidebar" class="w-full h-full bg-[#f4f1eb] border-r border-[#e6e2d6] overflow-y-auto flex flex-col items-center space-y-1.5 scrollbar-hide overflow-x-hidden"></div>
+
+                        <!-- 貼在面板右側邊緣的小收合鍵（展開時才看得見，位置同步在 top-20，點擊收起） -->
+                        <button type="button" id="gallerySidebarCollapseBtn" onclick="window.toggleGallerySidebar(false)" class="hidden absolute top-20 -right-4 z-40 bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-300 rounded-r-lg shadow-md w-4 h-12 flex items-center justify-center active:scale-95 transition-all select-none" title="收起分類">
+                            <span class="text-slate-600 font-black text-[11px] leading-none select-none pointer-events-none">❮</span>
+                        </button>
+                    </div>
+
+                    <!-- 中央照片區域（展開時自動隨寬度調整縮排，照片縮小） -->
                     <div class="flex-1 p-2 overflow-y-auto bg-[#fdfbf7] relative scrollbar-hide" id="galleryGrid">
                         <!-- 拖曳懸停時僅在中央出現的藍色虛線提示框 -->
                         <div id="galleryDragOverlay" class="hidden absolute inset-2 z-30 bg-blue-50/85 border-2 border-dashed border-blue-500 rounded-2xl flex-col items-center justify-center pointer-events-none transition-all duration-200">
