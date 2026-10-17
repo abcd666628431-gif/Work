@@ -632,6 +632,7 @@ const tabMetadataMap = {
         let csMembersStore = [], cleanMembersStore = [];
 
         window.toggleMapRoleMode = (forceMode) => {
+            // 1. 先把當前畫面的排班和名單暫存回對應的角色變數中
             if (window.currentMapRole === 'cs') {
                 csSchedulesStore = [...memberSchedules];
                 csMembersStore = [...teamMembers];
@@ -640,10 +641,11 @@ const tabMetadataMap = {
                 cleanMembersStore = [...teamMembers];
             }
 
+            // 2. 切換角色狀態
             window.currentMapRole = forceMode || (window.currentMapRole === 'cs' ? 'clean' : 'cs');
             const isClean = window.currentMapRole === 'clean';
 
-            // 1. 切換右上角 2 字精簡版按鈕 (最上層 z-[60]，客服 [白底靛紫框] <-> 清潔 [白底翠綠框])
+            // 3. 瞬間更新右上角按鈕樣式
             const roleBtn = $('mapRoleToggleBtn');
             if (roleBtn) {
                 roleBtn.innerText = isClean ? '清潔' : '客服';
@@ -652,10 +654,11 @@ const tabMetadataMap = {
                     : 'absolute top-1.5 right-1.5 z-[60] bg-white hover:bg-indigo-50 text-indigo-700 font-black text-xs px-2 py-0.5 rounded-lg border border-indigo-400 shadow-xs active:scale-95 transition-all cursor-pointer select-none tracking-wider leading-tight';
             }
 
-            // 2. 切換地圖層 (客服 vs 清潔 3 層版)
-            $('mapCsLayer')?.classList.toggle('hidden', isClean);$('mapCleanLayer')?.classList.toggle('hidden', !isClean);
+            // 4. 切換地圖圖層
+            $('mapCsLayer')?.classList.toggle('hidden', isClean);
+            $('mapCleanLayer')?.classList.toggle('hidden', !isClean);
 
-            // 3. 外圍站點：取消「一樓大清點」，將「地面層大清點」改為「機動」，並讓「機動」與「休息中」變長且底部完美對齊
+            // 5. 外圍站點調整
             $('station-pt_2')?.classList.toggle('hidden', isClean);
             const pt6Station = $('station-pt_6');
             const pt6Title = $('stationPt6Title');
@@ -666,7 +669,6 @@ const tabMetadataMap = {
             }
             if (pt6Station && restStation) {
                 if (isClean) {
-                    // 兩格各 139px + 間距 8px = 286px (與客服模式 90px*3 + 16px 完全同高對齊底部)
                     pt6Station.classList.replace('min-h-[90px]', 'min-h-[139px]');
                     restStation.classList.replace('min-h-[90px]', 'min-h-[139px]');
                 } else {
@@ -675,16 +677,28 @@ const tabMetadataMap = {
                 }
             }
 
-            // 4. 切換對應排班與名單
-            if ($('scheduleBtnText'))$('scheduleBtnText').innerText = isClean ? '清潔排班' : '成員排班';
+            // 6. 瞬間載入對應的角色變數
+            if ($('scheduleBtnText')) $('scheduleBtnText').innerText = isClean ? '清潔排班' : '成員排班';
             mapData.points = JSON.parse(JSON.stringify(isClean ? defaultCleanMapPoints : defaultMapPoints));
-            memberSchedules = isClean ? [...cleanSchedulesStore] : [...csSchedulesStore];
-            teamMembers = isClean ? [...cleanMembersStore] : [...csMembersStore];
+            
+            // 直接指定，避免陣列拷貝延遲
+            memberSchedules = isClean ? cleanSchedulesStore : csSchedulesStore;
+            teamMembers = isClean ? cleanMembersStore : csMembersStore;
             window._tempGridValues = null;
 
             const container = $('mapPointsContainer');
             if (container) container.innerHTML = '';
+            
+            // 7. 同步更新地圖與排班表（若排班彈窗開著，強制同步調用）
             window.updateMapSimulation();
+
+            const modal = $('scheduleManageModal');
+            if (modal && modal.classList.contains('flex')) {
+                // 使用 requestAnimationFrame 讓瀏覽器在下一個畫面影格順暢重繪，不卡主執行緒
+                requestAnimationFrame(() => {
+                    window.renderScheduleManager();
+                });
+            }
         };
         let activeGridMember = null, isEditingMembers = false, isGridDragging = false, gridDragAction = null, splitHoursState = {};
         window.lastTouchedEl = null;
@@ -1447,7 +1461,6 @@ window.setPatrolStatus = (stall, status, slot) => {
     const targetSlot = slot || patrolSlot;
     const key = window.getPatrolKey(stall);
 
-    // 🌟 防手機觸控彈跳（350ms 內同攤位同按鈕不重複觸發，防止剛剔選就誤觸取消）
     const nowMs = Date.now();
     const tapId = `${currentPatrolDate}_${key}_${targetSlot}_${status}`;
     if (window._lastPatrolTapKey === tapId && (nowMs - window._lastPatrolTapTime) < 350) {
@@ -1467,8 +1480,7 @@ window.setPatrolStatus = (stall, status, slot) => {
     const isCancelling = (currentVal === status);
 
     if (isCancelling) {
-        // 🌟 關鍵修復：取消時寫入明確的空字串 '' 與最新時間戳 nowMs，並維持 locked = true（防止被收工相自動填回 0）
-        // 這樣雲端與另一台裝置收到更晚的 nowMs 時，就會立刻同步把該格清空！
+        // 🌟 取消時寫入明確的空字串與最新時間戳，並鎖定防止被照片自動填回 0
         patrolHistoryStore[currentPatrolDate][key][targetSlot] = '';
         patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_locked`] = true;
         patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`] = '';
@@ -1478,7 +1490,7 @@ window.setPatrolStatus = (stall, status, slot) => {
         window.clearFocusAutoTimer();
         window.writeGalleryLog('取消剔檔', `${stall.floor} ${stall.id}`, `時段: ${targetSlot}`);
     } else {
-        // 🌟 手動點選：寫入狀態、手動鎖定 (locked: true) 與最新毫秒時間戳 (nowMs)
+        // 🌟 手動點選：寫入狀態、手動鎖定與毫秒時間戳
         patrolHistoryStore[currentPatrolDate][key][targetSlot] = status;
         patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_locked`] = true; 
         patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`] = '';
@@ -1486,7 +1498,7 @@ window.setPatrolStatus = (stall, status, slot) => {
 
         const desc = status === 'A' ? 'A (檔主)' : status === '1' ? '1 (協作人)' : '0 (無人)';
         const statusName = status === 'A' ? '檔主' : status === '1' ? '協作人' : '無人';
-        window.showToast(navigator.onLine ? `${stall.id}：${desc}` : `💾 ${stall.id}：${desc} (離線已存，連網自動上傳)`);
+        window.showToast(navigator.onLine ? `${stall.id}：${desc}` : `💾 ${stall.id}：${desc} (離線已存)`);
         window.writeGalleryLog('剔檔標記', `${stall.floor} ${stall.id}`, `時段: ${targetSlot} · 狀態: [${status}] ${statusName}`);
       
         if ('speechSynthesis' in window) {
@@ -1506,13 +1518,8 @@ window.setPatrolStatus = (stall, status, slot) => {
     safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
     safeSetLocal('work_cache_patrol_records', patrolState);
 
-    // 1. 只將「該攤位的該時段」推進離線佇列
     window.enqueuePatrolSync(currentPatrolDate, key, targetSlot);
-
-    // 2. 立即渲染畫面
     window.renderPatrol();
-
-    // 3. 背景觸發上傳
     window.resumePatrolUploadQueue(false);
 };
         window.updatePatrolDateInputUI = () => {
@@ -2403,13 +2410,17 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         function checkAndResetDailySchedule() {
             const todayStr = getNowInputStrs().date;
             
-            // 排班清理
+            // 排班清理（同時重置客服與清潔排班）
             const lastSavedDate = getLocal('work_cache_schedule_date', '');
             if (lastSavedDate && lastSavedDate !== todayStr) {
                 memberSchedules = [];
-                safeSetLocal('work_cache_member_schedules', memberSchedules);
+                csSchedulesStore = [];
+                cleanSchedulesStore = [];
+                safeSetLocal('work_cache_member_schedules', []);
+                safeSetLocal('work_cache_clean_schedules', []);
                 safeSetLocal('work_cache_schedule_date', todayStr);
                 syncConfig('member_schedules', { schedules: [], date: todayStr });
+                syncConfig('clean_member_schedules', { schedules: [], date: todayStr });
                 if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
             } else if (!lastSavedDate) {
                 safeSetLocal('work_cache_schedule_date', todayStr);
@@ -5113,12 +5124,45 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 }
             });
             bindSync('future_memos', 'work_cache_future_memos', d => { futureMemos = d.memos || []; if (!$('memoPage')?.classList.contains('hidden')) window.renderMemos(); window.checkMemoAlerts(); });
-            bindSync('team_members', 'work_cache_team_members', d => { teamMembers = d.members || []; if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager(); });
+           // 🌟 客服名單與排班同步（僅在當前為客服模式時才更新畫面）
+            bindSync('team_members', 'work_cache_team_members', d => {
+                csMembersStore = d.members || [];
+                safeSetLocal('work_cache_team_members', csMembersStore);
+                if (window.currentMapRole !== 'clean') {
+                    teamMembers = [...csMembersStore];
+                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                }
+            });
             bindSync('member_schedules', 'work_cache_member_schedules', d => {
-                memberSchedules = d.schedules || []; if (d.date) safeSetLocal('work_cache_schedule_date', d.date);
+                csSchedulesStore = d.schedules || [];
+                safeSetLocal('work_cache_member_schedules', csSchedulesStore);
+                if (d.date) safeSetLocal('work_cache_schedule_date', d.date);
                 checkAndResetDailySchedule();
-                if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+                if (window.currentMapRole !== 'clean') {
+                    memberSchedules = [...csSchedulesStore];
+                    if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                }
                 if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
+            });
+
+            // 🌟 清潔名單與排班同步（僅在當前為清潔模式時才更新畫面）
+            bindSync('clean_team_members', 'work_cache_clean_members', d => {
+                cleanMembersStore = d.members || [];
+                safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                if (window.currentMapRole === 'clean') {
+                    teamMembers = [...cleanMembersStore];
+                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                }
+            });
+            bindSync('clean_member_schedules', 'work_cache_clean_schedules', d => {
+                cleanSchedulesStore = d.schedules || [];
+                safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+                if (window.currentMapRole === 'clean') {
+                    memberSchedules = [...cleanSchedulesStore];
+                    if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                }
             });
 
             bindSync('tab_visibility', 'work_cache_tab_visibility', d => { 
@@ -5501,10 +5545,36 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         window.toggleEditMembers = () => { isEditingMembers = !isEditingMembers; activeGridMember = null; window.renderScheduleManager(); };
 
         window.addTeamMember = () => {
-            const name = prompt("請輸入新成員名字：");
-            if (name && name.trim()) { teamMembers.push(name.trim()); safeSetLocal('work_cache_team_members', teamMembers); syncConfig('team_members', { members: teamMembers }); window.renderScheduleManager(); }
+            const isClean = window.currentMapRole === 'clean';
+            const name = prompt(`請輸入新${isClean ? '清潔' : '客服'}成員名字：`);
+            if (name && name.trim()) {
+                teamMembers.push(name.trim());
+                if (isClean) {
+                    cleanMembersStore = [...teamMembers];
+                    safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                    syncConfig('clean_team_members', { members: cleanMembersStore });
+                } else {
+                    csMembersStore = [...teamMembers];
+                    safeSetLocal('work_cache_team_members', csMembersStore);
+                    syncConfig('team_members', { members: csMembersStore });
+                }
+                window.renderScheduleManager();
+            }
         };
-        window.removeTeamMember = (idx) => { teamMembers.splice(idx, 1); safeSetLocal('work_cache_team_members', teamMembers); syncConfig('team_members', { members: teamMembers }); window.renderScheduleManager(); };
+        window.removeTeamMember = (idx) => {
+            const isClean = window.currentMapRole === 'clean';
+            teamMembers.splice(idx, 1);
+            if (isClean) {
+                cleanMembersStore = [...teamMembers];
+                safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                syncConfig('clean_team_members', { members: cleanMembersStore });
+            } else {
+                csMembersStore = [...teamMembers];
+                safeSetLocal('work_cache_team_members', csMembersStore);
+                syncConfig('team_members', { members: csMembersStore });
+            }
+            window.renderScheduleManager();
+        };
 
         window.selectGridMember = (name) => {
             activeGridMember = (activeGridMember === name) ? null : name;
@@ -5606,8 +5676,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         document.addEventListener('mouseup', window.stopGridDrag); document.addEventListener('touchend', window.stopGridDrag);
 
         window.toggleSplitHour = (locId, hourStr) => {
+            const rolePrefix = window.currentMapRole === 'clean' ? 'clean_' : 'cs_';
             const [startH] = hourStr.split(':'), endH = String(parseInt(startH, 10) + 1).padStart(2, '0');
-            const stateKey = `${locId}_${hourStr}`, willBeSplit = !splitHoursState[stateKey];
+            const stateKey = `${rolePrefix}${locId}_${hourStr}`, willBeSplit = !splitHoursState[stateKey];
             window._tempGridValues = window._tempGridValues || {};
             document.querySelectorAll('.grid-input').forEach(i => window._tempGridValues[`${i.dataset.loc}_${i.dataset.start}_${i.dataset.end}`] = i.value);
             document.querySelectorAll('td[data-loc]').forEach(td => {
@@ -5646,15 +5717,19 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     });
                 }
             });
+
+            // 🌟 修正：直接從格子內實際填寫的所有人名進行合併（即使不在上方快捷名單內也能成功儲存）
             let merged = [];
             locKeys.forEach(locId => {
-                teamMembers.forEach(name => {
+                const uniqueNamesInLoc = Array.from(new Set(newScheds.filter(s => s.locationId === locId).map(s => s.name)));
+                uniqueNamesInLoc.forEach(name => {
                     let slots = newScheds.filter(s => s.locationId === locId && s.name === name).sort((a, b) => a.start.localeCompare(b.start));
                     let cur = null;
                     slots.forEach(s => { if (!cur) cur = { ...s }; else if (cur.end === s.start) cur.end = s.end; else { merged.push(cur); cur = { ...s }; } });
                     if (cur) merged.push(cur);
                 });
             });
+
             memberSchedules = [...memberSchedules.filter(s => !s.id.startsWith('sch_grid_')), ...merged];
             const todayStr = getNowInputStrs().date; safeSetLocal('work_cache_schedule_date', todayStr);
             if (window.currentMapRole === 'clean') {
@@ -5666,15 +5741,24 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 safeSetLocal('work_cache_member_schedules', csSchedulesStore);
                 syncConfig('member_schedules', { schedules: csSchedulesStore, date: todayStr });
             }
-            window._tempGridValues = null; window.showToast(`排班已儲存！共生效 ${merged.length} 筆時段。`); window.closeScheduleManager();
+            window._tempGridValues = null; window.showToast(`✅ ${window.currentMapRole === 'clean' ? '清潔' : '客服'}排班已儲存！共生效 ${merged.length} 筆時段。`); window.closeScheduleManager();
         };
 
         window.clearAllSchedules = () => {
-            window.showConfirm('清空排班', '確定要清空當前所有的排班資料嗎？', () => {
+            const isClean = window.currentMapRole === 'clean';
+            window.showConfirm('清空排班', `確定要清空當前所有的【${isClean ? '清潔' : '客服'}】排班資料嗎？`, () => {
                 memberSchedules = []; window._tempGridValues = {};
                 const todayStr = getNowInputStrs().date; safeSetLocal('work_cache_schedule_date', todayStr);
-                syncConfig('member_schedules', { schedules: [], date: todayStr });
-                window.renderScheduleManager(); window.showToast('已清空所有排班');
+                if (isClean) {
+                    cleanSchedulesStore = [];
+                    safeSetLocal('work_cache_clean_schedules', []);
+                    syncConfig('clean_member_schedules', { schedules: [], date: todayStr });
+                } else {
+                    csSchedulesStore = [];
+                    safeSetLocal('work_cache_member_schedules', []);
+                    syncConfig('member_schedules', { schedules: [], date: todayStr });
+                }
+                window.renderScheduleManager(); window.showToast(`已清空所有${isClean ? '清潔' : '客服'}排班`);
             });
         };
 
@@ -5698,7 +5782,11 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     
                     const headers = validRows[0].map(h => h.replace(/^"+|"+$/g, '').trim());
                     window._tempGridValues = window._tempGridValues || {};
-                    const locMap = { '花園仔': 'pt_3', '魚檔': 'pt_4', '整體巡邏': 'pt_5', '客服室': 'pt_1', '一樓大清點': 'pt_2', '一樓': 'pt_2', '地面層大清點': 'pt_6', '地面層': 'pt_6', '休息中': 'pt_7', '人員休息中': 'pt_7', '休息': 'pt_7' };
+                    const isClean = window.currentMapRole === 'clean';
+                    const rolePrefix = isClean ? 'clean_' : 'cs_';
+                    const locMap = isClean
+                        ? { '一樓+廁所': 'pt_1', '一樓': 'pt_1', '魚檔': 'pt_4', '花園仔(男廁)': 'pt_8', '男廁': 'pt_8', '花園仔(女廁)+(傷健廁所)': 'pt_9', '花園仔(女廁)': 'pt_9', '女廁': 'pt_9', '花園仔': 'pt_3', '機動': 'pt_6', '休息中': 'pt_7', '人員休息中': 'pt_7', '休息': 'pt_7' }
+                        : { '花園仔': 'pt_3', '魚檔': 'pt_4', '整體巡邏': 'pt_5', '客服室': 'pt_1', '一樓大清點': 'pt_2', '一樓': 'pt_2', '地面層大清點': 'pt_6', '地面層': 'pt_6', '休息中': 'pt_7', '人員休息中': 'pt_7', '休息': 'pt_7' };
                     
                     for (let rowIdx = 1; rowIdx < validRows.length; rowIdx++) {
                         const cols = validRows[rowIdx]; if (!cols.length) continue;
@@ -5715,24 +5803,19 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             const [slotStart, slotEnd] = timeCol.split('-');
                             if (!slotStart || !slotEnd) continue;
 
-                            // 判斷是整小時 (例如 07:00-08:00) 還是半小時 (例如 07:00-07:30)
                             const [sH, sM] = slotStart.split(':').map(Number);
                             const [eH, eM] = slotEnd.split(':').map(Number);
                             const diffMins = (eH * 60 + eM) - (sH * 60 + sM);
 
                             if (diffMins === 30) {
-                                // 半小時格子
                                 const hStr = pad(sH);
-                                const isFirstHalf = sM === 0;
                                 const baseStartHour = `${hStr}:00`;
-                                
-                                splitHoursState[`${matchedLocId}_${baseStartHour}`] = true;
+                                splitHoursState[`${rolePrefix}${matchedLocId}_${baseStartHour}`] = true;
                                 const halfKey = `${matchedLocId}_${slotStart}_${slotEnd}`;
                                 window._tempGridValues[halfKey] = cellVal;
                             } else {
-                                // 整小時格子
                                 const hStr = pad(sH);
-                                splitHoursState[`${matchedLocId}_${hStr}:00`] = false;
+                                splitHoursState[`${rolePrefix}${matchedLocId}_${hStr}:00`] = false;
                                 const fullKey = `${matchedLocId}_${slotStart}_${slotEnd}`;
                                 window._tempGridValues[fullKey] = cellVal;
                             }
@@ -5792,7 +5875,8 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     if (window.currentMapRole !== 'clean' && (locId === 'pt_2' || locId === 'pt_6') && !validCountSlots.includes(ts)) {
                         rows += `<td class="p-0 border border-slate-200 bg-slate-200/60 pointer-events-none align-middle w-[40px] min-w-[40px]"><div class="w-full h-full ${hClass}"></div></td>`;
                     } else {
-                        const [startH] = tStart.split(':'), [endH] = tEnd.split(':'), isSplit = !!splitHoursState[`${locId}_${tStart}`];
+                        const rolePrefix = window.currentMapRole === 'clean' ? 'clean_' : 'cs_';
+                        const [startH] = tStart.split(':'), [endH] = tEnd.split(':'), isSplit = !!splitHoursState[`${rolePrefix}${locId}_${tStart}`];
                         if (isSplit) {
                             const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
                             const kA = `${locId}_${hA_s}_${hA_e}`, kB = `${locId}_${hB_s}_${hB_e}`;
@@ -5830,10 +5914,43 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 rows += `</tr>`;
             });
 
-            list.innerHTML = `<div class="mb-3 p-2 bg-slate-50 border border-slate-200 rounded-xl shadow-inner w-full"><div class="flex justify-between items-center mb-2 px-1"><span class="text-xs font-bold text-slate-700 flex items-center"><i data-lucide="palette" class="w-3.5 h-3.5 mr-1.5 text-blue-500"></i>快捷填表 (同名同色標記)</span><button onclick="window.toggleEditMembers()" class="text-[10px] font-bold text-slate-500 hover:text-blue-500 transition-colors bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">${isEditingMembers ? '完成編輯' : '編輯名單'}</button></div><div class="flex flex-wrap gap-1.5 px-1 justify-start items-center">${!isEditingMembers ? `<div class="relative group cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')"><div class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}"><i data-lucide="eraser" class="w-3.5 h-3.5 mr-1"></i>橡皮擦</div></div>` : ''}${teamMembers.map((name, idx) => {
-                const c = window.getMemberColorClass(name), sel = activeGridMember === name;
-                return `<div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? '' : `window.selectGridMember('${name}')`}"><div class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-105` : `${c.bg} ${c.text} ${c.border} hover:opacity-80 shadow-sm`}">${name}</div>${isEditingMembers ? `<button onclick="window.removeTeamMember(${idx}); event.stopPropagation();" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold z-10 hover:bg-red-600 transition-colors"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}</div>`;
-            }).join('')}${isEditingMembers ? `<button onclick="window.addTeamMember()" class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-dashed border-slate-400 text-slate-500 hover:bg-slate-200 flex items-center transition-colors justify-center"><i data-lucide="plus" class="w-3.5 h-3.5 mr-1"></i>新增</button>` : ''}</div><div id="grid-hint-text" class="${activeGridMember ? 'mt-2 text-[10px] font-bold animate-pulse px-1 block text-center ' + (activeGridMember === 'ERASER' ? 'text-pink-600' : 'text-blue-600') : 'hidden'}">${activeGridMember === 'ERASER' ? '👉 橡皮擦模式：點擊或拖曳表格以清除整格內容。' : (activeGridMember ? `👉 已選取「${activeGridMember}」，請點擊或拖曳下方表格填入。` : '')}</div></div><div class="bg-white border border-slate-200 rounded-xl mb-1 shadow-sm overflow-hidden flex flex-col relative w-full"><div class="p-2 sm:p-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-2 shrink-0"><h4 class="text-xs font-bold text-slate-700 flex items-center"><i data-lucide="grid" class="w-4 h-4 mr-1.5 text-indigo-500"></i>排班總表 (✂️切半小時 / 🩹復原)</h4><div class="flex items-center gap-1.5"><input type="file" id="scheduleExcelImportInput" accept=".csv" class="hidden" onchange="window.importScheduleCSV(event)"><button onclick="document.getElementById('scheduleExcelImportInput').click()" class="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg shadow-sm transition-colors flex items-center" title="匯入 Excel (CSV)"><i data-lucide="file-up" class="w-3 h-3 mr-1"></i>匯入Excel</button><button onclick="window.clearAllSchedules()" class="bg-red-50 hover:bg-red-100 text-red-600 font-bold text-[10px] px-2.5 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center"><i data-lucide="trash-2" class="w-3 h-3 mr-1"></i>清空</button><button onclick="window.saveGridSchedule()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg shadow-sm transition-colors active:scale-95 flex items-center"><i data-lucide="save" class="w-3 h-3 mr-1"></i>儲存表格</button></div></div><div class="overflow-x-auto w-full" ontouchmove="window.onGridTouchMove(event)"><table class="w-full text-center border-collapse"><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div></div>`;
+            const isCleanRole = window.currentMapRole === 'clean';
+
+            list.innerHTML = `
+            <div class="mb-3 p-2 bg-slate-50 border border-slate-200 rounded-xl shadow-inner w-full">
+                <div class="flex justify-between items-center mb-2 px-1">
+                    <span class="text-xs font-bold text-slate-700 flex items-center"><i data-lucide="palette" class="w-3.5 h-3.5 mr-1.5 text-blue-500"></i>快捷填表 (同名同色標記)</span>
+                    <button onclick="window.toggleEditMembers()" class="text-[10px] font-bold text-slate-500 hover:text-blue-500 transition-colors bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">${isEditingMembers ? '完成編輯' : '編輯名單'}</button>
+                </div>
+                <div class="flex flex-wrap gap-1.5 px-1 justify-start items-center">
+                    ${!isEditingMembers ? `<div class="relative group cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')"><div class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}"><i data-lucide="eraser" class="w-3.5 h-3.5 mr-1"></i>橡皮擦</div></div>` : ''}
+                    ${teamMembers.map((name, idx) => {
+                        const c = window.getMemberColorClass(name), sel = activeGridMember === name;
+                        return `<div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? '' : `window.selectGridMember('${name}')`}"><div class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-105` : `${c.bg} ${c.text} ${c.border} hover:opacity-80 shadow-sm`}">${name}</div>${isEditingMembers ? `<button onclick="window.removeTeamMember(${idx}); event.stopPropagation();" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold z-10 hover:bg-red-600 transition-colors"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}</div>`;
+                    }).join('')}
+                    ${isEditingMembers ? `<button onclick="window.addTeamMember()" class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-dashed border-slate-400 text-slate-500 hover:bg-slate-200 flex items-center transition-colors justify-center"><i data-lucide="plus" class="w-3.5 h-3.5 mr-1"></i>新增</button>` : ''}
+                </div>
+                <div id="grid-hint-text" class="${activeGridMember ? 'mt-2 text-[10px] font-bold animate-pulse px-1 block text-center ' + (activeGridMember === 'ERASER' ? 'text-pink-600' : 'text-blue-600') : 'hidden'}">${activeGridMember === 'ERASER' ? '👉 橡皮擦模式：點擊或拖曳表格以清除整格內容。' : (activeGridMember ? `👉 已選取「${activeGridMember}」，請點擊或拖曳下方表格填入。` : '')}</div>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded-xl mb-1 shadow-sm overflow-hidden flex flex-col relative w-full">
+                <div class="p-2 sm:p-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-2 shrink-0">
+                    <div class="flex items-center gap-2">
+                        <div class="flex bg-slate-200 p-0.5 rounded-lg border border-slate-300 shadow-inner">
+                            <button type="button" onclick="window.toggleMapRoleMode('cs'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${!isCleanRole ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🎧 客服排班</button>
+                            <button type="button" onclick="window.toggleMapRoleMode('clean'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${isCleanRole ? 'bg-white text-teal-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧹 清潔排班</button>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-1.5">
+                        <input type="file" id="scheduleExcelImportInput" accept=".csv" class="hidden" onchange="window.importScheduleCSV(event)">
+                        <button onclick="document.getElementById('scheduleExcelImportInput').click()" class="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg shadow-sm transition-colors flex items-center" title="匯入 Excel (CSV)"><i data-lucide="file-up" class="w-3 h-3 mr-1"></i>匯入Excel</button>
+                        <button onclick="window.clearAllSchedules()" class="bg-red-50 hover:bg-red-100 text-red-600 font-bold text-[10px] px-2.5 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center"><i data-lucide="trash-2" class="w-3 h-3 mr-1"></i>清空</button>
+                        <button onclick="window.saveGridSchedule()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg shadow-sm transition-colors active:scale-95 flex items-center"><i data-lucide="save" class="w-3 h-3 mr-1"></i>儲存表格</button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto w-full" ontouchmove="window.onGridTouchMove(event)"><table class="w-full text-center border-collapse"><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div>
+            </div>`;
             lucide.createIcons();
         };
 
@@ -7151,7 +7268,6 @@ setInterval(() => {
         function setupPatrolSync() {
             if (!currentUser) return;
 
-            // 剛連上雲端驗證成功時，若本機有離線期間累積的剔檔紀錄，立即自動上傳
             if (window.getPendingPatrolCount && window.getPendingPatrolCount() > 0) {
                 window.resumePatrolUploadQueue(true);
             }
@@ -7161,7 +7277,6 @@ setInterval(() => {
                 const remote = JSON.parse(JSON.stringify(data?.history || {}));
                 const pendingQueue = window._patrolPendingQueue || {};
 
-                // 收集所有出現過的日期
                 const allDates = new Set([
                     ...Object.keys(patrolHistoryStore || {}),
                     ...Object.keys(remote || {})
@@ -7170,7 +7285,6 @@ setInterval(() => {
                 const mergedHistory = {};
 
                 allDates.forEach(dateKey => {
-                    // 若雲端已經完全沒有該日期（例如某台裝置執行了「清除今天」），且本機也沒有待上傳佇列，則同步清空該日
                     if (!remote[dateKey] && !pendingQueue[dateKey] && snap.exists()) {
                         return;
                     }
@@ -7191,7 +7305,7 @@ setInterval(() => {
                         const mergedStall = {};
 
                         PATROL_TIME_SLOTS.forEach(slotKey => {
-                            // 🌟 優先權 1：如果本機這個攤位的「這個時段」正在排隊等上傳，絕對保護本機最新操作
+                            // 🌟 優先權 1：本機正在排隊等上傳的時段，優先保留本機
                             if (pendingStall[slotKey]) {
                                 const p = pendingStall[slotKey];
                                 mergedStall[slotKey] = p.val || '';
@@ -7201,12 +7315,11 @@ setInterval(() => {
                                 return;
                             }
 
-                            // 🌟 優先權 2：比對雲端與本機在「該時段」的毫秒時間戳 (_ts)，誰最新就聽誰的！
+                            // 🌟 優先權 2：比對雲端與本機在「該時段」的時間戳 (_ts)，誰最新就聽誰的！
                             const rTs = remoteStall[`${slotKey}_ts`] || 0;
                             const lTs = localStall[`${slotKey}_ts`] || 0;
 
                             if (rTs >= lTs && (rTs > 0 || remoteStall[slotKey] !== undefined)) {
-                                // 雲端時間戳較新（或相等），採用雲端狀態（包含其他裝置的最新修改或取消）
                                 mergedStall[slotKey] = remoteStall[slotKey] || '';
                                 if (remoteStall[`${slotKey}_locked`] !== undefined) {
                                     mergedStall[`${slotKey}_locked`] = remoteStall[`${slotKey}_locked`];
@@ -7216,7 +7329,6 @@ setInterval(() => {
                                 }
                                 if (rTs > 0) mergedStall[`${slotKey}_ts`] = rTs;
                             } else if (lTs > rTs) {
-                                // 本機時間戳較新，保留本機狀態
                                 mergedStall[slotKey] = localStall[slotKey] || '';
                                 if (localStall[`${slotKey}_locked`] !== undefined) {
                                     mergedStall[`${slotKey}_locked`] = localStall[`${slotKey}_locked`];
