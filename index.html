@@ -1251,50 +1251,51 @@ document.addEventListener('visibilitychange', () => {
     const dayRecords = patrolHistoryStore[currentPatrolDate];
     let changed = false;
     let autoFilledCount = 0;
-    const affectedStallKeys = new Set();
+    const affectedStallSlots = [];
+    const syncTs = Date.now();
 
     // 3. 檢查現有記錄：若照片被刪除，且該格是「自動填的 0」且沒有被手動鎖定，才允許清除
     Object.keys(dayRecords).forEach(stallKey => {
         PATROL_TIME_SLOTS.forEach(slotKey => {
             const reasonKey = `${slotKey}_reason`;
             const lockedKey = `${slotKey}_locked`;
+            const tsKey = `${slotKey}_ts`;
             const hasAutoReason = !!dayRecords[stallKey]?.[reasonKey];
             const isUserLocked = !!dayRecords[stallKey]?.[lockedKey];
 
             const isStillValid = currentExpectedMap.has(stallKey) && currentExpectedMap.get(stallKey).has(slotKey);
             
-            // 🌟 只有在非手動鎖定的情況下，照片刪除才連帶清除自動 0
+            // 🌟 只有在非手動鎖定的情況下，照片刪除才連帶清除自動 0，並打上最新時間戳通知所有裝置清除
             if (!isStillValid && hasAutoReason && !isUserLocked) {
                 if (dayRecords[stallKey][slotKey] === '0') {
-                    delete dayRecords[stallKey][slotKey];
+                    dayRecords[stallKey][slotKey] = '';
                 }
-                delete dayRecords[stallKey][reasonKey];
+                dayRecords[stallKey][reasonKey] = '';
+                dayRecords[stallKey][tsKey] = syncTs;
                 changed = true;
-                affectedStallKeys.add(stallKey);
+                affectedStallSlots.push({ stallKey, slotKey });
             }
         });
-
-        if (Object.keys(dayRecords[stallKey] || {}).length === 0) {
-            delete dayRecords[stallKey];
-        }
     });
 
-    // 4. 自動填入 0：前提是該格完全沒有被使用者手動標記過 (`isUserLocked` 為 false)
+    // 4. 自動填入 0：前提是該格沒有值，且沒有被使用者手動操作或手動取消過 (`isUserLocked` 為 false)
     currentExpectedMap.forEach((slots, stallKey) => {
         if (!dayRecords[stallKey]) dayRecords[stallKey] = {};
         slots.forEach((reasonStr, slotKey) => {
             const reasonKey = `${slotKey}_reason`;
             const lockedKey = `${slotKey}_locked`;
+            const tsKey = `${slotKey}_ts`;
             const curVal = dayRecords[stallKey][slotKey];
             const isUserLocked = !!dayRecords[stallKey][lockedKey];
 
-            // 🌟 關鍵記憶防護：如果使用者已經手動點過（isUserLocked 為 true），絕對不覆蓋！
+            // 🌟 關鍵記憶防護：只要使用者手動點過或手動取消過（isUserLocked 為 true），相片自動填 0 絕對不介入！
             if (!curVal && !isUserLocked) {
                 dayRecords[stallKey][slotKey] = '0';
                 dayRecords[stallKey][reasonKey] = reasonStr;
+                dayRecords[stallKey][tsKey] = syncTs;
                 autoFilledCount++;
                 changed = true;
-                affectedStallKeys.add(stallKey);
+                affectedStallSlots.push({ stallKey, slotKey });
             }
         });
     });
@@ -1304,8 +1305,8 @@ document.addEventListener('visibilitychange', () => {
         safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
         safeSetLocal('work_cache_patrol_records', patrolState);
 
-        affectedStallKeys.forEach(k => {
-            if (window.enqueuePatrolSync) window.enqueuePatrolSync(currentPatrolDate, k);
+        affectedStallSlots.forEach(({ stallKey, slotKey }) => {
+            if (window.enqueuePatrolSync) window.enqueuePatrolSync(currentPatrolDate, stallKey, slotKey);
         });
         if (window.resumePatrolUploadQueue) window.resumePatrolUploadQueue(false);
 
@@ -1316,63 +1317,41 @@ document.addEventListener('visibilitychange', () => {
     return autoFilledCount;
 };
 
-// 🌟 記錄本機尚未完成雲端同步的單檔變更（防止網路延遲或重連時被雲端舊快照洗掉回退）
-window._pendingPatrolWrites = getLocal('work_pending_patrol_writes', {});
-
-window.savePendingPatrolWrite = (dateKey, stallKey, stallData) => {
-    if (!window._pendingPatrolWrites[dateKey]) window._pendingPatrolWrites[dateKey] = {};
-    window._pendingPatrolWrites[dateKey][stallKey] = {
-        data: stallData ? JSON.parse(JSON.stringify(stallData)) : null,
-        ts: Date.now()
-    };
-    safeSetLocal('work_pending_patrol_writes', window._pendingPatrolWrites);
-};
-
-window.clearPendingPatrolWrite = (dateKey, stallKey, writeTs) => {
-    const pending = window._pendingPatrolWrites?.[dateKey]?.[stallKey];
-    // 只有當沒有更新的點擊發生時，才移除保護鎖
-    if (pending && pending.ts <= writeTs) {
-        delete window._pendingPatrolWrites[dateKey][stallKey];
-        if (Object.keys(window._pendingPatrolWrites[dateKey]).length === 0) {
-            delete window._pendingPatrolWrites[dateKey];
-        }
-        safeSetLocal('work_pending_patrol_writes', window._pendingPatrolWrites);
-    }
-};
-
-window.flushAllPendingPatrolWrites = async () => {
-    if (!currentUser || !db) return;
-    const dates = Object.keys(window._pendingPatrolWrites || {});
-    for (const dKey of dates) {
-        const stalls = Object.keys(window._pendingPatrolWrites[dKey] || {});
-        for (const sKey of stalls) {
-            await window.syncPatrolStallToCloud(dKey, sKey);
-        }
-    }
-};
-
-// ====== 剔檔專用離線佇列與防回退同步系統 (類似圖庫離線機制) ======
+// ====== 全新重製：時段級 (Slot-Level) 離線佇列與時間戳同步引擎 ======
 window._patrolPendingQueue = getLocal('work_pending_patrol_queue', {});
 window._isSyncingPatrol = false;
 window._hasMorePatrolToSync = false;
 
-// 取得目前尚未同步的攤位總數
+// 取得目前尚未同步的變更總數
 window.getPendingPatrolCount = () => {
     let count = 0;
     Object.values(window._patrolPendingQueue || {}).forEach(dateMap => {
-        count += Object.keys(dateMap || {}).length;
+        Object.values(dateMap || {}).forEach(stallSlots => {
+            count += Object.keys(stallSlots || {}).length;
+        });
     });
     return count;
 };
 
-// 將單一攤位變更推入本機離線佇列（保證關網頁、斷網都不會消失）
-window.enqueuePatrolSync = (dateKey, stallKey) => {
-    const stallData = patrolHistoryStore[dateKey]?.[stallKey];
+// 將「單一攤位的單一時段（或整攤位）」推入離線佇列，附帶精確時間戳，互不干擾其他時段
+window.enqueuePatrolSync = (dateKey, stallKey, targetSlot = null) => {
+    const stallData = patrolHistoryStore[dateKey]?.[stallKey] || {};
     if (!window._patrolPendingQueue[dateKey]) window._patrolPendingQueue[dateKey] = {};
-    window._patrolPendingQueue[dateKey][stallKey] = {
-        data: (stallData && Object.keys(stallData).length > 0) ? JSON.parse(JSON.stringify(stallData)) : null,
-        ts: Date.now()
-    };
+    if (!window._patrolPendingQueue[dateKey][stallKey]) window._patrolPendingQueue[dateKey][stallKey] = {};
+
+    const slotsToEnqueue = targetSlot ? [targetSlot] : PATROL_TIME_SLOTS;
+    const nowTs = Date.now();
+
+    slotsToEnqueue.forEach(sSlot => {
+        const slotTs = stallData[`${sSlot}_ts`] || nowTs;
+        window._patrolPendingQueue[dateKey][stallKey][sSlot] = {
+            val: stallData[sSlot] || '',
+            locked: !!stallData[`${sSlot}_locked`],
+            reason: stallData[`${sSlot}_reason`] || '',
+            ts: slotTs
+        };
+    });
+
     safeSetLocal('work_pending_patrol_queue', window._patrolPendingQueue);
 };
 
@@ -1392,42 +1371,46 @@ window.resumePatrolUploadQueue = async (showOnlineToast = false) => {
         do {
             window._hasMorePatrolToSync = false;
             const snapshotQueue = JSON.parse(JSON.stringify(window._patrolPendingQueue || {}));
-            const updates = {};
-            const fallbackNested = {};
+            const nestedPayload = {};
             let batchCount = 0;
 
             Object.keys(snapshotQueue).forEach(dKey => {
                 const stalls = snapshotQueue[dKey] || {};
                 Object.keys(stalls).forEach(sKey => {
-                    const item = stalls[sKey];
-                    const path = `history.${dKey}.${sKey}`;
-                    if (!item.data || Object.keys(item.data).length === 0) {
-                        updates[path] = deleteField();
-                    } else {
-                        updates[path] = item.data;
-                        if (!fallbackNested[dKey]) fallbackNested[dKey] = {};
-                        fallbackNested[dKey][sKey] = item.data;
-                    }
-                    batchCount++;
+                    const slots = stalls[sKey] || {};
+                    Object.keys(slots).forEach(slotName => {
+                        const item = slots[slotName];
+                        if (!nestedPayload[dKey]) nestedPayload[dKey] = {};
+                        if (!nestedPayload[dKey][sKey]) nestedPayload[dKey][sKey] = {};
+
+                        // 🌟 寫入時段狀態、手動鎖、原因與時間戳（即使是取消也明確寫入 '' 與最新 ts，讓手機與電腦同步取消）
+                        nestedPayload[dKey][sKey][slotName] = item.val || '';
+                        nestedPayload[dKey][sKey][`${slotName}_locked`] = !!item.locked;
+                        nestedPayload[dKey][sKey][`${slotName}_reason`] = item.reason || '';
+                        nestedPayload[dKey][sKey][`${slotName}_ts`] = item.ts;
+                        batchCount++;
+                    });
                 });
             });
 
             if (batchCount === 0) break;
 
-            // 🌟 強化版：若 updateDoc 找不到該日期的父文件結構，自動改用 setDoc(..., { merge: true }) 確保安全寫入
-            try {
-                await updateDoc(ref, updates);
-            } catch (err) {
-                await setDoc(ref, { history: fallbackNested }, { merge: true });
-            }
+            // 🌟 採用 setDoc + { merge: true } 深層合併，只更新有異動的時段欄位，絕不洗掉他人或其他時段紀錄
+            await setDoc(ref, { history: nestedPayload }, { merge: true });
 
-            // 寫入成功後：比對時間戳，只清除「期間沒有被使用者再次點擊修改」的項目
+            // 寫入成功後：比對時間戳，只清除「期間沒有被使用者再次點擊修改」的時段項目
             Object.keys(snapshotQueue).forEach(dKey => {
                 const stalls = snapshotQueue[dKey] || {};
                 Object.keys(stalls).forEach(sKey => {
-                    const uploadedTs = stalls[sKey].ts;
-                    const currentPending = window._patrolPendingQueue?.[dKey]?.[sKey];
-                    if (currentPending && currentPending.ts <= uploadedTs) {
+                    const slots = stalls[sKey] || {};
+                    Object.keys(slots).forEach(slotName => {
+                        const uploadedTs = slots[slotName].ts;
+                        const currentPending = window._patrolPendingQueue?.[dKey]?.[sKey]?.[slotName];
+                        if (currentPending && currentPending.ts <= uploadedTs) {
+                            delete window._patrolPendingQueue[dKey][sKey][slotName];
+                        }
+                    });
+                    if (window._patrolPendingQueue[dKey]?.[sKey] && Object.keys(window._patrolPendingQueue[dKey][sKey]).length === 0) {
                         delete window._patrolPendingQueue[dKey][sKey];
                     }
                 });
@@ -1443,18 +1426,17 @@ window.resumePatrolUploadQueue = async (showOnlineToast = false) => {
             }
         } while (window._hasMorePatrolToSync && navigator.onLine);
     } catch (e) {
-        console.warn('剔檔網路同步遇到阻礙，將自動保留在本機佇列等待下一次重試');
+        console.warn('剔檔網路同步遇到阻礙，將自動保留在本機佇列等待下一次重試', e);
     } finally {
         window._isSyncingPatrol = false;
-        // 如果在同步過程中又產生了新的離線紀錄，自動再次觸發補傳
         if (window.getPendingPatrolCount() > 0 && navigator.onLine) {
             setTimeout(() => window.resumePatrolUploadQueue(false), 2000);
         }
     }
 };
 
-window.syncPatrolStallToCloud = async (dateKey, stallKey) => {
-    window.enqueuePatrolSync(dateKey, stallKey);
+window.syncPatrolStallToCloud = async (dateKey, stallKey, slotKey = null) => {
+    window.enqueuePatrolSync(dateKey, stallKey, slotKey);
     await window.resumePatrolUploadQueue(false);
 };
 
@@ -1485,30 +1467,26 @@ window.setPatrolStatus = (stall, status, slot) => {
     const isCancelling = (currentVal === status);
 
     if (isCancelling) {
-        // 🌟 取消時清除狀態，並解除手動鎖定
-        delete patrolHistoryStore[currentPatrolDate][key][targetSlot];
-        delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_locked`];
-        delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
-        
-        if (Object.keys(patrolHistoryStore[currentPatrolDate][key]).length === 0) {
-            delete patrolHistoryStore[currentPatrolDate][key];
-        }
+        // 🌟 關鍵修復：取消時寫入明確的空字串 '' 與最新時間戳 nowMs，並維持 locked = true（防止被收工相自動填回 0）
+        // 這樣雲端與另一台裝置收到更晚的 nowMs 時，就會立刻同步把該格清空！
+        patrolHistoryStore[currentPatrolDate][key][targetSlot] = '';
+        patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_locked`] = true;
+        patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`] = '';
+        patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_ts`] = nowMs;
+
         window.showToast(navigator.onLine ? `已取消 ${stall.floor} ${stall.id}` : `💾 已取消 ${stall.id} (離線待同步)`);
         window.clearFocusAutoTimer();
-
-        // 🌟 記錄取消操作到日誌
         window.writeGalleryLog('取消剔檔', `${stall.floor} ${stall.id}`, `時段: ${targetSlot}`);
     } else {
-        // 🌟 核心記憶機制：手動點選，打上永久手動鎖定標記 (locked: true)
+        // 🌟 手動點選：寫入狀態、手動鎖定 (locked: true) 與最新毫秒時間戳 (nowMs)
         patrolHistoryStore[currentPatrolDate][key][targetSlot] = status;
         patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_locked`] = true; 
-        delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
+        patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`] = '';
+        patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_ts`] = nowMs;
 
         const desc = status === 'A' ? 'A (檔主)' : status === '1' ? '1 (協作人)' : '0 (無人)';
         const statusName = status === 'A' ? '檔主' : status === '1' ? '協作人' : '無人';
         window.showToast(navigator.onLine ? `${stall.id}：${desc}` : `💾 ${stall.id}：${desc} (離線已存，連網自動上傳)`);
-
-        // 🌟 記錄剔檔操作到日誌
         window.writeGalleryLog('剔檔標記', `${stall.floor} ${stall.id}`, `時段: ${targetSlot} · 狀態: [${status}] ${statusName}`);
       
         if ('speechSynthesis' in window) {
@@ -1528,13 +1506,13 @@ window.setPatrolStatus = (stall, status, slot) => {
     safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
     safeSetLocal('work_cache_patrol_records', patrolState);
 
-    // 1. 先寫入離線佇列上鎖，確保畫面絕對不回退
-    window.enqueuePatrolSync(currentPatrolDate, key);
+    // 1. 只將「該攤位的該時段」推進離線佇列
+    window.enqueuePatrolSync(currentPatrolDate, key, targetSlot);
 
     // 2. 立即渲染畫面
     window.renderPatrol();
 
-    // 3. 背景觸發上傳（若無網路會自動留在佇列，等有網路時自動上傳）
+    // 3. 背景觸發上傳
     window.resumePatrolUploadQueue(false);
 };
         window.updatePatrolDateInputUI = () => {
@@ -7181,59 +7159,81 @@ setInterval(() => {
             onSnapshot(cfgDoc('patrol_history'), (snap) => {
                 const data = snap.exists() ? snap.data() : {};
                 const remote = JSON.parse(JSON.stringify(data?.history || {}));
-
-                // 🌟 核心防護 1：取得本機尚未同步完成的暫存佇列
                 const pendingQueue = window._patrolPendingQueue || {};
 
-                // 🌟 核心防護 2：跨裝置深層合併（Deep Merge），精細到「每一天、每一個攤位、每一個時段」
-                const mergedHistory = { ...patrolHistoryStore };
+                // 收集所有出現過的日期
+                const allDates = new Set([
+                    ...Object.keys(patrolHistoryStore || {}),
+                    ...Object.keys(remote || {})
+                ]);
 
-                // 先把雲端的所有日期抓進來
-                Object.keys(remote).forEach(dateKey => {
-                    if (!mergedHistory[dateKey]) {
-                        mergedHistory[dateKey] = remote[dateKey];
-                    } else {
-                        const localDay = mergedHistory[dateKey];
-                        const remoteDay = remote[dateKey];
-                        const mergedDay = { ...localDay };
+                const mergedHistory = {};
 
-                        Object.keys(remoteDay).forEach(stallKey => {
-                            // 如果這個攤位本機正在等待上傳同步，絕對優先保留本機，不被雲端覆蓋！
-                            if (pendingQueue[dateKey]?.[stallKey]) {
+                allDates.forEach(dateKey => {
+                    // 若雲端已經完全沒有該日期（例如某台裝置執行了「清除今天」），且本機也沒有待上傳佇列，則同步清空該日
+                    if (!remote[dateKey] && !pendingQueue[dateKey] && snap.exists()) {
+                        return;
+                    }
+
+                    const localDay = patrolHistoryStore[dateKey] || {};
+                    const remoteDay = remote[dateKey] || {};
+                    const allStalls = new Set([
+                        ...Object.keys(localDay),
+                        ...Object.keys(remoteDay)
+                    ]);
+
+                    const mergedDay = {};
+
+                    allStalls.forEach(stallKey => {
+                        const localStall = localDay[stallKey] || {};
+                        const remoteStall = remoteDay[stallKey] || {};
+                        const pendingStall = pendingQueue[dateKey]?.[stallKey] || {};
+                        const mergedStall = {};
+
+                        PATROL_TIME_SLOTS.forEach(slotKey => {
+                            // 🌟 優先權 1：如果本機這個攤位的「這個時段」正在排隊等上傳，絕對保護本機最新操作
+                            if (pendingStall[slotKey]) {
+                                const p = pendingStall[slotKey];
+                                mergedStall[slotKey] = p.val || '';
+                                mergedStall[`${slotKey}_locked`] = !!p.locked;
+                                mergedStall[`${slotKey}_reason`] = p.reason || '';
+                                mergedStall[`${slotKey}_ts`] = p.ts;
                                 return;
                             }
 
-                            if (!localDay[stallKey]) {
-                                mergedDay[stallKey] = remoteDay[stallKey];
-                            } else {
-                                // 針對每一個時段進行欄位級合併（保留本機或雲端最新的狀態，手動點選優先）
-                                const localStall = localDay[stallKey];
-                                const remoteStall = remoteDay[stallKey];
-                                const mergedStall = { ...remoteStall, ...localStall };
+                            // 🌟 優先權 2：比對雲端與本機在「該時段」的毫秒時間戳 (_ts)，誰最新就聽誰的！
+                            const rTs = remoteStall[`${slotKey}_ts`] || 0;
+                            const lTs = localStall[`${slotKey}_ts`] || 0;
 
-                                // 確保手動鎖定標記與狀態完整保留
-                                ['上午9點', '上午11點', '下午4點', '下午6點'].forEach(slotKey => {
-                                    const localVal = localStall[slotKey];
-                                    const remoteVal = remoteStall[slotKey];
-                                    const localLocked = localStall[`${slotKey}_locked`];
-                                    const remoteLocked = remoteStall[`${slotKey}_locked`];
-
-                                    if (localLocked) {
-                                        mergedStall[slotKey] = localVal;
-                                        mergedStall[`${slotKey}_locked`] = true;
-                                    } else if (remoteLocked) {
-                                        mergedStall[slotKey] = remoteVal;
-                                        mergedStall[`${slotKey}_locked`] = true;
-                                    } else if (localVal !== undefined) {
-                                        mergedStall[slotKey] = localVal;
-                                    } else if (remoteVal !== undefined) {
-                                        mergedStall[slotKey] = remoteVal;
-                                    }
-                                });
-
-                                mergedDay[stallKey] = mergedStall;
+                            if (rTs >= lTs && (rTs > 0 || remoteStall[slotKey] !== undefined)) {
+                                // 雲端時間戳較新（或相等），採用雲端狀態（包含其他裝置的最新修改或取消）
+                                mergedStall[slotKey] = remoteStall[slotKey] || '';
+                                if (remoteStall[`${slotKey}_locked`] !== undefined) {
+                                    mergedStall[`${slotKey}_locked`] = remoteStall[`${slotKey}_locked`];
+                                }
+                                if (remoteStall[`${slotKey}_reason`] !== undefined) {
+                                    mergedStall[`${slotKey}_reason`] = remoteStall[`${slotKey}_reason`];
+                                }
+                                if (rTs > 0) mergedStall[`${slotKey}_ts`] = rTs;
+                            } else if (lTs > rTs) {
+                                // 本機時間戳較新，保留本機狀態
+                                mergedStall[slotKey] = localStall[slotKey] || '';
+                                if (localStall[`${slotKey}_locked`] !== undefined) {
+                                    mergedStall[`${slotKey}_locked`] = localStall[`${slotKey}_locked`];
+                                }
+                                if (localStall[`${slotKey}_reason`] !== undefined) {
+                                    mergedStall[`${slotKey}_reason`] = localStall[`${slotKey}_reason`];
+                                }
+                                mergedStall[`${slotKey}_ts`] = lTs;
                             }
                         });
+
+                        if (Object.keys(mergedStall).length > 0) {
+                            mergedDay[stallKey] = mergedStall;
+                        }
+                    });
+
+                    if (Object.keys(mergedDay).length > 0) {
                         mergedHistory[dateKey] = mergedDay;
                     }
                 });
