@@ -112,10 +112,24 @@
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         let currentUser = null;
 
-// ====== 圖庫操作日誌核心邏輯 ======
+// ====== 操作日誌核心邏輯 (含剔檔、圖庫與 20 分鐘同用戶聚合折疊) ======
         let sysUserName = localStorage.getItem('gallery_user_name') || '成員_' + Math.floor(Math.random() * 900 + 100);
         let sysUserColor = localStorage.getItem('gallery_user_color') || '#38bdf8';
         let galleryLogsStore = [];
+        window.expandedLogGroups = new Set(); // 記錄使用者展開的群組 ID
+
+        window.toggleLogGroup = (groupId, event) => {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            if (window.expandedLogGroups.has(groupId)) {
+                window.expandedLogGroups.delete(groupId);
+            } else {
+                window.expandedLogGroups.add(groupId);
+            }
+            window.renderGalleryLogs();
+        };
 
         window.writeGalleryLog = async (action, targetName, detail = '') => {
             if (!currentUser || !db) return;
@@ -134,9 +148,23 @@
         window.openLogsModal = () => {
             window.renderGalleryLogs();
             $('galleryLogsModal')?.classList.replace('hidden', 'flex');
-            lucide.createIcons();
+            if (window.lucide) lucide.createIcons();
         };
         window.closeLogsModal = () => $('galleryLogsModal')?.classList.replace('flex', 'hidden');
+
+        window.formatLogTime = (ts) => {
+            const d = new Date(ts);
+            return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+        };
+
+        window.getLogBadgeStyle = (action) => {
+            if (action.includes('刪除') || action.includes('清空') || action.includes('取消')) return 'bg-rose-100 text-rose-700 border-rose-200';
+            if (action.includes('還原')) return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+            if (action.includes('發布') || action.includes('上傳')) return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+            if (action.includes('修改')) return 'bg-amber-100 text-amber-700 border-amber-200';
+            if (action.includes('剔檔')) return 'bg-teal-100 text-teal-800 border-teal-300';
+            return 'bg-blue-100 text-blue-700 border-blue-200';
+        };
 
         window.renderGalleryLogs = () => {
             const container = $('galleryLogsList');
@@ -151,32 +179,110 @@
                 container.innerHTML = `
                     <div class="flex flex-col items-center justify-center py-16 text-slate-400">
                         <i data-lucide="scroll-text" class="w-10 h-10 mb-2 opacity-30"></i>
-                        <span class="text-xs font-bold tracking-widest text-center">尚無任何圖庫操作記錄</span>
+                        <span class="text-xs font-bold tracking-widest text-center">尚無任何操作記錄</span>
                     </div>`;
-                lucide.createIcons({ root: container });
+                if (window.lucide) lucide.createIcons({ root: container });
                 return;
             }
 
-            container.innerHTML = galleryLogsStore.map(log => {
-                const d = new Date(log.timestamp);
-                const timeStr = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
-                
-                let actionBadge = 'bg-blue-100 text-blue-700 border-blue-200';
-                if (log.action.includes('刪除') || log.action.includes('清空')) actionBadge = 'bg-rose-100 text-rose-700 border-rose-200';
-                else if (log.action.includes('還原')) actionBadge = 'bg-emerald-100 text-emerald-700 border-emerald-200';
-                else if (log.action.includes('發布') || log.action.includes('上傳')) actionBadge = 'bg-indigo-100 text-indigo-700 border-indigo-200';
-                else if (log.action.includes('修改')) actionBadge = 'bg-amber-100 text-amber-700 border-amber-200';
+            // 按時間降序（由新到舊）
+            const sortedLogs = [...galleryLogsStore].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+            // 將 20 分鐘（1,200,000 毫秒）內同一個使用者的操作聚合為一組
+            // 🌟 採用穩定唯一的 ID (基於最舊與最新時間戳及用戶名)，重繪時不會變動
+            const TWENTY_MINS = 20 * 60 * 1000;
+            const groups = [];
+            let currentGroup = null;
+
+            sortedLogs.forEach((log) => {
+                const uName = log.user || '未知';
+                if (!currentGroup) {
+                    currentGroup = {
+                        user: uName,
+                        color: log.color || '#38bdf8',
+                        latestTs: log.timestamp,
+                        oldestTs: log.timestamp,
+                        items: [log]
+                    };
+                } else {
+                    const isSameUser = currentGroup.user === uName;
+                    const within20Mins = Math.abs(currentGroup.oldestTs - log.timestamp) <= TWENTY_MINS;
+
+                    if (isSameUser && within20Mins) {
+                        currentGroup.items.push(log);
+                        currentGroup.oldestTs = log.timestamp;
+                    } else {
+                        currentGroup.id = `grp_${currentGroup.user}_${currentGroup.latestTs}_${currentGroup.oldestTs}`;
+                        groups.push(currentGroup);
+                        currentGroup = {
+                            user: uName,
+                            color: log.color || '#38bdf8',
+                            latestTs: log.timestamp,
+                            oldestTs: log.timestamp,
+                            items: [log]
+                        };
+                    }
+                }
+            });
+            if (currentGroup) {
+                currentGroup.id = `grp_${currentGroup.user}_${currentGroup.latestTs}_${currentGroup.oldestTs}`;
+                groups.push(currentGroup);
+            }
+
+            container.innerHTML = groups.map(group => {
+                // 單筆操作：直接橫排顯示，強制 whitespace-nowrap 不換行
+                // 單筆操作：收窄元素間距，大幅提升單行容納字數
+                if (group.items.length === 1) {
+                    const log = group.items[0];
+                    const actionBadge = window.getLogBadgeStyle(log.action);
+                    return `
+                    <div class="py-1 px-2 bg-slate-50 rounded-xl border border-slate-200/80 shadow-2xs flex items-center gap-1 whitespace-nowrap overflow-x-auto scrollbar-hide text-[11px]">
+                        <span class="font-mono text-[9.5px] font-bold text-slate-400 shrink-0 tracking-tight">${window.formatLogTime(log.timestamp)}</span>
+                        <span class="font-black shrink-0 tracking-tight" style="color: ${log.color || '#38bdf8'}">${log.user || '未知'}</span>
+                        <span class="font-black text-[9.5px] px-1 py-0.2 rounded border shrink-0 leading-tight ${actionBadge}">${log.action}</span>
+                        <span class="font-black text-slate-800 shrink-0 tracking-tight">[${log.targetName || '無標題'}]</span>
+                        ${log.detail ? `<span class="text-slate-500 font-medium text-[10px] shrink-0">${log.detail}</span>` : ''}
+                    </div>`;
+                }
+
+                // 多筆折疊操作：
+                const isExpanded = window.expandedLogGroups.has(group.id);
+                const startTime = window.formatLogTime(group.oldestTs).split(' ')[1] || '';
+                const endTime = window.formatLogTime(group.latestTs).split(' ')[1] || '';
+                const datePrefix = window.formatLogTime(group.latestTs).split(' ')[0];
+
+                const detailsHtml = group.items.map(log => {
+                    const actionBadge = window.getLogBadgeStyle(log.action);
+                    return `
+                    <div class="py-1 px-1.5 bg-white rounded-lg border border-slate-200/70 flex items-center gap-1 text-[10px] whitespace-nowrap overflow-x-auto scrollbar-hide">
+                        <span class="font-mono text-[9px] text-slate-400 shrink-0 tracking-tight">${window.formatLogTime(log.timestamp).split(' ')[1]}</span>
+                        <span class="font-bold text-[9px] px-1 py-0.2 rounded border shrink-0 leading-tight ${actionBadge}">${log.action}</span>
+                        <span class="font-black text-slate-800 shrink-0 tracking-tight">[${log.targetName || '無標題'}]</span>
+                        ${log.detail ? `<span class="text-slate-500 font-medium text-[9.5px] shrink-0">${log.detail}</span>` : ''}
+                    </div>`;
+                }).join('');
 
                 return `
-                <div class="p-1.5 px-2.5 bg-slate-50 rounded-lg border border-slate-200/80 shadow-2xs flex items-center space-x-2 whitespace-nowrap overflow-x-auto scrollbar-hide text-[11px]">
-                    <span class="font-mono text-[10px] font-bold text-slate-400 shrink-0">${timeStr}</span>
-                    <span class="font-black shrink-0" style="color: ${log.color || '#38bdf8'}">${log.user || '未知'}</span>
-                    <span class="font-black text-[10px] px-1.5 py-0.5 rounded border shrink-0 ${actionBadge}">${log.action}</span>
-                    <span class="font-black text-slate-800 shrink-0">[${log.targetName || '無標題'}]</span>
-                    ${log.detail ? `<span class="text-slate-500 font-medium text-[10.5px] shrink-0">${log.detail}</span>` : ''}
+                <div class="bg-slate-50 border border-slate-200/90 rounded-xl overflow-hidden shadow-2xs transition-all">
+                    <!-- 🌟 點擊整條按鈕即可展開/收合，加入 whitespace-nowrap 與 shrink-0 嚴格禁止時間換行 -->
+                    <button type="button" onclick="window.toggleLogGroup('${group.id}', event)" class="w-full p-2 px-2.5 flex items-center justify-between text-left hover:bg-slate-100/80 active:bg-slate-200/70 transition-colors select-none">
+                        <div class="flex items-center space-x-1.5 min-w-0 pr-1 overflow-hidden whitespace-nowrap">
+                            <span class="font-mono text-[10px] font-bold text-slate-400 shrink-0 whitespace-nowrap">${datePrefix} ${startTime}~${endTime}</span>
+                            <span class="font-black text-[11px] shrink-0 whitespace-nowrap" style="color: ${group.color}">${group.user}</span>
+                            <span class="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black px-1.5 py-0.2 rounded-full shrink-0 whitespace-nowrap">
+                                ${group.items.length}筆
+                            </span>
+                        </div>
+                        <div class="flex items-center space-x-1 shrink-0 text-blue-600 text-[10.5px] font-bold whitespace-nowrap pointer-events-none">
+                            <span>${isExpanded ? '收合' : '展開'}</span>
+                            <i data-lucide="${isExpanded ? 'chevron-up' : 'chevron-down'}" class="w-3.5 h-3.5"></i>
+                        </div>
+                    </button>
+                    ${isExpanded ? `<div class="p-1.5 pt-0 space-y-1 border-t border-slate-200/60 bg-slate-100/50">${detailsHtml}</div>` : ''}
                 </div>`;
             }).join('');
-            lucide.createIcons({ root: container });
+
+            if (window.lucide) lucide.createIcons({ root: container });
         };
 
         window.openUserNameModal = () => {
@@ -1393,25 +1499,31 @@ window.setPatrolStatus = (stall, status, slot) => {
     const isCancelling = (currentVal === status);
 
     if (isCancelling) {
-        const hadAutoReason = !!patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
-        delete patrolHistoryStore[currentPatrolDate][key][targetSlot];
-        delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
-        if (hadAutoReason) {
-            // 若原本是由相片自動填 0，手動取消時打上標記，防止系統又自動填回 0
-            patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_manualClear`] = true;
-        }
-        if (Object.keys(patrolHistoryStore[currentPatrolDate][key]).length === 0) {
-            delete patrolHistoryStore[currentPatrolDate][key];
-        }
-        window.showToast(navigator.onLine ? `已取消 ${stall.floor} ${stall.id}` : `💾 已取消 ${stall.id} (離線待同步)`);
-        window.clearFocusAutoTimer();
-    } else {
-        patrolHistoryStore[currentPatrolDate][key][targetSlot] = status;
-        delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
-        delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_manualClear`];
-        const desc = status === 'A' ? 'A (檔主)' : status === '1' ? '1 (協作人)' : '0 (無人)';
-        const statusName = status === 'A' ? '檔主' : status === '1' ? '協作人' : '無人';
-        window.showToast(navigator.onLine ? `${stall.id}：${desc}` : `💾 ${stall.id}：${desc} (離線已存，連網自動上傳)`);
+            const hadAutoReason = !!patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
+            delete patrolHistoryStore[currentPatrolDate][key][targetSlot];
+            delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
+            if (hadAutoReason) {
+                // 若原本是由相片自動填 0，手動取消時打上標記，防止系統又自動填回 0
+                patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_manualClear`] = true;
+            }
+            if (Object.keys(patrolHistoryStore[currentPatrolDate][key]).length === 0) {
+                delete patrolHistoryStore[currentPatrolDate][key];
+            }
+            window.showToast(navigator.onLine ? `已取消 ${stall.floor} ${stall.id}` : `💾 已取消 ${stall.id} (離線待同步)`);
+            window.clearFocusAutoTimer();
+
+            // 🌟 記錄取消操作到日誌
+            window.writeGalleryLog('取消剔檔', `${stall.floor} ${stall.id}`, `時段: ${targetSlot}`);
+        } else {
+            patrolHistoryStore[currentPatrolDate][key][targetSlot] = status;
+            delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_reason`];
+            delete patrolHistoryStore[currentPatrolDate][key][`${targetSlot}_manualClear`];
+            const desc = status === 'A' ? 'A (檔主)' : status === '1' ? '1 (協作人)' : '0 (無人)';
+            const statusName = status === 'A' ? '檔主' : status === '1' ? '協作人' : '無人';
+            window.showToast(navigator.onLine ? `${stall.id}：${desc}` : `💾 ${stall.id}：${desc} (離線已存，連網自動上傳)`);
+
+            // 🌟 記錄剔檔操作到日誌
+            window.writeGalleryLog('剔檔標記', `${stall.floor} ${stall.id}`, `時段: ${targetSlot} · 狀態: [${status}] ${statusName}`);
         
         if ('speechSynthesis' in window) {
             try {
@@ -1519,6 +1631,7 @@ window.clearTodayPatrolData = (e) => {
     $('patrolCalendarPopover')?.classList.add('hidden');
     window.updatePatrolDateInputUI();
     window.renderPatrol();
+window.writeGalleryLog('清空剔檔', targetDate, '清空該日全部巡查紀錄');
     window.showToast(`已清除 ${targetDate} 全部剔檔記錄`);
 };
         window.patrolJumpToToday = (e) => {
@@ -8708,7 +8821,7 @@ window.pushMeetingReportsToAllIframes = (reports) => {
                     <!-- 👇 必須放在這個選單框框的內部頂端 -->
                     <div id="settingsDropdown" class="hidden absolute right-0 mt-1 w-48 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200 p-1.5 z-50 flex flex-col space-y-1 animate-flag-in">
                         <button onclick="window.openMeetingReportModal(); window.toggleSettingsMenu();" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-amber-50 hover:text-amber-700 rounded-xl transition-colors text-left"><i data-lucide="clipboard-pen-line" class="w-3.5 h-3.5 mr-2 text-amber-500"></i> 開會記錄</button>
-                        <button onclick="window.openLogsModal(); window.toggleSettingsMenu();" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left"><i data-lucide="scroll-text" class="w-3.5 h-3.5 mr-2 text-blue-500"></i> 圖庫操作日誌</button>
+                        <button onclick="window.openLogsModal(); window.toggleSettingsMenu();" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left"><i data-lucide="scroll-text" class="w-3.5 h-3.5 mr-2 text-blue-500"></i> 操作日誌</button>
                         <div class="border-t border-slate-100 my-1"></div>
                         
                         <button onclick="window.openAsPopout(); window.toggleSettingsMenu();" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left"><i data-lucide="external-link" class="w-3.5 h-3.5 mr-2 text-slate-400"></i> 以獨立視窗開啟</button>
@@ -9494,7 +9607,7 @@ window.pushMeetingReportsToAllIframes = (reports) => {
             <header class="flex justify-between items-center pb-2.5 mb-2 border-b border-slate-100 shrink-0">
                 <div class="flex items-center space-x-2">
                     <div class="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center"><i data-lucide="scroll-text" class="w-4 h-4"></i></div>
-                    <h3 class="font-bold text-sm text-slate-800 tracking-wide">圖庫操作日誌</h3>
+                    <h3 class="font-bold text-sm text-slate-800 tracking-wide">操作日誌</h3>
                 </div>
                 <div class="flex items-center space-x-2">
                     <button type="button" onclick="window.openUserNameModal()" class="text-[10px] font-bold text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-lg border border-blue-200 transition-all">
