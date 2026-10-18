@@ -2539,24 +2539,14 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             }
         };
 
-        // 2. 每日排班重置與觸發相簿歸檔檢查
+        // 2. 每日排班自動切換至今日（保留 5 日多日排班資料，絕不清空）
         function checkAndResetDailySchedule() {
             const todayStr = getNowInputStrs().date;
-            
-            // 排班清理（同時重置客服與清潔排班）
             const lastSavedDate = getLocal('work_cache_schedule_date', '');
-            if (lastSavedDate && lastSavedDate !== todayStr) {
-                memberSchedules = [];
-                csSchedulesStore = [];
-                cleanSchedulesStore = [];
-                safeSetLocal('work_cache_member_schedules', []);
-                safeSetLocal('work_cache_clean_schedules', []);
+            if (lastSavedDate !== todayStr) {
                 safeSetLocal('work_cache_schedule_date', todayStr);
-                syncConfig('member_schedules', { schedules: [], date: todayStr });
-                syncConfig('clean_member_schedules', { schedules: [], date: todayStr });
+                window.syncActiveTodaySchedule();
                 if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
-            } else if (!lastSavedDate) {
-                safeSetLocal('work_cache_schedule_date', todayStr);
             }
 
             // 跨日時自動將剔檔頁日期推進至新的一天
@@ -5934,14 +5924,21 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         document.addEventListener('mouseup', window.stopGridDrag); document.addEventListener('touchend', window.stopGridDrag);
 
         // 🌟 2. 捕捉當下 5 日所有 DOM 格子內容
+        // 🌟 2. 捕捉當下 5 日所有 DOM 格子內容（完整支援整格與半格）
         window.captureAll5DayDomValues = () => {
             window._tempGridValues = window._tempGridValues || {};
+            // 捕捉舊版相容 input
             document.querySelectorAll('.grid-input').forEach(i => {
                 if (i.dataset.date) window._tempGridValues[`${i.dataset.date}_${i.dataset.loc}_${i.dataset.start}_${i.dataset.end}`] = i.value;
             });
+            // 捕捉整格 (1小時)
             document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
                 const disp = td.querySelector('.grid-input-display');
                 if (disp) window._tempGridValues[`${td.dataset.date}_${td.dataset.loc}_${td.dataset.start}_${td.dataset.end}`] = disp.textContent.trim();
+            });
+            // 🌟 關鍵修復：捕捉所有拆分後的半格 (30分鐘)
+            document.querySelectorAll('.grid-input-display[data-loc][data-date]').forEach(div => {
+                window._tempGridValues[`${div.dataset.date}_${div.dataset.loc}_${div.dataset.start}_${div.dataset.end}`] = div.textContent.trim();
             });
         };
 
@@ -5962,13 +5959,11 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             window.captureAll5DayDomValues();
             const prefixPrev = `${prevDateStr}_`;
             const prefixTarget = `${targetDateStr}_`;
-            let copiedCount = 0;
 
             Object.keys(window._tempGridValues).forEach(k => {
                 if (k.startsWith(prefixPrev)) {
                     const suffix = k.slice(prefixPrev.length);
                     window._tempGridValues[prefixTarget + suffix] = window._tempGridValues[k];
-                    if (window._tempGridValues[k]) copiedCount++;
                 }
             });
 
@@ -6001,8 +5996,11 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             });
         };
 
-        // 🌟 5. 儲存全部 5 日排班表
+        // 🌟 5. 儲存全部 5 日排班表（完整讀取整格、半格與暫存資料）
         window.saveGridSchedule = () => {
+            // 先把畫面上所有的整格與半格全部同步進 window._tempGridValues
+            window.captureAll5DayDomValues();
+
             const isClean = window.currentMapRole === 'clean';
             const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
             const locKeys = Object.keys(mapData.points);
@@ -6010,28 +6008,46 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             let rawByDate = {};
             fiveDays.forEach(d => rawByDate[d.dateStr] = []);
 
-            document.querySelectorAll('.grid-input').forEach(i => {
-                const { date, loc, start, end } = i.dataset, text = (i.value || '').trim();
-                if (date && text && start && end) {
-                    if (!rawByDate[date]) rawByDate[date] = [];
-                    text.split(/[\n\s]+/).forEach(r => {
-                        let clean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim();
-                        if (clean && !clean.includes('休')) rawByDate[date].push({ id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5), name: clean, locationId: loc, start, end });
-                    });
-                }
-            });
+            const addSlotRecord = (date, loc, start, end, text) => {
+                if (!date || !text || !start || !end) return;
+                if (!rawByDate[date]) rawByDate[date] = [];
+                text.split(/[\n\s,、/]+/).forEach(r => {
+                    let clean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim();
+                    if (clean && !clean.includes('休') && !clean.includes('...')) {
+                        const exists = rawByDate[date].some(x => x.name === clean && x.locationId === loc && x.start === start && x.end === end);
+                        if (!exists) {
+                            rawByDate[date].push({
+                                id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5),
+                                name: clean,
+                                locationId: loc,
+                                start,
+                                end
+                            });
+                        }
+                    }
+                });
+            };
 
+            // 1. 讀取整格 (td)
             document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
                 const { date, loc, start, end } = td.dataset;
                 const display = td.querySelector('.grid-input-display');
                 const text = display ? display.textContent.trim() : '';
-                if (date && text && start && end) {
-                    if (!rawByDate[date]) rawByDate[date] = [];
-                    text.split(/[\n\s]+/).forEach(r => {
-                        let clean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim();
-                        if (clean && !clean.includes('休')) rawByDate[date].push({ id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5), name: clean, locationId: loc, start, end });
-                    });
-                }
+                addSlotRecord(date, loc, start, end, text);
+            });
+
+            // 2. 🌟 關鍵修復：讀取所有拆分後的半格 (div.grid-input-display[data-loc][data-date])
+            document.querySelectorAll('.grid-input-display[data-loc][data-date]').forEach(div => {
+                const { date, loc, start, end } = div.dataset;
+                const text = (div.textContent || '').trim();
+                addSlotRecord(date, loc, start, end, text);
+            });
+
+            // 3. 讀取舊相容 textarea (若有)
+            document.querySelectorAll('.grid-input').forEach(i => {
+                const { date, loc, start, end } = i.dataset;
+                const text = (i.value || '').trim();
+                addSlotRecord(date, loc, start, end, text);
             });
 
             let totalSavedSlots = 0;
@@ -6054,6 +6070,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             const todayStr = getNowInputStrs().date;
             safeSetLocal('work_cache_schedule_date', todayStr);
             window.syncActiveTodaySchedule();
+
+            // 連同半格拆分狀態一併保存
+            safeSetLocal('work_cache_split_hours', splitHoursState);
 
             if (isClean) {
                 safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
@@ -6105,7 +6124,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             reader.onload = (e) => {
                 try {
                     window.captureAll5DayDomValues();
-                    const text = e.target.result; const rows = []; let row = [], cur = '', inQuotes = false;
+                    // 移除 UTF-8 BOM 避免首欄標題亂碼
+                    const text = (e.target.result || '').replace(/^\uFEFF/, '');
+                    const rows = []; let row = [], cur = '', inQuotes = false;
                     for (let i = 0; i < text.length; i++) {
                         const c = text[i], next = text[i+1];
                         if (c === '"') { if (inQuotes && next === '"') { cur += '"'; i++; } else inQuotes = !inQuotes; }
@@ -6121,49 +6142,72 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     const headers = validRows[0].map(h => h.replace(/^"+|"+$/g, '').trim());
                     const isClean = window.currentMapRole === 'clean';
                     const rolePrefix = isClean ? 'clean_' : 'cs_';
+                    // 注意：較長較精確的名稱放前面，避免「花園仔(男廁)」被「花園仔」提前攔截
                     const locMap = isClean
-                        ? { '一樓+廁所': 'pt_1', '一樓': 'pt_1', '魚檔': 'pt_4', '花園仔(男廁)': 'pt_8', '男廁': 'pt_8', '花園仔(女廁)+(傷健廁所)': 'pt_9', '花園仔(女廁)': 'pt_9', '女廁': 'pt_9', '花園仔': 'pt_3', '機動': 'pt_6', '休息中': 'pt_7', '人員休息中': 'pt_7', '休息': 'pt_7' }
-                        : { '花園仔': 'pt_3', '魚檔': 'pt_4', '整體巡邏': 'pt_5', '客服室': 'pt_1', '一樓大清點': 'pt_2', '一樓': 'pt_2', '地面層大清點': 'pt_6', '地面層': 'pt_6', '休息中': 'pt_7', '人員休息中': 'pt_7', '休息': 'pt_7' };
+                        ? { '一樓+廁所': 'pt_1', '一樓': 'pt_1', '魚檔': 'pt_4', '花園仔(男廁)': 'pt_8', '男廁': 'pt_8', '花園仔(女廁)+(傷健廁所)': 'pt_9', '花園仔(女廁)': 'pt_9', '女廁': 'pt_9', '傷健廁所': 'pt_9', '花園仔': 'pt_3', '機動': 'pt_6', '人員休息中': 'pt_7', '休息中': 'pt_7', '休息': 'pt_7' }
+                        : { '花園仔': 'pt_3', '魚檔': 'pt_4', '整體巡邏': 'pt_5', '客服室': 'pt_1', '一樓大清點': 'pt_2', '一樓': 'pt_2', '地面層大清點': 'pt_6', '地面層': 'pt_6', '人員休息中': 'pt_7', '休息中': 'pt_7', '休息': 'pt_7' };
                     
+                    // 🌟 時間標準化輔助函式：將 7:00 或 7:30 強制轉為 07:00、07:30
+                    const normTime = (tStr) => {
+                        const parts = (tStr || '').trim().split(':');
+                        if (parts.length < 2) return '';
+                        const h = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
+                        if (isNaN(h) || isNaN(m)) return '';
+                        return `${pad(h)}:${pad(m)}`;
+                    };
+
                     for (let rowIdx = 1; rowIdx < validRows.length; rowIdx++) {
                         const cols = validRows[rowIdx]; if (!cols.length) continue;
                         const stationRaw = (cols[0] || '').replace(/\s+/g, '');
-                        let matchedLocId = null; for (let [k, v] of Object.entries(locMap)) { if (stationRaw.includes(k)) { matchedLocId = v; break; } }
+                        let matchedLocId = null;
+                        for (let [k, v] of Object.entries(locMap)) {
+                            if (stationRaw.includes(k)) { matchedLocId = v; break; }
+                        }
                         if (!matchedLocId) continue;
 
                         for (let c = 1; c < headers.length; c++) {
-                            const timeCol = headers[c];
+                            const timeCol = (headers[c] || '').replace(/[~～—–]/g, '-');
                             const cellVal = cols[c] ? cols[c].replace(/^"+|"+$/g, '').trim() : '';
                             if (!timeCol || !timeCol.includes('-')) continue;
 
-                            const [slotStart, slotEnd] = timeCol.split('-');
+                            const [rawStart, rawEnd] = timeCol.split('-');
+                            const slotStart = normTime(rawStart);
+                            const slotEnd = normTime(rawEnd);
                             if (!slotStart || !slotEnd) continue;
 
                             const [sH, sM] = slotStart.split(':').map(Number);
                             const [eH, eM] = slotEnd.split(':').map(Number);
                             const diffMins = (eH * 60 + eM) - (sH * 60 + sM);
+                            const hStr = pad(sH);
+                            const nextHStr = pad(sH + 1);
 
                             if (diffMins === 30) {
-                                const hStr = pad(sH);
                                 const baseStartHour = `${hStr}:00`;
                                 splitHoursState[`${rolePrefix}${targetDateStr}_${matchedLocId}_${baseStartHour}`] = true;
                                 const halfKey = `${targetDateStr}_${matchedLocId}_${slotStart}_${slotEnd}`;
                                 window._tempGridValues[halfKey] = cellVal;
-                            } else {
-                                const hStr = pad(sH);
-                                splitHoursState[`${rolePrefix}${targetDateStr}_${matchedLocId}_${hStr}:00`] = false;
-                                const fullKey = `${targetDateStr}_${matchedLocId}_${slotStart}_${slotEnd}`;
-                                window._tempGridValues[fullKey] = cellVal;
+                                // 刪除舊整格快取避免衝突
+                                delete window._tempGridValues[`${targetDateStr}_${matchedLocId}_${hStr}:00_${nextHStr}:00`];
+                            } else if (diffMins === 60) {
+                                // 若同一小時已經被拆成半格，同步寫入上下半格，否則寫入整格
+                                if (splitHoursState[`${rolePrefix}${targetDateStr}_${matchedLocId}_${hStr}:00`]) {
+                                    window._tempGridValues[`${targetDateStr}_${matchedLocId}_${hStr}:00_${hStr}:30`] = cellVal;
+                                    window._tempGridValues[`${targetDateStr}_${matchedLocId}_${hStr}:30_${nextHStr}:00`] = cellVal;
+                                } else {
+                                    splitHoursState[`${rolePrefix}${targetDateStr}_${matchedLocId}_${hStr}:00`] = false;
+                                    const fullKey = `${targetDateStr}_${matchedLocId}_${slotStart}_${slotEnd}`;
+                                    window._tempGridValues[fullKey] = cellVal;
+                                }
                             }
                         }
                     }
 
-                    // 🌟 自動抓取本次匯入的所有人員編號/姓名，自動累積並記憶至上方快捷填表名單中
+                    // 自動抓取本次匯入的所有人員編號/姓名，自動累積並記憶至上方快捷填表名單中
                     const importedMemberSet = new Set(teamMembers);
                     Object.keys(window._tempGridValues).forEach(k => {
                         const val = window._tempGridValues[k] || '';
                         if (val) {
-                            val.split(/[\n\s]+/).forEach(raw => {
+                            val.split(/[\n\s,、/]+/).forEach(raw => {
                                 const clean = raw.replace(/\(.*?\)/g, '').replace('頂', '').trim();
                                 if (clean && !clean.includes('休') && !clean.includes('...')) {
                                     importedMemberSet.add(clean);
@@ -6184,8 +6228,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     }
 
                     safeSetLocal('work_cache_split_hours', splitHoursState); 
-                    window.renderScheduleManager(); 
-                    window.showToast(`✅ 已匯入【${targetDateStr}】排班，並已同步記憶所有人員！`);
+                    window.renderScheduleManager();
+                    // 🌟 匯入後自動幫你存檔寫入本機與雲端，就算忘記按儲存也不會消失！
+                    window.showToast(`✅ 已匯入【${targetDateStr}】排班！請確認後點擊右上角「儲存 5 日排班」或直接編輯。`);
                 } catch(err) { 
                     window.showToast("解析失敗", true); 
                 }
