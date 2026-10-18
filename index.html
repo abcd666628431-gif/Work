@@ -630,22 +630,45 @@ const tabMetadataMap = {
         let mapData = { points: JSON.parse(JSON.stringify(defaultMapPoints)) }, memberSchedules = [], teamMembers = [];
         let csSchedulesStore = [], cleanSchedulesStore = [];
         let csMembersStore = [], cleanMembersStore = [];
+        // 🌟 多日排班字典（依日期 YYYY-MM-DD 儲存每天排班陣列）
+        let csMultiDaySchedules = {}, cleanMultiDaySchedules = {};
+
+        // 🌟 計算「前2日、昨日、當日、明日、後2日」共 5 天的日期陣列
+        window.get5DayScheduleDates = () => {
+            const baseNow = window.getNow ? window.getNow() : new Date();
+            const baseNoon = new Date(baseNow.getFullYear(), baseNow.getMonth(), baseNow.getDate(), 12, 0, 0);
+            const weekNames = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+            const relLabels = { '-2': '前二日', '-1': '昨日', '0': '今日 (當日)', '1': '明日', '2': '後二日' };
+            return [-2, -1, 0, 1, 2].map(offset => {
+                const d = new Date(baseNoon.getTime() + offset * 86400000);
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                return {
+                    offset,
+                    dateStr: `${y}-${m}-${day}`,
+                    shortDate: `${m}/${day}`,
+                    weekDay: weekNames[d.getDay()],
+                    relLabel: relLabels[String(offset)],
+                    isToday: offset === 0
+                };
+            });
+        };
+
+        // 🌟 確保地圖永遠讀取「今日」的排班資料
+        window.syncActiveTodaySchedule = () => {
+            const todayStr = getNowInputStrs().date;
+            const isClean = window.currentMapRole === 'clean';
+            const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+            memberSchedules = [...(multiStore[todayStr] || [])];
+            if (isClean) cleanSchedulesStore = [...memberSchedules];
+            else csSchedulesStore = [...memberSchedules];
+        };
 
         window.toggleMapRoleMode = (forceMode) => {
-            // 1. 先把當前畫面的排班和名單暫存回對應的角色變數中
-            if (window.currentMapRole === 'cs') {
-                csSchedulesStore = [...memberSchedules];
-                csMembersStore = [...teamMembers];
-            } else {
-                cleanSchedulesStore = [...memberSchedules];
-                cleanMembersStore = [...teamMembers];
-            }
-
-            // 2. 切換角色狀態
             window.currentMapRole = forceMode || (window.currentMapRole === 'cs' ? 'clean' : 'cs');
             const isClean = window.currentMapRole === 'clean';
 
-            // 3. 瞬間更新右上角按鈕樣式
             const roleBtn = $('mapRoleToggleBtn');
             if (roleBtn) {
                 roleBtn.innerText = isClean ? '清潔' : '客服';
@@ -654,11 +677,8 @@ const tabMetadataMap = {
                     : 'absolute top-1.5 right-1.5 z-[60] bg-white hover:bg-indigo-50 text-indigo-700 font-black text-xs px-2 py-0.5 rounded-lg border border-indigo-400 shadow-xs active:scale-95 transition-all cursor-pointer select-none tracking-wider leading-tight';
             }
 
-            // 4. 切換地圖圖層
-            $('mapCsLayer')?.classList.toggle('hidden', isClean);
-            $('mapCleanLayer')?.classList.toggle('hidden', !isClean);
+            $('mapCsLayer')?.classList.toggle('hidden', isClean);$('mapCleanLayer')?.classList.toggle('hidden', !isClean);
 
-            // 5. 外圍站點調整
             $('station-pt_2')?.classList.toggle('hidden', isClean);
             const pt6Station = $('station-pt_6');
             const pt6Title = $('stationPt6Title');
@@ -677,24 +697,19 @@ const tabMetadataMap = {
                 }
             }
 
-            // 6. 瞬間載入對應的角色變數
-            if ($('scheduleBtnText')) $('scheduleBtnText').innerText = isClean ? '清潔排班' : '成員排班';
+            if ($('scheduleBtnText'))$('scheduleBtnText').innerText = isClean ? '清潔排班' : '成員排班';
             mapData.points = JSON.parse(JSON.stringify(isClean ? defaultCleanMapPoints : defaultMapPoints));
-            
-            // 直接指定，避免陣列拷貝延遲
-            memberSchedules = isClean ? cleanSchedulesStore : csSchedulesStore;
-            teamMembers = isClean ? cleanMembersStore : csMembersStore;
+            teamMembers = isClean ? [...cleanMembersStore] : [...csMembersStore];
+            window.syncActiveTodaySchedule();
             window._tempGridValues = null;
 
             const container = $('mapPointsContainer');
             if (container) container.innerHTML = '';
             
-            // 7. 同步更新地圖與排班表（若排班彈窗開著，強制同步調用）
             window.updateMapSimulation();
 
             const modal = $('scheduleManageModal');
             if (modal && modal.classList.contains('flex')) {
-                // 使用 requestAnimationFrame 讓瀏覽器在下一個畫面影格順暢重繪，不卡主執行緒
                 requestAnimationFrame(() => {
                     window.renderScheduleManager();
                 });
@@ -5015,6 +5030,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
         };
 
         // ====== 初始載入防爆：從 IndexedDB 優先拉回完整清單 ======
+        // ====== 初始載入防爆：從 IndexedDB 優先拉回完整清單 ======
         async function loadLocalFastCache() {
             dailyScheduleData = getLocal('work_cache_schedule', []);
             taskCompletionState = getLocal('work_cache_task_states', {});
@@ -5046,9 +5062,24 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
             mapData.points = JSON.parse(JSON.stringify(defaultMapPoints));
 
+            // 🌟 升級：載入 5 日排班快取字典，並自動轉換舊版資料
+            const todayInitStr = getNowInputStrs().date;
             csSchedulesStore = getLocal('work_cache_member_schedules', []);
             cleanSchedulesStore = getLocal('work_cache_clean_schedules', []);
-            memberSchedules = [...csSchedulesStore];
+            csMultiDaySchedules = getLocal('work_cache_cs_multiday_schedules', {});
+            cleanMultiDaySchedules = getLocal('work_cache_clean_multiday_schedules', {});
+
+            // 若 5 日字典庫中尚無今日紀錄，自動把現有紀錄載入為今日排班
+            if (!csMultiDaySchedules[todayInitStr] && csSchedulesStore.length > 0) {
+                csMultiDaySchedules[todayInitStr] = csSchedulesStore;
+            }
+            if (!cleanMultiDaySchedules[todayInitStr] && cleanSchedulesStore.length > 0) {
+                cleanMultiDaySchedules[todayInitStr] = cleanSchedulesStore;
+            }
+
+            // 同步今日生效排班至地圖
+            window.syncActiveTodaySchedule();
+
             tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility);
             tabOrderList = getLocal('work_tab_order_ids', defaultTabOrder);
             checkAndResetDailySchedule(); 
@@ -5106,7 +5137,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 window.renderGallery(); 
             });
 
-// 🌟 補齊動態任務實時監聽
+            // 🌟 動態任務實時監聽
             bindSync('schedule', 'work_cache_schedule', d => {
                 if (d && d.tasks) {
                     dailyScheduleData = d.tasks;
@@ -5115,7 +5146,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 }
             });
 
-            // 🌟 補齊任務勾選完成狀態實時監聽
+            // 🌟 任務勾選完成狀態實時監聽
             bindSync('task_states', 'work_cache_task_states', d => {
                 if (d && d.states) {
                     taskCompletionState = d.states;
@@ -5124,7 +5155,8 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 }
             });
             bindSync('future_memos', 'work_cache_future_memos', d => { futureMemos = d.memos || []; if (!$('memoPage')?.classList.contains('hidden')) window.renderMemos(); window.checkMemoAlerts(); });
-           // 🌟 客服名單與排班同步（僅在當前為客服模式時才更新畫面）
+
+            // 🌟 客服名單與 5 日排班雲端同步（包含多日字典多設備即時同步）
             bindSync('team_members', 'work_cache_team_members', d => {
                 csMembersStore = d.members || [];
                 safeSetLocal('work_cache_team_members', csMembersStore);
@@ -5134,19 +5166,21 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 }
             });
             bindSync('member_schedules', 'work_cache_member_schedules', d => {
-                csSchedulesStore = d.schedules || [];
-                safeSetLocal('work_cache_member_schedules', csSchedulesStore);
-                if (d.date) safeSetLocal('work_cache_schedule_date', d.date);
-                checkAndResetDailySchedule();
+                if (d.multiDay) {
+                    csMultiDaySchedules = d.multiDay;
+                } else if (d.schedules && d.date) {
+                    csMultiDaySchedules[d.date] = d.schedules;
+                }
+                safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
                 if (window.currentMapRole !== 'clean') {
-                    memberSchedules = [...csSchedulesStore];
+                    window.syncActiveTodaySchedule();
                     if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
                     if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
                 }
                 if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
             });
 
-            // 🌟 清潔名單與排班同步（僅在當前為清潔模式時才更新畫面）
+            // 🌟 清潔名單與 5 日排班雲端同步（包含多日字典多設備即時同步）
             bindSync('clean_team_members', 'work_cache_clean_members', d => {
                 cleanMembersStore = d.members || [];
                 safeSetLocal('work_cache_clean_members', cleanMembersStore);
@@ -5156,37 +5190,37 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 }
             });
             bindSync('clean_member_schedules', 'work_cache_clean_schedules', d => {
-                cleanSchedulesStore = d.schedules || [];
-                safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+                if (d.multiDay) {
+                    cleanMultiDaySchedules = d.multiDay;
+                } else if (d.schedules && d.date) {
+                    cleanMultiDaySchedules[d.date] = d.schedules;
+                }
+                safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
                 if (window.currentMapRole === 'clean') {
-                    memberSchedules = [...cleanSchedulesStore];
+                    window.syncActiveTodaySchedule();
                     if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
                     if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
                 }
             });
 
             bindSync('tab_visibility', 'work_cache_tab_visibility', d => { 
-    if (d.visibility) { 
-        // 用預設值當底，再蓋上雲端資料，避免舊資料把新分頁弄不見
-        tabVisibilityState = { ...defaultTabVisibility, ...d.visibility };
-        // 強制「剔檔」一定顯示（可依需求拿掉這行）
-        tabVisibilityState.patrol = true;
-        safeSetLocal('work_cache_tab_visibility', tabVisibilityState); 
-    }
-    if (d.order && Array.isArray(d.order)) {
-        tabOrderList = d.order.filter(k => !!tabMetadataMap[k]);
-        // 補上缺少的分頁
-        defaultTabOrder.forEach(k => {
-            if (!tabOrderList.includes(k)) tabOrderList.push(k);
-        });
-        safeSetLocal('work_tab_order_ids', tabOrderList);
-    }
-    window.applyTabVisibility(); 
-});
+                if (d.visibility) { 
+                    tabVisibilityState = { ...defaultTabVisibility, ...d.visibility };
+                    tabVisibilityState.patrol = true;
+                    safeSetLocal('work_cache_tab_visibility', tabVisibilityState); 
+                }
+                if (d.order && Array.isArray(d.order)) {
+                    tabOrderList = d.order.filter(k => !!tabMetadataMap[k]);
+                    defaultTabOrder.forEach(k => {
+                        if (!tabOrderList.includes(k)) tabOrderList.push(k);
+                    });
+                    safeSetLocal('work_tab_order_ids', tabOrderList);
+                }
+                window.applyTabVisibility(); 
+            });
 
             // 🌟 溫度統計表獨立雙向即時同步
             bindSync('patrol_temp_records', 'work_cache_patrol_temp_records', d => {
-                // 若本機正在連續點選小鍵盤 (800毫秒內)，忽略雲端回傳的舊回音，徹底防止數字閃回
                 if (window._lastTempInputTime && (Date.now() - window._lastTempInputTime) < 800) {
                     return;
                 }
@@ -5607,15 +5641,19 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         window._lastCellTapTime = 0;
         window._lastCellTapKey = '';
 
-        window.handleCellMobileClick = (tdEl, locId, start, end) => {
+        // ====== 5 日上下對照排班核心引擎 ======
+        window._lastCellTapTime = 0;
+        window._lastCellTapKey = '';
+
+        // 🌟 1. 支援 5 日期參數 dateStr 的格子點選
+        window.handleCellMobileClick = (tdEl, dateStr, locId, start, end) => {
             if (!activeGridMember) {
-                window.showToast("請先在上方點選上方成員或橡皮擦！", true);
+                window.showToast("請先在上方浮動列點選成員或橡皮擦！", true);
                 return;
             }
 
-            // 🌟 防幽靈連點：350毫秒內同一格不重複觸發，徹底解決「出現一下就彈回」的問題
             const now = Date.now();
-            const cellKey = `${locId}_${start}_${end}`;
+            const cellKey = `${dateStr}_${locId}_${start}_${end}`;
             if (window._lastCellTapKey === cellKey && (now - window._lastCellTapTime) < 350) {
                 return;
             }
@@ -5628,30 +5666,25 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             window._tempGridValues = window._tempGridValues || {};
 
             if (activeGridMember === 'ERASER') {
-                // 橡皮擦模式：直接清空
                 displayDiv.textContent = '';
                 window._tempGridValues[cellKey] = '';
                 tdEl.className = tdEl.className.replace(/bg-\S+/g, '') + ' bg-white';
                 window.showToast("🧹 已清除此格");
             } else {
-                // 成員填入模式
                 let currentText = displayDiv.textContent.trim();
                 let names = currentText ? currentText.split(/[\n\s]+/).filter(Boolean) : [];
                 
                 if (names.includes(activeGridMember)) {
                     names = names.filter(n => n !== activeGridMember);
-                    window.showToast(`➖ 已從此格移除「${activeGridMember}」`);
+                    window.showToast(`➖ 已移除「${activeGridMember}」`);
                 } else {
                     names.push(activeGridMember);
-                    window.showToast(`➕ 已指派「${activeGridMember}」`);
+                    window.showToast(`➕ 已指派「${activeGridMember}」(${dateStr.slice(5)})`);
                 }
                 const finalStr = names.join('\n');
                 displayDiv.textContent = finalStr;
-
-                // 🌟 同步保存到暫存字典中，防止重繪時消失
                 window._tempGridValues[cellKey] = finalStr;
 
-                // 🌟 同步更新底色（有名字時顯示成員專屬顏色）
                 if (names.length > 0) {
                     const col = window.getMemberColorClass(names[0]);
                     tdEl.className = tdEl.className.replace(/bg-\S+/g, '') + ` ${col.bg}`;
@@ -5663,7 +5696,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
         window.startGridDrag = (el) => {
             if (!activeGridMember) return; el.blur(); isGridDragging = true;
-            if (activeGridMember === 'ERASER') { gridDragAction = 'erase'; el.value = ''; }
+            if (activeGridMember === 'ERASER') { gridDragAction = 'erase'; applyGridAction(el); }
             else { let names = (el.value || '').split(/[\n\s]+/).filter(Boolean); gridDragAction = names.includes(activeGridMember) ? 'remove' : 'add'; applyGridAction(el); }
         };
         window.onGridDragEnter = (el) => { if (isGridDragging && activeGridMember) { el.blur(); applyGridAction(el); } };
@@ -5675,98 +5708,178 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         window.stopGridDrag = () => { isGridDragging = false; gridDragAction = null; window.lastTouchedEl = null; };
         document.addEventListener('mouseup', window.stopGridDrag); document.addEventListener('touchend', window.stopGridDrag);
 
-        window.toggleSplitHour = (locId, hourStr) => {
+        // 🌟 2. 捕捉當下 5 日所有 DOM 格子內容
+        window.captureAll5DayDomValues = () => {
+            window._tempGridValues = window._tempGridValues || {};
+            document.querySelectorAll('.grid-input').forEach(i => {
+                if (i.dataset.date) window._tempGridValues[`${i.dataset.date}_${i.dataset.loc}_${i.dataset.start}_${i.dataset.end}`] = i.value;
+            });
+            document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
+                const disp = td.querySelector('.grid-input-display');
+                if (disp) window._tempGridValues[`${td.dataset.date}_${td.dataset.loc}_${td.dataset.start}_${td.dataset.end}`] = disp.textContent.trim();
+            });
+        };
+
+        window.toggleSplitHour = (dateStr, locId, hourStr) => {
             const rolePrefix = window.currentMapRole === 'clean' ? 'clean_' : 'cs_';
             const [startH] = hourStr.split(':'), endH = String(parseInt(startH, 10) + 1).padStart(2, '0');
-            const stateKey = `${rolePrefix}${locId}_${hourStr}`, willBeSplit = !splitHoursState[stateKey];
-            window._tempGridValues = window._tempGridValues || {};
-            document.querySelectorAll('.grid-input').forEach(i => window._tempGridValues[`${i.dataset.loc}_${i.dataset.start}_${i.dataset.end}`] = i.value);
-            document.querySelectorAll('td[data-loc]').forEach(td => {
-                const disp = td.querySelector('.grid-input-display');
-                if (disp) window._tempGridValues[`${td.dataset.loc}_${td.dataset.start}_${td.dataset.end}`] = disp.textContent.trim();
-            });
-            const fullKey = `${locId}_${hourStr}_${endH}:00`, hA = `${locId}_${startH}:00_${startH}:30`, hB = `${locId}_${startH}:30_${endH}:00`;
+            const stateKey = `${rolePrefix}${dateStr}_${locId}_${hourStr}`, willBeSplit = !splitHoursState[stateKey];
+            window.captureAll5DayDomValues();
+
+            const fullKey = `${dateStr}_${locId}_${hourStr}_${endH}:00`, hA = `${dateStr}_${locId}_${startH}:00_${startH}:30`, hB = `${dateStr}_${locId}_${startH}:30_${endH}:00`;
             if (willBeSplit) { const val = window._tempGridValues[fullKey] || ''; window._tempGridValues[hA] = val; window._tempGridValues[hB] = val; delete window._tempGridValues[fullKey]; }
             else { const names = Array.from(new Set([...(window._tempGridValues[hA]||'').split(/[\n\s]+/), ...(window._tempGridValues[hB]||'').split(/[\n\s]+/)])).map(n => n.trim()).filter(Boolean); window._tempGridValues[fullKey] = names.join('\n'); delete window._tempGridValues[hA]; delete window._tempGridValues[hB]; }
             splitHoursState[stateKey] = willBeSplit; safeSetLocal('work_cache_split_hours', splitHoursState); window.renderScheduleManager();
         };
 
-        window.saveGridSchedule = () => {
-            let newScheds = [], locKeys = Object.keys(mapData.points);
-            
-            // 1. 抓取半小時切割格 (textarea)
-            document.querySelectorAll('.grid-input').forEach(i => {
-                const { loc, start, end } = i.dataset, text = (i.value || '').trim();
-                if (text && start && end) { 
-                    text.split(/[\n\s]+/).forEach(r => { 
-                        let clean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim(); 
-                        if (clean && !clean.includes('休')) newScheds.push({ id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5), name: clean, locationId: loc, start, end }); 
-                    }); 
+        // 🌟 3. 一鍵「複製前一日」排班到當天
+        window.copyPrevDaySchedule = (targetDateStr, prevDateStr) => {
+            window.captureAll5DayDomValues();
+            const prefixPrev = `${prevDateStr}_`;
+            const prefixTarget = `${targetDateStr}_`;
+            let copiedCount = 0;
+
+            Object.keys(window._tempGridValues).forEach(k => {
+                if (k.startsWith(prefixPrev)) {
+                    const suffix = k.slice(prefixPrev.length);
+                    window._tempGridValues[prefixTarget + suffix] = window._tempGridValues[k];
+                    if (window._tempGridValues[k]) copiedCount++;
                 }
             });
 
-            // 2. 🌟 抓取一般 1 小時整格 (手機點選的 td)
-            document.querySelectorAll('td[data-loc]').forEach(td => {
-                const { loc, start, end } = td.dataset;
-                const display = td.querySelector('.grid-input-display');
-                const text = display ? display.textContent.trim() : '';
-                if (text && start && end) {
+            const rolePrefix = window.currentMapRole === 'clean' ? 'clean_' : 'cs_';
+            Object.keys(splitHoursState).forEach(sk => {
+                if (sk.startsWith(`${rolePrefix}${prevDateStr}_`)) {
+                    const rest = sk.slice(`${rolePrefix}${prevDateStr}_`.length);
+                    splitHoursState[`${rolePrefix}${targetDateStr}_${rest}`] = splitHoursState[sk];
+                }
+            });
+            safeSetLocal('work_cache_split_hours', splitHoursState);
+            window.renderScheduleManager();
+            window.showToast(`📋 已將 ${prevDateStr.slice(5)} 的排班複製到 ${targetDateStr.slice(5)}！`);
+        };
+
+        // 🌟 4. 單獨清空某一天排班
+        window.clearSingleDaySchedule = (targetDateStr) => {
+            window.showConfirm('清空單日排班', `確定要清空【${targetDateStr}】當天的排班內容嗎？（其他日子不受影響）`, () => {
+                window.captureAll5DayDomValues();
+                Object.keys(window._tempGridValues).forEach(k => {
+                    if (k.startsWith(`${targetDateStr}_`)) {
+                        window._tempGridValues[k] = '';
+                    }
+                });
+                const isClean = window.currentMapRole === 'clean';
+                const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+                multiStore[targetDateStr] = [];
+                window.renderScheduleManager();
+                window.showToast(`🧹 已清空 ${targetDateStr} 的排班`);
+            });
+        };
+
+        // 🌟 5. 儲存全部 5 日排班表
+        window.saveGridSchedule = () => {
+            const isClean = window.currentMapRole === 'clean';
+            const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+            const locKeys = Object.keys(mapData.points);
+            const fiveDays = window.get5DayScheduleDates();
+            let rawByDate = {};
+            fiveDays.forEach(d => rawByDate[d.dateStr] = []);
+
+            document.querySelectorAll('.grid-input').forEach(i => {
+                const { date, loc, start, end } = i.dataset, text = (i.value || '').trim();
+                if (date && text && start && end) {
+                    if (!rawByDate[date]) rawByDate[date] = [];
                     text.split(/[\n\s]+/).forEach(r => {
                         let clean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim();
-                        if (clean && !clean.includes('休')) newScheds.push({ id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5), name: clean, locationId: loc, start, end });
+                        if (clean && !clean.includes('休')) rawByDate[date].push({ id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5), name: clean, locationId: loc, start, end });
                     });
                 }
             });
 
-            // 🌟 修正：直接從格子內實際填寫的所有人名進行合併（即使不在上方快捷名單內也能成功儲存）
-            let merged = [];
-            locKeys.forEach(locId => {
-                const uniqueNamesInLoc = Array.from(new Set(newScheds.filter(s => s.locationId === locId).map(s => s.name)));
-                uniqueNamesInLoc.forEach(name => {
-                    let slots = newScheds.filter(s => s.locationId === locId && s.name === name).sort((a, b) => a.start.localeCompare(b.start));
-                    let cur = null;
-                    slots.forEach(s => { if (!cur) cur = { ...s }; else if (cur.end === s.start) cur.end = s.end; else { merged.push(cur); cur = { ...s }; } });
-                    if (cur) merged.push(cur);
-                });
+            document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
+                const { date, loc, start, end } = td.dataset;
+                const display = td.querySelector('.grid-input-display');
+                const text = display ? display.textContent.trim() : '';
+                if (date && text && start && end) {
+                    if (!rawByDate[date]) rawByDate[date] = [];
+                    text.split(/[\n\s]+/).forEach(r => {
+                        let clean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim();
+                        if (clean && !clean.includes('休')) rawByDate[date].push({ id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5), name: clean, locationId: loc, start, end });
+                    });
+                }
             });
 
-            memberSchedules = [...memberSchedules.filter(s => !s.id.startsWith('sch_grid_')), ...merged];
-            const todayStr = getNowInputStrs().date; safeSetLocal('work_cache_schedule_date', todayStr);
-            if (window.currentMapRole === 'clean') {
-                cleanSchedulesStore = [...memberSchedules];
+            let totalSavedSlots = 0;
+            Object.keys(rawByDate).forEach(dStr => {
+                const dayScheds = rawByDate[dStr];
+                let merged = [];
+                locKeys.forEach(locId => {
+                    const uniqueNames = Array.from(new Set(dayScheds.filter(s => s.locationId === locId).map(s => s.name)));
+                    uniqueNames.forEach(name => {
+                        let slots = dayScheds.filter(s => s.locationId === locId && s.name === name).sort((a, b) => a.start.localeCompare(b.start));
+                        let cur = null;
+                        slots.forEach(s => { if (!cur) cur = { ...s }; else if (cur.end === s.start) cur.end = s.end; else { merged.push(cur); cur = { ...s }; } });
+                        if (cur) merged.push(cur);
+                    });
+                });
+                multiStore[dStr] = merged;
+                totalSavedSlots += merged.length;
+            });
+
+            const todayStr = getNowInputStrs().date;
+            safeSetLocal('work_cache_schedule_date', todayStr);
+            window.syncActiveTodaySchedule();
+
+            if (isClean) {
+                safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
                 safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
-                syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, date: todayStr });
+                syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
             } else {
-                csSchedulesStore = [...memberSchedules];
+                safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
                 safeSetLocal('work_cache_member_schedules', csSchedulesStore);
-                syncConfig('member_schedules', { schedules: csSchedulesStore, date: todayStr });
+                syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
             }
-            window._tempGridValues = null; window.showToast(`✅ ${window.currentMapRole === 'clean' ? '清潔' : '客服'}排班已儲存！共生效 ${merged.length} 筆時段。`); window.closeScheduleManager();
+            window._tempGridValues = null;
+            window.showToast(`✅ 5日${isClean ? '清潔' : '客服'}排班已全部儲存！（共 ${totalSavedSlots} 筆時段）`);
+            window.closeScheduleManager();
         };
 
         window.clearAllSchedules = () => {
             const isClean = window.currentMapRole === 'clean';
-            window.showConfirm('清空排班', `確定要清空當前所有的【${isClean ? '清潔' : '客服'}】排班資料嗎？`, () => {
-                memberSchedules = []; window._tempGridValues = {};
-                const todayStr = getNowInputStrs().date; safeSetLocal('work_cache_schedule_date', todayStr);
+            window.showConfirm('清空 5 日排班', `確定要清空當前畫面 5 日所有的【${isClean ? '清潔' : '客服'}】排班資料嗎？`, () => {
+                const fiveDays = window.get5DayScheduleDates();
+                const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+                fiveDays.forEach(d => { multiStore[d.dateStr] = []; });
+                window._tempGridValues = {};
+                const todayStr = getNowInputStrs().date;
+                window.syncActiveTodaySchedule();
                 if (isClean) {
-                    cleanSchedulesStore = [];
+                    safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
                     safeSetLocal('work_cache_clean_schedules', []);
-                    syncConfig('clean_member_schedules', { schedules: [], date: todayStr });
+                    syncConfig('clean_member_schedules', { schedules: [], multiDay: cleanMultiDaySchedules, date: todayStr });
                 } else {
-                    csSchedulesStore = [];
+                    safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
                     safeSetLocal('work_cache_member_schedules', []);
-                    syncConfig('member_schedules', { schedules: [], date: todayStr });
+                    syncConfig('member_schedules', { schedules: [], multiDay: csMultiDaySchedules, date: todayStr });
                 }
-                window.renderScheduleManager(); window.showToast(`已清空所有${isClean ? '清潔' : '客服'}排班`);
+                window.renderScheduleManager();
+                window.showToast(`已清空 5 日${isClean ? '清潔' : '客服'}排班`);
             });
+        };
+
+        window._csvImportTargetDate = '';
+        window.triggerDayCSVImport = (dateStr) => {
+            window._csvImportTargetDate = dateStr;
+            $('scheduleExcelImportInput')?.click();
         };
 
         window.importScheduleCSV = (event) => {
             const file = event.target.files[0]; if (!file) return;
+            const targetDateStr = window._csvImportTargetDate || getNowInputStrs().date;
             const reader = new FileReader();
             reader.onload = (e) => {
                 try {
+                    window.captureAll5DayDomValues();
                     const text = e.target.result; const rows = []; let row = [], cur = '', inQuotes = false;
                     for (let i = 0; i < text.length; i++) {
                         const c = text[i], next = text[i+1];
@@ -5781,7 +5894,6 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     if (validRows.length < 2) return window.showToast("匯入檔案內容格式不正確", true);
                     
                     const headers = validRows[0].map(h => h.replace(/^"+|"+$/g, '').trim());
-                    window._tempGridValues = window._tempGridValues || {};
                     const isClean = window.currentMapRole === 'clean';
                     const rolePrefix = isClean ? 'clean_' : 'cs_';
                     const locMap = isClean
@@ -5794,7 +5906,6 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         let matchedLocId = null; for (let [k, v] of Object.entries(locMap)) { if (stationRaw.includes(k)) { matchedLocId = v; break; } }
                         if (!matchedLocId) continue;
 
-                        // 逐欄位比對標題與內容
                         for (let c = 1; c < headers.length; c++) {
                             const timeCol = headers[c];
                             const cellVal = cols[c] ? cols[c].replace(/^"+|"+$/g, '').trim() : '';
@@ -5810,13 +5921,13 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             if (diffMins === 30) {
                                 const hStr = pad(sH);
                                 const baseStartHour = `${hStr}:00`;
-                                splitHoursState[`${rolePrefix}${matchedLocId}_${baseStartHour}`] = true;
-                                const halfKey = `${matchedLocId}_${slotStart}_${slotEnd}`;
+                                splitHoursState[`${rolePrefix}${targetDateStr}_${matchedLocId}_${baseStartHour}`] = true;
+                                const halfKey = `${targetDateStr}_${matchedLocId}_${slotStart}_${slotEnd}`;
                                 window._tempGridValues[halfKey] = cellVal;
                             } else {
                                 const hStr = pad(sH);
-                                splitHoursState[`${rolePrefix}${matchedLocId}_${hStr}:00`] = false;
-                                const fullKey = `${matchedLocId}_${slotStart}_${slotEnd}`;
+                                splitHoursState[`${rolePrefix}${targetDateStr}_${matchedLocId}_${hStr}:00`] = false;
+                                const fullKey = `${targetDateStr}_${matchedLocId}_${slotStart}_${slotEnd}`;
                                 window._tempGridValues[fullKey] = cellVal;
                             }
                         }
@@ -5824,7 +5935,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
                     safeSetLocal('work_cache_split_hours', splitHoursState); 
                     window.renderScheduleManager(); 
-                    window.showToast("✅ 已成功完整匯入 Excel 排班內容！");
+                    window.showToast(`✅ 已成功匯入 Excel 至【${targetDateStr}】！`);
                 } catch(err) { 
                     window.showToast("解析失敗", true); 
                 }
@@ -5841,115 +5952,158 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             pt_7: 'bg-slate-100 text-slate-700 border-r border-slate-200'
         }[id] || 'bg-white text-slate-700');
 
+        // 🌟 6. 核心渲染：前2日 + 當日 + 後2日（共 5 日）上下垂直對照排班總表
         window.renderScheduleManager = () => {
             const list = $('scheduleManageList');
-            let domVals = window._tempGridValues || {};
-            if (!window._tempGridValues) document.querySelectorAll('.grid-input').forEach(i => domVals[`${i.dataset.loc}_${i.dataset.start}_${i.dataset.end}`] = i.value);
+            if (!list) return;
+            const isCleanRole = window.currentMapRole === 'clean';
+            const rolePrefix = isCleanRole ? 'clean_' : 'cs_';
+            const multiStore = isCleanRole ? cleanMultiDaySchedules : csMultiDaySchedules;
 
+            let domVals = window._tempGridValues || {};
             const timeSlots = Array.from({length: 15}, (_, i) => `${pad(i + 7)}:00-${pad(i + 8)}:00`);
             const validCountSlots = ['13:00-14:00', '14:00-15:00', '19:00-20:00', '20:00-21:00', '21:00-22:00'];
             const curTotalMins = window.getNow().getHours() * 60 + window.getNow().getMinutes();
-
-            let th = `<th class="sticky left-0 bg-slate-100 p-1 z-10 w-[56px] min-w-[56px] max-w-[56px] border border-slate-200 text-slate-600 font-black text-[9.5px] text-center align-middle whitespace-nowrap shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">崗位 \\ 時間</th>`;
-            timeSlots.forEach(ts => {
-                const [sH, sM] = ts.split('-')[0].split(':').map(Number), [eH, eM] = ts.split('-')[1].split(':').map(Number);
-                const isCurrentHour = curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
-                th += `<th class="p-1 border border-slate-200 w-[42px] min-w-[42px] text-[8.5px] font-bold ${isCurrentHour ? 'now-glowing-header bg-gradient-to-b from-sky-400 to-sky-500 text-white font-black shadow-md' : 'text-slate-500 bg-slate-50'} whitespace-nowrap text-center align-middle">${isCurrentHour ? '<div class="flex items-center justify-center space-x-0.5 mb-0.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-300 animate-ping"></span><span class="text-[7.5px] bg-amber-300 text-slate-900 px-1 py-0.2 rounded font-black tracking-tight leading-none shadow-xs">現在</span></div>' : ''}${ts}</th>`;
-            });
-
             const order = ['pt_1', 'pt_3', 'pt_4', 'pt_8', 'pt_9', 'pt_5', 'pt_2', 'pt_6', 'pt_7'];
             let sortedLocs = Object.entries(mapData.points).sort(([a], [b]) => (order.indexOf(a) === -1 ? 999 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 999 : order.indexOf(b)));
-            let rows = '';
 
-            sortedLocs.forEach(([locId, pt]) => {
-                const hClass = locId === 'pt_1' ? "min-h-[72px]" : "min-h-[30px]";
-                rows += `<tr><td class="sticky left-0 ${getLocColorClass(locId)} border border-slate-200 font-black text-[10px] p-0.5 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center align-middle break-words leading-tight w-[56px] min-w-[56px] max-w-[56px]">${pt.name.replace(/\s*大清點/, '<br>大清點')}</td>`;
+            const fiveDays = window.get5DayScheduleDates();
+
+            // 逐日生成 5 張上下對照的排班表格
+            const fiveDayTablesHtml = fiveDays.map((dayInfo, dayIdx) => {
+                const dStr = dayInfo.dateStr;
+                const isToday = dayInfo.isToday;
+                const daySchedules = multiStore[dStr] || [];
+                const prevDateStr = dayIdx > 0 ? fiveDays[dayIdx - 1].dateStr : null;
+
+                let th = `<th class="sticky left-0 bg-slate-100 p-1 z-10 w-[56px] min-w-[56px] max-w-[56px] border border-slate-200 text-slate-600 font-black text-[9.5px] text-center align-middle whitespace-nowrap shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">崗位 \\ 時間</th>`;
                 timeSlots.forEach(ts => {
-                    const [tStart, tEnd] = ts.split('-');
-                    const [sH, sM] = tStart.split(':').map(Number), [eH, eM] = tEnd.split(':').map(Number);
-                    const isCurrentHour = curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
-                    const isHalfAActive = isCurrentHour && (curTotalMins < (sH * 60 + sM) + 30);
-                    const isHalfBActive = isCurrentHour && (curTotalMins >= (sH * 60 + sM) + 30);
-                    const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border border-slate-200' : 'border border-slate-200';
-
-                    if (window.currentMapRole !== 'clean' && (locId === 'pt_2' || locId === 'pt_6') && !validCountSlots.includes(ts)) {
-                        rows += `<td class="p-0 border border-slate-200 bg-slate-200/60 pointer-events-none align-middle w-[40px] min-w-[40px]"><div class="w-full h-full ${hClass}"></div></td>`;
-                    } else {
-                        const rolePrefix = window.currentMapRole === 'clean' ? 'clean_' : 'cs_';
-                        const [startH] = tStart.split(':'), [endH] = tEnd.split(':'), isSplit = !!splitHoursState[`${rolePrefix}${locId}_${tStart}`];
-                        if (isSplit) {
-                            const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
-                            const kA = `${locId}_${hA_s}_${hA_e}`, kB = `${locId}_${hB_s}_${hB_e}`;
-                            let cA = domVals[kA], cB = domVals[kB];
-                            const getNamesForHalf = (sStr, eStr) => {
-                                const sNum = parseInt(sStr.replace(':',''), 10), eNum = parseInt(eStr.replace(':',''), 10), res = [];
-                                memberSchedules.forEach(s => { if (s.locationId === locId && parseInt(s.start.replace(':',''), 10) <= sNum && parseInt(s.end.replace(':',''), 10) >= eNum) res.push(s.name); });
-                                return res.join('\n');
-                            };
-                            if (cA === undefined) cA = domVals[`${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${locId}_${tStart}_${tEnd}`] : getNamesForHalf(hA_s, hA_e);
-                            if (cB === undefined) cB = domVals[`${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${locId}_${tStart}_${tEnd}`] : getNamesForHalf(hB_s, hB_e);
-                            const colA = cA.split('\n')[0] ? window.getMemberColorClass(cA.split('\n')[0]).bg : 'bg-white';
-                            const colB = cB.split('\n')[0] ? window.getMemberColorClass(cB.split('\n')[0]).bg : 'bg-white';
-                            rows += `<td class="p-0 ${cellSlotClass} bg-white relative align-middle w-[40px] min-w-[40px]"><button type="button" onclick="window.toggleSplitHour('${locId}', '${tStart}')" class="absolute top-0 right-0 z-20 bg-slate-200 hover:bg-slate-300 text-slate-600 p-0.5 rounded-bl text-[8px] font-bold shadow-sm" title="復原整格">🩹</button><div class="flex w-full h-full ${hClass}"><div class="flex-1 min-w-[20px] border-r border-slate-200 flex flex-col justify-start items-center ${colA} ${isHalfAActive ? 'now-glowing-sub bg-sky-100/90 font-black' : ''} pt-0.5"><div class="text-[7px] font-bold ${isHalfAActive ? 'text-sky-800 bg-sky-100 font-black' : 'text-slate-400 bg-slate-50'} text-center w-full py-0.2 border-b border-slate-100 whitespace-nowrap mb-0.5">${startH}:00~${startH}:30</div>
-                            <textarea readonly class="grid-input w-full p-0 text-[9.5px] resize-none focus:outline-none border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent text-center overflow-y-auto cursor-pointer select-none" style="height: calc(100% - 12px);" data-loc="${locId}" data-start="${hA_s}" data-end="${hA_e}" placeholder="..." onmousedown="window.startGridDrag(this)" onmouseenter="window.onGridDragEnter(this)" ontouchstart="window.startGridDrag(this)">${cA}</textarea>
-                            </div><div class="flex-1 min-w-[20px] flex flex-col justify-start items-center ${colB} ${isHalfBActive ? 'now-glowing-sub bg-sky-100/90 font-black' : ''} pt-0.5"><div class="text-[7px] font-bold ${isHalfBActive ? 'text-sky-800 bg-sky-100 font-black' : 'text-slate-400 bg-slate-50'} text-center w-full py-0.2 border-b border-slate-100 whitespace-nowrap mb-0.5">${startH}:30~${endH}:00</div>
-                            <textarea readonly class="grid-input w-full p-0 text-[9.5px] resize-none focus:outline-none border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent text-center overflow-y-auto cursor-pointer select-none" style="height: calc(100% - 12px);" data-loc="${locId}" data-start="${hB_s}" data-end="${hB_e}" placeholder="..." onmousedown="window.startGridDrag(this)" onmouseenter="window.onGridDragEnter(this)" ontouchstart="window.startGridDrag(this)">${cB}</textarea>
-                            </div></div></td>`;
-                        } else {
-                            const cKey = `${locId}_${tStart}_${tEnd}`; let val = domVals[cKey];
-                            if (val === undefined) {
-                                const kA = `${startH}:00_${startH}:30`, kB = `${startH}:30_${endH}:00`;
-                                if (domVals[`${locId}_${kA}`] !== undefined || domVals[`${locId}_${kB}`] !== undefined) {
-                                    val = Array.from(new Set([...(domVals[`${locId}_${kA}`] || '').split(/[\n\s]+/), ...(domVals[`${locId}_${kB}`] || '').split(/[\n\s]+/)])).map(n => n.trim()).filter(Boolean).join('\n');
-                                } else {
-                                    let names = []; memberSchedules.forEach(s => { if (s.locationId === locId && parseInt(s.start.replace(':',''), 10) <= parseInt(tStart.replace(':',''), 10) && parseInt(s.end.replace(':',''), 10) >= parseInt(tEnd.replace(':',''), 10)) names.push(s.name); });
-                                    val = names.join('\n');
-                                }
-                            }
-                            const bgCol = val.split('\n')[0] ? window.getMemberColorClass(val.split('\n')[0]).bg : 'bg-white';
-                            rows += `<td onclick="window.handleCellMobileClick(this, '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} ${bgCol} hover:opacity-90 transition-colors relative align-middle w-[40px] min-w-[40px] cursor-pointer select-none" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><button type="button" onclick="event.stopPropagation(); window.toggleSplitHour('${locId}', '${tStart}')" class="absolute top-0 right-0 z-20 bg-slate-100 hover:bg-slate-200 text-slate-500 p-0.5 rounded-bl text-[8px] font-bold shadow-sm" title="切割半格">✂️</button><div class="grid-input-display w-full flex items-center justify-center font-bold text-slate-800 text-[10px] leading-tight overflow-hidden p-0.5 pointer-events-none" style="height: ${locId === 'pt_1' ? '72px' : '30px'}; min-height: ${locId === 'pt_1' ? '72px' : '30px'}; white-space: pre-line;">${val}</div></td>`;
-                        }
-                    }
+                    const [sH, sM] = ts.split('-')[0].split(':').map(Number), [eH, eM] = ts.split('-')[1].split(':').map(Number);
+                    const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
+                    th += `<th class="p-1 border border-slate-200 w-[42px] min-w-[42px] text-[8.5px] font-bold ${isCurrentHour ? 'now-glowing-header bg-gradient-to-b from-sky-400 to-sky-500 text-white font-black shadow-md' : 'text-slate-500 bg-slate-50'} whitespace-nowrap text-center align-middle">${isCurrentHour ? '<div class="flex items-center justify-center space-x-0.5 mb-0.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-300 animate-ping"></span><span class="text-[7.5px] bg-amber-300 text-slate-900 px-1 py-0.2 rounded font-black tracking-tight leading-none shadow-xs">現在</span></div>' : ''}${ts}</th>`;
                 });
-                rows += `</tr>`;
-            });
 
-            const isCleanRole = window.currentMapRole === 'clean';
+                let rows = '';
+                sortedLocs.forEach(([locId, pt]) => {
+                    const hClass = locId === 'pt_1' ? "min-h-[64px]" : "min-h-[28px]";
+                    rows += `<tr><td class="sticky left-0 ${getLocColorClass(locId)} border border-slate-200 font-black text-[10px] p-0.5 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center align-middle break-words leading-tight w-[56px] min-w-[56px] max-w-[56px]">${pt.name.replace(/\s*大清點/, '<br>大清點')}</td>`;
+                    timeSlots.forEach(ts => {
+                        const [tStart, tEnd] = ts.split('-');
+                        const [sH, sM] = tStart.split(':').map(Number), [eH, eM] = tEnd.split(':').map(Number);
+                        const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
+                        const isHalfAActive = isCurrentHour && (curTotalMins < (sH * 60 + sM) + 30);
+                        const isHalfBActive = isCurrentHour && (curTotalMins >= (sH * 60 + sM) + 30);
+                        const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border border-slate-200' : 'border border-slate-200';
+
+                        if (!isCleanRole && (locId === 'pt_2' || locId === 'pt_6') && !validCountSlots.includes(ts)) {
+                            rows += `<td class="p-0 border border-slate-200 bg-slate-200/60 pointer-events-none align-middle w-[40px] min-w-[40px]"><div class="w-full h-full ${hClass}"></div></td>`;
+                        } else {
+                            const [startH] = tStart.split(':'), [endH] = tEnd.split(':');
+                            const isSplit = !!(splitHoursState[`${rolePrefix}${dStr}_${locId}_${tStart}`] ?? (isToday ? splitHoursState[`${rolePrefix}${locId}_${tStart}`] : false));
+                            if (isSplit) {
+                                const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
+                                const kA = `${dStr}_${locId}_${hA_s}_${hA_e}`, kB = `${dStr}_${locId}_${hB_s}_${hB_e}`;
+                                let cA = domVals[kA], cB = domVals[kB];
+                                const getNamesForHalf = (sStr, eStr) => {
+                                    const sNum = parseInt(sStr.replace(':',''), 10), eNum = parseInt(eStr.replace(':',''), 10), res = [];
+                                    daySchedules.forEach(s => { if (s.locationId === locId && parseInt(s.start.replace(':',''), 10) <= sNum && parseInt(s.end.replace(':',''), 10) >= eNum) res.push(s.name); });
+                                    return res.join('\n');
+                                };
+                                if (cA === undefined) cA = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : getNamesForHalf(hA_s, hA_e);
+                                if (cB === undefined) cB = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : getNamesForHalf(hB_s, hB_e);
+                                const colA = cA.split('\n')[0] ? window.getMemberColorClass(cA.split('\n')[0]).bg : 'bg-white';
+                                const colB = cB.split('\n')[0] ? window.getMemberColorClass(cB.split('\n')[0]).bg : 'bg-white';
+                                rows += `<td class="p-0 ${cellSlotClass} bg-white relative align-middle w-[40px] min-w-[40px]"><button type="button" onclick="window.toggleSplitHour('${dStr}', '${locId}', '${tStart}')" class="absolute top-0 right-0 z-20 bg-slate-200 hover:bg-slate-300 text-slate-600 p-0.5 rounded-bl text-[8px] font-bold shadow-sm" title="復原整格">🩹</button><div class="flex w-full h-full ${hClass}"><div class="flex-1 min-w-[20px] border-r border-slate-200 flex flex-col justify-start items-center ${colA} ${isHalfAActive ? 'now-glowing-sub bg-sky-100/90 font-black' : ''} pt-0.5"><div class="text-[7px] font-bold ${isHalfAActive ? 'text-sky-800 bg-sky-100 font-black' : 'text-slate-400 bg-slate-50'} text-center w-full py-0.2 border-b border-slate-100 whitespace-nowrap mb-0.5">${startH}:00~${startH}:30</div>
+                                <textarea readonly class="grid-input w-full p-0 text-[9.5px] resize-none focus:outline-none border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent text-center overflow-y-auto cursor-pointer select-none" style="height: calc(100% - 12px);" data-date="${dStr}" data-loc="${locId}" data-start="${hA_s}" data-end="${hA_e}" placeholder="..." onmousedown="window.startGridDrag(this)" onmouseenter="window.onGridDragEnter(this)" ontouchstart="window.startGridDrag(this)">${cA}</textarea>
+                                </div><div class="flex-1 min-w-[20px] flex flex-col justify-start items-center ${colB} ${isHalfBActive ? 'now-glowing-sub bg-sky-100/90 font-black' : ''} pt-0.5"><div class="text-[7px] font-bold ${isHalfBActive ? 'text-sky-800 bg-sky-100 font-black' : 'text-slate-400 bg-slate-50'} text-center w-full py-0.2 border-b border-slate-100 whitespace-nowrap mb-0.5">${startH}:30~${endH}:00</div>
+                                <textarea readonly class="grid-input w-full p-0 text-[9.5px] resize-none focus:outline-none border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent text-center overflow-y-auto cursor-pointer select-none" style="height: calc(100% - 12px);" data-date="${dStr}" data-loc="${locId}" data-start="${hB_s}" data-end="${hB_e}" placeholder="..." onmousedown="window.startGridDrag(this)" onmouseenter="window.onGridDragEnter(this)" ontouchstart="window.startGridDrag(this)">${cB}</textarea>
+                                </div></div></td>`;
+                            } else {
+                                const cKey = `${dStr}_${locId}_${tStart}_${tEnd}`; let val = domVals[cKey];
+                                if (val === undefined) {
+                                    const kA = `${startH}:00_${startH}:30`, kB = `${startH}:30_${endH}:00`;
+                                    if (domVals[`${dStr}_${locId}_${kA}`] !== undefined || domVals[`${dStr}_${locId}_${kB}`] !== undefined) {
+                                        val = Array.from(new Set([...(domVals[`${dStr}_${locId}_${kA}`] || '').split(/[\n\s]+/), ...(domVals[`${dStr}_${locId}_${kB}`] || '').split(/[\n\s]+/)])).map(n => n.trim()).filter(Boolean).join('\n');
+                                    } else {
+                                        let names = []; daySchedules.forEach(s => { if (s.locationId === locId && parseInt(s.start.replace(':',''), 10) <= parseInt(tStart.replace(':',''), 10) && parseInt(s.end.replace(':',''), 10) >= parseInt(tEnd.replace(':',''), 10)) names.push(s.name); });
+                                        val = names.join('\n');
+                                    }
+                                }
+                                const bgCol = val.split('\n')[0] ? window.getMemberColorClass(val.split('\n')[0]).bg : 'bg-white';
+                                rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} ${bgCol} hover:opacity-90 transition-colors relative align-middle w-[40px] min-w-[40px] cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><button type="button" onclick="event.stopPropagation(); window.toggleSplitHour('${dStr}', '${locId}', '${tStart}')" class="absolute top-0 right-0 z-20 bg-slate-100 hover:bg-slate-200 text-slate-500 p-0.5 rounded-bl text-[8px] font-bold shadow-sm" title="切割半格">✂️</button><div class="grid-input-display w-full flex items-center justify-center font-bold text-slate-800 text-[10px] leading-tight overflow-hidden p-0.5 pointer-events-none" style="height: ${locId === 'pt_1' ? '64px' : '28px'}; min-height: ${locId === 'pt_1' ? '64px' : '28px'}; white-space: pre-line;">${val}</div></td>`;
+                            }
+                        }
+                    });
+                    rows += `</tr>`;
+                });
+
+                const badgeStyle = isToday
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : (dayInfo.offset < 0 ? 'bg-slate-200 text-slate-700' : 'bg-amber-500 text-white shadow-xs');
+                const cardBorderStyle = isToday
+                    ? 'border-2 border-blue-500 ring-2 ring-blue-200/60 shadow-md'
+                    : (dayInfo.offset < 0 ? 'border border-slate-200 opacity-95' : 'border border-amber-300 shadow-sm');
+                const headerBgStyle = isToday
+                    ? 'bg-blue-50/90 border-b border-blue-200'
+                    : (dayInfo.offset < 0 ? 'bg-slate-100/80 border-b border-slate-200' : 'bg-amber-50/70 border-b border-amber-200');
+
+                return `
+                <div id="sched-day-card-${dStr}" class="bg-white rounded-xl mb-3 overflow-hidden flex flex-col relative w-full ${cardBorderStyle}">
+                    <div class="px-2.5 py-1.5 ${headerBgStyle} flex flex-wrap justify-between items-center gap-2 shrink-0">
+                        <div class="flex items-center space-x-2">
+                            <span class="px-2 py-0.5 rounded-md text-[11px] font-black tracking-wide ${badgeStyle}">${dayInfo.relLabel}</span>
+                            <span class="text-xs font-mono font-black text-slate-800">${dayInfo.dateStr} (${dayInfo.weekDay})</span>
+                            ${isToday ? '<span class="text-[10px] font-black text-blue-600 bg-white px-1.5 py-0.2 rounded border border-blue-200">📍 地圖即時生效中</span>' : ''}
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            ${prevDateStr ? `<button type="button" onclick="window.copyPrevDaySchedule('${dStr}', '${prevDateStr}')" class="bg-white hover:bg-blue-50 text-blue-600 font-bold text-[10px] px-2 py-1 rounded-lg border border-blue-200 shadow-2xs transition-colors flex items-center active:scale-95" title="複製前一日排班"><i data-lucide="copy" class="w-3 h-3 mr-1"></i>複製前日</button>` : ''}
+                            <button type="button" onclick="window.triggerDayCSVImport('${dStr}')" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[10px] px-2 py-1 rounded-lg border border-emerald-200 transition-colors flex items-center active:scale-95"><i data-lucide="file-up" class="w-3 h-3 mr-1"></i>匯入此日</button>
+                            <button type="button" onclick="window.clearSingleDaySchedule('${dStr}')" class="bg-white hover:bg-red-50 text-red-500 font-bold text-[10px] px-2 py-1 rounded-lg border border-red-200 transition-colors flex items-center active:scale-95"><i data-lucide="trash-2" class="w-3 h-3 mr-0.5"></i>清空此日</button>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto w-full" ontouchmove="window.onGridTouchMove(event)">
+                        <table class="w-full text-center border-collapse">
+                            <thead><tr>${th}</tr></thead>
+                            <tbody>${rows}</tbody>
+                        </table>
+                    </div>
+                </div>`;
+            }).join('');
 
             list.innerHTML = `
-            <div class="mb-3 p-2 bg-slate-50 border border-slate-200 rounded-xl shadow-inner w-full">
-                <div class="flex justify-between items-center mb-2 px-1">
-                    <span class="text-xs font-bold text-slate-700 flex items-center"><i data-lucide="palette" class="w-3.5 h-3.5 mr-1.5 text-blue-500"></i>快捷填表 (同名同色標記)</span>
-                    <button onclick="window.toggleEditMembers()" class="text-[10px] font-bold text-slate-500 hover:text-blue-500 transition-colors bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">${isEditingMembers ? '完成編輯' : '編輯名單'}</button>
-                </div>
-                <div class="flex flex-wrap gap-1.5 px-1 justify-start items-center">
-                    ${!isEditingMembers ? `<div class="relative group cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')"><div class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}"><i data-lucide="eraser" class="w-3.5 h-3.5 mr-1"></i>橡皮擦</div></div>` : ''}
-                    ${teamMembers.map((name, idx) => {
-                        const c = window.getMemberColorClass(name), sel = activeGridMember === name;
-                        return `<div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? '' : `window.selectGridMember('${name}')`}"><div class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-105` : `${c.bg} ${c.text} ${c.border} hover:opacity-80 shadow-sm`}">${name}</div>${isEditingMembers ? `<button onclick="window.removeTeamMember(${idx}); event.stopPropagation();" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold z-10 hover:bg-red-600 transition-colors"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}</div>`;
-                    }).join('')}
-                    ${isEditingMembers ? `<button onclick="window.addTeamMember()" class="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-dashed border-slate-400 text-slate-500 hover:bg-slate-200 flex items-center transition-colors justify-center"><i data-lucide="plus" class="w-3.5 h-3.5 mr-1"></i>新增</button>` : ''}
-                </div>
-                <div id="grid-hint-text" class="${activeGridMember ? 'mt-2 text-[10px] font-bold animate-pulse px-1 block text-center ' + (activeGridMember === 'ERASER' ? 'text-pink-600' : 'text-blue-600') : 'hidden'}">${activeGridMember === 'ERASER' ? '👉 橡皮擦模式：點擊或拖曳表格以清除整格內容。' : (activeGridMember ? `👉 已選取「${activeGridMember}」，請點擊或拖曳下方表格填入。` : '')}</div>
-            </div>
-
-            <div class="bg-white border border-slate-200 rounded-xl mb-1 shadow-sm overflow-hidden flex flex-col relative w-full">
-                <div class="p-2 sm:p-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-2 shrink-0">
+            <!-- 🌟 置頂浮動控制盤：人員名單與儲存按鍵隨手可按 -->
+            <div class="sticky top-0 z-30 mb-3 p-2 bg-white/95 backdrop-blur-md border-2 border-slate-200 rounded-xl shadow-md w-full">
+                <div class="flex flex-wrap justify-between items-center gap-2 mb-2 pb-1.5 border-b border-slate-100">
                     <div class="flex items-center gap-2">
                         <div class="flex bg-slate-200 p-0.5 rounded-lg border border-slate-300 shadow-inner">
-                            <button type="button" onclick="window.toggleMapRoleMode('cs'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${!isCleanRole ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🎧 客服排班</button>
-                            <button type="button" onclick="window.toggleMapRoleMode('clean'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${isCleanRole ? 'bg-white text-teal-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧹 清潔排班</button>
+                            <button type="button" onclick="window.toggleMapRoleMode('cs'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${!isCleanRole ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🎧 客服排班 (5日)</button>
+                            <button type="button" onclick="window.toggleMapRoleMode('clean'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${isCleanRole ? 'bg-white text-teal-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧹 清潔排班 (5日)</button>
                         </div>
+                        <button type="button" onclick="document.getElementById('sched-day-card-${getNowInputStrs().date}')?.scrollIntoView({ behavior: 'smooth', block: 'center' })" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-2 py-1 rounded-lg text-[10px] font-black active:scale-95">定位今日</button>
                     </div>
 
                     <div class="flex items-center gap-1.5">
                         <input type="file" id="scheduleExcelImportInput" accept=".csv" class="hidden" onchange="window.importScheduleCSV(event)">
-                        <button onclick="document.getElementById('scheduleExcelImportInput').click()" class="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg shadow-sm transition-colors flex items-center" title="匯入 Excel (CSV)"><i data-lucide="file-up" class="w-3 h-3 mr-1"></i>匯入Excel</button>
-                        <button onclick="window.clearAllSchedules()" class="bg-red-50 hover:bg-red-100 text-red-600 font-bold text-[10px] px-2.5 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center"><i data-lucide="trash-2" class="w-3 h-3 mr-1"></i>清空</button>
-                        <button onclick="window.saveGridSchedule()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg shadow-sm transition-colors active:scale-95 flex items-center"><i data-lucide="save" class="w-3 h-3 mr-1"></i>儲存表格</button>
+                        <button onclick="window.toggleEditMembers()" class="text-[10px] font-bold text-slate-600 hover:text-blue-600 transition-colors bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs">${isEditingMembers ? '完成名單' : '編輯名單'}</button>
+                        <button onclick="window.clearAllSchedules()" class="bg-red-50 hover:bg-red-100 text-red-600 font-bold text-[10px] px-2.5 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center"><i data-lucide="trash-2" class="w-3 h-3 mr-1"></i>5日全清</button>
+                        <button onclick="window.saveGridSchedule()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg shadow-sm transition-colors active:scale-95 flex items-center"><i data-lucide="save" class="w-3.5 h-3.5 mr-1"></i>儲存 5 日排班</button>
                     </div>
                 </div>
-                <div class="overflow-x-auto w-full" ontouchmove="window.onGridTouchMove(event)"><table class="w-full text-center border-collapse"><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div>
+
+                <div class="flex flex-wrap gap-1.5 px-1 justify-start items-center">
+                    ${!isEditingMembers ? `<div class="relative group cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')"><div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}"><i data-lucide="eraser" class="w-3.5 h-3.5 mr-1"></i>橡皮擦</div></div>` : ''}
+                    ${teamMembers.map((name, idx) => {
+                        const c = window.getMemberColorClass(name), sel = activeGridMember === name;
+                        return `<div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? '' : `window.selectGridMember('${name}')`}"><div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-105` : `${c.bg} ${c.text} ${c.border} hover:opacity-80 shadow-sm`}">${name}</div>${isEditingMembers ? `<button onclick="window.removeTeamMember(${idx}); event.stopPropagation();" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold z-10 hover:bg-red-600 transition-colors"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}</div>`;
+                    }).join('')}
+                    ${isEditingMembers ? `<button onclick="window.addTeamMember()" class="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-dashed border-slate-400 text-slate-500 hover:bg-slate-200 flex items-center transition-colors justify-center"><i data-lucide="plus" class="w-3.5 h-3.5 mr-1"></i>新增</button>` : ''}
+                </div>
+                <div id="grid-hint-text" class="${activeGridMember ? 'mt-1.5 text-[10px] font-bold animate-pulse px-1 block text-center ' + (activeGridMember === 'ERASER' ? 'text-pink-600' : 'text-blue-600') : 'hidden'}">${activeGridMember === 'ERASER' ? '👉 橡皮擦模式：點擊或拖曳下方 5 日表格以清除格子內容。' : (activeGridMember ? `👉 已選取「${activeGridMember}」，可上下對照 5 日表格直接點擊填入。` : '')}</div>
+            </div>
+
+            <!-- 🌟 5日上下垂直對照排班表（前2日、昨日、今日、明日、後2日） -->
+            <div class="space-y-3 pb-4">
+                ${fiveDayTablesHtml}
             </div>`;
             lucide.createIcons();
         };
@@ -9616,12 +9770,18 @@ window.pushMeetingReportsToAllIframes = (reports) => {
         </div>
     </div>
 
-    <div id="scheduleManageModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-2 sm:p-4 overflow-y-auto">
-        <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-fit min-w-[96vw] max-w-[98vw] flex flex-col overflow-hidden relative">
-            <header class="p-2.5 sm:p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50"><h2 class="text-slate-800 font-bold text-sm flex items-center"><i data-lucide="users-round" class="w-4 h-4 mr-2 text-blue-500"></i> 成員排班表</h2><button onclick="window.closeScheduleManager()" class="text-slate-400 p-1.5 rounded-full"><i data-lucide="x" class="w-5 h-5"></i></button></header>
-            <div id="scheduleManageList" class="p-1.5 sm:p-2.5 overflow-y-auto max-h-[90vh] bg-[#fdfbf7] scrollbar-hide"></div>
-        </div>
+    <div id="scheduleManageModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-1.5 sm:p-3 overflow-y-auto">
+    <div class="bg-white border border-slate-200 shadow-2xl rounded-2xl w-fit min-w-[96vw] max-w-[99vw] flex flex-col overflow-hidden relative max-h-[95vh]">
+        <header class="px-3 py-2 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
+            <div class="flex items-center space-x-2">
+                <i data-lucide="calendar-range" class="w-4 h-4 text-blue-500"></i>
+                <h2 class="text-slate-800 font-black text-sm">5日上下對照排班總表 <span class="text-[11px] font-bold text-slate-400 ml-1">(前2日 · 當日 · 後2日)</span></h2>
+            </div>
+            <button onclick="window.closeScheduleManager()" class="text-slate-400 hover:text-slate-700 p-1 rounded-full"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </header>
+        <div id="scheduleManageList" class="p-1.5 sm:p-2.5 overflow-y-auto flex-1 bg-[#fdfbf7] scrollbar-hide"></div>
     </div>
+</div>
 
     <div id="crAddModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] hidden flex-col items-center justify-center p-4">
         <div class="bg-white rounded-2xl p-4 w-full max-w-[300px] shadow-2xl relative max-h-[85vh] overflow-y-auto scrollbar-hide">
