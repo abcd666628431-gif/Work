@@ -1169,21 +1169,19 @@ const tabMetadataMap = {
         let patrolViewMode = 'card';
         let patrolFocusIndex = 0;
 
-// ===== 卡片縮放控制核心邏輯 =====
-        // ===== 卡片縮放控制核心邏輯（獨立視窗與主網頁分開儲存） =====
-        // 判斷當前視窗是否為獨立彈出視窗 (有 opener 或視窗名為 WorkRecordPopup)
-        const isPopoutWindow = !!(window.opener || window.name === 'WorkRecordPopup');
-        const patrolScaleStorageKey = isPopoutWindow ? 'patrol_card_scale_popout' : 'patrol_card_scale_main';
+// ===== 卡片縮放控制核心邏輯（使用 sessionStorage 實現視窗物理級隔離） =====
+        const urlParams = new URLSearchParams(window.location.search);
+        const isPopoutWindow = urlParams.get('view') === 'popout' || window.name === 'WorkRecordPopup';
+        const scaleStorageKey = isPopoutWindow ? 'patrol_scale_popout' : 'patrol_scale_main';
 
-        // ===== 卡片縮放控制核心邏輯（主網頁與獨立視窗分開獨立儲存） =====
-        const isPopoutMode = !!(window.opener || window.name === 'WorkRecordPopup');
-        const patrolScaleKey = isPopoutMode ? 'patrol_card_scale_popout' : 'patrol_card_scale_main';
-
-        let patrolCardScale = localStorage.getItem(patrolScaleKey) || '100';
+        // 🌟 優先讀取個別視窗的 sessionStorage（完全隔離不互通），若無才讀取上次的 localStorage
+        let patrolCardScale = sessionStorage.getItem(scaleStorageKey) || localStorage.getItem(scaleStorageKey) || '100';
 
         window.setPatrolCardScale = (scale) => {
             patrolCardScale = scale;
-            localStorage.setItem(patrolScaleKey, scale);
+            // 寫入當前視窗專屬的 sessionStorage 與分流 localStorage
+            sessionStorage.setItem(scaleStorageKey, scale);
+            localStorage.setItem(scaleStorageKey, scale);
             window.updatePatrolCardScaleUI();
             if (patrolViewMode === 'card') window.renderPatrol();
         };
