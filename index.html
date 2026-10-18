@@ -618,7 +618,7 @@ const tabMetadataMap = {
             'pt_7': { name: '休息中', x: 0, y: 0 }
         };
         const defaultCleanMapPoints = {
-            'pt_1': { name: '一樓+廁所', x: 50, y: 16 },
+            'pt_1': { name: '一樓+廁所', x: 50, y: 17 },
             'pt_4': { name: '魚檔', x: 50, y: 46 },
             'pt_8': { name: '花園仔(男廁)', x: 15.5, y: 86 },
             'pt_3': { name: '花園仔', x: 43, y: 86 },
@@ -702,32 +702,43 @@ const tabMetadataMap = {
         window.handleUploadMemberAvatar = (name, input) => {
             const file = input.files[0];
             if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const img = new Image();
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = 240;
-                    canvas.height = 240;
-                    const ctx = canvas.getContext('2d');
-                    
-                    // 🌟 等比置中裁剪 (Object-fit: cover 效果)，徹底解決照片被壓扁變形的問題
-                    const size = Math.min(img.naturalWidth, img.naturalHeight);
-                    const startX = (img.naturalWidth - size) / 2;
-                    const startY = (img.naturalHeight - size) / 2;
+            let blobUrl = null;
+            try { blobUrl = URL.createObjectURL(file); } catch (e) {}
 
-                    ctx.drawImage(img, startX, startY, size, size, 0, 0, 240, 240);
-                    const avatarBase64 = canvas.toDataURL('image/jpeg', 0.85);
-                    
-                    window.saveMemberProfile(name, { avatar: avatarBase64 });
-                    window.showToast('✅ 已更新頭像');
-                    window.openMemberProfilePopup(name, '');
-                    window.updateMapSimulation();
-                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
-                };
-                img.src = e.target.result;
+            const img = new Image();
+            img.onload = async () => {
+                if (img.decode) { try { await img.decode(); } catch (e) {} }
+                if (blobUrl) try { URL.revokeObjectURL(blobUrl); } catch (e) {}
+
+                const canvas = document.createElement('canvas');
+                canvas.width = 240;
+                canvas.height = 240;
+                const ctx = canvas.getContext('2d');
+                
+                const w = img.naturalWidth || img.width;
+                const h = img.naturalHeight || img.height;
+                const size = Math.min(w, h);
+                const startX = (w - size) / 2;
+                const startY = (h - size) / 2;
+
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, 240, 240);
+                ctx.drawImage(img, startX, startY, size, size, 0, 0, 240, 240);
+                const avatarBase64 = canvas.toDataURL('image/jpeg', 0.85);
+                
+                window.saveMemberProfile(name, { avatar: avatarBase64 });
+                window.showToast('✅ 已更新頭像');
+                window.openMemberProfilePopup(name, '');
+                window.updateMapSimulation();
+                if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
             };
-            reader.readAsDataURL(file);
+            if (blobUrl) {
+                img.src = blobUrl;
+            } else {
+                const reader = new FileReader();
+                reader.onload = (e) => { img.src = e.target.result; };
+                reader.readAsDataURL(file);
+            }
         };
 
         // 🌟 計算「前2日、昨日、當日、明日、後2日」共 5 天的日期陣列
@@ -2599,50 +2610,38 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         };
 
         const splitImageTo4ChunksAsync = async (file, maxDim = CONFIG.maxDim, quality = CONFIG.quality) => {
-            // 🌟 核心防護 1：優先使用現代瀏覽器提供的底層轉正 API (完美解決 OPPO/Android EXIF 方向錯位)
-            let imageSource = null;
-            let isBitmap = false;
-
-            try {
-                if (window.createImageBitmap && (file instanceof Blob || file instanceof File)) {
-                    imageSource = await createImageBitmap(file, { imageOrientation: 'from-image' });
-                    isBitmap = true;
+            const imageSource = await new Promise((resolve, reject) => {
+                let blobUrl = null;
+                try { blobUrl = URL.createObjectURL(file); } catch (e) {}
+                const img = new Image();
+                img.onload = async () => {
+                    if (img.decode) { try { await img.decode(); } catch (e) {} }
+                    if (blobUrl) try { URL.revokeObjectURL(blobUrl); } catch (e) {}
+                    resolve(img);
+                };
+                img.onerror = () => {
+                    if (blobUrl) try { URL.revokeObjectURL(blobUrl); } catch (e) {}
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const fallbackImg = new Image();
+                        fallbackImg.onload = () => resolve(fallbackImg);
+                        fallbackImg.onerror = () => reject(new Error("圖片載入失敗"));
+                        fallbackImg.src = reader.result;
+                    };
+                    reader.onerror = () => reject(new Error("檔案讀取失敗"));
+                    reader.readAsDataURL(file);
+                };
+                if (blobUrl) img.src = blobUrl;
+                else {
+                    const reader = new FileReader();
+                    reader.onload = () => { img.src = reader.result; };
+                    reader.onerror = () => reject(new Error("檔案讀取失敗"));
+                    reader.readAsDataURL(file);
                 }
-            } catch (err) {}
+            });
 
-            if (!imageSource) {
-                imageSource = await new Promise((resolve, reject) => {
-                    let blobUrl = null;
-                    try { blobUrl = URL.createObjectURL(file); } catch (e) {}
-                    const img = new Image();
-                    img.onload = () => {
-                        if (blobUrl) try { URL.revokeObjectURL(blobUrl); } catch(e) {}
-                        resolve(img);
-                    };
-                    img.onerror = () => {
-                        if (blobUrl) try { URL.revokeObjectURL(blobUrl); } catch(e) {}
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                            const fallbackImg = new Image();
-                            fallbackImg.onload = () => resolve(fallbackImg);
-                            fallbackImg.onerror = () => reject(new Error("圖片載入失敗"));
-                            fallbackImg.src = reader.result;
-                        };
-                        reader.onerror = () => reject(new Error("檔案讀取失敗"));
-                        reader.readAsDataURL(file);
-                    };
-                    if (blobUrl) img.src = blobUrl;
-                    else {
-                        const reader = new FileReader();
-                        reader.onload = () => { img.src = reader.result; };
-                        reader.onerror = () => reject(new Error("檔案讀取失敗"));
-                        reader.readAsDataURL(file);
-                    }
-                });
-            }
-
-            let w = isBitmap ? imageSource.width : (imageSource.naturalWidth || imageSource.width || 800);
-            let h = isBitmap ? imageSource.height : (imageSource.naturalHeight || imageSource.height || 600);
+            let w = imageSource.naturalWidth || imageSource.width || 800;
+            let h = imageSource.naturalHeight || imageSource.height || 600;
 
             if (w > maxDim || h > maxDim) {
                 const scale = maxDim / Math.max(w, h);
@@ -2650,7 +2649,6 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 h = Math.round(h * scale);
             }
 
-            // 🌟 核心防護 2：建立主畫布，預設鋪白底防止任何透明區塊變黑
             const canvas = document.createElement('canvas');
             canvas.width = w; 
             canvas.height = h;
@@ -2658,10 +2656,6 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, w, h);
             ctx.drawImage(imageSource, 0, 0, w, h);
-
-            if (isBitmap && imageSource.close) {
-                imageSource.close();
-            }
 
             // 4 等分水平切片
             const chunkHeight = Math.floor(h / 4);
