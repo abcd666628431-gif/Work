@@ -1179,11 +1179,19 @@ const tabMetadataMap = {
         const isPopoutMode = !!(window.opener || window.name === 'WorkRecordPopup');
         const patrolScaleKey = isPopoutMode ? 'patrol_card_scale_popout' : 'patrol_card_scale_main';
 
-        let patrolCardScale = localStorage.getItem(patrolScaleKey) || '100';
+       // ===== 卡片縮放控制核心邏輯（使用 sessionStorage 實現視窗物理級隔離） =====
+        const urlParams = new URLSearchParams(window.location.search);
+        const isPopoutWindow = urlParams.get('view') === 'popout' || window.name === 'WorkRecordPopup';
+        const scaleStorageKey = isPopoutWindow ? 'patrol_scale_popout' : 'patrol_scale_main';
+
+        // 🌟 優先讀取個別視窗的 sessionStorage（完全隔離不互通），若無才讀取上次的 localStorage
+        let patrolCardScale = sessionStorage.getItem(scaleStorageKey) || localStorage.getItem(scaleStorageKey) || '100';
 
         window.setPatrolCardScale = (scale) => {
             patrolCardScale = scale;
-            localStorage.setItem(patrolScaleKey, scale);
+            // 寫入當前視窗專屬的 sessionStorage 與分流 localStorage
+            sessionStorage.setItem(scaleStorageKey, scale);
+            localStorage.setItem(scaleStorageKey, scale);
             window.updatePatrolCardScaleUI();
             if (patrolViewMode === 'card') window.renderPatrol();
         };
@@ -2348,7 +2356,10 @@ window.writeGalleryLog('清空剔檔', targetDate, '清空該日全部巡查紀�
 
         window.openAsPopout = () => {
             const w = 480, h = 950, l = Math.max(0, (window.screen.width - w) / 2), t = Math.max(0, (window.screen.height - h) / 2);
-            window.open(window.location.href, 'WorkRecordPopup', `width=${w},height=${h},left=${l},top=${t},menubar=no,status=no,toolbar=no,location=no,scrollbars=no,resizable=yes`);
+            // 加上 ?view=popout 參數，讓獨立視窗永遠能被精準識別，重整也不失效
+            const popUrl = new URL(window.location.href);
+            popUrl.searchParams.set('view', 'popout');
+            window.open(popUrl.toString(), 'WorkRecordPopup', `width=${w},height=${h},left=${l},top=${t},menubar=no,status=no,toolbar=no,location=no,scrollbars=no,resizable=yes`);
         };
 
         let crRecords = [], crItemTypes = ['海鮮', '肉類', '蔬果', '包裝冰', '其他'], crCurrentSelectedType = '', crCurrentTab = 'active';
