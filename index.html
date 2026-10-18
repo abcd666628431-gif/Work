@@ -5811,16 +5811,32 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         window.selectGridMember = (name) => {
             activeGridMember = (activeGridMember === name) ? null : name;
             document.querySelectorAll('.member-btn-container').forEach(c => {
-                const cName = c.dataset.name, sel = cName === activeGridMember, isEraser = cName === 'ERASER', div = c.querySelector('div');
+                const cName = c.dataset.name, sel = cName === activeGridMember, isEraser = cName === 'ERASER', isSplitter = cName === 'SPLITTER', div = c.querySelector('div');
                 if (!div) return;
-                if (isEraser) div.className = `px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}`;
-                else { const col = window.getMemberColorClass(cName); div.className = `px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all justify-center flex items-center ${sel ? `${col.activeBg} text-white border-transparent shadow-md scale-105` : `${col.bg} ${col.text} ${col.border} hover:opacity-80 shadow-sm`}`; }
+                if (isSplitter) {
+                    div.className = `px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-105' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-sm'}`;
+                } else if (isEraser) {
+                    div.className = `px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}`;
+                } else {
+                    const col = window.getMemberColorClass(cName);
+                    div.className = `px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? `${col.activeBg} text-white border-transparent shadow-md scale-105` : `${col.bg} ${col.text}${col.border} hover:opacity-80 shadow-sm`}`;
+                }
             });
             const hint = $('grid-hint-text');
             if (hint) {
-                if (activeGridMember === 'ERASER') { hint.className = 'mt-2 text-[10px] text-pink-600 font-bold animate-pulse px-1 block text-center'; hint.innerHTML = '👉 橡皮擦模式：點擊或拖曳表格以清除整格內容。'; }
-                else if (activeGridMember) { hint.className = 'mt-2 text-[10px] text-blue-600 font-bold animate-pulse px-1 block text-center'; hint.innerHTML = `👉 已選取「${activeGridMember}」，請點擊或拖曳下方表格填入。`; }
-                else { hint.className = 'hidden'; hint.innerHTML = ''; }
+                if (activeGridMember === 'SPLITTER') {
+                    hint.className = 'mt-1.5 text-[10px] text-indigo-600 font-bold animate-pulse px-1 block text-center';
+                    hint.innerHTML = '✂️ 拆分/合併模式：點擊任何格子可切換「半小時兩半格」或「一小時整格」。';
+                } else if (activeGridMember === 'ERASER') {
+                    hint.className = 'mt-1.5 text-[10px] text-pink-600 font-bold animate-pulse px-1 block text-center';
+                    hint.innerHTML = '👉 橡皮擦模式：點擊表格以清除整格或半格內容。';
+                } else if (activeGridMember) {
+                    hint.className = 'mt-1.5 text-[10px] text-blue-600 font-bold animate-pulse px-1 block text-center';
+                    hint.innerHTML = `👉 已選取「${activeGridMember}」，點擊任何整格或半格即可貼上名字。`;
+                } else {
+                    hint.className = 'hidden';
+                    hint.innerHTML = '';
+                }
             }
             document.querySelectorAll('.grid-input').forEach(ta => { ta.classList.toggle('cursor-pointer', !!activeGridMember); ta.classList.toggle('select-none', !!activeGridMember); });
         };
@@ -5844,31 +5860,42 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         window._lastCellTapKey = '';
 
         // 🌟 1. 支援 5 日期參數 dateStr 的格子點選
-        window.handleCellMobileClick = (tdEl, dateStr, locId, start, end) => {
+        window.handleCellMobileClick = (el, dateStr, locId, start, end) => {
+            // 工具一：選中「✂️ 拆分/合併」模式時，點擊直接拆開或合併
+            if (activeGridMember === 'SPLITTER') {
+                window.toggleSplitHour(dateStr, locId, start);
+                return;
+            }
+
+            // 若尚未選擇人員/工具，提醒使用者
             if (!activeGridMember) {
-                window.showToast("請先在上方浮動列點選成員或橡皮擦！", true);
+                window.showToast("👉 請先在上方選取人員、橡皮擦或拆分工具！", true);
                 return;
             }
 
             const now = Date.now();
             const cellKey = `${dateStr}_${locId}_${start}_${end}`;
-            if (window._lastCellTapKey === cellKey && (now - window._lastCellTapTime) < 350) {
+            if (window._lastCellTapKey === cellKey && (now - window._lastCellTapTime) < 250) {
                 return;
             }
             window._lastCellTapTime = now;
             window._lastCellTapKey = cellKey;
             
-            const displayDiv = tdEl.querySelector('.grid-input-display');
-            if (!displayDiv) return;
+            // 同時支援整格與內部半格
+            const displayDiv = el.classList.contains('grid-input-display') 
+                ? el 
+                : (el.querySelector('.grid-input-display') || el);
 
             window._tempGridValues = window._tempGridValues || {};
 
+            // 工具二：橡皮擦
             if (activeGridMember === 'ERASER') {
                 displayDiv.textContent = '';
                 window._tempGridValues[cellKey] = '';
-                tdEl.className = tdEl.className.replace(/bg-\S+/g, '') + ' bg-white';
+                el.className = el.className.replace(/bg-\S+/g, '') + ' bg-white';
                 window.showToast("🧹 已清除此格");
             } else {
+                // 工具三：填入名字
                 let currentText = displayDiv.textContent.trim();
                 let names = currentText ? currentText.split(/[\n\s]+/).filter(Boolean) : [];
                 
@@ -5877,7 +5904,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     window.showToast(`➖ 已移除「${activeGridMember}」`);
                 } else {
                     names.push(activeGridMember);
-                    window.showToast(`➕ 已指派「${activeGridMember}」(${dateStr.slice(5)})`);
+                    window.showToast(`➕ 已指派「${activeGridMember}」`);
                 }
                 const finalStr = names.join('\n');
                 displayDiv.textContent = finalStr;
@@ -5885,9 +5912,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
                 if (names.length > 0) {
                     const col = window.getMemberColorClass(names[0]);
-                    tdEl.className = tdEl.className.replace(/bg-\S+/g, '') + ` ${col.bg}`;
+                    el.className = el.className.replace(/bg-\S+/g, '') + ` ${col.bg}`;
                 } else {
-                    tdEl.className = tdEl.className.replace(/bg-\S+/g, '') + ' bg-white';
+                    el.className = el.className.replace(/bg-\S+/g, '') + ' bg-white';
                 }
             }
         };
@@ -6236,11 +6263,12 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                 if (cB === undefined) cB = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : getNamesForHalf(hB_s, hB_e);
                                 const colA = cA.split('\n')[0] ? window.getMemberColorClass(cA.split('\n')[0]).bg : 'bg-white';
                                 const colB = cB.split('\n')[0] ? window.getMemberColorClass(cB.split('\n')[0]).bg : 'bg-white';
-                                rows += `<td class="p-0 ${cellSlotClass} bg-white relative align-middle w-[40px] min-w-[40px]"><button type="button" onclick="window.toggleSplitHour('${dStr}', '${locId}', '${tStart}')" class="absolute top-0 right-0 z-20 bg-slate-200 hover:bg-slate-300 text-slate-600 p-0.5 rounded-bl text-[8px] font-bold shadow-sm" title="復原整格">🩹</button><div class="flex w-full h-full ${hClass}"><div class="flex-1 min-w-[20px] border-r border-slate-200 flex flex-col justify-start items-center ${colA} ${isHalfAActive ? 'now-glowing-sub bg-sky-100/90 font-black' : ''} pt-0.5"><div class="text-[7px] font-bold ${isHalfAActive ? 'text-sky-800 bg-sky-100 font-black' : 'text-slate-400 bg-slate-50'} text-center w-full py-0.2 border-b border-slate-100 whitespace-nowrap mb-0.5">${startH}:00~${startH}:30</div>
-                                <textarea readonly class="grid-input w-full p-0 text-[9.5px] resize-none focus:outline-none border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent text-center overflow-y-auto cursor-pointer select-none" style="height: calc(100% - 12px);" data-date="${dStr}" data-loc="${locId}" data-start="${hA_s}" data-end="${hA_e}" placeholder="..." onmousedown="window.startGridDrag(this)" onmouseenter="window.onGridDragEnter(this)" ontouchstart="window.startGridDrag(this)">${cA}</textarea>
-                                </div><div class="flex-1 min-w-[20px] flex flex-col justify-start items-center ${colB} ${isHalfBActive ? 'now-glowing-sub bg-sky-100/90 font-black' : ''} pt-0.5"><div class="text-[7px] font-bold ${isHalfBActive ? 'text-sky-800 bg-sky-100 font-black' : 'text-slate-400 bg-slate-50'} text-center w-full py-0.2 border-b border-slate-100 whitespace-nowrap mb-0.5">${startH}:30~${endH}:00</div>
-                                <textarea readonly class="grid-input w-full p-0 text-[9.5px] resize-none focus:outline-none border-none font-bold text-slate-800 leading-tight placeholder-slate-200 bg-transparent text-center overflow-y-auto cursor-pointer select-none" style="height: calc(100% - 12px);" data-date="${dStr}" data-loc="${locId}" data-start="${hB_s}" data-end="${hB_e}" placeholder="..." onmousedown="window.startGridDrag(this)" onmouseenter="window.onGridDragEnter(this)" ontouchstart="window.startGridDrag(this)">${cB}</textarea>
-                                </div></div></td>`;
+                                rows += `<td class="p-0 ${cellSlotClass} bg-white relative align-middle w-[40px] min-w-[40px]">
+                                    <div class="flex w-full h-full ${hClass}">
+                                        <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hA_s}', '${hA_e}')" class="grid-input-display flex-1 min-w-[20px] border-r border-slate-200 flex items-center justify-center ${colA} ${isHalfAActive ? 'now-glowing-sub bg-sky-100/90 font-black' : ''} cursor-pointer select-none font-black text-slate-800 text-[10px] leading-tight overflow-hidden p-0.5" data-date="${dStr}" data-loc="${locId}" data-start="${hA_s}" data-end="${hA_e}">${cA}</div>
+                                        <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hB_s}', '${hB_e}')" class="grid-input-display flex-1 min-w-[20px] flex items-center justify-center ${colB} ${isHalfBActive ? 'now-glowing-sub bg-sky-100/90 font-black' : ''} cursor-pointer select-none font-black text-slate-800 text-[10px] leading-tight overflow-hidden p-0.5" data-date="${dStr}" data-loc="${locId}" data-start="${hB_s}" data-end="${hB_e}">${cB}</div>
+                                    </div>
+                                </td>`;
                             } else {
                                 const cKey = `${dStr}_${locId}_${tStart}_${tEnd}`; let val = domVals[cKey];
                                 if (val === undefined) {
@@ -6253,7 +6281,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                     }
                                 }
                                 const bgCol = val.split('\n')[0] ? window.getMemberColorClass(val.split('\n')[0]).bg : 'bg-white';
-                                rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} ${bgCol} hover:opacity-90 transition-colors relative align-middle w-[40px] min-w-[40px] cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><button type="button" onclick="event.stopPropagation(); window.toggleSplitHour('${dStr}', '${locId}', '${tStart}')" class="absolute top-0 right-0 z-20 bg-slate-100 hover:bg-slate-200 text-slate-500 p-0.5 rounded-bl text-[8px] font-bold shadow-sm" title="切割半格">✂️</button><div class="grid-input-display w-full flex items-center justify-center font-bold text-slate-800 text-[10px] leading-tight overflow-hidden p-0.5 pointer-events-none" style="height: ${locId === 'pt_1' ? '64px' : '28px'}; min-height: ${locId === 'pt_1' ? '64px' : '28px'}; white-space: pre-line;">${val}</div></td>`;
+                                rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} ${bgCol} hover:opacity-90 transition-colors relative align-middle w-[40px] min-w-[40px] cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display w-full flex items-center justify-center font-bold text-slate-800 text-[10px] leading-tight overflow-hidden p-0.5 pointer-events-none" style="height: ${locId === 'pt_1' ? '64px' : '28px'}; min-height: ${locId === 'pt_1' ? '64px' : '28px'}; white-space: pre-line;">${val}</div></td>`;
                             }
                         }
                     });
@@ -6314,7 +6342,21 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 </div>
 
                 <div class="flex flex-wrap gap-1.5 px-1 justify-start items-center">
-                    ${!isEditingMembers ? `<div class="relative group cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')"><div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}"><i data-lucide="eraser" class="w-3.5 h-3.5 mr-1"></i>橡皮擦</div></div>` : ''}
+                    ${!isEditingMembers ? `
+                        <!-- 🌟 拆分/合併專屬按鈕 -->
+                        <div class="relative group cursor-pointer member-btn-container" data-name="SPLITTER" onclick="window.selectGridMember('SPLITTER')">
+                            <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-105' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-sm'}">
+                                ✂️ 拆分/合併
+                            </div>
+                        </div>
+
+                        <!-- 橡皮擦 -->
+                        <div class="relative group cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')">
+                            <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}">
+                                <i data-lucide="eraser" class="w-3.5 h-3.5 mr-1"></i>橡皮擦
+                            </div>
+                        </div>
+                    ` : ''}
                     ${teamMembers.map((name, idx) => {
                         const c = window.getMemberColorClass(name), sel = activeGridMember === name;
                         const profile = isCleanRole ? window.getMemberProfile(name) : { id: '', avatar: '' };
