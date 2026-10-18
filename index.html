@@ -633,6 +633,98 @@ const tabMetadataMap = {
         // 🌟 多日排班字典（依日期 YYYY-MM-DD 儲存每天排班陣列）
         let csMultiDaySchedules = {}, cleanMultiDaySchedules = {};
 
+        // 🌟 人員頭像與編號持久化儲存庫
+        let memberProfilesStore = getLocal('work_cache_member_profiles', {});
+
+        window.getMemberProfile = (name) => {
+            if (!name) return { id: '', avatar: '' };
+            if (!memberProfilesStore[name]) {
+                memberProfilesStore[name] = { id: '', avatar: '' };
+            }
+            return memberProfilesStore[name];
+        };
+
+        window.saveMemberProfile = (name, profileData) => {
+            if (!name) return;
+            memberProfilesStore[name] = Object.assign({}, memberProfilesStore[name] || {}, profileData);
+            safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+            if (currentUser && db) {
+                syncConfig('member_profiles', { profiles: memberProfilesStore }, true);
+            }
+        };
+
+        window.openMemberProfilePopup = (name, locationName) => {
+            const profile = window.getMemberProfile(name);
+            const col = window.getMemberColorClass(name);
+
+            let popup = $('memberProfileModal');
+            if (!popup) {
+                popup = document.createElement('div');
+                popup.id = 'memberProfileModal';
+                popup.className = 'fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] flex items-center justify-center p-4';
+                popup.onclick = (e) => { if (e.target === popup) popup.classList.add('hidden'); };
+                document.body.appendChild(popup);
+            }
+
+            const avatarImgTag = profile.avatar
+                ? '<img id="popupMemberAvatarImg" src="' + profile.avatar + '" class="w-full h-full object-cover">'
+                : '<div id="popupMemberAvatarImg" class="w-full h-full flex items-center justify-center font-black text-2xl text-slate-500">' + name.slice(0, 1) + '</div>';
+
+            popup.innerHTML = `
+                <div class="bg-white rounded-2xl p-4 shadow-2xl border border-slate-200 w-full max-w-[280px] flex flex-col items-center text-center animate-pop-in relative" onclick="event.stopPropagation()">
+                    <button type="button" onclick="document.getElementById('memberProfileModal').classList.add('hidden')" class="absolute top-2.5 right-2.5 text-slate-400 hover:text-slate-600 p-1">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                    <div class="relative group cursor-pointer mb-2.5">
+                        <div class="w-16 h-16 rounded-full border-2 border-slate-200 overflow-hidden shadow-inner flex items-center justify-center ${col.bg}">
+                            ${avatarImgTag}
+                        </div>
+                        <label class="absolute inset-0 bg-black/40 text-white rounded-full flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-bold cursor-pointer">
+                            <i data-lucide="camera" class="w-4 h-4 mb-0.5"></i>
+                            <span>換頭像</span>
+                            <input type="file" accept="image/*" class="hidden" onchange="window.handleUploadMemberAvatar('${name}', this)">
+                        </label>
+                    </div>
+                    <h3 class="text-base font-black text-slate-800">${name}</h3>
+                    <div class="text-xs font-bold text-slate-400 mt-0.5">${locationName || '當前崗位'}</div>
+                    <div class="w-full mt-3 bg-slate-50 p-2 rounded-xl border border-slate-200 flex items-center justify-between">
+                        <span class="text-[11px] font-bold text-slate-500">人員編號：</span>
+                        <input type="text" id="popupMemberIdInput" value="${profile.id || ''}" placeholder="例如: CL-01" 
+                            onchange="window.saveMemberProfile('${name}', { id: this.value.trim() }); window.showToast('✅ 已更新編號'); window.updateMapSimulation(); if($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();"
+                            class="bg-white border border-slate-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center w-28 focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div class="text-[10px] text-slate-400 mt-2">點選頭像可即時拍照或上傳</div>
+                </div>
+            `;
+            popup.classList.remove('hidden');
+            if (window.lucide) lucide.createIcons({ root: popup });
+        };
+
+        window.handleUploadMemberAvatar = (name, input) => {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 120;
+                    canvas.height = 120;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, 120, 120);
+                    const avatarBase64 = canvas.toDataURL('image/jpeg', 0.8);
+                    
+                    window.saveMemberProfile(name, { avatar: avatarBase64 });
+                    window.showToast('✅ 已更新頭像');
+                    window.openMemberProfilePopup(name, '');
+                    window.updateMapSimulation();
+                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        };
+
         // 🌟 計算「前2日、昨日、當日、明日、後2日」共 5 天的日期陣列
         window.get5DayScheduleDates = () => {
             const baseNow = window.getNow ? window.getNow() : new Date();
@@ -5203,7 +5295,17 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 }
             });
 
-            bindSync('tab_visibility', 'work_cache_tab_visibility', d => { 
+            // 🌟 成員檔案（頭像與工號）雲端監聽同步
+            bindSync('member_profiles', 'work_cache_member_profiles', d => {
+                if (d.profiles) {
+                    memberProfilesStore = d.profiles;
+                    safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+                    if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                }
+            });
+
+            bindSync('tab_visibility', 'work_cache_tab_visibility', d => {
                 if (d.visibility) { 
                     tabVisibilityState = { ...defaultTabVisibility, ...d.visibility };
                     tabVisibilityState.patrol = true;
@@ -5537,16 +5639,46 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 if (['pt_2', 'pt_6', 'pt_7'].includes(locId) || !mapData.points[locId]) return;
                 const loc = mapData.points[locId], names = locGroups[locId] || [], incoming = incomingMembers[locId] || [];
 
-                names.forEach((name, idx) => {
+               names.forEach((name, idx) => {
                     let marker = $(`dyn-marker-${name}-${locId}-current`) || document.createElement('div');
                     marker.id = `dyn-marker-${name}-${locId}-current`;
-                    marker.innerHTML = `<div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-lg whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${name}</div><div class="relative flex items-center justify-center"><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md z-10 relative flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div><div class="absolute w-8 h-8 bg-blue-400/40 rounded-full radar-slow z-0"></div></div>`;
+                    
+                    const isCleanRole = window.currentMapRole === 'clean';
+                    const profile = window.getMemberProfile(name);
+                    const col = window.getMemberColorClass(name);
+
+                    const avatarHtml = profile.avatar 
+                        ? `<img src="${profile.avatar}" class="w-full h-full object-cover rounded-full">`
+                        : `<i data-lucide="user" class="w-3.5 h-3.5 text-white"></i>`;
+
+                    marker.innerHTML = `
+                        <div class="bg-slate-900/90 text-white text-[11px] font-black px-2 py-0.5 rounded-md shadow-md whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center gap-1">
+                            ${profile.id ? `<span class="text-amber-300 font-mono text-[9px] mr-0.5">#${profile.id}</span>` : ''}
+                            <span>${name}</span>
+                        </div>
+                        <div class="relative flex items-center justify-center group-hover:scale-110 transition-transform">
+                            <div class="w-7 h-7 ${col.activeBg} rounded-full border-2 border-white shadow-md z-10 flex items-center justify-center overflow-hidden">
+                                ${avatarHtml}
+                            </div>
+                            <div class="absolute w-10 h-10 bg-sky-400/30 rounded-full radar-slow z-0"></div>
+                        </div>`;
+
                     if (marker.parentNode !== container) container.appendChild(marker);
-                    const off = names.length > 1 ? (idx - (names.length - 1) / 2) * 75 : 0;
-                    marker.style.left = `calc(${loc.x}% + ${off}px - 20px)`; marker.style.top = `calc(${loc.y}% - 50px)`;
-                    let seed = 0; for (let i = 0; i < name.length; i++) seed += name.charCodeAt(i);
-                    marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 pointer-events-none z-40 drop-shadow-xl ${['animate-float-a', 'animate-float-b', 'animate-float-c'][seed % 3]}`;
-                    marker.style.animationDelay = `${(seed % 5) * -3}s`; marker.dataset.active = "true";
+
+                    const off = names.length > 1 ? (idx - (names.length - 1) / 2) * 65 : 0;
+                    marker.style.left = `calc(${loc.x}% + ${off}px)`; 
+                    marker.style.top = `calc(${loc.y}% - 25px)`;
+
+                    marker.className = isCleanRole
+                        ? `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 -translate-y-1/2 pointer-events-auto cursor-pointer z-40 drop-shadow-md transition-transform active:scale-95 group`
+                        : `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 -translate-y-1/2 pointer-events-auto cursor-pointer z-40 drop-shadow-xl animate-float-a group`;
+
+                    marker.onclick = (e) => {
+                        e.stopPropagation();
+                        window.openMemberProfilePopup(name, loc.name);
+                    };
+
+                    marker.dataset.active = "true";
                 });
 
                 incoming.forEach((name, idx) => {
@@ -6094,7 +6226,16 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     ${!isEditingMembers ? `<div class="relative group cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')"><div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}"><i data-lucide="eraser" class="w-3.5 h-3.5 mr-1"></i>橡皮擦</div></div>` : ''}
                     ${teamMembers.map((name, idx) => {
                         const c = window.getMemberColorClass(name), sel = activeGridMember === name;
-                        return `<div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? '' : `window.selectGridMember('${name}')`}"><div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-105` : `${c.bg} ${c.text} ${c.border} hover:opacity-80 shadow-sm`}">${name}</div>${isEditingMembers ? `<button onclick="window.removeTeamMember(${idx}); event.stopPropagation();" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold z-10 hover:bg-red-600 transition-colors"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}</div>`;
+                        const profile = window.getMemberProfile(name);
+                        return `
+                        <div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? '' : `window.selectGridMember('${name}')`}">
+                            <div class="px-2 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center gap-1.5 ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-105` : `${c.bg} ${c.text}${c.border} hover:opacity-80 shadow-sm`}">
+                                ${profile.avatar ? `<img src="${profile.avatar}" class="w-4 h-4 rounded-full object-cover shrink-0 border border-white/60">` : ''}
+                                <span>${name}</span>
+                                ${profile.id ? `<span class="text-[9px] font-mono opacity-80 bg-black/10 px-1 py-0.2 rounded">#${profile.id}</span>` : ''}
+                            </div>
+                            ${isEditingMembers ? `<button onclick="window.removeTeamMember(${idx}); event.stopPropagation();" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold z-10 hover:bg-red-600 transition-colors"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}
+                        </div>`;
                     }).join('')}
                     ${isEditingMembers ? `<button onclick="window.addTeamMember()" class="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-dashed border-slate-400 text-slate-500 hover:bg-slate-200 flex items-center transition-colors justify-center"><i data-lucide="plus" class="w-3.5 h-3.5 mr-1"></i>新增</button>` : ''}
                 </div>
