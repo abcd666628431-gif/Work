@@ -6126,9 +6126,34 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         }
                     }
 
+                    // 🌟 自動抓取本次匯入的所有人員編號/姓名，自動累積並記憶至上方快捷填表名單中
+                    const importedMemberSet = new Set(teamMembers);
+                    Object.keys(window._tempGridValues).forEach(k => {
+                        const val = window._tempGridValues[k] || '';
+                        if (val) {
+                            val.split(/[\n\s]+/).forEach(raw => {
+                                const clean = raw.replace(/\(.*?\)/g, '').replace('頂', '').trim();
+                                if (clean && !clean.includes('休') && !clean.includes('...')) {
+                                    importedMemberSet.add(clean);
+                                }
+                            });
+                        }
+                    });
+
+                    teamMembers = Array.from(importedMemberSet);
+                    if (isClean) {
+                        cleanMembersStore = [...teamMembers];
+                        safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                        syncConfig('clean_team_members', { members: cleanMembersStore });
+                    } else {
+                        csMembersStore = [...teamMembers];
+                        safeSetLocal('work_cache_team_members', csMembersStore);
+                        syncConfig('team_members', { members: csMembersStore });
+                    }
+
                     safeSetLocal('work_cache_split_hours', splitHoursState); 
                     window.renderScheduleManager(); 
-                    window.showToast(`✅ 已成功匯入 Excel 至【${targetDateStr}】！`);
+                    window.showToast(`✅ 已匯入【${targetDateStr}】排班，並已同步記憶所有人員！`);
                 } catch(err) { 
                     window.showToast("解析失敗", true); 
                 }
