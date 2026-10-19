@@ -5661,12 +5661,22 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 }
             }, console.error);
 
-// 即時同步日誌
+// 即時同步日誌（僅保留最近 3 天內的記錄，超過 3 天自動過濾）
             try {
-                const logQuery = query(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs'), orderBy('timestamp', 'desc'), limit(100));
+                const logQuery = query(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs'), orderBy('timestamp', 'desc'), limit(200));
                 onSnapshot(logQuery, (snap) => {
                     let list = [];
-                    snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+                    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000; // 3 天的毫秒數
+                    const nowTs = Date.now();
+
+                    snap.forEach(d => {
+                        const data = d.data();
+                        // 🌟 嚴格過濾：只保留時間戳在 3 天內的紀錄
+                        if (data.timestamp && (nowTs - data.timestamp) <= THREE_DAYS_MS) {
+                            list.push({ id: d.id, ...data });
+                        }
+                    });
+
                     galleryLogsStore = list;
                     if ($('galleryLogsModal') && !$('galleryLogsModal').classList.contains('hidden')) {
                         window.renderGalleryLogs();
