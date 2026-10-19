@@ -666,6 +666,10 @@ const tabMetadataMap = {
                 document.body.appendChild(popup);
             }
 
+            // 安全確保傳進來的 name 是字串
+            const safeName = (name || '').trim();
+            const safeLoc = (locationName || '當前崗位').trim();
+
             popup.innerHTML = `
                 <div class="bg-white rounded-2xl p-4 shadow-2xl border border-slate-200 w-full max-w-[280px] flex flex-col items-center text-center animate-pop-in relative" onclick="event.stopPropagation()">
                     <button type="button" onclick="document.getElementById('memberProfileModal').classList.add('hidden')" class="absolute top-2.5 right-2.5 text-slate-400 hover:text-slate-600 p-1">
@@ -679,17 +683,22 @@ const tabMetadataMap = {
                         <label class="absolute inset-0 bg-black/40 text-white rounded-2xl flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold cursor-pointer">
                             <i data-lucide="camera" class="w-5 h-5 mb-1"></i>
                             <span>更換頭像</span>
-                            <input type="file" accept="image/*" class="hidden" onchange="window.handleUploadMemberAvatar('${name}', this)">
+                            <input type="file" accept="image/*" class="hidden" onchange="window.handleUploadMemberAvatar('${safeName}', this)">
                         </label>
                     </div>
 
-                    <h3 class="text-base font-black text-slate-800">${name}</h3>
-                    <div class="text-xs font-bold text-slate-400 mt-0.5">${locationName || '當前崗位'}</div>
+                    <!-- 🌟 姓名改為可直接編輯的輸入框 -->
+                    <div class="w-full mb-1">
+                        <input type="text" id="popupMemberNameInput" value="${safeName}" placeholder="輸入成員姓名" 
+                            onchange="window.renameMember('${safeName}', this.value)"
+                            class="bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-sm font-black text-slate-800 text-center w-full focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div class="text-xs font-bold text-slate-400 mt-0.5">${safeLoc}</div>
 
                     <div class="w-full mt-3 bg-slate-50 p-2 rounded-xl border border-slate-200 flex items-center justify-between">
                         <span class="text-[11px] font-bold text-slate-500">人員編號：</span>
-                        <input type="text" id="popupMemberIdInput" value="${profile.id || ''}" placeholder="例如: CL-01" 
-                            onchange="window.saveMemberProfile('${name}', { id: this.value.trim() }); window.showToast('✅ 已更新編號'); window.updateMapSimulation(); if($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();"
+                        <input type="text" id="popupMemberIdInput" value="${profile.id || ''}" placeholder="例如: EH0047" 
+                            onchange="window.saveMemberProfile('${safeName}', { id: this.value.trim() }); window.showToast('✅ 已更新編號'); window.updateMapSimulation(); if($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();"
                             class="bg-white border border-slate-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center w-28 focus:outline-none focus:border-blue-500">
                     </div>
                     <div class="text-[10px] text-slate-400 mt-2">點選頭像可即時拍照或上傳</div>
@@ -699,39 +708,47 @@ const tabMetadataMap = {
             if (window.lucide) lucide.createIcons({ root: popup });
         };
 
-        window.handleUploadMemberAvatar = (name, input) => {
-            const file = input.files[0];
-            if (!file) return;
-            let blobUrl = null;
-            try { blobUrl = URL.createObjectURL(file); } catch (e) {}
+        window.renameMember = (oldName, newNameVal) => {
+            const newName = (newNameVal || '').trim();
+            if (!newName || newName === oldName) return;
 
-            const img = new Image();
-            img.onload = async () => {
-                if (img.decode) { try { await img.decode(); } catch (e) {} }
-                if (blobUrl) try { URL.revokeObjectURL(blobUrl); } catch (e) {}
+            const isClean = window.currentMapRole === 'clean';
+            let list = isClean ? cleanMembersStore : csMembersStore;
 
-                const canvas = document.createElement('canvas');
-                canvas.width = 240;
-                canvas.height = 240;
-                const ctx = canvas.getContext('2d');
-                
-                const w = img.naturalWidth || img.width;
-                const h = img.naturalHeight || img.height;
-                const size = Math.min(w, h);
-                const startX = (w - size) / 2;
-                const startY = (h - size) / 2;
+            if (list.includes(newName)) {
+                window.showToast("⚠️ 此名字已存在，無法重複", true);
+                // 還原輸入框的值
+                const input = $('popupMemberNameInput');
+                if (input) input.value = oldName;
+                return;
+            }
 
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(0, 0, 240, 240);
-                ctx.drawImage(img, startX, startY, size, size, 0, 0, 240, 240);
-                const avatarBase64 = canvas.toDataURL('image/jpeg', 0.85);
-                
-                window.saveMemberProfile(name, { avatar: avatarBase64 });
-                window.showToast('✅ 已更新頭像');
-                window.openMemberProfilePopup(name, '');
-                window.updateMapSimulation();
-                if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
-            };
+            const idx = list.indexOf(oldName);
+            if (idx !== -1) {
+                list[idx] = newName;
+            }
+
+            if (memberProfilesStore[oldName]) {
+                memberProfilesStore[newName] = memberProfilesStore[oldName];
+                delete memberProfilesStore[oldName];
+                safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+            }
+
+            if (isClean) {
+                cleanMembersStore = [...list];
+                safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                syncConfig('clean_team_members', { members: cleanMembersStore });
+            } else {
+                csMembersStore = [...list];
+                safeSetLocal('work_cache_team_members', csMembersStore);
+                syncConfig('team_members', { members: csMembersStore });
+            }
+
+            window.showToast(`✅ 已將名字更改為「${newName}」`);
+            window.openMemberProfilePopup(newName, '當前崗位');
+            window.updateMapSimulation();
+            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+
             if (blobUrl) {
                 img.src = blobUrl;
             } else {
