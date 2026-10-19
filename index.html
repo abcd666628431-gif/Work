@@ -649,7 +649,13 @@ const tabMetadataMap = {
             if (!clean) return '';
             const upper = clean.toUpperCase();
 
-            // 1. 優先比對人員編號 (profile.id)
+            // 1. 優先比對「非編號為名」的正式姓名檔案（避免被舊編號分身攔截）
+            for (const [mName, prof] of Object.entries(memberProfilesStore || {})) {
+                if (!window.isStaffIdFormat(mName) && prof && prof.id && prof.id.trim().replace(/^#/, '').toUpperCase() === upper) {
+                    return mName;
+                }
+            }
+            // 次要比對所有人員編號檔案
             for (const [mName, prof] of Object.entries(memberProfilesStore || {})) {
                 if (prof && prof.id && prof.id.trim().replace(/^#/, '').toUpperCase() === upper) {
                     return mName;
@@ -690,7 +696,7 @@ const tabMetadataMap = {
             return staffId ? staffId : realName;
         };
 
-        // 🌟 同步將 5 日排班表與暫存格內的舊名字/舊編號替換為新名字
+        // 🌟 同步將 5 日排班表與暫存格內的舊名字/舊編號替換為新名字，並自動合併相連時段
         window.replaceMemberKeyEverywhere = (oldKey, newKey) => {
             if (!oldKey || !newKey || oldKey === newKey) return;
             const isClean = window.currentMapRole === 'clean';
@@ -706,13 +712,26 @@ const tabMetadataMap = {
                     }
                 });
                 if (changed) {
-                    const seen = new Set();
-                    multiStore[dStr] = dayList.filter(s => {
-                        const k = `${s.name}_${s.locationId}_${s.start}_${s.end}`;
-                        if (seen.has(k)) return false;
-                        seen.add(k);
-                        return true;
+                    const merged = [];
+                    const locIds = Array.from(new Set(dayList.map(s => s.locationId)));
+                    locIds.forEach(locId => {
+                        const uNames = Array.from(new Set(dayList.filter(s => s.locationId === locId).map(s => s.name)));
+                        uNames.forEach(uName => {
+                            const slots = dayList.filter(s => s.locationId === locId && s.name === uName).sort((a, b) => a.start.localeCompare(b.start));
+                            let cur = null;
+                            slots.forEach(s => {
+                                if (!cur) cur = { ...s };
+                                else if (cur.end >= s.start) {
+                                    if (s.end > cur.end) cur.end = s.end;
+                                } else {
+                                    merged.push(cur);
+                                    cur = { ...s };
+                                }
+                            });
+                            if (cur) merged.push(cur);
+                        });
                     });
+                    multiStore[dStr] = merged;
                 }
             });
 
@@ -747,16 +766,32 @@ const tabMetadataMap = {
             }
             const newId = profileData?.id;
 
-            // 若設定的編號與名單中某個以編號為名的分身相同，自動合併為同一人
+            // 🌟 徹底清理所有同編號的舊分身（包含 memberProfilesStore 與成員名單）
             if (newId) {
                 const isClean = window.currentMapRole === 'clean';
                 let list = isClean ? cleanMembersStore : csMembersStore;
-                const dupKey = list.find(m => m !== name && (m.trim().toUpperCase() === newId || (memberProfilesStore[m]?.id || '').toUpperCase() === newId));
-                if (dupKey) {
-                    const existingAvatar = memberProfilesStore[name]?.avatar || memberProfilesStore[dupKey]?.avatar || '';
-                    if (existingAvatar) profileData.avatar = existingAvatar;
-                    delete memberProfilesStore[dupKey];
-                    list = list.filter(m => m !== dupKey);
+                const dupKeys = new Set();
+
+                list.forEach(m => {
+                    if (m !== name && (m.trim().toUpperCase() === newId || (memberProfilesStore[m]?.id || '').toUpperCase() === newId)) {
+                        dupKeys.add(m);
+                    }
+                });
+                Object.keys(memberProfilesStore || {}).forEach(k => {
+                    if (k !== name && (k.trim().toUpperCase() === newId || (memberProfilesStore[k]?.id || '').toUpperCase() === newId)) {
+                        dupKeys.add(k);
+                    }
+                });
+
+                if (dupKeys.size > 0) {
+                    dupKeys.forEach(dupKey => {
+                        if (!profileData.avatar && !memberProfilesStore[name]?.avatar && memberProfilesStore[dupKey]?.avatar) {
+                            profileData.avatar = memberProfilesStore[dupKey].avatar;
+                        }
+                        delete memberProfilesStore[dupKey];
+                        window.replaceMemberKeyEverywhere(dupKey, name);
+                    });
+                    list = list.filter(m => !dupKeys.has(m));
                     if (isClean) {
                         cleanMembersStore = [...list];
                         teamMembers = [...cleanMembersStore];
@@ -768,14 +803,13 @@ const tabMetadataMap = {
                         safeSetLocal('work_cache_team_members', csMembersStore);
                         syncConfig('team_members', { members: csMembersStore });
                     }
-                    window.replaceMemberKeyEverywhere(dupKey, name);
                 }
             }
 
             memberProfilesStore[name] = Object.assign({}, memberProfilesStore[name] || {}, profileData);
             safeSetLocal('work_cache_member_profiles', memberProfilesStore);
             if (currentUser && db) {
-                syncConfig('member_profiles', { profiles: memberProfilesStore }, true);
+                syncConfig('member_profiles', { profiles: memberProfilesStore });
             }
 
             const todayStr = getNowInputStrs().date;
@@ -872,7 +906,7 @@ const tabMetadataMap = {
             }
             safeSetLocal('work_cache_member_profiles', memberProfilesStore);
             if (currentUser && db) {
-                syncConfig('member_profiles', { profiles: memberProfilesStore }, true);
+                syncConfig('member_profiles', { profiles: memberProfilesStore });
             }
 
             if (list.includes(newName)) {
@@ -1564,10 +1598,8 @@ document.addEventListener('visibilitychange', () => {
 
        window.autoSyncClosedStallsToPatrol = async (silent = true) => {
     const todayStr = getTodayDateStr();
-    const now = window.getNow();
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
-    if (currentPatrolDate < todayStr || (currentPatrolDate === todayStr && nowMinutes >= 22 * 60)) {
+    if (currentPatrolDate < todayStr) {
         return 0;
     }
 
@@ -1589,7 +1621,7 @@ document.addEventListener('visibilitychange', () => {
     // 2. 建立當前有效照片對應的「預期填入 0」清單
     const currentExpectedMap = new Map();
 
-    if (nowMinutes >= 7 * 60) {
+    if (true) {
         validClosedPhotos.forEach(photo => {
             const title = (photo.title || '').trim().replace(/^#/, '');
             const photoTime = photo.time || '12:00';
@@ -5544,7 +5576,6 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             bindSync('tab_visibility', 'work_cache_tab_visibility', d => {
                 if (d.visibility) { 
                     tabVisibilityState = { ...defaultTabVisibility, ...d.visibility };
-                    tabVisibilityState.patrol = true;
                     safeSetLocal('work_cache_tab_visibility', tabVisibilityState); 
                 }
                 if (d.order && Array.isArray(d.order)) {
@@ -5671,9 +5702,11 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
                     snap.forEach(d => {
                         const data = d.data();
-                        // 🌟 嚴格過濾：只保留時間戳在 3 天內的紀錄
+                        // 🌟 嚴格過濾：只保留 3 天內的紀錄，超過 3 天自動從雲端清理
                         if (data.timestamp && (nowTs - data.timestamp) <= THREE_DAYS_MS) {
                             list.push({ id: d.id, ...data });
+                        } else if (data.timestamp && (nowTs - data.timestamp) > THREE_DAYS_MS) {
+                            deleteDoc(d.ref).catch(() => {});
                         }
                     });
 
@@ -5693,6 +5726,13 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             const now = window.getNow(), nowTime = now.getTime(), curMins = now.getHours() * 60 + now.getMinutes();
             let activeMembers = {}, incomingMembers = {};
 
+            // 🌟 先確保今日排班中的所有編號/姓名皆對齊最新身分綁定
+            memberSchedules.forEach(s => {
+                if (s.name && window.resolveMemberIdentity) {
+                    s.name = window.resolveMemberIdentity(s.name);
+                }
+            });
+
             memberSchedules.forEach(sched => {
                 const s = parseTime(sched.start).getTime(), e = parseTime(sched.end).getTime();
                 if (nowTime >= s && nowTime <= e) {
@@ -5709,7 +5749,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         }
                     }
 
-                    // ====== 新增：若此人當前在其他地方，但下一個時段排定前往「客服室 (pt_1)」，提早 15 分鐘在客服室標示「待:」======
+                    // ====== 若此人當前在其他地方，但下一個時段排定前往「客服室 (pt_1)」，提早 15 分鐘在客服室標示「待:」======
                     if (sched.locationId !== 'pt_1') {
                         const nextDuty = memberSchedules.find(ns => ns.name === sched.name && ns.start === sched.end && ns.locationId === 'pt_1');
                         if (nextDuty && remainMins > 0 && remainMins <= 15) {
@@ -5911,15 +5951,20 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     });
 
                     memberDutyList.sort((a, b) => a.rank - b.rank || a.subSort - b.subSort || a.name.localeCompare(b.name));
-                    staffStatusListEl.innerHTML = memberDutyList.map(item => `
-                        <div class="bg-white border border-slate-200/80 rounded-lg p-1.5 px-2.5 flex items-center justify-between shadow-xs hover:border-slate-300 transition-colors">
-                            <div class="flex items-center min-w-0 pr-2">
-                                <div class="w-2 h-2 rounded-full ${item.col.activeBg} mr-2 shrink-0"></div>
+                    staffStatusListEl.innerHTML = memberDutyList.map(item => {
+                        const prof = window.getMemberProfile(item.name);
+                        const hasId = prof.id && prof.id.trim() !== '' && prof.id.trim().toUpperCase() !== item.name.trim().toUpperCase();
+                        const safeNameAttr = item.name.replace(/'/g, "\\'");
+                        return `
+                        <div onclick="window.openMemberProfilePopup('${safeNameAttr}', '今日排班人員')" class="bg-white border border-slate-200/80 rounded-lg p-1.5 px-2.5 flex items-center justify-between shadow-xs hover:border-blue-300 cursor-pointer active:scale-[0.99] transition-all">
+                            <div class="flex items-center min-w-0 pr-2 gap-1.5">
+                                ${prof.avatar ? `<img src="${prof.avatar}" class="w-4 h-4 rounded-full object-cover shrink-0 border border-slate-200">` : `<div class="w-2 h-2 rounded-full ${item.col.activeBg} shrink-0"></div>`}
                                 <span class="font-black text-[11px] text-slate-800 tracking-wide truncate">${item.name}</span>
+                                ${hasId ? `<span class="text-[9px] font-mono font-bold text-slate-500 bg-slate-100 px-1 py-0.2 rounded shrink-0">${prof.id.trim()}</span>` : ''}
                             </div>
                             <div class="shrink-0">${item.statusBadge}</div>
-                        </div>
-                    `).join('');
+                        </div>`;
+                    }).join('');
                 }
             }
 
@@ -6072,7 +6117,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     div.className = `px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}`;
                 } else {
                     const col = window.getMemberColorClass(cName);
-                    div.className = `px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? `${col.activeBg} text-white border-transparent shadow-md scale-105` : `${col.bg} ${col.text}${col.border} hover:opacity-80 shadow-sm`}`;
+                    div.className = `px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center gap-1.5 ${sel ? `${col.activeBg} text-white border-transparent shadow-md scale-105` : `${col.bg} ${col.text}${col.border} hover:opacity-80 shadow-sm`}`;
                 }
             });
             const hint = $('grid-hint-text');
@@ -6402,6 +6447,14 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         ? { '一樓+廁所': 'pt_1', '一樓': 'pt_1', '魚檔': 'pt_4', '花園仔(男廁)': 'pt_8', '男廁': 'pt_8', '花園仔(女廁)+(傷健廁所)': 'pt_9', '花園仔(女廁)': 'pt_9', '女廁': 'pt_9', '傷健廁所': 'pt_9', '花園仔': 'pt_3', '機動': 'pt_6', '人員休息中': 'pt_7', '休息中': 'pt_7', '休息': 'pt_7' }
                         : { '花園仔': 'pt_3', '魚檔': 'pt_4', '整體巡邏': 'pt_5', '客服室': 'pt_1', '一樓大清點': 'pt_2', '一樓': 'pt_2', '地面層大清點': 'pt_6', '地面層': 'pt_6', '人員休息中': 'pt_7', '休息中': 'pt_7', '休息': 'pt_7' };
                     
+                    // 🌟 匯入前先清空目標日期 (targetDateStr) 的舊暫存與舊拆分狀態，避免舊班表殘留重疊
+                    Object.keys(window._tempGridValues).forEach(k => {
+                        if (k.startsWith(`${targetDateStr}_`)) delete window._tempGridValues[k];
+                    });
+                    Object.keys(splitHoursState).forEach(sk => {
+                        if (sk.startsWith(`${rolePrefix}${targetDateStr}_`)) delete splitHoursState[sk];
+                    });
+
                     const normTime = (tStr) => {
                         const parts = (tStr || '').trim().split(':');
                         if (parts.length < 2) return '';
@@ -6409,6 +6462,8 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         if (isNaN(h) || isNaN(m)) return '';
                         return `${pad(h)}:${pad(m)}`;
                     };
+
+                    const importedRawDay = [];
 
                     for (let rowIdx = 1; rowIdx < validRows.length; rowIdx++) {
                         const cols = validRows[rowIdx]; if (!cols.length) continue;
@@ -6423,13 +6478,14 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             const timeCol = (headers[c] || '').replace(/[~～—–]/g, '-');
                             const rawCellVal = cols[c] ? cols[c].replace(/^"+|"+$/g, '').trim() : '';
                             // 🌟 匯入時自動以「人員編號優先」解析為同一個人
-                            const cellVal = rawCellVal
+                            const resolvedArr = rawCellVal
                                 ? rawCellVal.split(/[\n\s,、/]+/).map(token => {
                                     const stripped = token.replace(/\(.*?\)/g, '').replace('頂', '').trim();
                                     if (!stripped || stripped.includes('休') || stripped.includes('...')) return '';
                                     return window.resolveMemberIdentity ? window.resolveMemberIdentity(stripped) : stripped;
-                                }).filter(Boolean).join('\n')
-                                : '';
+                                }).filter(Boolean)
+                                : [];
+                            const cellVal = Array.from(new Set(resolvedArr)).join('\n');
                             if (!timeCol || !timeCol.includes('-')) continue;
 
                             const [rawStart, rawEnd] = timeCol.split('-');
@@ -6459,38 +6515,66 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                     window._tempGridValues[fullKey] = cellVal;
                                 }
                             }
+
+                            // 同步收集至排班陣列以便立即持久化存檔
+                            resolvedArr.forEach(cleanName => {
+                                importedRawDay.push({
+                                    id: 'sch_csv_' + Date.now() + Math.random().toString(36).substr(2, 5),
+                                    name: cleanName,
+                                    locationId: matchedLocId,
+                                    start: slotStart,
+                                    end: slotEnd
+                                });
+                            });
                         }
                     }
 
+                    // 🌟 將匯入的單日排班立即合併並寫入 multiStore、本機快取與雲端（就算直接關視窗或改名也絕不丟失！）
+                    const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+                    const mergedDay = [];
+                    Object.keys(mapData.points).forEach(locId => {
+                        const uNames = Array.from(new Set(importedRawDay.filter(s => s.locationId === locId).map(s => s.name)));
+                        uNames.forEach(name => {
+                            const slots = importedRawDay.filter(s => s.locationId === locId && s.name === name).sort((a, b) => a.start.localeCompare(b.start));
+                            let cur = null;
+                            slots.forEach(s => {
+                                if (!cur) cur = { ...s };
+                                else if (cur.end === s.start) cur.end = s.end;
+                                else { mergedDay.push(cur); cur = { ...s }; }
+                            });
+                            if (cur) mergedDay.push(cur);
+                        });
+                    });
+                    multiStore[targetDateStr] = mergedDay;
+
                     // 自動歸戶名單，避免同時出現編號與姓名的重複分身
                     const importedMemberSet = new Set(teamMembers.map(m => window.resolveMemberIdentity ? window.resolveMemberIdentity(m) : m));
-                    Object.keys(window._tempGridValues).forEach(k => {
-                        const val = window._tempGridValues[k] || '';
-                        if (val) {
-                            val.split(/[\n\s,、/]+/).forEach(raw => {
-                                const stripped = raw.replace(/\(.*?\)/g, '').replace('頂', '').trim();
-                                if (stripped && !stripped.includes('休') && !stripped.includes('...')) {
-                                    const resolved = window.resolveMemberIdentity ? window.resolveMemberIdentity(stripped) : stripped;
-                                    importedMemberSet.add(resolved);
-                                }
-                            });
-                        }
-                    });
+                    importedRawDay.forEach(r => importedMemberSet.add(r.name));
 
                     teamMembers = Array.from(importedMemberSet);
+                    const todayStr = getNowInputStrs().date;
+                    window.syncActiveTodaySchedule();
+
                     if (isClean) {
                         cleanMembersStore = [...teamMembers];
                         safeSetLocal('work_cache_clean_members', cleanMembersStore);
                         syncConfig('clean_team_members', { members: cleanMembersStore });
+                        safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
+                        safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+                        syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
                     } else {
                         csMembersStore = [...teamMembers];
                         safeSetLocal('work_cache_team_members', csMembersStore);
                         syncConfig('team_members', { members: csMembersStore });
+                        safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+                        safeSetLocal('work_cache_member_schedules', csSchedulesStore);
+                        syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
                     }
 
                     safeSetLocal('work_cache_split_hours', splitHoursState); 
                     window.renderScheduleManager();
-                    window.showToast(`✅ 已匯入【${targetDateStr}】排班！請確認後點擊右上角「儲存 5 日排班」或直接編輯。`);
+                    window.updateMapSimulation();
+                    window.showToast(`✅ 已匯入並自動儲存【${targetDateStr}】排班！`);
                 } catch(err) { 
                     window.showToast("解析失敗", true); 
                 }
@@ -6507,7 +6591,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             pt_7: 'bg-slate-100 text-slate-700 border-r border-slate-200'
         }[id] || 'bg-white text-slate-700');
 
-        // 🌟 6. 核心渲染：前2日 + 當日 + 後2日（共 5 日）上下垂直對照排班總表（格子優先顯示人員編號 EHXXX）
+        // 🌟 6. 核心渲染：前2日 + 當日 + 後2日（共 5 日）上下垂直對照排班總表（格子優先顯示人員編號 EHXXX，並自動展開半小時班次）
         window.renderScheduleManager = () => {
             const list = $('scheduleManageList');
             if (!list) return;
@@ -6553,18 +6637,26 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             rows += `<td class="p-0 border border-slate-200 bg-slate-200/60 pointer-events-none align-middle w-[40px] min-w-[40px]"><div class="w-full h-full ${hClass}"></div></td>`;
                         } else {
                             const [startH] = tStart.split(':'), [endH] = tEnd.split(':');
-                            const isSplit = !!(splitHoursState[`${rolePrefix}${dStr}_${locId}_${tStart}`] ?? (isToday ? splitHoursState[`${rolePrefix}${locId}_${tStart}`] : false));
+                            const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
+                            const getNamesForHalf = (sStr, eStr) => {
+                                const sNum = parseInt(sStr.replace(':',''), 10), eNum = parseInt(eStr.replace(':',''), 10), res = [];
+                                daySchedules.forEach(s => { if (s.locationId === locId && parseInt(s.start.replace(':',''), 10) <= sNum && parseInt(s.end.replace(':',''), 10) >= eNum) res.push(s.name); });
+                                return res.join('\n');
+                            };
+                            const namesHalfA = getNamesForHalf(hA_s, hA_e);
+                            const namesHalfB = getNamesForHalf(hB_s, hB_e);
+                            // 🌟 跨設備自動偵測：若該時段上下半小時的人員不同，自動展開為半小時兩格，絕不遺失任何半小時班次！
+                            const stateKey = `${rolePrefix}${dStr}_${locId}_${tStart}`;
+                            if (splitHoursState[stateKey] === undefined && namesHalfA !== namesHalfB) {
+                                splitHoursState[stateKey] = true;
+                            }
+                            const isSplit = !!(splitHoursState[stateKey] ?? (isToday ? splitHoursState[`${rolePrefix}${locId}_${tStart}`] : false));
+
                             if (isSplit) {
-                                const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
                                 const kA = `${dStr}_${locId}_${hA_s}_${hA_e}`, kB = `${dStr}_${locId}_${hB_s}_${hB_e}`;
                                 let cA = domVals[kA], cB = domVals[kB];
-                                const getNamesForHalf = (sStr, eStr) => {
-                                    const sNum = parseInt(sStr.replace(':',''), 10), eNum = parseInt(eStr.replace(':',''), 10), res = [];
-                                    daySchedules.forEach(s => { if (s.locationId === locId && parseInt(s.start.replace(':',''), 10) <= sNum && parseInt(s.end.replace(':',''), 10) >= eNum) res.push(s.name); });
-                                    return res.join('\n');
-                                };
-                                if (cA === undefined) cA = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : getNamesForHalf(hA_s, hA_e);
-                                if (cB === undefined) cB = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : getNamesForHalf(hB_s, hB_e);
+                                if (cA === undefined) cA = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : namesHalfA;
+                                if (cB === undefined) cB = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : namesHalfB;
 
                                 const firstCanonA = cA ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(cA.split('\n')[0]) : cA.split('\n')[0]) : '';
                                 const firstCanonB = cB ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(cB.split('\n')[0]) : cB.split('\n')[0]) : '';
@@ -6679,8 +6771,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         const c = window.getMemberColorClass(name), sel = activeGridMember === name;
                         const profile = isCleanRole ? window.getMemberProfile(name) : { id: '', avatar: '' };
                         const hasUniqueId = isCleanRole && profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== name.trim().toUpperCase();
+                        const safeNameAttr = name.replace(/'/g, "\\'");
                         return `
-                        <div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? '' : `window.selectGridMember('${name}')`}">
+                        <div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? `window.openMemberProfilePopup('${safeNameAttr}', '名單管理')` : `window.selectGridMember('${safeNameAttr}')`}">
                             <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center gap-1.5 ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-105` : `${c.bg} ${c.text}${c.border} hover:opacity-80 shadow-sm`}">
                                 ${isCleanRole && profile.avatar ? `<img src="${profile.avatar}" class="w-4 h-4 rounded-full object-cover shrink-0 border border-white/60">` : ''}
                                 <span>${name}</span>
