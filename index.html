@@ -861,6 +861,87 @@ const tabMetadataMap = {
             if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
         };
 
+        // 🌟 點擊「修改名稱」按鈕時觸發的獨立儲存函式（不影響人員編號與排班綁定）
+        window.confirmRenameMember = (oldName) => {
+            const input = $('popupMemberNameInput');
+            if (!input) return;
+            const newName = input.value.trim().replace(/^#/, '');
+            
+            if (!newName) {
+                window.showToast("⚠️ 姓名不能為空", true);
+                input.value = oldName;
+                return;
+            }
+            if (newName === oldName) {
+                window.showToast("⚠️ 名稱沒有改變");
+                return;
+            }
+
+            const isClean = window.currentMapRole === 'clean';
+            let list = isClean ? cleanMembersStore : csMembersStore;
+
+            if (list.includes(newName)) {
+                window.showToast("⚠️ 此名字已存在，無法重複", true);
+                input.value = oldName;
+                return;
+            }
+
+            // 1. 保留原本的人員編號與頭像，僅將 key 轉移到新名字
+            const oldProf = memberProfilesStore[oldName] || { id: '', avatar: '' };
+            const preservedId = oldProf.id || '';
+            const preservedAvatar = oldProf.avatar || '';
+
+            memberProfilesStore[newName] = { id: preservedId, avatar: preservedAvatar };
+            if (oldName !== newName) {
+                delete memberProfilesStore[oldName];
+            }
+            safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+            if (currentUser && db) {
+                syncConfig('member_profiles', { profiles: memberProfilesStore }, true);
+            }
+
+            // 2. 更新成員名單陣列
+            const idx = list.indexOf(oldName);
+            if (idx !== -1) {
+                list[idx] = newName;
+            } else {
+                list.push(newName);
+            }
+
+            // 3. 同步更新 5 日排班表上的名字
+            if (window.replaceMemberKeyEverywhere) {
+                window.replaceMemberKeyEverywhere(oldName, newName);
+            }
+
+            const todayStr = getNowInputStrs().date;
+            if (isClean) {
+                cleanMembersStore = [...list];
+                teamMembers = [...cleanMembersStore];
+                safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                syncConfig('clean_team_members', { members: cleanMembersStore });
+                window.syncActiveTodaySchedule();
+                safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
+                safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+                syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
+            } else {
+                csMembersStore = [...list];
+                teamMembers = [...csMembersStore];
+                safeSetLocal('work_cache_team_members', csMembersStore);
+                syncConfig('team_members', { members: csMembersStore });
+                window.syncActiveTodaySchedule();
+                safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+                safeSetLocal('work_cache_member_schedules', csSchedulesStore);
+                syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
+            }
+
+            if (activeGridMember === oldName) activeGridMember = newName;
+
+            window.showToast(`✅ 成功修改名稱為「${newName}」（編號維持不變）`);
+            window.openMemberProfilePopup(newName, window._currentPopupLocation || '當前崗位');
+            window.updateMapSimulation();
+            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+        };
+
         window.openMemberProfilePopup = (name, locationName) => {
             const canonicalName = window.resolveMemberIdentity ? window.resolveMemberIdentity(name) : (name || '').trim();
             const profile = window.getMemberProfile(canonicalName);
@@ -894,22 +975,24 @@ const tabMetadataMap = {
                         </label>
                     </div>
 
-                    <!-- 🌟 姓名改為即時響應輸入框，支援 Enter 儲存 -->
-                    <div class="w-full mb-1">
+                    <!-- 🌟 姓名輸入框與專屬的「修改名稱」按鈕 -->
+                    <div class="w-full mb-1 flex items-center gap-1">
                         <input type="text" id="popupMemberNameInput" value="${canonicalName}" placeholder="輸入成員姓名" 
-                            oninput="window.renameMember('${safeNameAttr}', this.value, false)"
-                            onkeydown="if(event.key === 'Enter') { this.blur(); window.renameMember('${safeNameAttr}', this.value, true); }"
-                            class="bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-300 rounded-xl px-2 py-1 text-base font-black text-slate-800 text-center w-44 focus:outline-none focus:border-blue-500 transition-colors">
+                            class="bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-sm font-black text-slate-800 text-center flex-1 focus:outline-none focus:border-blue-500">
+                        <button type="button" onclick="window.confirmRenameMember('${safeNameAttr}')" 
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-lg text-xs font-bold active:scale-95 transition-all shrink-0">
+                            修改名稱
+                        </button>
                     </div>
                     <div class="text-xs font-bold text-slate-400 mt-0.5">${window._currentPopupLocation}</div>
 
                     <div class="w-full mt-3 bg-slate-50 p-2 rounded-xl border border-slate-200 flex items-center justify-between">
                         <span class="text-[11px] font-bold text-slate-500">人員編號：</span>
                         <input type="text" id="popupMemberIdInput" value="${(profile.id || '').replace(/^#/, '')}" placeholder="例如: EH0047" 
-                            onchange="window.saveMemberProfile('${safeNameAttr}', { id: this.value.trim() }); window.showToast('✅ 已更新編號並綁定'); window.openMemberProfilePopup('${safeNameAttr}', window._currentPopupLocation); window.updateMapSimulation(); if($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();"
+                            onchange="window.saveMemberProfile('${safeNameAttr}', { id: this.value.trim() }); window.showToast('✅ 已更新編號'); window.openMemberProfilePopup('${safeNameAttr}', window._currentPopupLocation); window.updateMapSimulation(); if($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();"
                             class="bg-white border border-slate-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center w-28 focus:outline-none focus:border-blue-500">
                     </div>
-                    <div class="text-[10px] text-slate-400 mt-2">名稱與編號雙向綁定 · 匯入時自動認人</div>
+                    <div class="text-[10px] text-slate-400 mt-2">修改名稱不會影響下方的人員編號</div>
                 </div>
             `;
             popup.classList.remove('hidden');
