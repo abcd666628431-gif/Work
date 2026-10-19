@@ -653,6 +653,61 @@ const tabMetadataMap = {
             }
         };
 
+// 🌟 處理人員頭像上傳、自動縮圖壓縮與儲存
+        window.handleUploadMemberAvatar = async (name, input) => {
+            const file = input.files?.[0];
+            if (!file) return;
+
+            try {
+                // 將圖片縮小為 120x120 小尺寸頭像，節省儲存空間與防止卡頓
+                const avatarDataUrl = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            const size = 120;
+                            const canvas = document.createElement('canvas');
+                            canvas.width = size;
+                            canvas.height = size;
+                            const ctx = canvas.getContext('2d');
+
+                            // 保持比例居中裁切成正方形
+                            const minSide = Math.min(img.width, img.height);
+                            const sx = (img.width - minSide) / 2;
+                            const sy = (img.height - minSide) / 2;
+
+                            ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, size, size);
+                            resolve(canvas.toDataURL('image/jpeg', 0.8));
+                        };
+                        img.onerror = () => reject(new Error('圖片讀取失敗'));
+                        img.src = e.target.result;
+                    };
+                    reader.onerror = () => reject(new Error('檔案讀取失敗'));
+                    reader.readAsDataURL(file);
+                });
+
+                // 儲存頭像資料
+                window.saveMemberProfile(name, { avatar: avatarDataUrl });
+
+                // 即時更新彈窗內的圖片預覽
+                const imgEl = $('popupMemberAvatarImg');
+                if (imgEl) imgEl.src = avatarDataUrl;
+
+                // 刷新地圖與排班表上的頭像
+                window.updateMapSimulation();
+                if ($('scheduleManageModal')?.classList.contains('flex')) {
+                    window.renderScheduleManager();
+                }
+
+                window.showToast(`✅ 已更新 ${name} 的個人頭像！`);
+            } catch (err) {
+                console.error('頭像上傳失敗:', err);
+                window.showToast('⚠️ 頭像上傳失敗，請重試', true);
+            } finally {
+                input.value = '';
+            }
+        };
+
         window.openMemberProfilePopup = (name, locationName) => {
             const profile = window.getMemberProfile(name);
             const col = window.getMemberColorClass(name);
