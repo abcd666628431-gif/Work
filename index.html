@@ -894,10 +894,11 @@ const tabMetadataMap = {
                         </label>
                     </div>
 
-                    <!-- 🌟 姓名可直接點擊修改 -->
+                    <!-- 🌟 姓名改為即時響應輸入框，支援 Enter 儲存 -->
                     <div class="w-full mb-1">
                         <input type="text" id="popupMemberNameInput" value="${canonicalName}" placeholder="輸入成員姓名" 
-                            onchange="window.renameMember('${safeNameAttr}', this.value)"
+                            oninput="window.renameMember('${safeNameAttr}', this.value, false)"
+                            onkeydown="if(event.key === 'Enter') { this.blur(); window.renameMember('${safeNameAttr}', this.value, true); }"
                             class="bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-300 rounded-xl px-2 py-1 text-base font-black text-slate-800 text-center w-44 focus:outline-none focus:border-blue-500 transition-colors">
                     </div>
                     <div class="text-xs font-bold text-slate-400 mt-0.5">${window._currentPopupLocation}</div>
@@ -915,53 +916,78 @@ const tabMetadataMap = {
             if (window.lucide) lucide.createIcons({ root: popup });
         };
 
-        window.renameMember = (oldName, newNameVal) => {
-            const newName = (newNameVal || '').trim();
+        window.renameMember = (oldName, newNameVal, isFinal = false) => {
+            const newName = (newNameVal || '').trim().replace(/^#/, '');
             if (!newName || newName === oldName) return;
 
             const isClean = window.currentMapRole === 'clean';
             let list = isClean ? cleanMembersStore : csMembersStore;
 
-            if (list.includes(newName)) {
-                window.showToast("⚠️ 此名字已存在，無法重複", true);
-                // 還原輸入框的值
-                const input = $('popupMemberNameInput');
-                if (input) input.value = oldName;
+            // 若名字重複且不是自己，阻止並提示
+            if (list.includes(newName) && newName !== oldName) {
+                if (isFinal) window.showToast("⚠️ 此名字已存在，無法重複", true);
                 return;
             }
 
-            const idx = list.indexOf(oldName);
-            if (idx !== -1) {
-                list[idx] = newName;
-            }
+            const oldProf = memberProfilesStore[oldName] || { id: '', avatar: '' };
+            const targetProf = memberProfilesStore[newName] || { id: '', avatar: '' };
 
-            if (memberProfilesStore[oldName]) {
-                memberProfilesStore[newName] = memberProfilesStore[oldName];
+            let preservedId = oldProf.id || targetProf.id || '';
+            if (!preservedId && window.isStaffIdFormat(oldName)) {
+                preservedId = oldName.trim().toUpperCase();
+            }
+            const preservedAvatar = oldProf.avatar || targetProf.avatar || '';
+
+            memberProfilesStore[newName] = { id: preservedId, avatar: preservedAvatar };
+            if (oldName !== newName) {
                 delete memberProfilesStore[oldName];
-                safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+            }
+            safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+            if (currentUser && db) {
+                syncConfig('member_profiles', { profiles: memberProfilesStore }, true);
             }
 
+            // 更新清單
+            if (list.includes(newName)) {
+                list = list.filter(m => m !== oldName);
+            } else {
+                const idx = list.indexOf(oldName);
+                if (idx !== -1) list[idx] = newName;
+                else list.push(newName);
+            }
+
+            // 同步替換 5 日排班表上的名字
+            window.replaceMemberKeyEverywhere(oldName, newName);
+
+            const todayStr = getNowInputStrs().date;
             if (isClean) {
                 cleanMembersStore = [...list];
+                teamMembers = [...cleanMembersStore];
                 safeSetLocal('work_cache_clean_members', cleanMembersStore);
                 syncConfig('clean_team_members', { members: cleanMembersStore });
+                window.syncActiveTodaySchedule();
+                safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
+                safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+                syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
             } else {
                 csMembersStore = [...list];
+                teamMembers = [...csMembersStore];
                 safeSetLocal('work_cache_team_members', csMembersStore);
                 syncConfig('team_members', { members: csMembersStore });
+                window.syncActiveTodaySchedule();
+                safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+                safeSetLocal('work_cache_member_schedules', csSchedulesStore);
+                syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
             }
 
-            window.showToast(`✅ 已將名字更改為「${newName}」`);
-            window.openMemberProfilePopup(newName, '當前崗位');
+            if (activeGridMember === oldName) activeGridMember = newName;
+
             window.updateMapSimulation();
             if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
 
-            if (blobUrl) {
-                img.src = blobUrl;
-            } else {
-                const reader = new FileReader();
-                reader.onload = (e) => { img.src = e.target.result; };
-                reader.readAsDataURL(file);
+            if (isFinal) {
+                window.showToast(`✅ 已將名字更改為「${newName}」`);
+                window.openMemberProfilePopup(newName, window._currentPopupLocation || '當前崗位');
             }
         };
 
