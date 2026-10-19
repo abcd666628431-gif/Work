@@ -662,9 +662,10 @@ const tabMetadataMap = {
                 }
             }
 
-            // 2. 比對現有名單名稱
-            const isClean = window.currentMapRole === 'clean';
-            const list = isClean ? cleanMembersStore : csMembersStore;
+            const inClean = cleanMembersStore.includes(oldName);
+            const inCs = csMembersStore.includes(oldName);
+            const isClean = inClean ? true : (inCs ? false : (window.currentMapRole === 'clean'));
+            let list = isClean ? cleanMembersStore : csMembersStore;
             const matchedName = (list || []).find(m => m.trim().toUpperCase() === upper);
             if (matchedName) {
                 if (window.isStaffIdFormat(matchedName)) {
@@ -5586,6 +5587,63 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 window.applyTabVisibility(); 
             });
 
+            // 🌟 剔檔紀錄 (patrol_history) 雲端雙向即時同步（比對 _ts 時間戳，確保多機同時剔檔絕不互蓋）
+            onSnapshot(cfgDoc('patrol_history'), (snap) => {
+                if (!snap.exists()) return;
+                const remoteHistory = snap.data()?.history || {};
+                let hasUpdated = false;
+
+                // 檢查雲端被整日清空的日期
+                Object.keys(patrolHistoryStore).forEach(dKey => {
+                    if (!remoteHistory[dKey] && !window._patrolPendingQueue?.[dKey]) {
+                        delete patrolHistoryStore[dKey];
+                        hasUpdated = true;
+                    }
+                });
+
+                Object.keys(remoteHistory).forEach(dKey => {
+                    const remoteDay = remoteHistory[dKey] || {};
+                    if (!patrolHistoryStore[dKey]) patrolHistoryStore[dKey] = {};
+                    const localDay = patrolHistoryStore[dKey];
+
+                    Object.keys(remoteDay).forEach(sKey => {
+                        const remoteStall = remoteDay[sKey] || {};
+                        if (!localDay[sKey]) localDay[sKey] = {};
+                        const localStall = localDay[sKey];
+
+                        PATROL_TIME_SLOTS.forEach(slotName => {
+                            // 若本機該時段正在離線佇列等待上傳，優先保護本機最新操作
+                            if (window._patrolPendingQueue?.[dKey]?.[sKey]?.[slotName]) return;
+
+                            const rTs = remoteStall[`${slotName}_ts`] || 0;
+                            const lTs = localStall[`${slotName}_ts`] || 0;
+
+                            if (rTs >= lTs) {
+                                const rVal = remoteStall[slotName] || '';
+                                const rLoc = !!remoteStall[`${slotName}_locked`];
+                                const rRea = remoteStall[`${slotName}_reason`] || '';
+                                if (localStall[slotName] !== rVal || !!localStall[`${slotName}_locked`] !== rLoc || (localStall[`${slotName}_reason`] || '') !== rRea) {
+                                    localStall[slotName] = rVal;
+                                    localStall[`${slotName}_locked`] = rLoc;
+                                    localStall[`${slotName}_reason`] = rRea;
+                                    localStall[`${slotName}_ts`] = rTs;
+                                    hasUpdated = true;
+                                }
+                            }
+                        });
+                    });
+                });
+
+                if (hasUpdated) {
+                    patrolState = patrolHistoryStore[currentPatrolDate] || {};
+                    safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
+                    safeSetLocal('work_cache_patrol_records', patrolState);
+                    if (!$('patrolPage')?.classList.contains('hidden')) {
+                        window.renderPatrol();
+                    }
+                }
+            }, console.error);
+
             // 🌟 溫度統計表獨立雙向即時同步
             bindSync('patrol_temp_records', 'work_cache_patrol_temp_records', d => {
                 if (window._lastTempInputTime && (Date.now() - window._lastTempInputTime) < 800) {
@@ -6283,20 +6341,43 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             window.showToast(`📋 已將 ${prevDateStr.slice(5)} 的排班複製到 ${targetDateStr.slice(5)}！`);
         };
 
-        // 🌟 4. 單獨清空某一天排班
+        // 🌟 4. 單獨清空某一天排班（立即存檔並同步雲端與地圖）
         window.clearSingleDaySchedule = (targetDateStr) => {
             window.showConfirm('清空單日排班', `確定要清空【${targetDateStr}】當天的排班內容嗎？（其他日子不受影響）`, () => {
                 window.captureAll5DayDomValues();
                 Object.keys(window._tempGridValues).forEach(k => {
                     if (k.startsWith(`${targetDateStr}_`)) {
-                        window._tempGridValues[k] = '';
+                        delete window._tempGridValues[k];
                     }
                 });
                 const isClean = window.currentMapRole === 'clean';
+                const rolePrefix = isClean ? 'clean_' : 'cs_';
+                Object.keys(splitHoursState).forEach(sk => {
+                    if (sk.startsWith(`${rolePrefix}${targetDateStr}_`)) {
+                        delete splitHoursState[sk];
+                    }
+                });
+                safeSetLocal('work_cache_split_hours', splitHoursState);
+
                 const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
                 multiStore[targetDateStr] = [];
+
+                const todayStr = getNowInputStrs().date;
+                window.syncActiveTodaySchedule();
+
+                if (isClean) {
+                    safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
+                    safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+                    syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
+                } else {
+                    safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+                    safeSetLocal('work_cache_member_schedules', csSchedulesStore);
+                    syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
+                }
+
                 window.renderScheduleManager();
-                window.showToast(`🧹 已清空 ${targetDateStr} 的排班`);
+                window.updateMapSimulation();
+                window.showToast(`🧹 已清空並儲存 ${targetDateStr} 的排班`);
             });
         };
 
