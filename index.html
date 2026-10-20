@@ -642,6 +642,10 @@ const tabMetadataMap = {
             return /^[A-Za-z]{1,4}-?\d{2,6}$/.test(str.trim());
         };
 
+        // 🌟 出勤過濾狀態（預設為空代表顯示全部，有勾選則只顯示當日出勤人員按鈕）
+        window.activeDutyMembersFilter = getLocal('work_cache_duty_filter', { cs: [], clean: [] });
+        window.isSelectingDutyFilter = false;
+
         // 🌟 核心智慧判定：無論輸入「編號 (EH0047)」或「姓名 (黃金妹)」，一律以人員編號優先歸戶為同一個人
         window.resolveMemberIdentity = (rawInput) => {
             if (!rawInput) return '';
@@ -662,7 +666,7 @@ const tabMetadataMap = {
                 }
             }
 
-            // 🌟 修正：將原本錯誤的 oldName 改為正確的 clean
+            // 🌟 已修復：將 oldName 改為 clean
             const inClean = cleanMembersStore.includes(clean);
             const inCs = csMembersStore.includes(clean);
             const isClean = inClean ? true : (inCs ? false : (window.currentMapRole === 'clean'));
@@ -670,7 +674,7 @@ const tabMetadataMap = {
             const matchedName = (list || []).find(m => m.trim().toUpperCase() === upper);
             if (matchedName) {
                 if (window.isStaffIdFormat(matchedName)) {
-                    memberProfilesStore[matchedName] = memberProfilesStore[matchedName] || { id: '', avatar: '' };
+                    memberProfilesStore[matchedName] = memberProfilesStore[matchedName] || { id: '', avatar: '', prefs: [] };
                     if (!memberProfilesStore[matchedName].id) {
                         memberProfilesStore[matchedName].id = upper;
                     }
@@ -680,7 +684,7 @@ const tabMetadataMap = {
 
             // 3. 若為全新匯入的編號格式 (如 EH0047)，自動建立編號檔案
             if (window.isStaffIdFormat(clean)) {
-                memberProfilesStore[upper] = Object.assign({ id: upper, avatar: '' }, memberProfilesStore[upper] || {}, { id: upper });
+                memberProfilesStore[upper] = Object.assign({ id: upper, avatar: '', prefs: [] }, memberProfilesStore[upper] || {}, { id: upper });
                 safeSetLocal('work_cache_member_profiles', memberProfilesStore);
                 return upper;
             }
@@ -688,7 +692,6 @@ const tabMetadataMap = {
             return clean;
         };
 
-        // 🌟 讓排班總表優先顯示人員編號 (EHXXX)，若無編號才顯示名稱
         // 🌟 恢復排班總表直接顯示真實姓名
         window.getScheduleDisplayLabel = (nameOrId) => {
             if (!nameOrId) return '';
@@ -747,14 +750,17 @@ const tabMetadataMap = {
         };
 
         window.getMemberProfile = (name) => {
-            if (!name) return { id: '', avatar: '' };
+            if (!name) return { id: '', avatar: '', prefs: [] };
             const canonical = window.resolveMemberIdentity ? window.resolveMemberIdentity(name) : name;
             if (!memberProfilesStore[canonical]) {
                 const autoId = window.isStaffIdFormat(canonical) ? canonical.toUpperCase() : '';
-                memberProfilesStore[canonical] = { id: autoId, avatar: '' };
+                memberProfilesStore[canonical] = { id: autoId, avatar: '', prefs: [] };
             }
             if (memberProfilesStore[canonical].id) {
                 memberProfilesStore[canonical].id = memberProfilesStore[canonical].id.replace(/^#/, '');
+            }
+            if (!Array.isArray(memberProfilesStore[canonical].prefs)) {
+                memberProfilesStore[canonical].prefs = [];
             }
             return memberProfilesStore[canonical];
         };
@@ -788,6 +794,9 @@ const tabMetadataMap = {
                         if (!profileData.avatar && !memberProfilesStore[name]?.avatar && memberProfilesStore[dupKey]?.avatar) {
                             profileData.avatar = memberProfilesStore[dupKey].avatar;
                         }
+                        if (!profileData.prefs && !memberProfilesStore[name]?.prefs?.length && memberProfilesStore[dupKey]?.prefs?.length) {
+                            profileData.prefs = memberProfilesStore[dupKey].prefs;
+                        }
                         delete memberProfilesStore[dupKey];
                         window.replaceMemberKeyEverywhere(dupKey, name);
                     });
@@ -806,7 +815,7 @@ const tabMetadataMap = {
                 }
             }
 
-            memberProfilesStore[name] = Object.assign({}, memberProfilesStore[name] || {}, profileData);
+            memberProfilesStore[name] = Object.assign({ id: '', avatar: '', prefs: [] }, memberProfilesStore[name] || {}, profileData);
             safeSetLocal('work_cache_member_profiles', memberProfilesStore);
             if (currentUser && db) {
                 syncConfig('member_profiles', { profiles: memberProfilesStore });
@@ -823,6 +832,145 @@ const tabMetadataMap = {
                 safeSetLocal('work_cache_member_schedules', csSchedulesStore);
                 syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
             }
+        };
+
+        // 🌟 儲存人員的 Top 3 優先崗位設定
+        window.updateMemberPref = (name, idx, locVal) => {
+            const prof = window.getMemberProfile(name);
+            const prefs = Array.isArray(prof.prefs) ? [...prof.prefs] : ['', '', ''];
+            prefs[idx] = locVal;
+            window.saveMemberProfile(name, { prefs });
+            window.showToast(`✅ 已更新 ${name} 的第 ${idx + 1} 優先崗位！`);
+            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+        };
+
+        // 🌟 切換「勾選出勤人員過濾」模式與點選邏輯
+        window.toggleDutyFilterMode = () => {
+            window.isSelectingDutyFilter = !window.isSelectingDutyFilter;
+            if (window.isSelectingDutyFilter) {
+                isEditingMembers = false;
+                activeGridMember = null;
+            }
+            window.renderScheduleManager();
+        };
+
+        window.toggleDutyMemberActive = (name) => {
+            const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
+            window.activeDutyMembersFilter[roleKey] = window.activeDutyMembersFilter[roleKey] || [];
+            const list = window.activeDutyMembersFilter[roleKey];
+            const idx = list.indexOf(name);
+            if (idx === -1) list.push(name);
+            else list.splice(idx, 1);
+            safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
+            window.renderScheduleManager();
+        };
+
+        window.selectAllDutyMembers = (selectAll) => {
+            const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
+            window.activeDutyMembersFilter[roleKey] = selectAll ? [...teamMembers] : [];
+            safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
+            window.renderScheduleManager();
+        };
+
+        // 🌟 一鍵智慧自動排班（依據當日勾選的出勤人員 + 每人 Top 3 優先崗位自動填入）
+        window.autoAssignDaySchedule = (targetDateStr) => {
+            window.captureAll5DayDomValues();
+            const isClean = window.currentMapRole === 'clean';
+            const roleKey = isClean ? 'clean' : 'cs';
+            const filterList = window.activeDutyMembersFilter[roleKey] || [];
+            // 若有勾選出勤名單則只排勾選的人；若未勾選則預設排全部成員
+            const dutyMembers = filterList.length > 0 ? teamMembers.filter(m => filterList.includes(m)) : [...teamMembers];
+
+            if (dutyMembers.length === 0) {
+                return window.showToast("⚠️ 請先勾選今日出勤人員或新增成員！", true);
+            }
+
+            window.showConfirm('✨ 智慧自動排班', `將根據目前 ${dutyMembers.length} 位出勤人員的「優先級設定」，自動排入【${targetDateStr}】的班表，確定執行嗎？`, () => {
+                const rolePrefix = isClean ? 'clean_' : 'cs_';
+                // 先清空該日舊暫存
+                Object.keys(window._tempGridValues).forEach(k => {
+                    if (k.startsWith(`${targetDateStr}_`)) delete window._tempGridValues[k];
+                });
+
+                const timeSlots = Array.from({length: 15}, (_, i) => `${pad(i + 7)}:00-${pad(i + 8)}:00`);
+                // 各崗位建議目標人數（清潔模式：單人崗位先各1人、魚檔最多3人、機動最多4人）
+                const locTargets = isClean
+                    ? [
+                        { id: 'pt_8', max: 1 }, // 花園仔(男廁)
+                        { id: 'pt_9', max: 1 }, // 花園仔(女廁)+(傷健廁所)
+                        { id: 'pt_3', max: 1 }, // 花園仔
+                        { id: 'pt_1', max: 1 }, // 一樓+廁所
+                        { id: 'pt_4', max: 3 }, // 魚檔 (預設3行)
+                        { id: 'pt_6', max: 4 }  // 機動 (預設4行)
+                      ]
+                    : [
+                        { id: 'pt_1', max: 2 },
+                        { id: 'pt_3', max: 1 },
+                        { id: 'pt_4', max: 1 },
+                        { id: 'pt_5', max: 1 }
+                      ];
+
+                timeSlots.forEach((ts, slotIdx) => {
+                    const [tStart, tEnd] = ts.split('-');
+                    const assignedInSlot = new Set();
+                    const locAssignedMap = {};
+                    Object.keys(mapData.points).forEach(k => locAssignedMap[k] = []);
+
+                    // 第 1 輪：依照第 1 優先、第 2 優先、第 3 優先依序對號入座
+                    for (let prefRank = 0; prefRank < 3; prefRank++) {
+                        // 稍微輪轉順序讓同優先級的人公平分配
+                        const rotatedMembers = dutyMembers.map((_, idx) => dutyMembers[(idx + slotIdx) % dutyMembers.length]);
+                        rotatedMembers.forEach(m => {
+                            if (assignedInSlot.has(m)) return;
+                            const prof = window.getMemberProfile(m);
+                            const prefLoc = prof.prefs?.[prefRank];
+                            if (prefLoc && mapData.points[prefLoc] && prefLoc !== 'pt_7') {
+                                const targetObj = locTargets.find(x => x.id === prefLoc);
+                                const maxCap = targetObj ? targetObj.max : 1;
+                                if (locAssignedMap[prefLoc].length < maxCap) {
+                                    locAssignedMap[prefLoc].push(m);
+                                    assignedInSlot.add(m);
+                                }
+                            }
+                        });
+                    }
+
+                    // 第 2 輪：將尚未分配的人員，自動補齊還有缺額的核心崗位（最後溢出的歸入機動或客服室）
+                    const remainingMembers = dutyMembers.filter(m => !assignedInSlot.has(m));
+                    remainingMembers.forEach(m => {
+                        let placed = false;
+                        for (const targetObj of locTargets) {
+                            if (locAssignedMap[targetObj.id] && locAssignedMap[targetObj.id].length < targetObj.max) {
+                                locAssignedMap[targetObj.id].push(m);
+                                assignedInSlot.add(m);
+                                placed = true;
+                                break;
+                            }
+                        }
+                        if (!placed) {
+                            const fallbackLoc = isClean ? 'pt_6' : 'pt_1';
+                            if (locAssignedMap[fallbackLoc]) locAssignedMap[fallbackLoc].push(m);
+                        }
+                    });
+
+                    // 寫入 _tempGridValues 暫存
+                    Object.entries(locAssignedMap).forEach(([locId, namesArr]) => {
+                        if (namesArr.length > 0) {
+                            const stateKey = `${rolePrefix}${targetDateStr}_${locId}_${tStart}`;
+                            if (splitHoursState[stateKey]) {
+                                const [sH] = tStart.split(':'), [eH] = tEnd.split(':');
+                                window._tempGridValues[`${targetDateStr}_${locId}_${sH}:00_${sH}:30`] = namesArr.join('\n');
+                                window._tempGridValues[`${targetDateStr}_${locId}_${sH}:30_${eH}:00`] = namesArr.join('\n');
+                            } else {
+                                window._tempGridValues[`${targetDateStr}_${locId}_${tStart}_${tEnd}`] = namesArr.join('\n');
+                            }
+                        }
+                    });
+                });
+
+                window.renderScheduleManager();
+                window.showToast(`✨ 已完成【${targetDateStr}】智慧自動排班！請檢查後點擊儲存。`);
+            });
         };
 
         // 🌟 處理人員頭像上傳、自動縮圖壓縮與儲存
@@ -871,7 +1019,7 @@ const tabMetadataMap = {
             }
         };
 
-        // 🌟 點擊「修改名稱」按鈕時觸發（不影響人員編號，若原名為 EH0047 自動保留為編號，並支援同名合併）
+        // 🌟 點擊「修改名稱」按鈕時觸發
         window.confirmRenameMember = (oldName) => {
             const input = $('popupMemberNameInput');
             if (!input) return;
@@ -890,17 +1038,17 @@ const tabMetadataMap = {
             const isClean = window.currentMapRole === 'clean';
             let list = isClean ? cleanMembersStore : csMembersStore;
 
-            const oldProf = memberProfilesStore[oldName] || { id: '', avatar: '' };
-            const targetProf = memberProfilesStore[newName] || { id: '', avatar: '' };
+            const oldProf = memberProfilesStore[oldName] || { id: '', avatar: '', prefs: [] };
+            const targetProf = memberProfilesStore[newName] || { id: '', avatar: '', prefs: [] };
 
-            // 保留原本的人員編號；若舊名字本身就是 EH0047 格式且尚未填編號，自動留存為編號
             let preservedId = oldProf.id || targetProf.id || '';
             if (!preservedId && window.isStaffIdFormat(oldName)) {
                 preservedId = oldName.trim().toUpperCase();
             }
             const preservedAvatar = oldProf.avatar || targetProf.avatar || '';
+            const preservedPrefs = (oldProf.prefs && oldProf.prefs.length) ? oldProf.prefs : (targetProf.prefs || []);
 
-            memberProfilesStore[newName] = { id: preservedId, avatar: preservedAvatar };
+            memberProfilesStore[newName] = { id: preservedId, avatar: preservedAvatar, prefs: preservedPrefs };
             if (oldName !== newName) {
                 delete memberProfilesStore[oldName];
             }
@@ -969,15 +1117,21 @@ const tabMetadataMap = {
             }
 
             const safeNameAttr = canonicalName.replace(/'/g, "\\'");
+            const prefs = profile.prefs || ['', '', ''];
+            // 依據您指定的順序顯示下拉選單
+            const order = ['pt_8', 'pt_9', 'pt_3', 'pt_4', 'pt_1', 'pt_5', 'pt_2', 'pt_6'];
+            const locEntries = Object.entries(mapData.points)
+                .filter(([k]) => k !== 'pt_7')
+                .sort(([a], [b]) => (order.indexOf(a) === -1 ? 999 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 999 : order.indexOf(b)));
 
             popup.innerHTML = `
-                <div class="bg-white rounded-2xl p-4 shadow-2xl border border-slate-200 w-full max-w-[280px] flex flex-col items-center text-center animate-pop-in relative" onclick="event.stopPropagation()">
+                <div class="bg-white rounded-2xl p-4 shadow-2xl border border-slate-200 w-full max-w-[300px] flex flex-col items-center text-center animate-pop-in relative" onclick="event.stopPropagation()">
                     <button type="button" onclick="document.getElementById('memberProfileModal').classList.add('hidden')" class="absolute top-2.5 right-2.5 text-slate-400 hover:text-slate-600 p-1">
                         <i data-lucide="x" class="w-4 h-4"></i>
                     </button>
                     
-                    <div class="relative group cursor-pointer mb-2.5 mt-1">
-                        <div class="w-24 h-24 rounded-2xl border-2 border-slate-200 overflow-hidden shadow-inner flex items-center justify-center bg-slate-100">
+                    <div class="relative group cursor-pointer mb-2 mt-1">
+                        <div class="w-20 h-20 rounded-2xl border-2 border-slate-200 overflow-hidden shadow-inner flex items-center justify-center bg-slate-100">
                             <img id="popupMemberAvatarImg" src="${profile.avatar || 'data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'100\' height=\'100\' fill=\'%23cbd5e1\'><rect width=\'100\' height=\'100\'/></svg>'}" class="w-full h-full object-cover">
                         </div>
                         <label class="absolute inset-0 bg-black/40 text-white rounded-2xl flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold cursor-pointer">
@@ -987,7 +1141,7 @@ const tabMetadataMap = {
                         </label>
                     </div>
 
-                    <!-- 🌟 姓名輸入框與專屬「修改名稱」按鈕 -->
+                    <!-- 姓名與修改按鈕 -->
                     <div class="w-full mb-1 flex items-center gap-1">
                         <input type="text" id="popupMemberNameInput" value="${canonicalName}" placeholder="輸入成員姓名" 
                             onkeydown="if(event.key==='Enter'){ event.preventDefault(); window.confirmRenameMember('${safeNameAttr}'); }"
@@ -997,15 +1151,31 @@ const tabMetadataMap = {
                             修改名稱
                         </button>
                     </div>
-                    <div class="text-xs font-bold text-slate-400 mt-0.5">${window._currentPopupLocation}</div>
 
-                    <div class="w-full mt-3 bg-slate-50 p-2 rounded-xl border border-slate-200 flex items-center justify-between">
+                    <div class="w-full mt-2 bg-slate-50 p-2 rounded-xl border border-slate-200 flex items-center justify-between">
                         <span class="text-[11px] font-bold text-slate-500">人員編號：</span>
                         <input type="text" id="popupMemberIdInput" value="${(profile.id || '').replace(/^#/, '')}" placeholder="例如: EH0047" 
                             onchange="window.saveMemberProfile('${safeNameAttr}', { id: this.value.trim() }); window.showToast('✅ 已更新編號'); window.openMemberProfilePopup('${safeNameAttr}', window._currentPopupLocation); window.updateMapSimulation(); if($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();"
                             class="bg-white border border-slate-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center w-28 focus:outline-none focus:border-blue-500">
                     </div>
-                    <div class="text-[10px] text-slate-400 mt-2">修改名稱不會影響人員編號 · 點選頭像可上傳</div>
+
+                    <!-- 🌟 新增：個人 Top 3 優先去向設定 -->
+                    <div class="w-full mt-2.5 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-200/80 text-left space-y-1.5">
+                        <div class="text-[11px] font-black text-indigo-800 flex items-center">
+                            <i data-lucide="sparkles" class="w-3.5 h-3.5 mr-1 text-indigo-600"></i>優先排班崗位 (自動排班用)
+                        </div>
+                        ${[0, 1, 2].map(idx => `
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="text-[10.5px] font-bold text-slate-600 shrink-0">第 ${idx + 1} 優先：</span>
+                                <select onchange="window.updateMemberPref('${safeNameAttr}',${idx}, this.value)" class="flex-1 bg-white border border-slate-300 rounded-lg px-2 py-1 text-[11px] font-bold text-slate-800 focus:outline-none focus:border-indigo-500">
+                                    <option value="">-- 未指定 --</option>
+                                    ${locEntries.map(([locKey, locObj]) => `<option value="${locKey}" ${prefs[idx] === locKey ? 'selected' : ''}>${locObj.name}</option>`).join('')}
+                                </select>
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    <div class="text-[10px] text-slate-400 mt-2">點選「編輯名單」再點人名即可開啟此設定</div>
                 </div>
             `;
             popup.classList.remove('hidden');
@@ -1903,13 +2073,35 @@ window.setPatrolStatus = (stall, status, slot) => {
         if ('speechSynthesis' in window) {
             try {
                 window.speechSynthesis.cancel();
+                
                 const cleanNum = String(stall.id).replace(/^[A-Za-z0-9]-?/, '').replace(/^0+/, '') || String(stall.id).replace(/\D/g, '').replace(/^0+/, '');
                 const speechText = `${stall.floor} ${cleanNum}號 ${statusName}`;
                 const utt = new SpeechSynthesisUtterance(speechText);
-                utt.lang = 'zh-HK';
-                utt.rate = 1.05;
-                window.speechSynthesis.speak(utt);
-            } catch(e) {}
+                
+                // 🌟 OPPO / ColorOS 專用相容調整
+                utt.rate = 1.05; // 語速
+                utt.pitch = 1.0; // 音調
+                
+                // 動態搜尋手機內支援的中文語音（優先尋找粵語或普通話，解決 tts accessibility engine 讀不到的問題）
+                const voices = window.speechSynthesis.getVoices();
+                const targetVoice = voices.find(v => v.lang === 'zh-HK' || v.lang === 'zh-TW' || v.lang === 'yue-Hant-HK') ||
+                                    voices.find(v => v.lang.includes('zh') || v.lang.includes('cmn'));
+                
+                if (targetVoice) {
+                    utt.voice = targetVoice;
+                    utt.lang = targetVoice.lang;
+                } else {
+                    utt.lang = 'zh-HK'; // 保底設定
+                }
+
+                // 🌟 防止 OPPO 瀏覽器背景佇列卡死，加入強制喚醒延遲
+                setTimeout(() => {
+                    window.speechSynthesis.speak(utt);
+                }, 50);
+
+            } catch(e) {
+                console.warn("語音播報失敗:", e);
+            }
         }
     }
 
@@ -6210,8 +6402,43 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         window._lastCellTapTime = 0;
         window._lastCellTapKey = '';
 
-        // ====== 5 日上下對照排班核心引擎 ======
-        // 🌟 1. 支援 5 日期參數 dateStr 的格子點選（自動相容編號顯示與姓名點選）
+       // 🌟 輔助函式：產生帶有獨立格線的多行 HTML（魚檔預設3行、機動預設4行、其他預設1行，每多1人自動加1行）
+        window.getLocMinRows = (locId) => {
+            const isClean = window.currentMapRole === 'clean';
+            if (locId === 'pt_4') return isClean ? 3 : 1; // 魚檔預設 3 行
+            if (locId === 'pt_6') return isClean ? 4 : 1; // 機動預設 4 行
+            if (locId === 'pt_1') return isClean ? 1 : 2;
+            return 1;
+        };
+
+        window.renderCellLinesHtml = (rawText, locId) => {
+            const minRows = window.getLocMinRows(locId);
+            const names = rawText
+                ? Array.from(new Set(rawText.split(/[\n\s]+/).filter(Boolean).map(n => window.getScheduleDisplayLabel ? window.getScheduleDisplayLabel(n) : n)))
+                : [];
+            // 🌟 若人數超過預設行數，每多一人自動增加一行！
+            const totalRows = Math.max(minRows, names.length);
+            let html = '';
+            for (let i = 0; i < totalRows; i++) {
+                const n = names[i] || '';
+                const canon = n ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n) : '';
+                const col = canon ? window.getMemberColorClass(canon) : null;
+                const borderCls = i < totalRows - 1 ? 'border-b border-slate-300' : '';
+                const bgAndTextCls = col ? `${col.bg}${col.text}` : 'bg-white text-slate-800';
+                html += `<div class="sub-line-item w-full h-[22px] min-h-[22px] flex items-center justify-center ${borderCls}${bgAndTextCls} font-black text-[10px] leading-none truncate px-0.5 select-none">${n}</div>`;
+            }
+            return html;
+        };
+
+        window.extractCellText = (containerEl) => {
+            if (!containerEl) return '';
+            const items = containerEl.querySelectorAll('.sub-line-item');
+            if (items.length > 0) {
+                return Array.from(items).map(el => el.textContent.trim()).filter(Boolean).join('\n');
+            }
+            return (containerEl.textContent || '').trim();
+        };
+
         window.handleCellMobileClick = (el, dateStr, locId, start, end) => {
             if (activeGridMember === 'SPLITTER') {
                 window.toggleSplitHour(dateStr, locId, start);
@@ -6238,13 +6465,11 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             window._tempGridValues = window._tempGridValues || {};
 
             if (activeGridMember === 'ERASER') {
-                displayDiv.textContent = '';
                 window._tempGridValues[cellKey] = '';
-                el.className = el.className.replace(/bg-\S+/g, '') + ' bg-white';
+                displayDiv.innerHTML = window.renderCellLinesHtml('', locId);
                 window.showToast("🧹 已清除此格");
             } else {
-                // 將格子內的編號或名字統一解析為標準身分，確保點選「黃金妹」能正確操作顯示「EH0047」的格子
-                let currentText = displayDiv.textContent.trim();
+                let currentText = window.extractCellText(displayDiv);
                 let canonicalNames = currentText
                     ? currentText.split(/[\n\s]+/).filter(Boolean).map(n => window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n)
                     : [];
@@ -6258,17 +6483,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     window.showToast(`➕ 已指派「${targetCanonical}」`);
                 }
 
-                // 排班總表畫面優先顯示人員編號 (EHXXX)
-                const displayStr = canonicalNames.map(n => window.getScheduleDisplayLabel ? window.getScheduleDisplayLabel(n) : n).join('\n');
-                displayDiv.textContent = displayStr;
-                window._tempGridValues[cellKey] = canonicalNames.join('\n');
-
-                if (canonicalNames.length > 0) {
-                    const col = window.getMemberColorClass(canonicalNames[0]);
-                    el.className = el.className.replace(/bg-\S+/g, '') + ` ${col.bg}`;
-                } else {
-                    el.className = el.className.replace(/bg-\S+/g, '') + ' bg-white';
-                }
+                const joinedCanon = canonicalNames.join('\n');
+                window._tempGridValues[cellKey] = joinedCanon;
+                displayDiv.innerHTML = window.renderCellLinesHtml(joinedCanon, locId);
             }
         };
 
@@ -6286,7 +6503,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         window.stopGridDrag = () => { isGridDragging = false; gridDragAction = null; window.lastTouchedEl = null; };
         document.addEventListener('mouseup', window.stopGridDrag); document.addEventListener('touchend', window.stopGridDrag);
 
-        // 🌟 2. 捕捉當下 5 日所有 DOM 格子內容（完整支援整格與半格，並自動將編號轉回對應成員身分）
+        // 🌟 捕捉當下 5 日所有 DOM 格子內容（支援多行 sub-line-item 解析）
         window.captureAll5DayDomValues = () => {
             window._tempGridValues = window._tempGridValues || {};
             const normCellText = (txt) => {
@@ -6298,10 +6515,10 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             });
             document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
                 const disp = td.querySelector('.grid-input-display');
-                if (disp) window._tempGridValues[`${td.dataset.date}_${td.dataset.loc}_${td.dataset.start}_${td.dataset.end}`] = normCellText(disp.textContent.trim());
+                if (disp) window._tempGridValues[`${td.dataset.date}_${td.dataset.loc}_${td.dataset.start}_${td.dataset.end}`] = normCellText(window.extractCellText(disp));
             });
             document.querySelectorAll('.grid-input-display[data-loc][data-date]').forEach(div => {
-                window._tempGridValues[`${div.dataset.date}_${div.dataset.loc}_${div.dataset.start}_${div.dataset.end}`] = normCellText(div.textContent.trim());
+                window._tempGridValues[`${div.dataset.date}_${div.dataset.loc}_${div.dataset.start}_${div.dataset.end}`] = normCellText(window.extractCellText(div));
             });
         };
 
@@ -6382,7 +6599,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             });
         };
 
-        // 🌟 5. 儲存全部 5 日排班表（自動將格內的編號對應回真實身分，不影響人員編號）
+        // 🌟 5. 儲存全部 5 日排班表（完整支援多行 sub-line-item 讀取）
         window.saveGridSchedule = () => {
             window.captureAll5DayDomValues();
 
@@ -6417,13 +6634,13 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
                 const { date, loc, start, end } = td.dataset;
                 const display = td.querySelector('.grid-input-display');
-                const text = display ? display.textContent.trim() : '';
+                const text = display ? window.extractCellText(display) : '';
                 addSlotRecord(date, loc, start, end, text);
             });
 
             document.querySelectorAll('.grid-input-display[data-loc][data-date]').forEach(div => {
                 const { date, loc, start, end } = div.dataset;
-                const text = (div.textContent || '').trim();
+                const text = window.extractCellText(div);
                 addSlotRecord(date, loc, start, end, text);
             });
 
@@ -6527,7 +6744,6 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         ? { '一樓+廁所': 'pt_1', '一樓': 'pt_1', '魚檔': 'pt_4', '花園仔(男廁)': 'pt_8', '男廁': 'pt_8', '花園仔(女廁)+(傷健廁所)': 'pt_9', '花園仔(女廁)': 'pt_9', '女廁': 'pt_9', '傷健廁所': 'pt_9', '花園仔': 'pt_3', '機動': 'pt_6', '人員休息中': 'pt_7', '休息中': 'pt_7', '休息': 'pt_7' }
                         : { '花園仔': 'pt_3', '魚檔': 'pt_4', '整體巡邏': 'pt_5', '客服室': 'pt_1', '一樓大清點': 'pt_2', '一樓': 'pt_2', '地面層大清點': 'pt_6', '地面層': 'pt_6', '人員休息中': 'pt_7', '休息中': 'pt_7', '休息': 'pt_7' };
                     
-                    // 🌟 匯入前先清空目標日期 (targetDateStr) 的舊暫存與舊拆分狀態，避免舊班表殘留重疊
                     Object.keys(window._tempGridValues).forEach(k => {
                         if (k.startsWith(`${targetDateStr}_`)) delete window._tempGridValues[k];
                     });
@@ -6557,7 +6773,6 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         for (let c = 1; c < headers.length; c++) {
                             const timeCol = (headers[c] || '').replace(/[~～—–]/g, '-');
                             const rawCellVal = cols[c] ? cols[c].replace(/^"+|"+$/g, '').trim() : '';
-                            // 🌟 匯入時自動以「人員編號優先」解析為同一個人
                             const resolvedArr = rawCellVal
                                 ? rawCellVal.split(/[\n\s,、/]+/).map(token => {
                                     const stripped = token.replace(/\(.*?\)/g, '').replace('頂', '').trim();
@@ -6596,7 +6811,6 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                 }
                             }
 
-                            // 同步收集至排班陣列以便立即持久化存檔
                             resolvedArr.forEach(cleanName => {
                                 importedRawDay.push({
                                     id: 'sch_csv_' + Date.now() + Math.random().toString(36).substr(2, 5),
@@ -6609,7 +6823,6 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         }
                     }
 
-                    // 🌟 將匯入的單日排班立即合併並寫入 multiStore、本機快取與雲端（就算直接關視窗或改名也絕不丟失！）
                     const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
                     const mergedDay = [];
                     Object.keys(mapData.points).forEach(locId => {
@@ -6627,7 +6840,6 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     });
                     multiStore[targetDateStr] = mergedDay;
 
-                    // 自動歸戶名單，避免同時出現編號與姓名的重複分身
                     const importedMemberSet = new Set(teamMembers.map(m => window.resolveMemberIdentity ? window.resolveMemberIdentity(m) : m));
                     importedRawDay.forEach(r => importedMemberSet.add(r.name));
 
@@ -6671,11 +6883,12 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             pt_7: 'bg-slate-100 text-slate-700 border-r border-slate-200'
         }[id] || 'bg-white text-slate-700');
 
-        // 🌟 6. 核心渲染：前2日 + 當日 + 後2日（共 5 日）上下垂直對照排班總表（格子優先顯示人員編號 EHXXX，並自動展開半小時班次）
+        // 🌟 6. 核心渲染：套用最新順序 + 魚檔3行/機動4行/滿人自動加行(每行帶格線) + 出勤勾選過濾 + 智慧自動排班
         window.renderScheduleManager = () => {
             const list = $('scheduleManageList');
             if (!list) return;
             const isCleanRole = window.currentMapRole === 'clean';
+            const roleKey = isCleanRole ? 'clean' : 'cs';
             const rolePrefix = isCleanRole ? 'clean_' : 'cs_';
             const multiStore = isCleanRole ? cleanMultiDaySchedules : csMultiDaySchedules;
 
@@ -6683,7 +6896,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             const timeSlots = Array.from({length: 15}, (_, i) => `${pad(i + 7)}:00-${pad(i + 8)}:00`);
             const validCountSlots = ['13:00-14:00', '14:00-15:00', '19:00-20:00', '20:00-21:00', '21:00-22:00'];
             const curTotalMins = window.getNow().getHours() * 60 + window.getNow().getMinutes();
-            const order = ['pt_1', 'pt_3', 'pt_4', 'pt_8', 'pt_9', 'pt_5', 'pt_2', 'pt_6', 'pt_7'];
+
+            // 🌟 依照您指定的最新順序：花園仔(男廁) > 花園仔(女廁)+(傷健廁所) > 花園仔 > 魚檔 > 一樓+廁所 > 機動 > 休息中
+            const order = ['pt_8', 'pt_9', 'pt_3', 'pt_4', 'pt_1', 'pt_5', 'pt_2', 'pt_6', 'pt_7'];
             let sortedLocs = Object.entries(mapData.points).sort(([a], [b]) => (order.indexOf(a) === -1 ? 999 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 999 : order.indexOf(b)));
 
             const fiveDays = window.get5DayScheduleDates();
@@ -6694,27 +6909,28 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 const daySchedules = multiStore[dStr] || [];
                 const prevDateStr = dayIdx > 0 ? fiveDays[dayIdx - 1].dateStr : null;
 
-                let th = `<th class="sticky left-0 bg-slate-100 p-1 z-10 w-[56px] min-w-[56px] max-w-[56px] border border-slate-200 text-slate-600 font-black text-[9.5px] text-center align-middle whitespace-nowrap shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">崗位 \\ 時間</th>`;
+                let th = `<th class="sticky left-0 bg-slate-100 p-1 z-10 w-[64px] min-w-[64px] max-w-[64px] border border-slate-300 text-slate-600 font-black text-[9.5px] text-center align-middle whitespace-nowrap shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">崗位 \\ 時間</th>`;
                 timeSlots.forEach(ts => {
                     const [sH, sM] = ts.split('-')[0].split(':').map(Number), [eH, eM] = ts.split('-')[1].split(':').map(Number);
                     const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
-                    th += `<th class="p-1 border border-slate-200 w-[42px] min-w-[42px] text-[8.5px] font-bold ${isCurrentHour ? 'now-glowing-header bg-gradient-to-b from-sky-400 to-sky-500 text-white font-black shadow-md' : 'text-slate-500 bg-slate-50'} whitespace-nowrap text-center align-middle">${isCurrentHour ? '<div class="flex items-center justify-center space-x-0.5 mb-0.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-300 animate-ping"></span><span class="text-[7.5px] bg-amber-300 text-slate-900 px-1 py-0.2 rounded font-black tracking-tight leading-none shadow-xs">現在</span></div>' : ''}${ts}</th>`;
+                    th += `<th class="p-1 border border-slate-300 w-[44px] min-w-[44px] text-[8.5px] font-bold ${isCurrentHour ? 'now-glowing-header bg-gradient-to-b from-sky-400 to-sky-500 text-white font-black shadow-md' : 'text-slate-500 bg-slate-50'} whitespace-nowrap text-center align-middle">${isCurrentHour ? '<div class="flex items-center justify-center space-x-0.5 mb-0.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-300 animate-ping"></span><span class="text-[7.5px] bg-amber-300 text-slate-900 px-1 py-0.2 rounded font-black tracking-tight leading-none shadow-xs">現在</span></div>' : ''}${ts}</th>`;
                 });
 
                 let rows = '';
                 sortedLocs.forEach(([locId, pt]) => {
-                    const hClass = locId === 'pt_1' ? "min-h-[64px]" : "min-h-[28px]";
-                    rows += `<tr><td class="sticky left-0 ${getLocColorClass(locId)} border border-slate-200 font-black text-[10px] p-0.5 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center align-middle break-words leading-tight w-[56px] min-w-[56px] max-w-[56px]">${pt.name.replace(/\s*大清點/, '<br>大清點')}</td>`;
+                    const minRows = window.getLocMinRows(locId);
+                    const minH = minRows * 22;
+                    rows += `<tr><td class="sticky left-0 ${getLocColorClass(locId)} border border-slate-300 font-black text-[10px] p-0.5 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center align-middle break-words leading-tight w-[64px] min-w-[64px] max-w-[64px]">${pt.name.replace(/\s*大清點/, '<br>大清點').replace('+(傷健廁所)', '<br>+(傷健)')}</td>`;
                     timeSlots.forEach(ts => {
                         const [tStart, tEnd] = ts.split('-');
                         const [sH, sM] = tStart.split(':').map(Number), [eH, eM] = tEnd.split(':').map(Number);
                         const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
                         const isHalfAActive = isCurrentHour && (curTotalMins < (sH * 60 + sM) + 30);
                         const isHalfBActive = isCurrentHour && (curTotalMins >= (sH * 60 + sM) + 30);
-                        const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border border-slate-200' : 'border border-slate-200';
+                        const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border border-slate-300' : 'border border-slate-300';
 
                         if (!isCleanRole && (locId === 'pt_2' || locId === 'pt_6') && !validCountSlots.includes(ts)) {
-                            rows += `<td class="p-0 border border-slate-200 bg-slate-200/60 pointer-events-none align-middle w-[40px] min-w-[40px]"><div class="w-full h-full ${hClass}"></div></td>`;
+                            rows += `<td class="p-0 border border-slate-300 bg-slate-200/60 pointer-events-none align-middle w-[44px] min-w-[44px]"><div class="w-full h-full" style="min-height:${minH}px"></div></td>`;
                         } else {
                             const [startH] = tStart.split(':'), [endH] = tEnd.split(':');
                             const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
@@ -6725,7 +6941,6 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             };
                             const namesHalfA = getNamesForHalf(hA_s, hA_e);
                             const namesHalfB = getNamesForHalf(hB_s, hB_e);
-                            // 🌟 跨設備自動偵測：若該時段上下半小時的人員不同，自動展開為半小時兩格，絕不遺失任何半小時班次！
                             const stateKey = `${rolePrefix}${dStr}_${locId}_${tStart}`;
                             if (splitHoursState[stateKey] === undefined && namesHalfA !== namesHalfB) {
                                 splitHoursState[stateKey] = true;
@@ -6738,19 +6953,13 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                 if (cA === undefined) cA = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : namesHalfA;
                                 if (cB === undefined) cB = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : namesHalfB;
 
-                                const firstCanonA = cA ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(cA.split('\n')[0]) : cA.split('\n')[0]) : '';
-                                const firstCanonB = cB ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(cB.split('\n')[0]) : cB.split('\n')[0]) : '';
-                                const colA = firstCanonA ? window.getMemberColorClass(firstCanonA).bg : 'bg-white';
-                                const colB = firstCanonB ? window.getMemberColorClass(firstCanonB).bg : 'bg-white';
+                                const htmlA = window.renderCellLinesHtml(cA, locId);
+                                const htmlB = window.renderCellLinesHtml(cB, locId);
 
-                                // 🌟 轉換半格文字為人員編號 (EHXXX)
-                                cA = cA ? cA.split('\n').filter(Boolean).map(n => window.getScheduleDisplayLabel(n)).join('\n') : '';
-                                cB = cB ? cB.split('\n').filter(Boolean).map(n => window.getScheduleDisplayLabel(n)).join('\n') : '';
-
-                                rows += `<td class="p-0 ${cellSlotClass} bg-white relative align-middle w-[40px] min-w-[40px]">
-                                    <div class="flex w-full h-full ${hClass}">
-                                        <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hA_s}', '${hA_e}')" class="grid-input-display flex-1 min-w-[20px] border-r border-slate-200 flex items-center justify-center ${colA} ${isHalfAActive ? 'now-glowing-sub bg-sky-100/90 font-black' : ''} cursor-pointer select-none font-black text-slate-800 text-[10px] leading-tight overflow-hidden p-0.5" data-date="${dStr}" data-loc="${locId}" data-start="${hA_s}" data-end="${hA_e}">${cA}</div>
-                                        <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hB_s}', '${hB_e}')" class="grid-input-display flex-1 min-w-[20px] flex items-center justify-center ${colB} ${isHalfBActive ? 'now-glowing-sub bg-sky-100/90 font-black' : ''} cursor-pointer select-none font-black text-slate-800 text-[10px] leading-tight overflow-hidden p-0.5" data-date="${dStr}" data-loc="${locId}" data-start="${hB_s}" data-end="${hB_e}">${cB}</div>
+                                rows += `<td class="p-0 ${cellSlotClass} bg-white relative align-top w-[44px] min-w-[44px]">
+                                    <div class="flex w-full h-full">
+                                        <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hA_s}', '${hA_e}')" class="grid-input-display flex-1 min-w-[22px] border-r border-slate-300 flex flex-col justify-start ${isHalfAActive ? 'now-glowing-sub ring-1 ring-sky-400' : ''} cursor-pointer select-none overflow-hidden" data-date="${dStr}" data-loc="${locId}" data-start="${hA_s}" data-end="${hA_e}">${htmlA}</div>
+                                        <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hB_s}', '${hB_e}')" class="grid-input-display flex-1 min-w-[22px] flex flex-col justify-start ${isHalfBActive ? 'now-glowing-sub ring-1 ring-sky-400' : ''} cursor-pointer select-none overflow-hidden" data-date="${dStr}" data-loc="${locId}" data-start="${hB_s}" data-end="${hB_e}">${htmlB}</div>
                                     </div>
                                 </td>`;
                             } else {
@@ -6765,13 +6974,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                     }
                                 }
 
-                                const firstCanon = val ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(val.split('\n')[0]) : val.split('\n')[0]) : '';
-                                const bgCol = firstCanon ? window.getMemberColorClass(firstCanon).bg : 'bg-white';
+                                const htmlFull = window.renderCellLinesHtml(val, locId);
 
-                                // 🌟 轉換整格文字為人員編號 (EHXXX)
-                                val = val ? val.split('\n').filter(Boolean).map(n => window.getScheduleDisplayLabel(n)).join('\n') : '';
-
-                                rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} ${bgCol} hover:opacity-90 transition-colors relative align-middle w-[40px] min-w-[40px] cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display w-full flex items-center justify-center font-bold text-slate-800 text-[10px] leading-tight overflow-hidden p-0.5 pointer-events-none" style="height: ${locId === 'pt_1' ? '64px' : '28px'}; min-height: ${locId === 'pt_1' ? '64px' : '28px'}; white-space: pre-line;">${val}</div></td>`;
+                                rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} bg-white relative align-top w-[44px] min-w-[44px] cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display w-full flex flex-col justify-start overflow-hidden pointer-events-none">${htmlFull}</div></td>`;
                             }
                         }
                     });
@@ -6796,7 +7001,8 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             <span class="text-xs font-mono font-black text-slate-800">${dayInfo.dateStr} (${dayInfo.weekDay})</span>
                             ${isToday ? '<span class="text-[10px] font-black text-blue-600 bg-white px-1.5 py-0.2 rounded border border-blue-200">📍 地圖即時生效中</span>' : ''}
                         </div>
-                        <div class="flex items-center gap-1.5">
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                            <button type="button" onclick="window.autoAssignDaySchedule('${dStr}')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="依出勤名單與每人優先級自動排班"><i data-lucide="sparkles" class="w-3 h-3 mr-1"></i>智慧排班</button>
                             ${prevDateStr ? `<button type="button" onclick="window.copyPrevDaySchedule('${dStr}', '${prevDateStr}')" class="bg-white hover:bg-blue-50 text-blue-600 font-bold text-[10px] px-2 py-1 rounded-lg border border-blue-200 shadow-2xs transition-colors flex items-center active:scale-95" title="複製前一日排班"><i data-lucide="copy" class="w-3 h-3 mr-1"></i>複製前日</button>` : ''}
                             <button type="button" onclick="window.triggerDayCSVImport('${dStr}')" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[10px] px-2 py-1 rounded-lg border border-emerald-200 transition-colors flex items-center active:scale-95"><i data-lucide="file-up" class="w-3 h-3 mr-1"></i>匯入此日</button>
                             <button type="button" onclick="window.clearSingleDaySchedule('${dStr}')" class="bg-white hover:bg-red-50 text-red-500 font-bold text-[10px] px-2 py-1 rounded-lg border border-red-200 transition-colors flex items-center active:scale-95"><i data-lucide="trash-2" class="w-3 h-3 mr-0.5"></i>清空此日</button>
@@ -6811,63 +7017,102 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 </div>`;
             }).join('');
 
+            // 計算當日出勤過濾名單
+            const activeFilterList = window.activeDutyMembersFilter[roleKey] || [];
+            const isFilterEnabled = activeFilterList.length > 0;
+            const visibleMembers = (isEditingMembers || window.isSelectingDutyFilter || !isFilterEnabled)
+                ? teamMembers
+                : teamMembers.filter(m => activeFilterList.includes(m));
+
             list.innerHTML = `
-            <!-- 🌟 置頂浮動控制盤：人員名單與儲存按鍵隨手可按 -->
+            <!-- 🌟 置頂浮動控制盤：出勤勾選過濾 + 優先級設定 + 儲存按鍵 -->
             <div class="sticky top-0 z-30 mb-3 p-2 bg-white/95 backdrop-blur-md border-2 border-slate-200 rounded-xl shadow-md w-full">
                 <div class="flex flex-wrap justify-between items-center gap-2 mb-2 pb-1.5 border-b border-slate-100">
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-1.5 flex-wrap">
                         <div class="flex bg-slate-200 p-0.5 rounded-lg border border-slate-300 shadow-inner">
                             <button type="button" onclick="window.toggleMapRoleMode('cs'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${!isCleanRole ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🎧 客服排班 (5日)</button>
                             <button type="button" onclick="window.toggleMapRoleMode('clean'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${isCleanRole ? 'bg-white text-teal-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧹 清潔排班 (5日)</button>
                         </div>
                         <button type="button" onclick="document.getElementById('sched-day-card-${getNowInputStrs().date}')?.scrollIntoView({ behavior: 'smooth', block: 'center' })" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-2 py-1 rounded-lg text-[10px] font-black active:scale-95">定位今日</button>
+                        
+                        <!-- 🌟 新增：勾選當日出勤人員按鈕 -->
+                        <button type="button" onclick="window.toggleDutyFilterMode()" class="px-2.5 py-1 rounded-lg text-[10.5px] font-black border transition-all flex items-center active:scale-95 ${window.isSelectingDutyFilter ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm' : (isFilterEnabled ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200')}">
+                            <i data-lucide="user-check" class="w-3.5 h-3.5 mr-1"></i>${window.isSelectingDutyFilter ? '完成出勤勾選' : (isFilterEnabled ? `出勤中 (${activeFilterList.length}/${teamMembers.length}人)` : '勾選出勤人員')}
+                        </button>
                     </div>
 
                     <div class="flex items-center gap-1.5">
                         <input type="file" id="scheduleExcelImportInput" accept=".csv" class="hidden" onchange="window.importScheduleCSV(event)">
-                        <button onclick="window.toggleEditMembers()" class="text-[10px] font-bold text-slate-600 hover:text-blue-600 transition-colors bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs">${isEditingMembers ? '完成名單' : '編輯名單'}</button>
+                        <button onclick="window.toggleEditMembers()" class="text-[10px] font-bold transition-colors px-2.5 py-1.5 rounded-lg border shadow-2xs ${isEditingMembers ? 'bg-amber-500 text-white border-amber-600' : 'bg-slate-100 text-slate-600 hover:text-blue-600 border-slate-200'}">${isEditingMembers ? '完成設定' : '⚙️ 名單與優先級'}</button>
                         <button onclick="window.clearAllSchedules()" class="bg-red-50 hover:bg-red-100 text-red-600 font-bold text-[10px] px-2.5 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center"><i data-lucide="trash-2" class="w-3 h-3 mr-1"></i>5日全清</button>
                         <button onclick="window.saveGridSchedule()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg shadow-sm transition-colors active:scale-95 flex items-center"><i data-lucide="save" class="w-3.5 h-3.5 mr-1"></i>儲存 5 日排班</button>
                     </div>
                 </div>
 
+                ${window.isSelectingDutyFilter ? `
+                    <div class="mb-2 px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between text-[11px] font-bold text-emerald-800">
+                        <span>👇 請點擊下方人員以勾選今日上班名單（未勾選者將隱藏按鈕，方便排班點選）：</span>
+                        <div class="flex items-center gap-1.5 shrink-0">
+                            <button type="button" onclick="window.selectAllDutyMembers(true)" class="px-2 py-0.5 bg-white border border-emerald-300 rounded text-[10px] font-black text-emerald-700 hover:bg-emerald-100">全選</button>
+                            <button type="button" onclick="window.selectAllDutyMembers(false)" class="px-2 py-0.5 bg-white border border-slate-300 rounded text-[10px] font-bold text-slate-600 hover:bg-slate-100">顯示全部(不過濾)</button>
+                        </div>
+                    </div>
+                ` : ''}
+
                 <div class="flex flex-wrap gap-1.5 px-1 justify-start items-center">
-                    ${!isEditingMembers ? `
-                        <!-- 🌟 拆分/合併專屬按鈕 -->
+                    ${(!isEditingMembers && !window.isSelectingDutyFilter) ? `
                         <div class="relative group cursor-pointer member-btn-container" data-name="SPLITTER" onclick="window.selectGridMember('SPLITTER')">
                             <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-105' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-sm'}">
                                 ✂️ 拆分/合併
                             </div>
                         </div>
 
-                        <!-- 橡皮擦 -->
                         <div class="relative group cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')">
                             <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}">
                                 <i data-lucide="eraser" class="w-3.5 h-3.5 mr-1"></i>橡皮擦
                             </div>
                         </div>
                     ` : ''}
-                    ${teamMembers.map((name, idx) => {
+                    ${visibleMembers.map((name) => {
+                        const idx = teamMembers.indexOf(name);
                         const c = window.getMemberColorClass(name), sel = activeGridMember === name;
-                        const profile = isCleanRole ? window.getMemberProfile(name) : { id: '', avatar: '' };
+                        const profile = window.getMemberProfile(name);
                         const hasUniqueId = isCleanRole && profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== name.trim().toUpperCase();
                         const safeNameAttr = name.replace(/'/g, "\\'");
+                        const isDutyChecked = activeFilterList.includes(name);
+
+                        // 顯示該成員設定的前三優先簡稱提示
+                        const prefCount = (profile.prefs || []).filter(Boolean).length;
+                        const prefBadge = (isEditingMembers && prefCount > 0) ? `<span class="text-[9px] bg-indigo-600 text-white px-1 rounded-full">★${prefCount}</span>` : '';
+
+                        if (window.isSelectingDutyFilter) {
+                            return `
+                            <div class="relative cursor-pointer select-none" onclick="window.toggleDutyMemberActive('${safeNameAttr}')">
+                                <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border-2 transition-all flex items-center justify-center gap-1.5 ${isDutyChecked ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm scale-105' : 'bg-slate-100 text-slate-400 border-slate-200 opacity-60'}">
+                                    <span>${isDutyChecked ? '☑️' : '⬜'} ${name}</span>
+                                </div>
+                            </div>`;
+                        }
+
                         return `
-                        <div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? `window.openMemberProfilePopup('${safeNameAttr}', '名單管理')` : `window.selectGridMember('${safeNameAttr}')`}">
-                            <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center gap-1.5 ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-105` : `${c.bg} ${c.text}${c.border} hover:opacity-80 shadow-sm`}">
+                        <div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? `window.openMemberProfilePopup('${safeNameAttr}', '名單與優先級設定')` : `window.selectGridMember('${safeNameAttr}')`}">
+                            <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center gap-1 ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-105` : `${c.bg} ${c.text} ${c.border} hover:opacity-80 shadow-sm`}">
                                 ${isCleanRole && profile.avatar ? `<img src="${profile.avatar}" class="w-4 h-4 rounded-full object-cover shrink-0 border border-white/60">` : ''}
                                 <span>${name}</span>
                                 ${hasUniqueId ? `<span class="text-[9px] font-mono opacity-80 bg-black/10 px-1 py-0.2 rounded">${profile.id.trim()}</span>` : ''}
+                                ${prefBadge}
                             </div>
                             ${isEditingMembers ? `<button onclick="window.removeTeamMember(${idx}); event.stopPropagation();" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold z-10 hover:bg-red-600 transition-colors"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}
                         </div>`;
                     }).join('')}
                     ${isEditingMembers ? `<button onclick="window.addTeamMember()" class="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-dashed border-slate-400 text-slate-500 hover:bg-slate-200 flex items-center transition-colors justify-center"><i data-lucide="plus" class="w-3.5 h-3.5 mr-1"></i>新增</button>` : ''}
                 </div>
-                <div id="grid-hint-text" class="${activeGridMember ? 'mt-1.5 text-[10px] font-bold animate-pulse px-1 block text-center ' + (activeGridMember === 'ERASER' ? 'text-pink-600' : 'text-blue-600') : 'hidden'}">${activeGridMember === 'ERASER' ? '👉 橡皮擦模式：點擊或拖曳下方 5 日表格以清除格子內容。' : (activeGridMember ? `👉 已選取「${activeGridMember}」，可上下對照 5 日表格直接點擊填入。` : '')}</div>
+                <div id="grid-hint-text" class="${isEditingMembers ? 'mt-1.5 text-[10.5px] font-black text-amber-600 px-1 block text-center' : (activeGridMember ? 'mt-1.5 text-[10px] font-bold animate-pulse px-1 block text-center ' + (activeGridMember === 'ERASER' ? 'text-pink-600' : 'text-blue-600') : 'hidden')}">
+                    ${isEditingMembers ? '⚙️ 點擊上方任何成員按鈕，即可設定該人員的「Top 3 優先排班地點」、編號與頭像！' : (activeGridMember === 'ERASER' ? '👉 橡皮擦模式：點擊下方表格以清除格子內容。' : (activeGridMember ? `👉 已選取「${activeGridMember}」，點擊下方格子即可填入或移除（滿行會自動加行）。` : ''))}
+                </div>
             </div>
 
-            <!-- 🌟 5日上下垂直對照排班表（前2日、昨日、今日、明日、後2日） -->
+            <!-- 🌟 5日上下垂直對照排班表 -->
             <div class="space-y-3 pb-4">
                 ${fiveDayTablesHtml}
             </div>`;
