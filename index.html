@@ -642,8 +642,9 @@ const tabMetadataMap = {
             return /^[A-Za-z]{1,4}-?\d{2,6}$/.test(str.trim());
         };
 
-        // 🌟 出勤過濾狀態（預設為空代表顯示全部，有勾選則只顯示當日出勤人員按鈕）
-        window.activeDutyMembersFilter = getLocal('work_cache_duty_filter', { cs: [], clean: [] });
+       // 🌟 出勤勾選名單與「僅顯示出勤 / 顯示全部」模式開關
+        window.activeDutyMembersFilter = getLocal('work_cache_duty_filter', { cs: null, clean: null });
+        window.dutyFilterModeEnabled = getLocal('work_cache_duty_filter_mode', { cs: true, clean: true });
         window.isSelectingDutyFilter = false;
 
         // 🌟 核心智慧判定：無論輸入「編號 (EH0047)」或「姓名 (黃金妹)」，一律以人員編號優先歸戶為同一個人
@@ -1019,17 +1020,261 @@ const tabMetadataMap = {
             if (modal && window.lucide) lucide.createIcons({ root: modal });
         };
 
+        // 🌟 取得當前角色已勾選的出勤名單（首次預設全選）
+        window.getCheckedDutyList = () => {
+            const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
+            if (!window.activeDutyMembersFilter || typeof window.activeDutyMembersFilter !== 'object') {
+                window.activeDutyMembersFilter = { cs: null, clean: null };
+            }
+            if (!Array.isArray(window.activeDutyMembersFilter[roleKey])) {
+                window.activeDutyMembersFilter[roleKey] = [...teamMembers];
+                safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
+            }
+            return window.activeDutyMembersFilter[roleKey];
+        };
+
+        // 🌟 更新頂部資訊與切換鍵外觀
+        window.updateRosterHeaderButtonsUI = () => {
+            const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
+            const list = window.getCheckedDutyList();
+            const validCheckedCount = teamMembers.filter(m => list.includes(m)).length;
+            const isAllChecked = teamMembers.length > 0 && validCheckedCount === teamMembers.length;
+            if (!window.dutyFilterModeEnabled) window.dutyFilterModeEnabled = { cs: true, clean: true };
+            const isFilterOn = window.dutyFilterModeEnabled[roleKey] !== false;
+
+            const sumEl = $('rosterDutySummary');
+            if (sumEl) {
+                sumEl.textContent = `已剔選：${validCheckedCount} / ${teamMembers.length} 人`;
+            }
+
+            // 切換鍵 1：全剔選 / 全部取消
+            const btnCheckAll = $('btnToggleCheckAll');
+            if (btnCheckAll) {
+                btnCheckAll.innerHTML = isAllChecked ? '⬜ 全部取消' : '☑️ 全部剔選';
+                btnCheckAll.className = isAllChecked
+                    ? 'px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-black active:scale-95 transition-all'
+                    : 'px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-black active:scale-95 transition-all';
+            }
+
+            // 切換鍵 2：僅顯示出勤 / 顯示全部（加入即時外觀切換）
+            const btnFilterMode = $('btnToggleFilterMode');
+            if (btnFilterMode) {
+                btnFilterMode.innerHTML = isFilterOn ? '🎯 僅顯示出勤' : '👁️ 顯示全部';
+                btnFilterMode.className = isFilterOn
+                    ? 'px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-600 rounded-lg text-xs font-black shadow-2xs active:scale-95 transition-all'
+                    : 'px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold active:scale-95 transition-all';
+            }
+        };
+
+        // 🌟 點擊單一成員：局部更新 DOM，絕不閃爍
+        window.toggleDutyMemberActive = (name, cardEl) => {
+            const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
+            const list = window.getCheckedDutyList();
+            const idx = list.indexOf(name);
+            let isNowChecked = false;
+            if (idx === -1) {
+                list.push(name);
+                isNowChecked = true;
+            } else {
+                list.splice(idx, 1);
+                isNowChecked = false;
+            }
+            safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
+
+            if (cardEl) {
+                const chk = cardEl.querySelector('input[type="checkbox"]');
+                if (chk) chk.checked = isNowChecked;
+                cardEl.className = `p-2 rounded-xl border transition-all ${isNowChecked ? 'bg-white border-slate-200 shadow-2xs' : 'bg-slate-100/70 border-slate-200 opacity-55'} flex items-center justify-between gap-2`;
+            } else {
+                window.renderMemberRosterListsOnly();
+            }
+            window.updateRosterHeaderButtonsUI();
+            // 同步更新背後排班表按鍵
+            if ($('scheduleManageModal')?.classList.contains('flex')) {
+                window.renderScheduleManager();
+            }
+        };
+
+        // 🌟 切換鍵 1：一鍵全剔選 / 全部取消
+        window.toggleAllDutyMembers = () => {
+            const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
+            const list = window.getCheckedDutyList();
+            const validCheckedCount = teamMembers.filter(m => list.includes(m)).length;
+            const isAllChecked = teamMembers.length > 0 && validCheckedCount === teamMembers.length;
+
+            window.activeDutyMembersFilter[roleKey] = isAllChecked ? [] : [...teamMembers];
+            safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
+            window.renderMemberRosterListsOnly();
+            window.updateRosterHeaderButtonsUI();
+            if ($('scheduleManageModal')?.classList.contains('flex')) {
+                window.renderScheduleManager();
+            }
+        };
+
+        // 🌟 切換鍵 2：即時切換「僅顯示出勤」與「顯示全部」，並立刻同步內外畫面
+        window.toggleDutyDisplayFilterMode = () => {
+            const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
+            if (!window.dutyFilterModeEnabled) window.dutyFilterModeEnabled = { cs: true, clean: true };
+            const cur = window.dutyFilterModeEnabled[roleKey] !== false;
+            window.dutyFilterModeEnabled[roleKey] = !cur;
+            safeSetLocal('work_cache_duty_filter_mode', window.dutyFilterModeEnabled);
+            
+            window.updateRosterHeaderButtonsUI();
+            window.renderMemberRosterListsOnly();
+            // 立刻重繪外面排班表頂部的人員按鍵！
+            if ($('scheduleManageModal')?.classList.contains('flex')) {
+                window.renderScheduleManager();
+            }
+            window.showToast(!cur ? '🎯 已切換為：僅顯示出勤人員（排班區已過濾）' : '👁️ 已切換為：顯示所有成員（排班區顯示全部）');
+        };
+
+        window.addTeamMemberWithGender = (gender = '女') => {
+            const isClean = window.currentMapRole === 'clean';
+            const rawInput = prompt(`請輸入新【${gender}性】${isClean ? '清潔' : '客服'}成員姓名（可寫「姓名-編號」，例如：王大明-EH0088）：`);
+            if (!rawInput || !rawInput.trim()) return;
+            const parts = rawInput.trim().split(/[-—_]/);
+            const name = parts[0].trim();
+            const staffId = (parts[1] || '').trim().toUpperCase();
+            if (!name) return;
+
+            if (!teamMembers.includes(name)) {
+                teamMembers.push(name);
+                const list = window.getCheckedDutyList();
+                if (!list.includes(name)) list.push(name);
+                safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
+
+                if (isClean) {
+                    cleanMembersStore = [...teamMembers];
+                    safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                    syncConfig('clean_team_members', { members: cleanMembersStore });
+                } else {
+                    csMembersStore = [...teamMembers];
+                    safeSetLocal('work_cache_team_members', csMembersStore);
+                    syncConfig('team_members', { members: csMembersStore });
+                }
+            }
+            window.saveMemberProfile(name, { gender, ...(staffId ? { id: staffId } : {}) });
+            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
+                window.renderMemberRosterListsOnly();
+                window.updateRosterHeaderButtonsUI();
+            }
+            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+            window.showToast(`✅ 已新增${gender}性成員「${name}」`);
+        };
+
+        window.deleteMemberByName = (name) => {
+            window.showConfirm('刪除成員', `確定要從名單中刪除「${name}」嗎？`, () => {
+                const idx = teamMembers.indexOf(name);
+                if (idx !== -1) window.removeTeamMember(idx);
+                if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
+                    window.renderMemberRosterListsOnly();
+                    window.updateRosterHeaderButtonsUI();
+                }
+            });
+        };
+
+        window.openMemberRosterModal = () => {
+            let modal = $('memberRosterModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'memberRosterModal';
+                modal.className = 'fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[280] hidden flex-col items-center justify-center p-2 sm:p-4';
+                modal.onclick = (e) => { if (e.target === modal) window.closeMemberRosterModal(); };
+                document.body.appendChild(modal);
+            }
+            window.renderMemberRosterModal();
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        };
+
+        window.closeMemberRosterModal = () => {
+            const modal = $('memberRosterModal');
+            if (modal) {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+        };
+
+        window._rosterSearchQuery = '';
+
+        window.filterMemberRosterSearch = (val) => {
+            window._rosterSearchQuery = (val || '').trim().toLowerCase();
+            window.renderMemberRosterListsOnly();
+        };
+
+        window.renderMemberRosterListsOnly = () => {
+            const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
+            const isFilterOn = window.dutyFilterModeEnabled?.[roleKey] !== false;
+            const activeFilterList = window.getCheckedDutyList();
+            const q = window._rosterSearchQuery || '';
+
+            const maleMembers = [];
+            const femaleMembers = [];
+            teamMembers.forEach(m => {
+                const prof = window.getMemberProfile(m);
+                const staffIdStr = (prof.id || '').trim().toLowerCase();
+                if (q && !m.toLowerCase().includes(q) && !staffIdStr.includes(q)) return;
+
+                if (prof.gender === '男') maleMembers.push(m);
+                else femaleMembers.push(m);
+            });
+
+            const renderMemberCard = (name) => {
+                const prof = window.getMemberProfile(name);
+                const col = window.getMemberColorClass(name);
+                const safeName = name.replace(/'/g, "\\'");
+                const isChecked = activeFilterList.includes(name);
+                const staffIdStr = (prof.id || '').trim();
+                const displayTitle = staffIdStr && staffIdStr.toUpperCase() !== name.toUpperCase()
+                    ? `${name} - <span class="font-mono text-[11px] text-slate-600">${staffIdStr}</span>`
+                    : `${name}`;
+
+                const avatarHtml = prof.avatar
+                    ? `<img src="${prof.avatar}" class="w-8 h-8 rounded-full object-cover border border-slate-300 shrink-0 shadow-2xs">`
+                    : `<div class="w-8 h-8 rounded-full ${col.bg} ${col.border} border flex items-center justify-center shrink-0 shadow-2xs"><i data-lucide="user" class="w-4 h-4 text-slate-700"></i></div>`;
+
+                // 當切換為「👁️ 顯示全部」時，所有成員卡片皆保持清晰不變暗，並標示「全部顯示中」
+                const cardOpacityCls = (isChecked || !isFilterOn)
+                    ? 'bg-white border-slate-200 shadow-2xs'
+                    : 'bg-slate-100/70 border-slate-200 opacity-50';
+
+                return `
+                <div class="p-2 rounded-xl border transition-all ${cardOpacityCls} flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-2 min-w-0 flex-1 cursor-pointer select-none" onclick="window.toggleDutyMemberActive('${safeName}', this.parentElement)" title="點擊勾選/取消當日出勤">
+                        <input type="checkbox" ${isChecked ? 'checked' : ''} class="w-4 h-4 rounded text-emerald-600 pointer-events-none shrink-0">
+                        ${avatarHtml}
+                        <span class="font-black text-xs text-slate-900 ${col.bg} px-2 py-0.5 rounded-md border ${col.border} truncate">${displayTitle}</span>
+                    </div>
+                    <div class="flex items-center gap-1 shrink-0">
+                        <button type="button" onclick="window.openMemberProfilePopup('${safeName}', '人員名單設定')" class="p-1.5 rounded-lg bg-slate-50 hover:bg-blue-50 text-blue-600 border border-slate-200/80 active:scale-95 transition-all" title="修改名稱、編號、性別、頭像與優先級"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
+                        <button type="button" onclick="window.deleteMemberByName('${safeName}')" class="p-1.5 rounded-lg bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 border border-slate-200/80 active:scale-95 transition-all" title="刪除成員"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                    </div>
+                </div>`;
+            };
+
+            const maleListEl = $('rosterMaleList');
+            const femaleListEl = $('rosterFemaleList');
+            if ($('rosterMaleCount'))$('rosterMaleCount').textContent = maleMembers.length;
+            if ($('rosterFemaleCount'))$('rosterFemaleCount').textContent = femaleMembers.length;
+
+            if (maleListEl) {
+                maleListEl.innerHTML = maleMembers.length ? maleMembers.map(m => renderMemberCard(m)).join('') : '<div class="text-center py-8 text-xs font-bold text-slate-400">無相符男性成員</div>';
+            }
+            if (femaleListEl) {
+                femaleListEl.innerHTML = femaleMembers.length ? femaleMembers.map(m => renderMemberCard(m)).join('') : '<div class="text-center py-8 text-xs font-bold text-slate-400">無相符女性成員</div>';
+            }
+            const modal = $('memberRosterModal');
+            if (modal && window.lucide) lucide.createIcons({ root: modal });
+        };
+
         window.renderMemberRosterModal = () => {
             const modal = $('memberRosterModal');
             if (!modal) return;
             const isClean = window.currentMapRole === 'clean';
-            const roleKey = isClean ? 'clean' : 'cs';
-            const activeFilterList = window.activeDutyMembersFilter[roleKey] || [];
-            const isFilterEnabled = activeFilterList.length > 0;
 
             modal.innerHTML = `
                 <div class="bg-[#fdfbf7] rounded-2xl w-full max-w-[760px] max-h-[90vh] shadow-2xl border-2 border-slate-200 flex flex-col overflow-hidden animate-pop-in" onclick="event.stopPropagation()">
-                    <!-- 頂部標題與出勤快捷列 -->
                     <header class="px-3.5 py-2.5 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
                         <div class="flex items-center space-x-2">
                             <div class="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
@@ -1037,20 +1282,17 @@ const tabMetadataMap = {
                             </div>
                             <h3 class="font-black text-sm text-slate-800 flex items-center gap-1.5">
                                 人員名單 (${isClean ? '清潔' : '客服'})
-                                <span id="rosterDutySummary" class="text-[11px] font-bold px-2 py-0.2 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                    當日出勤：${isFilterEnabled ? activeFilterList.length : teamMembers.length} / ${teamMembers.length} 人
-                                </span>
+                                <span id="rosterDutySummary" class="text-[11px] font-bold px-2 py-0.2 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200"></span>
                             </h3>
                         </div>
 
                         <div class="flex items-center gap-1.5">
-                            <button type="button" onclick="window.selectAllDutyMembers(true)" class="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-black active:scale-95">全選出勤</button>
-                            <button type="button" onclick="window.selectAllDutyMembers(false)" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 rounded-lg text-xs font-bold active:scale-95">全部顯示(不過濾)</button>
+                            <button type="button" id="btnToggleCheckAll" onclick="window.toggleAllDutyMembers()" class="px-2.5 py-1 rounded-lg text-xs font-black active:scale-95 transition-all"></button>
+                            <button type="button" id="btnToggleFilterMode" onclick="window.toggleDutyDisplayFilterMode()" class="px-2.5 py-1 rounded-lg text-xs font-black active:scale-95 transition-all"></button>
                             <button type="button" onclick="window.closeMemberRosterModal()" class="p-1 text-slate-400 hover:text-slate-600 rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button>
                         </div>
                     </header>
 
-                    <!-- 🌟 上方搜尋框 -->
                     <div class="px-3.5 py-2 bg-white border-b border-slate-200 shrink-0">
                         <div class="relative flex items-center">
                             <i data-lucide="search" class="absolute left-3 w-4 h-4 text-slate-400"></i>
@@ -1061,9 +1303,7 @@ const tabMetadataMap = {
                         </div>
                     </div>
 
-                    <!-- 男左女右雙欄板塊 -->
                     <div class="flex-1 overflow-y-auto p-2.5 sm:p-3 grid grid-cols-1 sm:grid-cols-2 gap-3 min-h-0">
-                        <!-- 左板塊：男性成員 -->
                         <div class="bg-blue-50/40 border-2 border-blue-200/80 rounded-2xl p-2.5 flex flex-col">
                             <div class="flex items-center justify-between pb-2 mb-2 border-b border-blue-200/60">
                                 <div class="flex items-center gap-1.5">
@@ -1077,7 +1317,6 @@ const tabMetadataMap = {
                             <div id="rosterMaleList" class="space-y-2 flex-1"></div>
                         </div>
 
-                        <!-- 右板塊：女性成員 -->
                         <div class="bg-rose-50/40 border-2 border-rose-200/80 rounded-2xl p-2.5 flex flex-col">
                             <div class="flex items-center justify-between pb-2 mb-2 border-b border-rose-200/60">
                                 <div class="flex items-center gap-1.5">
@@ -1092,7 +1331,6 @@ const tabMetadataMap = {
                         </div>
                     </div>
 
-                    <!-- 底部完成按鈕 -->
                     <footer class="px-4 py-2.5 bg-white border-t border-slate-200 flex justify-between items-center shrink-0">
                         <span class="text-[11px] font-bold text-slate-500">💡 點擊鉛筆圖示可設定性別、員工編號與排班優先級</span>
                         <button type="button" onclick="window.closeMemberRosterModal()" class="px-5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-black shadow-sm active:scale-95">
@@ -1102,6 +1340,7 @@ const tabMetadataMap = {
                 </div>
             `;
             window.renderMemberRosterListsOnly();
+            window.updateRosterHeaderButtonsUI();
         };
 
         // 🌟 一鍵智慧自動排班（依據當日勾選的出勤人員 + 每人 Top 3 優先崗位自動填入）
@@ -1109,8 +1348,9 @@ const tabMetadataMap = {
             window.captureAll5DayDomValues();
             const isClean = window.currentMapRole === 'clean';
             const roleKey = isClean ? 'clean' : 'cs';
-            const filterList = window.activeDutyMembersFilter[roleKey] || [];
-            const dutyMembers = filterList.length > 0 ? teamMembers.filter(m => filterList.includes(m)) : [...teamMembers];
+            const filterList = window.getCheckedDutyList ? window.getCheckedDutyList() : teamMembers;
+            const isFilterOn = window.dutyFilterModeEnabled?.[roleKey] !== false;
+            const dutyMembers = isFilterOn ? teamMembers.filter(m => filterList.includes(m)) : [...teamMembers];
 
             if (dutyMembers.length === 0) {
                 return window.showToast("⚠️ 請先在「編輯名單」勾選今日出勤人員！", true);
@@ -5888,14 +6128,11 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
     const d = snap.data();
     const remoteReports = d?.reports || {};
 
-    // 與本機合併
+    // 🌟 關鍵修復：直接以雲端推送的最新資料覆蓋本地快取，解決手機與電腦時鐘微小誤差導致不更新的問題
     let all = getLocal('market_reports_all_data', {});
     Object.keys(remoteReports).forEach(k => {
         const remote = remoteReports[k];
-        const local = all[k];
-        const remoteTime = remote?.updatedAt ? new Date(remote.updatedAt).getTime() : 0;
-        const localTime = local?.updatedAt ? new Date(local.updatedAt).getTime() : 0;
-        if (!local || remoteTime >= localTime) {
+        if (remote && remote.data) {
             all[k] = remote;
             safeSetLocal('market_report_' + k, remote);
         }
@@ -7250,12 +7487,12 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 </div>`;
             }).join('');
 
-           // 計算當日出勤過濾名單（排班頂部只顯示當日出勤人員按鍵）
-            const activeFilterList = window.activeDutyMembersFilter[roleKey] || [];
-            const isFilterEnabled = activeFilterList.length > 0;
-            const visibleMembers = !isFilterEnabled
-                ? teamMembers
-                : teamMembers.filter(m => activeFilterList.includes(m));
+          // 計算當日出勤過濾名單（嚴格依照「🎯 僅顯示出勤 / 👁️ 顯示全部」切換鍵決定！）
+            const checkedList = window.getCheckedDutyList ? window.getCheckedDutyList() : (window.activeDutyMembersFilter[roleKey] || teamMembers);
+            const isFilterOn = window.dutyFilterModeEnabled?.[roleKey] !== false;
+            const visibleMembers = !isFilterOn
+                ? [...teamMembers]
+                : teamMembers.filter(m => checkedList.includes(m));
 
             list.innerHTML = `
             <!-- 🌟 置頂浮動控制盤：只顯示當日出勤人員按鍵，所有人員管理統一併入「編輯名單」 -->
@@ -7433,17 +7670,18 @@ window.crSaveData = () => {
         };
 
         window.crOpenAddModal = () => {
-            ['crInputTenant', 'crInputNewType'].forEach(id => $(id).value = '');
-            
-            // 🌟 加上這兩行：初始化數量顯示框與隱藏欄位
-            $('crInputQuantity').value = '';
+            ['crInputTenant', 'crInputNewType'].forEach(id => $(id).value = '');$('crInputQuantity').value = '';
             if ($('crInputQuantityDisplay'))$('crInputQuantityDisplay').innerText = '---';
 
             crCurrentSelectedType = ''; window.crRenderTypesInModal();
             const { date, time } = getNowInputStrs();
             $('crInputDate').value = date; $('crInputTime').value = time;
             const staff = $('crInputStaff');
-            if (staff) staff.innerHTML = '<option value="">請選擇經手客服人員...</option>' + teamMembers.map(m => `<option value="${m}">${m}</option>`).join('');
+            if (staff) {
+                // 🌟 嚴格修復：雪房經手人員固定只抓取客服名單 (csMembersStore)，絕不抓清潔人員
+                const csList = (typeof csMembersStore !== 'undefined' && csMembersStore.length > 0) ? csMembersStore : ['周靜儀', '蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲'];
+                staff.innerHTML = '<option value="">請選擇經手客服人員...</option>' + csList.map(m => `<option value="${m}">${m}</option>`).join('');
+            }
             $('crAddModal')?.classList.replace('hidden', 'flex');
         };
         window.crCloseAddModal = () => $('crAddModal')?.classList.replace('flex', 'hidden');
@@ -8986,6 +9224,16 @@ window.pushMeetingReportsToAllIframes = (reports) => {
 };
 
         window.closeMeetingReportModal = () => {
+            const iframe = document.getElementById('meetingReportIframe');
+            if (iframe && iframe.contentWindow) {
+                try { iframe.contentWindow.postMessage({ type: 'FLUSH_MEETING_REPORT' }, '*'); } catch (e) {}
+            }
+            document.getElementById('meetingReportModal')?.classList.replace('flex', 'hidden');
+        };window.closeMeetingReportModal = () => {
+            const iframe = document.getElementById('meetingReportIframe');
+            if (iframe && iframe.contentWindow) {
+                try { iframe.contentWindow.postMessage({ type: 'FLUSH_MEETING_REPORT' }, '*'); } catch (e) {}
+            }
             document.getElementById('meetingReportModal')?.classList.replace('flex', 'hidden');
         };
 
@@ -9894,6 +10142,10 @@ window.pushMeetingReportsToAllIframes = (reports) => {
     });
 
     window.addEventListener('message', function(event) {
+      if (event.data?.type === 'FLUSH_MEETING_REPORT') {
+        flushPendingCloudSave();
+        return;
+      }
       if (event.data?.type !== 'SYNC_MEETING_REPORTS') return;
       const reports = event.data.reports || {};
       try {
@@ -9907,18 +10159,13 @@ window.pushMeetingReportsToAllIframes = (reports) => {
 
         Object.keys(reports).forEach(function(k) {
           const remote = reports[k];
-          if (!remote) return;
-          let local = null;
-          try { local = JSON.parse(localStorage.getItem('market_report_' + k) || 'null'); } catch(e) {}
-          const remoteTime = remote.updatedAt ? new Date(remote.updatedAt).getTime() : 0;
-          const localTime = local?.updatedAt ? new Date(local.updatedAt).getTime() : 0;
-          if (!local || remoteTime >= localTime) {
+          if (remote && remote.data) {
             localStorage.setItem('market_report_' + k, JSON.stringify(remote));
           }
         });
       } catch(e) {}
 
-      // 若本機正在連續打字中（600ms 內），暫緩覆蓋當前畫面，避免游標與剛點的按鈕閃回
+      // 若本機正在連續打字中（600ms 內），暫緩覆蓋當前畫面，保護打字游標
       if (Date.now() - lastUserEditTime < 600) {
         updateHistoryCountBadge();
         return;
