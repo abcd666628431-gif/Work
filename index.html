@@ -749,15 +749,21 @@ const tabMetadataMap = {
             }
         };
 
-        window.getMemberProfile = (name) => {
-            if (!name) return { id: '', avatar: '', prefs: [] };
+       window.getMemberProfile = (name) => {
+            if (!name) return { id: '', avatar: '', gender: '女', prefs: [] };
             const canonical = window.resolveMemberIdentity ? window.resolveMemberIdentity(name) : name;
             if (!memberProfilesStore[canonical]) {
                 const autoId = window.isStaffIdFormat(canonical) ? canonical.toUpperCase() : '';
-                memberProfilesStore[canonical] = { id: autoId, avatar: '', prefs: [] };
+                const defaultMales = ['林浩霆', '黃永超', '譚建安', '甘永寧'];
+                const defGender = defaultMales.includes(canonical) ? '男' : '女';
+                memberProfilesStore[canonical] = { id: autoId, avatar: '', gender: defGender, prefs: [] };
             }
             if (memberProfilesStore[canonical].id) {
                 memberProfilesStore[canonical].id = memberProfilesStore[canonical].id.replace(/^#/, '');
+            }
+            if (!memberProfilesStore[canonical].gender) {
+                const defaultMales = ['林浩霆', '黃永超', '譚建安', '甘永寧'];
+                memberProfilesStore[canonical].gender = defaultMales.includes(canonical) ? '男' : '女';
             }
             if (!Array.isArray(memberProfilesStore[canonical].prefs)) {
                 memberProfilesStore[canonical].prefs = [];
@@ -794,6 +800,9 @@ const tabMetadataMap = {
                         if (!profileData.avatar && !memberProfilesStore[name]?.avatar && memberProfilesStore[dupKey]?.avatar) {
                             profileData.avatar = memberProfilesStore[dupKey].avatar;
                         }
+                        if (!profileData.gender && !memberProfilesStore[name]?.gender && memberProfilesStore[dupKey]?.gender) {
+                            profileData.gender = memberProfilesStore[dupKey].gender;
+                        }
                         if (!profileData.prefs && !memberProfilesStore[name]?.prefs?.length && memberProfilesStore[dupKey]?.prefs?.length) {
                             profileData.prefs = memberProfilesStore[dupKey].prefs;
                         }
@@ -815,7 +824,7 @@ const tabMetadataMap = {
                 }
             }
 
-            memberProfilesStore[name] = Object.assign({ id: '', avatar: '', prefs: [] }, memberProfilesStore[name] || {}, profileData);
+            memberProfilesStore[name] = Object.assign({ id: '', avatar: '', gender: '女', prefs: [] }, memberProfilesStore[name] || {}, profileData);
             safeSetLocal('work_cache_member_profiles', memberProfilesStore);
             if (currentUser && db) {
                 syncConfig('member_profiles', { profiles: memberProfilesStore });
@@ -840,20 +849,25 @@ const tabMetadataMap = {
             const prefs = Array.isArray(prof.prefs) ? [...prof.prefs] : ['', '', ''];
             prefs[idx] = locVal;
             window.saveMemberProfile(name, { prefs });
-            window.showToast(`✅ 已更新 ${name} 的第 ${idx + 1} 優先崗位！`);
+            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal();
             if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
         };
 
-        // 🌟 切換「勾選出勤人員過濾」模式與點選邏輯
-        window.toggleDutyFilterMode = () => {
-            window.isSelectingDutyFilter = !window.isSelectingDutyFilter;
-            if (window.isSelectingDutyFilter) {
-                isEditingMembers = false;
-                activeGridMember = null;
+        // 🌟 切換人員性別（自動在左男右女板塊間移動）
+        window.setMemberGender = (name, gender) => {
+            window.saveMemberProfile(name, { gender });
+            if ($('memberProfileModal') && !$('memberProfileModal').classList.contains('hidden')) {
+                window.openMemberProfilePopup(name, window._currentPopupLocation);
             }
-            window.renderScheduleManager();
+            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
+                window.renderMemberRosterModal();
+            }
+            if ($('scheduleManageModal')?.classList.contains('flex')) {
+                window.renderScheduleManager();
+            }
         };
 
+        // 🌟 勾選/取消當日出勤人員
         window.toggleDutyMemberActive = (name) => {
             const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
             window.activeDutyMembersFilter[roleKey] = window.activeDutyMembersFilter[roleKey] || [];
@@ -862,14 +876,232 @@ const tabMetadataMap = {
             if (idx === -1) list.push(name);
             else list.splice(idx, 1);
             safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
-            window.renderScheduleManager();
+            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal();
+            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
         };
 
         window.selectAllDutyMembers = (selectAll) => {
             const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
             window.activeDutyMembersFilter[roleKey] = selectAll ? [...teamMembers] : [];
             safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
-            window.renderScheduleManager();
+            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal();
+            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+        };
+
+        // 🌟 在「人員名單」視窗內直接新增男/女成員
+        window.addTeamMemberWithGender = (gender = '女') => {
+            const isClean = window.currentMapRole === 'clean';
+            const rawInput = prompt(`請輸入新【${gender}性】${isClean ? '清潔' : '客服'}成員姓名（可寫「姓名-編號」，例如：王大明-EH0088）：`);
+            if (!rawInput || !rawInput.trim()) return;
+            const parts = rawInput.trim().split(/[-—_]/);
+            const name = parts[0].trim();
+            const staffId = (parts[1] || '').trim().toUpperCase();
+            if (!name) return;
+
+            if (!teamMembers.includes(name)) {
+                teamMembers.push(name);
+                if (isClean) {
+                    cleanMembersStore = [...teamMembers];
+                    safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                    syncConfig('clean_team_members', { members: cleanMembersStore });
+                } else {
+                    csMembersStore = [...teamMembers];
+                    safeSetLocal('work_cache_team_members', csMembersStore);
+                    syncConfig('team_members', { members: csMembersStore });
+                }
+            }
+            window.saveMemberProfile(name, { gender, ...(staffId ? { id: staffId } : {}) });
+            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal();
+            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+            window.showToast(`✅ 已新增${gender}性成員「${name}」`);
+        };
+
+        window.deleteMemberByName = (name) => {
+            window.showConfirm('刪除成員', `確定要從名單中刪除「${name}」嗎？`, () => {
+                const idx = teamMembers.indexOf(name);
+                if (idx !== -1) window.removeTeamMember(idx);
+                if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal();
+            });
+        };
+
+        // 🌟 開啟「人員名單」專屬整合彈窗（男左女右、名稱-員工編號、名單與優先級、勾選出勤人員合一）
+        window.openMemberRosterModal = () => {
+            let modal = $('memberRosterModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'memberRosterModal';
+                modal.className = 'fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[280] hidden flex-col items-center justify-center p-2 sm:p-4';
+                modal.onclick = (e) => { if (e.target === modal) window.closeMemberRosterModal(); };
+                document.body.appendChild(modal);
+            }
+            window.renderMemberRosterModal();
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        };
+
+        window.closeMemberRosterModal = () => {
+            const modal = $('memberRosterModal');
+            if (modal) {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+        };
+
+        window._rosterSearchQuery = '';
+
+        window.filterMemberRosterSearch = (val) => {
+            window._rosterSearchQuery = (val || '').trim().toLowerCase();
+            window.renderMemberRosterListsOnly();
+        };
+
+        window.renderMemberRosterListsOnly = () => {
+            const isClean = window.currentMapRole === 'clean';
+            const roleKey = isClean ? 'clean' : 'cs';
+            const activeFilterList = window.activeDutyMembersFilter[roleKey] || [];
+            const isFilterEnabled = activeFilterList.length > 0;
+            const q = window._rosterSearchQuery || '';
+
+            const maleMembers = [];
+            const femaleMembers = [];
+            teamMembers.forEach(m => {
+                const prof = window.getMemberProfile(m);
+                const staffIdStr = (prof.id || '').trim().toLowerCase();
+                if (q && !m.toLowerCase().includes(q) && !staffIdStr.includes(q)) return;
+
+                if (prof.gender === '男') maleMembers.push(m);
+                else femaleMembers.push(m);
+            });
+
+            const renderMemberCard = (name) => {
+                const prof = window.getMemberProfile(name);
+                const col = window.getMemberColorClass(name);
+                const safeName = name.replace(/'/g, "\\'");
+                const isChecked = !isFilterEnabled || activeFilterList.includes(name);
+                const staffIdStr = (prof.id || '').trim();
+                const displayTitle = staffIdStr && staffIdStr.toUpperCase() !== name.toUpperCase()
+                    ? `${name} - <span class="font-mono text-[11px] text-slate-600">${staffIdStr}</span>`
+                    : `${name}`;
+
+                const avatarHtml = prof.avatar
+                    ? `<img src="${prof.avatar}" class="w-8 h-8 rounded-full object-cover border border-slate-300 shrink-0 shadow-2xs">`
+                    : `<div class="w-8 h-8 rounded-full ${col.bg} ${col.border} border flex items-center justify-center shrink-0 shadow-2xs"><i data-lucide="user" class="w-4 h-4 text-slate-700"></i></div>`;
+
+                return `
+                <div class="p-2 rounded-xl border transition-all ${isChecked ? 'bg-white border-slate-200 shadow-2xs' : 'bg-slate-100/70 border-slate-200 opacity-60'} flex items-center justify-between gap-2">
+                    <!-- 勾選出勤 + 頭像 + 名稱-員工編號 -->
+                    <div class="flex items-center gap-2 min-w-0 flex-1 cursor-pointer select-none" onclick="window.toggleDutyMemberActive('${safeName}')" title="點擊勾選/取消當日出勤">
+                        <input type="checkbox" ${isChecked ? 'checked' : ''} class="w-4 h-4 rounded text-emerald-600 pointer-events-none shrink-0">
+                        ${avatarHtml}
+                        <span class="font-black text-xs text-slate-900 ${col.bg} px-2 py-0.5 rounded-md border ${col.border} truncate">${displayTitle}</span>
+                    </div>
+                    <!-- 右側僅保留：修改筆號（點擊進入設定性別/編號/優先級/頭像）與 刪除鍵 -->
+                    <div class="flex items-center gap-1 shrink-0">
+                        <button type="button" onclick="window.openMemberProfilePopup('${safeName}', '人員名單設定')" class="p-1.5 rounded-lg bg-slate-50 hover:bg-blue-50 text-blue-600 border border-slate-200/80 active:scale-95 transition-all" title="修改名稱、編號、性別、頭像與優先級"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
+                        <button type="button" onclick="window.deleteMemberByName('${safeName}')" class="p-1.5 rounded-lg bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 border border-slate-200/80 active:scale-95 transition-all" title="刪除成員"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                    </div>
+                </div>`;
+            };
+
+            const maleListEl = $('rosterMaleList');
+            const femaleListEl = $('rosterFemaleList');
+            if ($('rosterMaleCount'))$('rosterMaleCount').textContent = maleMembers.length;
+            if ($('rosterFemaleCount'))$('rosterFemaleCount').textContent = femaleMembers.length;
+            if ($('rosterDutySummary'))$('rosterDutySummary').textContent = `當日出勤：${isFilterEnabled ? activeFilterList.length : teamMembers.length} / ${teamMembers.length} 人`;
+
+            if (maleListEl) {
+                maleListEl.innerHTML = maleMembers.length ? maleMembers.map(m => renderMemberCard(m)).join('') : '<div class="text-center py-8 text-xs font-bold text-slate-400">無相符男性成員</div>';
+            }
+            if (femaleListEl) {
+                femaleListEl.innerHTML = femaleMembers.length ? femaleMembers.map(m => renderMemberCard(m)).join('') : '<div class="text-center py-8 text-xs font-bold text-slate-400">無相符女性成員</div>';
+            }
+            const modal = $('memberRosterModal');
+            if (modal && window.lucide) lucide.createIcons({ root: modal });
+        };
+
+        window.renderMemberRosterModal = () => {
+            const modal = $('memberRosterModal');
+            if (!modal) return;
+            const isClean = window.currentMapRole === 'clean';
+            const roleKey = isClean ? 'clean' : 'cs';
+            const activeFilterList = window.activeDutyMembersFilter[roleKey] || [];
+            const isFilterEnabled = activeFilterList.length > 0;
+
+            modal.innerHTML = `
+                <div class="bg-[#fdfbf7] rounded-2xl w-full max-w-[760px] max-h-[90vh] shadow-2xl border-2 border-slate-200 flex flex-col overflow-hidden animate-pop-in" onclick="event.stopPropagation()">
+                    <!-- 頂部標題與出勤快捷列 -->
+                    <header class="px-3.5 py-2.5 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                        <div class="flex items-center space-x-2">
+                            <div class="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                                <i data-lucide="users" class="w-4 h-4"></i>
+                            </div>
+                            <h3 class="font-black text-sm text-slate-800 flex items-center gap-1.5">
+                                人員名單 (${isClean ? '清潔' : '客服'})
+                                <span id="rosterDutySummary" class="text-[11px] font-bold px-2 py-0.2 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    當日出勤：${isFilterEnabled ? activeFilterList.length : teamMembers.length} / ${teamMembers.length} 人
+                                </span>
+                            </h3>
+                        </div>
+
+                        <div class="flex items-center gap-1.5">
+                            <button type="button" onclick="window.selectAllDutyMembers(true)" class="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-black active:scale-95">全選出勤</button>
+                            <button type="button" onclick="window.selectAllDutyMembers(false)" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 rounded-lg text-xs font-bold active:scale-95">全部顯示(不過濾)</button>
+                            <button type="button" onclick="window.closeMemberRosterModal()" class="p-1 text-slate-400 hover:text-slate-600 rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button>
+                        </div>
+                    </header>
+
+                    <!-- 🌟 上方搜尋框 -->
+                    <div class="px-3.5 py-2 bg-white border-b border-slate-200 shrink-0">
+                        <div class="relative flex items-center">
+                            <i data-lucide="search" class="absolute left-3 w-4 h-4 text-slate-400"></i>
+                            <input type="text" id="rosterSearchInput" value="${window._rosterSearchQuery || ''}" oninput="window.filterMemberRosterSearch(this.value)" placeholder="搜尋人員姓名或員工編號 (例如: EH0047)..." class="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-8 py-1.5 text-xs font-bold text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:bg-white focus:outline-none">
+                            <button type="button" onclick="document.getElementById('rosterSearchInput').value=''; window.filterMemberRosterSearch('');" class="absolute right-2 text-slate-400 hover:text-slate-600 p-1">
+                                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 男左女右雙欄板塊 -->
+                    <div class="flex-1 overflow-y-auto p-2.5 sm:p-3 grid grid-cols-1 sm:grid-cols-2 gap-3 min-h-0">
+                        <!-- 左板塊：男性成員 -->
+                        <div class="bg-blue-50/40 border-2 border-blue-200/80 rounded-2xl p-2.5 flex flex-col">
+                            <div class="flex items-center justify-between pb-2 mb-2 border-b border-blue-200/60">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="bg-blue-600 text-white text-xs font-black px-2 py-0.5 rounded-md shadow-2xs">男</span>
+                                    <span class="text-xs font-black text-blue-950">男性成員 (<span id="rosterMaleCount">0</span>人)</span>
+                                </div>
+                                <button type="button" onclick="window.addTeamMemberWithGender('男')" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-bold flex items-center shadow-2xs active:scale-95">
+                                    <i data-lucide="plus" class="w-3 h-3 mr-0.5"></i>新增男員
+                                </button>
+                            </div>
+                            <div id="rosterMaleList" class="space-y-2 flex-1"></div>
+                        </div>
+
+                        <!-- 右板塊：女性成員 -->
+                        <div class="bg-rose-50/40 border-2 border-rose-200/80 rounded-2xl p-2.5 flex flex-col">
+                            <div class="flex items-center justify-between pb-2 mb-2 border-b border-rose-200/60">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="bg-rose-500 text-white text-xs font-black px-2 py-0.5 rounded-md shadow-2xs">女</span>
+                                    <span class="text-xs font-black text-rose-950">女性成員 (<span id="rosterFemaleCount">0</span>人)</span>
+                                </div>
+                                <button type="button" onclick="window.addTeamMemberWithGender('女')" class="px-2 py-1 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-[11px] font-bold flex items-center shadow-2xs active:scale-95">
+                                    <i data-lucide="plus" class="w-3 h-3 mr-0.5"></i>新增女員
+                                </button>
+                            </div>
+                            <div id="rosterFemaleList" class="space-y-2 flex-1"></div>
+                        </div>
+                    </div>
+
+                    <!-- 底部完成按鈕 -->
+                    <footer class="px-4 py-2.5 bg-white border-t border-slate-200 flex justify-between items-center shrink-0">
+                        <span class="text-[11px] font-bold text-slate-500">💡 點擊鉛筆圖示可設定性別、員工編號與排班優先級</span>
+                        <button type="button" onclick="window.closeMemberRosterModal()" class="px-5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-black shadow-sm active:scale-95">
+                            完成並返回排班
+                        </button>
+                    </footer>
+                </div>
+            `;
+            window.renderMemberRosterListsOnly();
         };
 
         // 🌟 一鍵智慧自動排班（依據當日勾選的出勤人員 + 每人 Top 3 優先崗位自動填入）
@@ -878,30 +1110,27 @@ const tabMetadataMap = {
             const isClean = window.currentMapRole === 'clean';
             const roleKey = isClean ? 'clean' : 'cs';
             const filterList = window.activeDutyMembersFilter[roleKey] || [];
-            // 若有勾選出勤名單則只排勾選的人；若未勾選則預設排全部成員
             const dutyMembers = filterList.length > 0 ? teamMembers.filter(m => filterList.includes(m)) : [...teamMembers];
 
             if (dutyMembers.length === 0) {
-                return window.showToast("⚠️ 請先勾選今日出勤人員或新增成員！", true);
+                return window.showToast("⚠️ 請先在「編輯名單」勾選今日出勤人員！", true);
             }
 
             window.showConfirm('✨ 智慧自動排班', `將根據目前 ${dutyMembers.length} 位出勤人員的「優先級設定」，自動排入【${targetDateStr}】的班表，確定執行嗎？`, () => {
                 const rolePrefix = isClean ? 'clean_' : 'cs_';
-                // 先清空該日舊暫存
                 Object.keys(window._tempGridValues).forEach(k => {
                     if (k.startsWith(`${targetDateStr}_`)) delete window._tempGridValues[k];
                 });
 
                 const timeSlots = Array.from({length: 15}, (_, i) => `${pad(i + 7)}:00-${pad(i + 8)}:00`);
-                // 各崗位建議目標人數（清潔模式：單人崗位先各1人、魚檔最多3人、機動最多4人）
                 const locTargets = isClean
                     ? [
-                        { id: 'pt_8', max: 1 }, // 花園仔(男廁)
-                        { id: 'pt_9', max: 1 }, // 花園仔(女廁)+(傷健廁所)
-                        { id: 'pt_3', max: 1 }, // 花園仔
-                        { id: 'pt_1', max: 1 }, // 一樓+廁所
-                        { id: 'pt_4', max: 3 }, // 魚檔 (預設3行)
-                        { id: 'pt_6', max: 4 }  // 機動 (預設4行)
+                        { id: 'pt_8', max: 1 },
+                        { id: 'pt_9', max: 1 },
+                        { id: 'pt_3', max: 1 },
+                        { id: 'pt_1', max: 1 },
+                        { id: 'pt_4', max: 3 },
+                        { id: 'pt_6', max: 4 }
                       ]
                     : [
                         { id: 'pt_1', max: 2 },
@@ -916,9 +1145,7 @@ const tabMetadataMap = {
                     const locAssignedMap = {};
                     Object.keys(mapData.points).forEach(k => locAssignedMap[k] = []);
 
-                    // 第 1 輪：依照第 1 優先、第 2 優先、第 3 優先依序對號入座
                     for (let prefRank = 0; prefRank < 3; prefRank++) {
-                        // 稍微輪轉順序讓同優先級的人公平分配
                         const rotatedMembers = dutyMembers.map((_, idx) => dutyMembers[(idx + slotIdx) % dutyMembers.length]);
                         rotatedMembers.forEach(m => {
                             if (assignedInSlot.has(m)) return;
@@ -935,7 +1162,6 @@ const tabMetadataMap = {
                         });
                     }
 
-                    // 第 2 輪：將尚未分配的人員，自動補齊還有缺額的核心崗位（最後溢出的歸入機動或客服室）
                     const remainingMembers = dutyMembers.filter(m => !assignedInSlot.has(m));
                     remainingMembers.forEach(m => {
                         let placed = false;
@@ -953,7 +1179,6 @@ const tabMetadataMap = {
                         }
                     });
 
-                    // 寫入 _tempGridValues 暫存
                     Object.entries(locAssignedMap).forEach(([locId, namesArr]) => {
                         if (namesArr.length > 0) {
                             const stateKey = `${rolePrefix}${targetDateStr}_${locId}_${tStart}`;
@@ -1007,9 +1232,8 @@ const tabMetadataMap = {
                 if (imgEl) imgEl.src = avatarDataUrl;
 
                 window.updateMapSimulation();
-                if ($('scheduleManageModal')?.classList.contains('flex')) {
-                    window.renderScheduleManager();
-                }
+                if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal();
+                if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
                 window.showToast(`✅ 已更新 ${name} 的個人頭像！`);
             } catch (err) {
                 console.error('頭像上傳失敗:', err);
@@ -1038,17 +1262,18 @@ const tabMetadataMap = {
             const isClean = window.currentMapRole === 'clean';
             let list = isClean ? cleanMembersStore : csMembersStore;
 
-            const oldProf = memberProfilesStore[oldName] || { id: '', avatar: '', prefs: [] };
-            const targetProf = memberProfilesStore[newName] || { id: '', avatar: '', prefs: [] };
+            const oldProf = memberProfilesStore[oldName] || { id: '', avatar: '', gender: '女', prefs: [] };
+            const targetProf = memberProfilesStore[newName] || { id: '', avatar: '', gender: '女', prefs: [] };
 
             let preservedId = oldProf.id || targetProf.id || '';
             if (!preservedId && window.isStaffIdFormat(oldName)) {
                 preservedId = oldName.trim().toUpperCase();
             }
             const preservedAvatar = oldProf.avatar || targetProf.avatar || '';
+            const preservedGender = oldProf.gender || targetProf.gender || '女';
             const preservedPrefs = (oldProf.prefs && oldProf.prefs.length) ? oldProf.prefs : (targetProf.prefs || []);
 
-            memberProfilesStore[newName] = { id: preservedId, avatar: preservedAvatar, prefs: preservedPrefs };
+            memberProfilesStore[newName] = { id: preservedId, avatar: preservedAvatar, gender: preservedGender, prefs: preservedPrefs };
             if (oldName !== newName) {
                 delete memberProfilesStore[oldName];
             }
@@ -1093,6 +1318,7 @@ const tabMetadataMap = {
             window.showToast(`✅ 已修改名稱為「${newName}」（編號 ${preservedId || '無'} 維持不變）`);
             window.openMemberProfilePopup(newName, window._currentPopupLocation || '當前崗位');
             window.updateMapSimulation();
+            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal();
             if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
         };
 
@@ -1111,14 +1337,14 @@ const tabMetadataMap = {
             if (!popup) {
                 popup = document.createElement('div');
                 popup.id = 'memberProfileModal';
-                popup.className = 'fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] flex items-center justify-center p-4';
+                popup.className = 'fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[320] flex items-center justify-center p-4';
                 popup.onclick = (e) => { if (e.target === popup) popup.classList.add('hidden'); };
                 document.body.appendChild(popup);
             }
 
             const safeNameAttr = canonicalName.replace(/'/g, "\\'");
             const prefs = profile.prefs || ['', '', ''];
-            // 依據您指定的順序顯示下拉選單
+            const curGender = profile.gender || '女';
             const order = ['pt_8', 'pt_9', 'pt_3', 'pt_4', 'pt_1', 'pt_5', 'pt_2', 'pt_6'];
             const locEntries = Object.entries(mapData.points)
                 .filter(([k]) => k !== 'pt_7')
@@ -1141,8 +1367,7 @@ const tabMetadataMap = {
                         </label>
                     </div>
 
-                    <!-- 姓名與修改按鈕 -->
-                    <div class="w-full mb-1 flex items-center gap-1">
+                    <div class="w-full mb-1.5 flex items-center gap-1">
                         <input type="text" id="popupMemberNameInput" value="${canonicalName}" placeholder="輸入成員姓名" 
                             onkeydown="if(event.key==='Enter'){ event.preventDefault(); window.confirmRenameMember('${safeNameAttr}'); }"
                             class="bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-sm font-black text-slate-800 text-center flex-1 min-w-0 focus:outline-none focus:border-blue-500">
@@ -1152,15 +1377,24 @@ const tabMetadataMap = {
                         </button>
                     </div>
 
-                    <div class="w-full mt-2 bg-slate-50 p-2 rounded-xl border border-slate-200 flex items-center justify-between">
-                        <span class="text-[11px] font-bold text-slate-500">人員編號：</span>
-                        <input type="text" id="popupMemberIdInput" value="${(profile.id || '').replace(/^#/, '')}" placeholder="例如: EH0047" 
-                            onchange="window.saveMemberProfile('${safeNameAttr}', { id: this.value.trim() }); window.showToast('✅ 已更新編號'); window.openMemberProfilePopup('${safeNameAttr}', window._currentPopupLocation); window.updateMapSimulation(); if($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();"
-                            class="bg-white border border-slate-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center w-28 focus:outline-none focus:border-blue-500">
+                    <!-- 性別與員工編號 -->
+                    <div class="w-full mt-1.5 bg-slate-50 p-2 rounded-xl border border-slate-200 space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[11px] font-bold text-slate-500">性別分組：</span>
+                            <div class="flex gap-1">
+                                <button type="button" onclick="window.setMemberGender('${safeNameAttr}', '男')" class="px-3 py-0.5 rounded-md text-xs font-black border transition-all ${curGender === '男' ? 'bg-blue-600 text-white border-blue-600 shadow-2xs' : 'bg-white text-slate-600 border-slate-200'}">男</button>
+                                <button type="button" onclick="window.setMemberGender('${safeNameAttr}', '女')" class="px-3 py-0.5 rounded-md text-xs font-black border transition-all ${curGender === '女' ? 'bg-rose-500 text-white border-rose-500 shadow-2xs' : 'bg-white text-slate-600 border-slate-200'}">女</button>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-[11px] font-bold text-slate-500">員工編號：</span>
+                            <input type="text" id="popupMemberIdInput" value="${(profile.id || '').replace(/^#/, '')}" placeholder="例如: EH0047" 
+                                onchange="window.saveMemberProfile('${safeNameAttr}', { id: this.value.trim() }); window.showToast('✅ 已更新編號'); window.openMemberProfilePopup('${safeNameAttr}', window._currentPopupLocation); window.updateMapSimulation(); if($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal(); if($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();"
+                                class="bg-white border border-slate-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center w-28 focus:outline-none focus:border-blue-500">
+                        </div>
                     </div>
 
-                    <!-- 🌟 新增：個人 Top 3 優先去向設定 -->
-                    <div class="w-full mt-2.5 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-200/80 text-left space-y-1.5">
+                    <div class="w-full mt-2 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-200/80 text-left space-y-1.5">
                         <div class="text-[11px] font-black text-indigo-800 flex items-center">
                             <i data-lucide="sparkles" class="w-3.5 h-3.5 mr-1 text-indigo-600"></i>優先排班崗位 (自動排班用)
                         </div>
@@ -1174,8 +1408,6 @@ const tabMetadataMap = {
                             </div>
                         `).join('')}
                     </div>
-
-                    <div class="text-[10px] text-slate-400 mt-2">點選「編輯名單」再點人名即可開啟此設定</div>
                 </div>
             `;
             popup.classList.remove('hidden');
@@ -6321,7 +6553,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
         window.openScheduleManager = () => { window.renderScheduleManager(); $('scheduleManageModal')?.classList.replace('hidden', 'flex'); };
         window.closeScheduleManager = () => { $('scheduleManageModal')?.classList.replace('flex', 'hidden'); window.updateMapSimulation(); };
-        window.toggleEditMembers = () => { isEditingMembers = !isEditingMembers; activeGridMember = null; window.renderScheduleManager(); };
+        window.toggleEditMembers = () => { window.openMemberRosterModal(); };
 
         window.addTeamMember = () => {
             const isClean = window.currentMapRole === 'clean';
@@ -6424,8 +6656,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 const canon = n ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n) : '';
                 const col = canon ? window.getMemberColorClass(canon) : null;
                 const borderCls = i < totalRows - 1 ? 'border-b border-slate-300' : '';
-                const bgAndTextCls = col ? `${col.bg}${col.text}` : 'bg-white text-slate-800';
-                html += `<div class="sub-line-item w-full h-[22px] min-h-[22px] flex items-center justify-center ${borderCls}${bgAndTextCls} font-black text-[10px] leading-none truncate px-0.5 select-none">${n}</div>`;
+                // 🌟 名字框加底色 (col.bg)，文字維持深黑色 (text-slate-900)
+                const bgCls = col ? col.bg : 'bg-white';
+                html += `<div class="sub-line-item w-full h-[22px] min-h-[22px] flex items-center justify-center ${borderCls} ${bgCls} text-slate-900 font-black text-[10px] leading-none truncate px-0.5 select-none">${n}</div>`;
             }
             return html;
         };
@@ -7017,15 +7250,15 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 </div>`;
             }).join('');
 
-            // 計算當日出勤過濾名單
+           // 計算當日出勤過濾名單（排班頂部只顯示當日出勤人員按鍵）
             const activeFilterList = window.activeDutyMembersFilter[roleKey] || [];
             const isFilterEnabled = activeFilterList.length > 0;
-            const visibleMembers = (isEditingMembers || window.isSelectingDutyFilter || !isFilterEnabled)
+            const visibleMembers = !isFilterEnabled
                 ? teamMembers
                 : teamMembers.filter(m => activeFilterList.includes(m));
 
             list.innerHTML = `
-            <!-- 🌟 置頂浮動控制盤：出勤勾選過濾 + 優先級設定 + 儲存按鍵 -->
+            <!-- 🌟 置頂浮動控制盤：只顯示當日出勤人員按鍵，所有人員管理統一併入「編輯名單」 -->
             <div class="sticky top-0 z-30 mb-3 p-2 bg-white/95 backdrop-blur-md border-2 border-slate-200 rounded-xl shadow-md w-full">
                 <div class="flex flex-wrap justify-between items-center gap-2 mb-2 pb-1.5 border-b border-slate-100">
                     <div class="flex items-center gap-1.5 flex-wrap">
@@ -7034,81 +7267,50 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             <button type="button" onclick="window.toggleMapRoleMode('clean'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${isCleanRole ? 'bg-white text-teal-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧹 清潔排班 (5日)</button>
                         </div>
                         <button type="button" onclick="document.getElementById('sched-day-card-${getNowInputStrs().date}')?.scrollIntoView({ behavior: 'smooth', block: 'center' })" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-2 py-1 rounded-lg text-[10px] font-black active:scale-95">定位今日</button>
-                        
-                        <!-- 🌟 新增：勾選當日出勤人員按鈕 -->
-                        <button type="button" onclick="window.toggleDutyFilterMode()" class="px-2.5 py-1 rounded-lg text-[10.5px] font-black border transition-all flex items-center active:scale-95 ${window.isSelectingDutyFilter ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm' : (isFilterEnabled ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200')}">
-                            <i data-lucide="user-check" class="w-3.5 h-3.5 mr-1"></i>${window.isSelectingDutyFilter ? '完成出勤勾選' : (isFilterEnabled ? `出勤中 (${activeFilterList.length}/${teamMembers.length}人)` : '勾選出勤人員')}
-                        </button>
                     </div>
 
                     <div class="flex items-center gap-1.5">
                         <input type="file" id="scheduleExcelImportInput" accept=".csv" class="hidden" onchange="window.importScheduleCSV(event)">
-                        <button onclick="window.toggleEditMembers()" class="text-[10px] font-bold transition-colors px-2.5 py-1.5 rounded-lg border shadow-2xs ${isEditingMembers ? 'bg-amber-500 text-white border-amber-600' : 'bg-slate-100 text-slate-600 hover:text-blue-600 border-slate-200'}">${isEditingMembers ? '完成設定' : '⚙️ 名單與優先級'}</button>
+                        <!-- 🌟 點擊「編輯名單」開啟男左女右「人員名單」新視窗 -->
+                        <button type="button" onclick="window.openMemberRosterModal()" class="text-[11px] font-black transition-colors px-3 py-1.5 rounded-lg border shadow-2xs bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 flex items-center active:scale-95">
+                            <i data-lucide="users" class="w-3.5 h-3.5 mr-1 text-amber-600"></i>編輯名單 (${visibleMembers.length}/${teamMembers.length})
+                        </button>
                         <button onclick="window.clearAllSchedules()" class="bg-red-50 hover:bg-red-100 text-red-600 font-bold text-[10px] px-2.5 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center"><i data-lucide="trash-2" class="w-3 h-3 mr-1"></i>5日全清</button>
                         <button onclick="window.saveGridSchedule()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg shadow-sm transition-colors active:scale-95 flex items-center"><i data-lucide="save" class="w-3.5 h-3.5 mr-1"></i>儲存 5 日排班</button>
                     </div>
                 </div>
 
-                ${window.isSelectingDutyFilter ? `
-                    <div class="mb-2 px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between text-[11px] font-bold text-emerald-800">
-                        <span>👇 請點擊下方人員以勾選今日上班名單（未勾選者將隱藏按鈕，方便排班點選）：</span>
-                        <div class="flex items-center gap-1.5 shrink-0">
-                            <button type="button" onclick="window.selectAllDutyMembers(true)" class="px-2 py-0.5 bg-white border border-emerald-300 rounded text-[10px] font-black text-emerald-700 hover:bg-emerald-100">全選</button>
-                            <button type="button" onclick="window.selectAllDutyMembers(false)" class="px-2 py-0.5 bg-white border border-slate-300 rounded text-[10px] font-bold text-slate-600 hover:bg-slate-100">顯示全部(不過濾)</button>
+                <!-- 當日出勤人員快選按鍵列 -->
+                <div class="flex flex-wrap gap-1.5 px-1 justify-start items-center">
+                    <div class="relative group cursor-pointer member-btn-container" data-name="SPLITTER" onclick="window.selectGridMember('SPLITTER')">
+                        <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-105' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-sm'}">
+                            ✂️ 拆分/合併
                         </div>
                     </div>
-                ` : ''}
 
-                <div class="flex flex-wrap gap-1.5 px-1 justify-start items-center">
-                    ${(!isEditingMembers && !window.isSelectingDutyFilter) ? `
-                        <div class="relative group cursor-pointer member-btn-container" data-name="SPLITTER" onclick="window.selectGridMember('SPLITTER')">
-                            <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-105' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-sm'}">
-                                ✂️ 拆分/合併
-                            </div>
+                    <div class="relative group cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')">
+                        <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}">
+                            <i data-lucide="eraser" class="w-3.5 h-3.5 mr-1"></i>橡皮擦
                         </div>
+                    </div>
 
-                        <div class="relative group cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')">
-                            <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}">
-                                <i data-lucide="eraser" class="w-3.5 h-3.5 mr-1"></i>橡皮擦
-                            </div>
-                        </div>
-                    ` : ''}
                     ${visibleMembers.map((name) => {
-                        const idx = teamMembers.indexOf(name);
                         const c = window.getMemberColorClass(name), sel = activeGridMember === name;
                         const profile = window.getMemberProfile(name);
-                        const hasUniqueId = isCleanRole && profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== name.trim().toUpperCase();
+                        const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== name.trim().toUpperCase();
                         const safeNameAttr = name.replace(/'/g, "\\'");
-                        const isDutyChecked = activeFilterList.includes(name);
-
-                        // 顯示該成員設定的前三優先簡稱提示
-                        const prefCount = (profile.prefs || []).filter(Boolean).length;
-                        const prefBadge = (isEditingMembers && prefCount > 0) ? `<span class="text-[9px] bg-indigo-600 text-white px-1 rounded-full">★${prefCount}</span>` : '';
-
-                        if (window.isSelectingDutyFilter) {
-                            return `
-                            <div class="relative cursor-pointer select-none" onclick="window.toggleDutyMemberActive('${safeNameAttr}')">
-                                <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border-2 transition-all flex items-center justify-center gap-1.5 ${isDutyChecked ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm scale-105' : 'bg-slate-100 text-slate-400 border-slate-200 opacity-60'}">
-                                    <span>${isDutyChecked ? '☑️' : '⬜'} ${name}</span>
-                                </div>
-                            </div>`;
-                        }
 
                         return `
-                        <div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="${isEditingMembers ? `window.openMemberProfilePopup('${safeNameAttr}', '名單與優先級設定')` : `window.selectGridMember('${safeNameAttr}')`}">
+                        <div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="window.selectGridMember('${safeNameAttr}')">
                             <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center gap-1 ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-105` : `${c.bg} ${c.text} ${c.border} hover:opacity-80 shadow-sm`}">
                                 ${isCleanRole && profile.avatar ? `<img src="${profile.avatar}" class="w-4 h-4 rounded-full object-cover shrink-0 border border-white/60">` : ''}
-                                <span>${name}</span>
-                                ${hasUniqueId ? `<span class="text-[9px] font-mono opacity-80 bg-black/10 px-1 py-0.2 rounded">${profile.id.trim()}</span>` : ''}
-                                ${prefBadge}
+                                <span>${name}</span>${hasUniqueId ? `<span class="text-[9px] font-mono opacity-80 bg-black/10 px-1 py-0.2 rounded">${profile.id.trim()}</span>` : ''}
                             </div>
-                            ${isEditingMembers ? `<button onclick="window.removeTeamMember(${idx}); event.stopPropagation();" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold z-10 hover:bg-red-600 transition-colors"><i data-lucide="x" class="w-2.5 h-2.5"></i></button>` : ''}
                         </div>`;
                     }).join('')}
-                    ${isEditingMembers ? `<button onclick="window.addTeamMember()" class="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-dashed border-slate-400 text-slate-500 hover:bg-slate-200 flex items-center transition-colors justify-center"><i data-lucide="plus" class="w-3.5 h-3.5 mr-1"></i>新增</button>` : ''}
                 </div>
-                <div id="grid-hint-text" class="${isEditingMembers ? 'mt-1.5 text-[10.5px] font-black text-amber-600 px-1 block text-center' : (activeGridMember ? 'mt-1.5 text-[10px] font-bold animate-pulse px-1 block text-center ' + (activeGridMember === 'ERASER' ? 'text-pink-600' : 'text-blue-600') : 'hidden')}">
-                    ${isEditingMembers ? '⚙️ 點擊上方任何成員按鈕，即可設定該人員的「Top 3 優先排班地點」、編號與頭像！' : (activeGridMember === 'ERASER' ? '👉 橡皮擦模式：點擊下方表格以清除格子內容。' : (activeGridMember ? `👉 已選取「${activeGridMember}」，點擊下方格子即可填入或移除（滿行會自動加行）。` : ''))}
+                <div id="grid-hint-text" class="${activeGridMember ? 'mt-1.5 text-[10px] font-bold animate-pulse px-1 block text-center ' + (activeGridMember === 'ERASER' ? 'text-pink-600' : 'text-blue-600') : 'hidden'}">
+                    ${activeGridMember === 'ERASER' ? '👉 橡皮擦模式：點擊下方表格以清除格子內容。' : (activeGridMember ? `👉 已選取「${activeGridMember}」，點擊下方格子即可填入或移除（滿行會自動加行）。` : '')}
                 </div>
             </div>
 
