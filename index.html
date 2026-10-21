@@ -6826,6 +6826,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
         window.selectGridMember = (name) => {
             activeGridMember = (activeGridMember === name) ? null : name;
+            // 頂部按鈕保持正常外觀與選中狀態
             document.querySelectorAll('.member-btn-container').forEach(c => {
                 const cName = c.dataset.name, sel = cName === activeGridMember, isEraser = cName === 'ERASER', isSplitter = cName === 'SPLITTER', div = c.querySelector('div');
                 if (!div) return;
@@ -6838,6 +6839,39 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     div.className = `px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center gap-1.5 ${sel ? `${col.activeBg} text-white border-transparent shadow-md scale-105` : `${col.bg} ${col.text}${col.border} hover:opacity-80 shadow-sm`}`;
                 }
             });
+
+          // 🌟 核心：即時切換【表格中】所有人名的底色
+            const isMemberFocus = activeGridMember && activeGridMember !== 'ERASER' && activeGridMember !== 'SPLITTER';
+            document.querySelectorAll('.sub-line-item').forEach(el => {
+                const canon = el.dataset.name || el.textContent.trim();
+                if (!canon) return;
+                const col = window.getMemberColorClass(canon);
+                
+                // 只精準清理背景色 (bg-*) 與文字顏色 (text-slate-*)，保留字體大小 text-[10px]
+                el.className = el.className.replace(/\bbg-\S+/g, '').replace(/\btext-slate-\S+/g, '');
+
+                if (isMemberFocus) {
+                    if (canon === activeGridMember) {
+                        // 只有被點選的人名：保留專屬彩色底色高亮
+                        el.classList.add(col ? col.bg : 'bg-blue-100', 'text-slate-900');
+                        el.classList.remove('bg-white', 'text-slate-400');
+                    } else {
+                        // 其他所有人名：全部變回無底色（純白底，文字變淡）
+                        el.classList.add('bg-white', 'text-slate-400');
+                        el.classList.remove('text-slate-900');
+                    }
+                } else {
+                    // 取消點選（無選取）時：全員恢復各自的彩色底色
+                    el.classList.add(col ? col.bg : 'bg-white', 'text-slate-900');
+                    el.classList.remove('text-slate-400');
+                }
+
+                // 確保 text-[10px] 永久保留，文字絕不變大
+                if (!el.classList.contains('text-[10px]')) {
+                    el.classList.add('text-[10px]');
+                }
+            });
+
             const hint = $('grid-hint-text');
             if (hint) {
                 if (activeGridMember === 'SPLITTER') {
@@ -6845,11 +6879,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     hint.innerHTML = '✂️ 拆分/合併模式：點擊任何格子可切換「半小時兩半格」或「一小時整格」。';
                 } else if (activeGridMember === 'ERASER') {
                     hint.className = 'mt-1.5 text-[10px] text-pink-600 font-bold animate-pulse px-1 block text-center';
-                    hint.innerHTML = '👉 橡皮擦模式：點擊表格以清除整格或半格內容。';
-                } else if (activeGridMember) {
-                    hint.className = 'mt-1.5 text-[10px] text-blue-600 font-bold animate-pulse px-1 block text-center';
-                    hint.innerHTML = `👉 已選取「${activeGridMember}」，點擊任何整格或半格即可貼上名字。`;
+                    hint.innerHTML = '👉 橡皮擦模式：點擊表格以清除格子內容。';
                 } else {
+                    // 選取人名時完全隱藏提示，保持介面清爽不佔空間
                     hint.className = 'hidden';
                     hint.innerHTML = '';
                 }
@@ -6880,22 +6912,50 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             return 1;
         };
 
-        window.renderCellLinesHtml = (rawText, locId) => {
+        window.renderCellLinesHtml = (rawText, locId, dateStr = '', start = '', end = '') => {
             const minRows = window.getLocMinRows(locId);
-            const names = rawText
-                ? Array.from(new Set(rawText.split(/[\n\s]+/).filter(Boolean).map(n => window.getScheduleDisplayLabel ? window.getScheduleDisplayLabel(n) : n)))
-                : [];
-            // 🌟 若人數超過預設行數，每多一人自動增加一行！
-            const totalRows = Math.max(minRows, names.length);
+            let lines = [];
+            if (rawText !== undefined && rawText !== null && rawText !== '') {
+                lines = String(rawText).split('\n').map(n => {
+                    const clean = n.trim();
+                    return clean ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean) : '';
+                });
+            }
+            const totalRows = Math.max(minRows, lines.length);
+            while (lines.length < totalRows) {
+                lines.push('');
+            }
+
+            const isMemberFocus = activeGridMember && activeGridMember !== 'ERASER' && activeGridMember !== 'SPLITTER';
+
             let html = '';
             for (let i = 0; i < totalRows; i++) {
-                const n = names[i] || '';
+                const n = lines[i] || '';
                 const canon = n ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n) : '';
                 const col = canon ? window.getMemberColorClass(canon) : null;
                 const borderCls = i < totalRows - 1 ? 'border-b border-slate-300' : '';
-                // 🌟 名字框加底色 (col.bg)，文字維持深黑色 (text-slate-900)
-                const bgCls = col ? col.bg : 'bg-white';
-                html += `<div class="sub-line-item w-full h-[22px] min-h-[22px] flex items-center justify-center ${borderCls} ${bgCls} text-slate-900 font-black text-[10px] leading-none truncate px-0.5 select-none">${n}</div>`;
+                const dispText = canon ? (window.getScheduleDisplayLabel ? window.getScheduleDisplayLabel(canon) : canon) : '';
+
+                // 🌟 表格內人名底色判定：選中某人時，其他人全部變為白底無底色；未選取時全員彩色
+                let bgCls = 'bg-white hover:bg-blue-50/60';
+                let textCls = 'text-slate-900 font-black';
+
+                if (canon) {
+                    if (isMemberFocus) {
+                        if (canon === activeGridMember) {
+                            bgCls = col ? col.bg : 'bg-blue-100';
+                            textCls = 'text-slate-900 font-black';
+                        } else {
+                            bgCls = 'bg-white';
+                            textCls = 'text-slate-400 font-normal';
+                        }
+                    } else {
+                        bgCls = col ? col.bg : 'bg-white';
+                        textCls = 'text-slate-900 font-black';
+                    }
+                }
+
+                html += `<div data-name="${canon}" data-line-idx="${i}" onclick="window.handleSubLineClick(event, this, '${dateStr}', '${locId}', '${start}', '${end}', ${i})" class="sub-line-item w-full h-[22px] min-h-[22px] flex items-center justify-center ${borderCls} ${bgCls} ${textCls} text-[10px] leading-none truncate px-0.5 select-none cursor-pointer transition-colors active:scale-95 pointer-events-auto">${dispText}</div>`;
             }
             return html;
         };
@@ -6904,12 +6964,19 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             if (!containerEl) return '';
             const items = containerEl.querySelectorAll('.sub-line-item');
             if (items.length > 0) {
-                return Array.from(items).map(el => el.textContent.trim()).filter(Boolean).join('\n');
+                // 保留換行空位，不再用 filter(Boolean) 抹煞行數
+                return Array.from(items).map(el => el.textContent.trim()).join('\n');
             }
             return (containerEl.textContent || '').trim();
         };
 
-        window.handleCellMobileClick = (el, dateStr, locId, start, end) => {
+        // 🌟 精準行點擊函式：點哪一行就精準改哪一行
+        window.handleSubLineClick = (e, lineEl, dateStr, locId, start, end, lineIdx) => {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
             if (activeGridMember === 'SPLITTER') {
                 window.toggleSplitHour(dateStr, locId, start);
                 return;
@@ -6921,42 +6988,74 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             }
 
             const now = Date.now();
-            const cellKey = `${dateStr}_${locId}_${start}_${end}`;
-            if (window._lastCellTapKey === cellKey && (now - window._lastCellTapTime) < 250) {
+            const tapKey = `${dateStr}_${locId}_${start}_${end}_${lineIdx}_${activeGridMember}`;
+            if (window._lastSubLineTapKey === tapKey && (now - window._lastSubLineTapTime) < 250) {
                 return;
             }
-            window._lastCellTapTime = now;
-            window._lastCellTapKey = cellKey;
-            
-            const displayDiv = el.classList.contains('grid-input-display') 
-                ? el 
-                : (el.querySelector('.grid-input-display') || el);
+            window._lastSubLineTapTime = now;
+            window._lastSubLineTapKey = tapKey;
 
+            const displayDiv = lineEl.closest('.grid-input-display');
+            if (!displayDiv) return;
+
+            const cellKey = `${dateStr}_${locId}_${start}_${end}`;
             window._tempGridValues = window._tempGridValues || {};
 
-            if (activeGridMember === 'ERASER') {
-                window._tempGridValues[cellKey] = '';
-                displayDiv.innerHTML = window.renderCellLinesHtml('', locId);
-                window.showToast("🧹 已清除此格");
-            } else {
-                let currentText = window.extractCellText(displayDiv);
-                let canonicalNames = currentText
-                    ? currentText.split(/[\n\s]+/).filter(Boolean).map(n => window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n)
-                    : [];
-                const targetCanonical = window.resolveMemberIdentity ? window.resolveMemberIdentity(activeGridMember) : activeGridMember;
-                
-                if (canonicalNames.includes(targetCanonical)) {
-                    canonicalNames = canonicalNames.filter(n => n !== targetCanonical);
-                    window.showToast(`➖ 已移除「${targetCanonical}」`);
-                } else {
-                    canonicalNames.push(targetCanonical);
-                    window.showToast(`➕ 已指派「${targetCanonical}」`);
-                }
+            const subItems = Array.from(displayDiv.querySelectorAll('.sub-line-item'));
+            const minRows = window.getLocMinRows(locId);
+            const totalRows = Math.max(minRows, subItems.length);
+            let currentLines = subItems.map(item => (item.textContent || '').trim());
 
-                const joinedCanon = canonicalNames.join('\n');
-                window._tempGridValues[cellKey] = joinedCanon;
-                displayDiv.innerHTML = window.renderCellLinesHtml(joinedCanon, locId);
+            while (currentLines.length < totalRows) {
+                currentLines.push('');
             }
+
+            if (activeGridMember === 'ERASER') {
+                if (currentLines[lineIdx]) {
+                    const oldName = currentLines[lineIdx];
+                    currentLines[lineIdx] = '';
+                    window.showToast(`🧹 已清除第 ${lineIdx + 1} 行「${oldName}」`);
+                } else {
+                    window.showToast(`🧹 此行目前已是空的`);
+                }
+            } else {
+                const targetCanonical = window.resolveMemberIdentity ? window.resolveMemberIdentity(activeGridMember) : activeGridMember;
+                const currentInLine = currentLines[lineIdx] ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(currentLines[lineIdx]) : currentLines[lineIdx]) : '';
+
+                if (currentInLine === targetCanonical) {
+                    // 重複點選同行同名 -> 取消該行
+                    currentLines[lineIdx] = '';
+                    window.showToast(`➖ 已移除第 ${lineIdx + 1} 行「${targetCanonical}」`);
+                } else {
+                    // 若該成員已在此時段同格的其他行，自動先清除以防重疊指派
+                    for (let j = 0; j < currentLines.length; j++) {
+                        if (j !== lineIdx && (window.resolveMemberIdentity ? window.resolveMemberIdentity(currentLines[j]) : currentLines[j]) === targetCanonical) {
+                            currentLines[j] = '';
+                        }
+                    }
+                    currentLines[lineIdx] = targetCanonical;
+                    window.showToast(`➕ 第 ${lineIdx + 1} 行已指派「${targetCanonical}」`);
+                }
+            }
+
+            const hasAny = currentLines.some(n => !!n);
+            const joinedVal = hasAny ? currentLines.join('\n') : '';
+            window._tempGridValues[cellKey] = joinedVal;
+            displayDiv.innerHTML = window.renderCellLinesHtml(joinedVal, locId, dateStr, start, end);
+        };
+
+        window.handleCellMobileClick = (el, dateStr, locId, start, end) => {
+            const displayDiv = el.classList.contains('grid-input-display') ? el : (el.querySelector('.grid-input-display') || el);
+            const subItems = displayDiv ? Array.from(displayDiv.querySelectorAll('.sub-line-item')) : [];
+            let targetIdx = 0;
+            for (let i = 0; i < subItems.length; i++) {
+                if (!subItems[i].textContent.trim()) {
+                    targetIdx = i;
+                    break;
+                }
+            }
+            const targetEl = subItems[targetIdx] || displayDiv;
+            window.handleSubLineClick(null, targetEl, dateStr, locId, start, end, targetIdx);
         };
 
         window.startGridDrag = (el) => {
@@ -7423,8 +7522,8 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                 if (cA === undefined) cA = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : namesHalfA;
                                 if (cB === undefined) cB = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : namesHalfB;
 
-                                const htmlA = window.renderCellLinesHtml(cA, locId);
-                                const htmlB = window.renderCellLinesHtml(cB, locId);
+                                const htmlA = window.renderCellLinesHtml(cA, locId, dStr, hA_s, hA_e);
+                                const htmlB = window.renderCellLinesHtml(cB, locId, dStr, hB_s, hB_e);
 
                                 rows += `<td class="p-0 ${cellSlotClass} bg-white relative align-top w-[44px] min-w-[44px]">
                                     <div class="flex w-full h-full">
@@ -7444,9 +7543,10 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                     }
                                 }
 
-                                const htmlFull = window.renderCellLinesHtml(val, locId);
+                                const htmlFull = window.renderCellLinesHtml(val, locId, dStr, tStart, tEnd);
 
-                                rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} bg-white relative align-top w-[44px] min-w-[44px] cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display w-full flex flex-col justify-start overflow-hidden pointer-events-none">${htmlFull}</div></td>`;
+                                // 🌟 移除原本的 pointer-events-none，啟用 pointer-events-auto 讓每行皆可被精準點選
+                                rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} bg-white relative align-top w-[44px] min-w-[44px] cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display w-full flex flex-col justify-start overflow-hidden pointer-events-auto">${htmlFull}</div></td>`;
                             }
                         }
                     });
@@ -7546,8 +7646,8 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         </div>`;
                     }).join('')}
                 </div>
-                <div id="grid-hint-text" class="${activeGridMember ? 'mt-1.5 text-[10px] font-bold animate-pulse px-1 block text-center ' + (activeGridMember === 'ERASER' ? 'text-pink-600' : 'text-blue-600') : 'hidden'}">
-                    ${activeGridMember === 'ERASER' ? '👉 橡皮擦模式：點擊下方表格以清除格子內容。' : (activeGridMember ? `👉 已選取「${activeGridMember}」，點擊下方格子即可填入或移除（滿行會自動加行）。` : '')}
+                <<div id="grid-hint-text" class="${activeGridMember === 'ERASER' || activeGridMember === 'SPLITTER' ? 'mt-1.5 text-[10px] font-bold animate-pulse px-1 block text-center text-pink-600' : 'hidden'}">
+                    ${activeGridMember === 'ERASER' ? '👉 橡皮擦模式：點擊下方表格以清除格子內容。' : (activeGridMember === 'SPLITTER' ? '✂️ 拆分/合併模式：點擊任何格子可切換「半小時兩半格」或「一小時整格」。' : '')}
                 </div>
             </div>
 
