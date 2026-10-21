@@ -6904,7 +6904,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         window._lastCellTapKey = '';
 
        // 🌟 輔助函式：產生帶有獨立格線的多行 HTML（魚檔預設3行、機動預設4行、其他預設1行，每多1人自動加1行）
-        window.getLocMinRows = (locId) => {
+                        window.getLocMinRows = (locId) => {
             const isClean = window.currentMapRole === 'clean';
             if (locId === 'pt_4') return isClean ? 3 : 1; // 魚檔預設 3 行
             if (locId === 'pt_6') return isClean ? 4 : 1; // 機動預設 4 行
@@ -6912,7 +6912,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             return 1;
         };
 
-        window.renderCellLinesHtml = (rawText, locId, dateStr = '', start = '', end = '') => {
+                window.renderCellLinesHtml = (rawText, locId, dateStr = '', start = '', end = '', forceRows = 0) => {
             const minRows = window.getLocMinRows(locId);
             let lines = [];
             if (rawText !== undefined && rawText !== null && rawText !== '') {
@@ -6921,7 +6921,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     return clean ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean) : '';
                 });
             }
-            const totalRows = Math.max(minRows, lines.length);
+            const totalRows = Math.max(minRows, lines.length, forceRows || 0);
             while (lines.length < totalRows) {
                 lines.push('');
             }
@@ -6971,7 +6971,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         };
 
         // 🌟 精準行點擊函式：點哪一行就精準改哪一行
-        window.handleSubLineClick = (e, lineEl, dateStr, locId, start, end, lineIdx) => {
+                window.handleSubLineClick = (e, lineEl, dateStr, locId, start, end, lineIdx) => {
             if (e) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -6995,19 +6995,27 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             window._lastSubLineTapTime = now;
             window._lastSubLineTapKey = tapKey;
 
-            const displayDiv = lineEl.closest('.grid-input-display');
+            const displayDiv = lineEl.closest ? lineEl.closest('.grid-input-display') : null;
             if (!displayDiv) return;
+
+            const hostCell = lineEl.closest ? lineEl.closest('[data-loc][data-date]') : null;
+            if (hostCell && hostCell.dataset) {
+                dateStr = hostCell.dataset.date || dateStr;
+                locId   = hostCell.dataset.loc  || locId;
+                start   = hostCell.dataset.start || start;
+                end     = hostCell.dataset.end   || end;
+            }
 
             const cellKey = `${dateStr}_${locId}_${start}_${end}`;
             window._tempGridValues = window._tempGridValues || {};
 
             const subItems = Array.from(displayDiv.querySelectorAll('.sub-line-item'));
             const minRows = window.getLocMinRows(locId);
-            const totalRows = Math.max(minRows, subItems.length);
+            let totalRows = Math.max(minRows, subItems.length, (lineIdx | 0) + 1);
             let currentLines = subItems.map(item => (item.textContent || '').trim());
-
-            while (currentLines.length < totalRows) {
-                currentLines.push('');
+            while (currentLines.length < totalRows) currentLines.push('');
+            if (lineIdx >= currentLines.length) {
+                while (currentLines.length <= lineIdx) currentLines.push('');
             }
 
             if (activeGridMember === 'ERASER') {
@@ -7020,19 +7028,25 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 }
             } else {
                 const targetCanonical = window.resolveMemberIdentity ? window.resolveMemberIdentity(activeGridMember) : activeGridMember;
-                const currentInLine = currentLines[lineIdx] ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(currentLines[lineIdx]) : currentLines[lineIdx]) : '';
+                const resolve = (n) => n ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n) : '';
+                const currentInLine = resolve(currentLines[lineIdx]);
+
+                // 同一格同一人只留一處
+                for (let j = 0; j < currentLines.length; j++) {
+                    if (j !== lineIdx && resolve(currentLines[j]) === targetCanonical) {
+                        currentLines[j] = '';
+                    }
+                }
 
                 if (currentInLine === targetCanonical) {
-                    // 重複點選同行同名 -> 取消該行
                     currentLines[lineIdx] = '';
                     window.showToast(`➖ 已移除第 ${lineIdx + 1} 行「${targetCanonical}」`);
+                } else if (currentInLine && currentInLine !== targetCanonical) {
+                    // 該行已有別人 → 不覆蓋，下面新增一條軌道
+                    currentLines.push(targetCanonical);
+                    window.showToast(`➕ 已自動新增第 ${currentLines.length} 行並指派「${targetCanonical}」`);
                 } else {
-                    // 若該成員已在此時段同格的其他行，自動先清除以防重疊指派
-                    for (let j = 0; j < currentLines.length; j++) {
-                        if (j !== lineIdx && (window.resolveMemberIdentity ? window.resolveMemberIdentity(currentLines[j]) : currentLines[j]) === targetCanonical) {
-                            currentLines[j] = '';
-                        }
-                    }
+                    // ★ 重點：上面可以空白，照樣寫入「被點到的那一行」
                     currentLines[lineIdx] = targetCanonical;
                     window.showToast(`➕ 第 ${lineIdx + 1} 行已指派「${targetCanonical}」`);
                 }
@@ -7041,19 +7055,46 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             const hasAny = currentLines.some(n => !!n);
             const joinedVal = hasAny ? currentLines.join('\n') : '';
             window._tempGridValues[cellKey] = joinedVal;
-            displayDiv.innerHTML = window.renderCellLinesHtml(joinedVal, locId, dateStr, start, end);
+            const needRows = Math.max(window.getLocMinRows(locId), currentLines.length);
+            displayDiv.innerHTML = window.renderCellLinesHtml(joinedVal, locId, dateStr, start, end, needRows);
+
+            // 同一崗位其他時段對齊行數
+            if (window.syncLocTrackRows) {
+                window.syncLocTrackRows(dateStr, locId, needRows);
+            }
         };
 
-        window.handleCellMobileClick = (el, dateStr, locId, start, end) => {
-            const displayDiv = el.classList.contains('grid-input-display') ? el : (el.querySelector('.grid-input-display') || el);
+
+                     window.handleCellMobileClick = (el, dateStr, locId, start, end) => {
+            const cell = (el && el.closest) ? (el.closest('[data-loc][data-date]') || el) : el;
+            const d = (cell && cell.dataset) ? cell.dataset : {};
+            dateStr = d.date || dateStr;
+            locId   = d.loc  || locId;
+            start   = d.start || start;
+            end     = d.end   || end;
+
+            const displayDiv = (cell && cell.classList && cell.classList.contains('grid-input-display'))
+                ? cell
+                : ((cell && cell.querySelector) ? (cell.querySelector('.grid-input-display') || cell) : el);
+
             const subItems = displayDiv ? Array.from(displayDiv.querySelectorAll('.sub-line-item')) : [];
+
             let targetIdx = 0;
-            for (let i = 0; i < subItems.length; i++) {
-                if (!subItems[i].textContent.trim()) {
-                    targetIdx = i;
-                    break;
+            const lineEl = (el && el.closest) ? el.closest('.sub-line-item') : null;
+            if (lineEl && lineEl.dataset && lineEl.dataset.lineIdx !== undefined && lineEl.dataset.lineIdx !== '') {
+                targetIdx = parseInt(lineEl.dataset.lineIdx, 10) || 0;
+            } else if (subItems.length > 0) {
+                let foundEmpty = false;
+                for (let i = 0; i < subItems.length; i++) {
+                    if (!subItems[i].textContent.trim()) {
+                        targetIdx = i;
+                        foundEmpty = true;
+                        break;
+                    }
                 }
+                if (!foundEmpty) targetIdx = subItems.length - 1;
             }
+
             const targetEl = subItems[targetIdx] || displayDiv;
             window.handleSubLineClick(null, targetEl, dateStr, locId, start, end, targetIdx);
         };
@@ -7075,9 +7116,14 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         // 🌟 捕捉當下 5 日所有 DOM 格子內容（支援多行 sub-line-item 解析）
         window.captureAll5DayDomValues = () => {
             window._tempGridValues = window._tempGridValues || {};
-            const normCellText = (txt) => {
+                                    const normCellText = (txt) => {
                 if (!txt) return '';
-                return txt.split(/[\n\s]+/).filter(Boolean).map(n => window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n).join('\n');
+                // 保留空行（上面空白、下面有人）
+                return String(txt).split('\n').map(n => {
+                    const t = n.trim();
+                    if (!t) return '';
+                    return window.resolveMemberIdentity ? window.resolveMemberIdentity(t) : t;
+                }).join('\n');
             };
             document.querySelectorAll('.grid-input').forEach(i => {
                 if (i.dataset.date) window._tempGridValues[`${i.dataset.date}_${i.dataset.loc}_${i.dataset.start}_${i.dataset.end}`] = normCellText(i.value);
@@ -7482,7 +7528,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 timeSlots.forEach(ts => {
                     const [sH, sM] = ts.split('-')[0].split(':').map(Number), [eH, eM] = ts.split('-')[1].split(':').map(Number);
                     const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
-                    th += `<th class="p-1 border border-slate-300 w-[44px] min-w-[44px] text-[8.5px] font-bold ${isCurrentHour ? 'now-glowing-header bg-gradient-to-b from-sky-400 to-sky-500 text-white font-black shadow-md' : 'text-slate-500 bg-slate-50'} whitespace-nowrap text-center align-middle">${isCurrentHour ? '<div class="flex items-center justify-center space-x-0.5 mb-0.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-300 animate-ping"></span><span class="text-[7.5px] bg-amber-300 text-slate-900 px-1 py-0.2 rounded font-black tracking-tight leading-none shadow-xs">現在</span></div>' : ''}${ts}</th>`;
+                    th += `<th class="p-1 border border-slate-300 w-[52px] min-w-[52px] text-[8.5px] font-bold ${isCurrentHour ? 'now-glowing-header bg-gradient-to-b from-sky-400 to-sky-500 text-white font-black shadow-md' : 'text-slate-500 bg-slate-50'} whitespace-nowrap text-center align-middle">${isCurrentHour ? '<div class="flex items-center justify-center space-x-0.5 mb-0.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-300 animate-ping"></span><span class="text-[7.5px] bg-amber-300 text-slate-900 px-1 py-0.2 rounded font-black tracking-tight leading-none shadow-xs">現在</span></div>' : ''}${ts}</th>`;
                 });
 
                 let rows = '';
@@ -7499,7 +7545,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border border-slate-300' : 'border border-slate-300';
 
                         if (!isCleanRole && (locId === 'pt_2' || locId === 'pt_6') && !validCountSlots.includes(ts)) {
-                            rows += `<td class="p-0 border border-slate-300 bg-slate-200/60 pointer-events-none align-middle w-[44px] min-w-[44px]"><div class="w-full h-full" style="min-height:${minH}px"></div></td>`;
+                            rows += `<td class="p-0 border border-slate-300 bg-slate-200/60 pointer-events-none align-middle w-[52px] min-w-[52px]"><div class="w-full h-full" style="min-height:${minH}px"></div></td>`;
                         } else {
                             const [startH] = tStart.split(':'), [endH] = tEnd.split(':');
                             const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
@@ -7525,10 +7571,10 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                 const htmlA = window.renderCellLinesHtml(cA, locId, dStr, hA_s, hA_e);
                                 const htmlB = window.renderCellLinesHtml(cB, locId, dStr, hB_s, hB_e);
 
-                                rows += `<td class="p-0 ${cellSlotClass} bg-white relative align-top w-[44px] min-w-[44px]">
+                                rows += `<td class="p-0 ${cellSlotClass} bg-white relative align-top w-[52px] min-w-[52px]">
                                     <div class="flex w-full h-full">
-                                        <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hA_s}', '${hA_e}')" class="grid-input-display flex-1 min-w-[22px] border-r border-slate-300 flex flex-col justify-start ${isHalfAActive ? 'now-glowing-sub ring-1 ring-sky-400' : ''} cursor-pointer select-none overflow-hidden" data-date="${dStr}" data-loc="${locId}" data-start="${hA_s}" data-end="${hA_e}">${htmlA}</div>
-                                        <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hB_s}', '${hB_e}')" class="grid-input-display flex-1 min-w-[22px] flex flex-col justify-start ${isHalfBActive ? 'now-glowing-sub ring-1 ring-sky-400' : ''} cursor-pointer select-none overflow-hidden" data-date="${dStr}" data-loc="${locId}" data-start="${hB_s}" data-end="${hB_e}">${htmlB}</div>
+                                        <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hA_s}', '${hA_e}')" class="grid-input-display flex-1 min-w-[26px] border-r border-slate-300 flex flex-col justify-start ${isHalfAActive ? 'now-glowing-sub ring-1 ring-sky-400' : ''} cursor-pointer select-none overflow-hidden" data-date="${dStr}" data-loc="${locId}" data-start="${hA_s}" data-end="${hA_e}">${htmlA}</div>
+                                        <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hB_s}', '${hB_e}')" class="grid-input-display flex-1 min-w-[26px] flex flex-col justify-start ${isHalfBActive ? 'now-glowing-sub ring-1 ring-sky-400' : ''} cursor-pointer select-none overflow-hidden" data-date="${dStr}" data-loc="${locId}" data-start="${hB_s}" data-end="${hB_e}">${htmlB}</div>
                                     </div>
                                 </td>`;
                             } else {
@@ -7546,7 +7592,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                 const htmlFull = window.renderCellLinesHtml(val, locId, dStr, tStart, tEnd);
 
                                 // 🌟 移除原本的 pointer-events-none，啟用 pointer-events-auto 讓每行皆可被精準點選
-                                rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} bg-white relative align-top w-[44px] min-w-[44px] cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display w-full flex flex-col justify-start overflow-hidden pointer-events-auto">${htmlFull}</div></td>`;
+                                rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} bg-white relative align-top w-[52px] min-w-[52px] cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display w-full flex flex-col justify-start overflow-hidden pointer-events-auto">${htmlFull}</div></td>`;
                             }
                         }
                     });
