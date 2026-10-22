@@ -232,13 +232,21 @@
             container.innerHTML = groups.map(group => {
                 // 單筆操作：直接橫排顯示，強制 whitespace-nowrap 不換行
                 // 單筆操作：收窄元素間距，大幅提升單行容納字數
+              const isAdminUser = (sysUserName === '手提電腦' || sysUserName === '雲');
+
+                // 單筆操作：直接橫排顯示，強制 whitespace-nowrap 不換行
                 if (group.items.length === 1) {
                     const log = group.items[0];
                     const actionBadge = window.getLogBadgeStyle(log.action);
+                    const safeU = (log.user || '未知').replace(/'/g, "\\'");
+                    const safeC = log.color || '#38bdf8';
+                    const userClickAttr = isAdminUser ? `onclick="event.stopPropagation(); window.openEditOtherUserModal('${safeU}', '${safeC}')" title="點擊修改此用戶名稱與顏色"` : '';
+                    const userCursorCls = isAdminUser ? 'cursor-pointer underline decoration-dotted hover:opacity-80' : '';
+
                     return `
                     <div class="py-1 px-2 bg-slate-50 rounded-xl border border-slate-200/80 shadow-2xs flex items-center gap-1 whitespace-nowrap overflow-x-auto scrollbar-hide text-[11px]">
                         <span class="font-mono text-[9.5px] font-bold text-slate-400 shrink-0 tracking-tight">${window.formatLogTime(log.timestamp)}</span>
-                        <span class="font-black shrink-0 tracking-tight" style="color: ${log.color || '#38bdf8'}">${log.user || '未知'}</span>
+                        <span ${userClickAttr} class="font-black shrink-0 tracking-tight ${userCursorCls}" style="color: ${safeC}">${log.user || '未知'}</span>
                         <span class="font-black text-[9.5px] px-1 py-0.2 rounded border shrink-0 leading-tight ${actionBadge}">${log.action}</span>
                         <span class="font-black text-slate-800 shrink-0 tracking-tight">[${log.targetName || '無標題'}]</span>
                         ${log.detail ? `<span class="text-slate-500 font-medium text-[10px] shrink-0">${log.detail}</span>` : ''}
@@ -250,6 +258,10 @@
                 const startTime = window.formatLogTime(group.oldestTs).split(' ')[1] || '';
                 const endTime = window.formatLogTime(group.latestTs).split(' ')[1] || '';
                 const datePrefix = window.formatLogTime(group.latestTs).split(' ')[0];
+                const safeGrpU = (group.user || '未知').replace(/'/g, "\\'");
+                const safeGrpC = group.color || '#38bdf8';
+                const grpUserClickAttr = isAdminUser ? `onclick="event.stopPropagation(); window.openEditOtherUserModal('${safeGrpU}', '${safeGrpC}')" title="點擊修改此用戶名稱與顏色"` : '';
+                const grpUserCursorCls = isAdminUser ? 'cursor-pointer underline decoration-dotted hover:opacity-80' : '';
 
                 const detailsHtml = group.items.map(log => {
                     const actionBadge = window.getLogBadgeStyle(log.action);
@@ -264,11 +276,10 @@
 
                 return `
                 <div class="bg-slate-50 border border-slate-200/90 rounded-xl overflow-hidden shadow-2xs transition-all">
-                    <!-- 🌟 點擊整條按鈕即可展開/收合，加入 whitespace-nowrap 與 shrink-0 嚴格禁止時間換行 -->
                     <button type="button" onclick="window.toggleLogGroup('${group.id}', event)" class="w-full p-2 px-2.5 flex items-center justify-between text-left hover:bg-slate-100/80 active:bg-slate-200/70 transition-colors select-none">
                         <div class="flex items-center space-x-1.5 min-w-0 pr-1 overflow-hidden whitespace-nowrap">
                             <span class="font-mono text-[10px] font-bold text-slate-400 shrink-0 whitespace-nowrap">${datePrefix} ${startTime}~${endTime}</span>
-                            <span class="font-black text-[11px] shrink-0 whitespace-nowrap" style="color: ${group.color}">${group.user}</span>
+                            <span ${grpUserClickAttr} class="font-black text-[11px] shrink-0 whitespace-nowrap ${grpUserCursorCls}" style="color: ${safeGrpC}">${group.user}</span>
                             <span class="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black px-1.5 py-0.2 rounded-full shrink-0 whitespace-nowrap">
                                 ${group.items.length}筆
                             </span>
@@ -285,18 +296,80 @@
             if (window.lucide) lucide.createIcons({ root: container });
         };
 
+        window._editingTargetLogUser = null;
+
         window.openUserNameModal = () => {
+            window._editingTargetLogUser = null;
             const nameInput = document.getElementById('newUserNameInput');
             const colorInput = document.getElementById('newUserColorInput');
             if (nameInput) nameInput.value = sysUserName;
             if (colorInput) colorInput.value = sysUserColor;
             document.getElementById('userNameModal')?.classList.replace('hidden', 'flex');
         };
-        window.closeUserNameModal = () => document.getElementById('userNameModal')?.classList.replace('flex', 'hidden');
-        window.saveUserName = () => {
+
+        // 🌟 專屬管理員（「手提電腦」、「雲」）點擊日誌內其他用戶名時彈出修改
+        window.openEditOtherUserModal = (targetUser, targetColor) => {
+            if (sysUserName !== '手提電腦' && sysUserName !== '雲') return;
+            window._editingTargetLogUser = targetUser;
+            const nameInput = document.getElementById('newUserNameInput');
+            const colorInput = document.getElementById('newUserColorInput');
+            if (nameInput) nameInput.value = targetUser;
+            if (colorInput) colorInput.value = targetColor || '#38bdf8';
+            document.getElementById('userNameModal')?.classList.replace('hidden', 'flex');
+        };
+
+        window.closeUserNameModal = () => {
+            window._editingTargetLogUser = null;
+            document.getElementById('userNameModal')?.classList.replace('flex', 'hidden');
+        };
+
+        window.saveUserName = async () => {
             const name = document.getElementById('newUserNameInput')?.value.trim();
             const color = document.getElementById('newUserColorInput')?.value || '#38bdf8';
             if (!name) return window.showToast("請輸入姓名/暱稱", true);
+
+            // 若管理員（「手提電腦」或「雲」）正在修改其他用戶的名稱與顏色
+            if (window._editingTargetLogUser && (sysUserName === '手提電腦' || sysUserName === '雲')) {
+                const oldName = window._editingTargetLogUser;
+                const logsToUpdate = galleryLogsStore.filter(l => l.user === oldName);
+
+                logsToUpdate.forEach(l => {
+                    l.user = name;
+                    l.color = color;
+                });
+
+                if (currentUser && db && logsToUpdate.length > 0) {
+                    try {
+                        for (let i = 0; i < logsToUpdate.length; i += 450) {
+                            const chunk = logsToUpdate.slice(i, i + 450);
+                            const batch = writeBatch(db);
+                            chunk.forEach(l => {
+                                if (l.id) {
+                                    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_logs', l.id);
+                                    batch.update(ref, { user: name, color: color });
+                                }
+                            });
+                            await batch.commit();
+                        }
+                    } catch (e) {
+                        console.error("更新其他用戶日誌失敗:", e);
+                    }
+                }
+
+                // 若剛好改到自己的名字，也一併更新本機
+                if (oldName === sysUserName) {
+                    sysUserName = name;
+                    sysUserColor = color;
+                    localStorage.setItem('gallery_user_name', sysUserName);
+                    localStorage.setItem('gallery_user_color', sysUserColor);
+                }
+
+                window.closeUserNameModal();
+                window.renderGalleryLogs();
+                window.showToast(`✅ 已將「${oldName}」修改為「${name}」並更新顏色！`);
+                return;
+            }
+
             sysUserName = name;
             sysUserColor = color;
             localStorage.setItem('gallery_user_name', sysUserName);
@@ -304,7 +377,7 @@
             window.closeUserNameModal();
             window.renderGalleryLogs();
             window.showToast("✅ 已儲存操作者身分！");
-        };        
+        };
 
         // 確保每台裝置/瀏覽器擁有一個永久固定的唯一識別碼
         let clientSessionId = localStorage.getItem('work_client_device_id');
@@ -5037,13 +5110,13 @@ window.deleteSelectedGalleryItems = () => {
             const codePart = item.code || '';
             item.title = `${basePrefix}${codePart}`.trim();
 
-            // 更新按鈕樣式（固定 h-[22px] 鎖死高度，徹底杜絕介面跳動）
+            // 更新按鈕樣式（固定 h-[24px] 鎖死高度，上下增加 2px）
             ['1-', 'R-', 'J-'].forEach(pKey => {
                 const btn = $(`btn-prefix-${tempId}-${pKey}`);
                 if (btn) {
                     btn.className = (item.prefix === pKey)
-                        ? "w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-emerald-600 text-white border-emerald-600 shadow-xs"
-                        : "w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-white hover:bg-slate-100 text-slate-700 border-slate-200";
+                        ? "w-full h-[24px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : "w-full h-[24px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-white hover:bg-slate-100 text-slate-700 border-slate-200";
                 }
             });
 
@@ -5435,14 +5508,15 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
         window.setMergedPrefix = (val) => {
             window.mergedBatchForm.prefix = (window.mergedBatchForm.prefix === val) ? "" : val;
             
-            ['1-', 'R-', 'J-'].forEach(pKey => {
+             ['1-', 'R-', 'J-'].forEach(pKey => {
                 const btn = $(`merged-prefix-${pKey}`);
                 if (btn) {
                     btn.className = (window.mergedBatchForm.prefix === pKey)
-                        ? "w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-emerald-600 text-white border-emerald-600 shadow-xs"
-                        : "w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-white text-slate-700 border-slate-200 hover:bg-slate-100";
+                        ? "w-full h-[24px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : "w-full h-[24px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all bg-white text-slate-700 border-slate-200 hover:bg-slate-100";
                 }
             });
+
 
             const fullCode = `${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`.trim();
             window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
@@ -5543,25 +5617,321 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
         };
 
-        // ====== 合併模式專用的時間更新函式 ======
-        window.updateMergedTimePart = (part, val) => {
-            let [h, m] = (window.mergedBatchForm.time || '00:00').split(':');
-            if (part === 'h') h = val; else m = val;
-            window.mergedBatchForm.time = `${h}:${m}`;
+       // 🌟 自動格式化手動輸入的時間（支援打 0930 自動轉 09:30，並限制 00:00~23:59）
+        window.formatManualTimeInput = (rawVal, fallback = '12:00') => {
+            let v = String(rawVal || '').trim().replace(/[^\d:]/g, '');
+            if (!v) return fallback;
+            if (!v.includes(':') && v.length === 4) {
+                v = v.slice(0, 2) + ':' + v.slice(2, 4);
+            } else if (!v.includes(':') && v.length === 3) {
+                v = '0' + v.slice(0, 1) + ':' + v.slice(1, 3);
+            }
+            const parts = v.split(':');
+            let h = parseInt(parts[0], 10);
+            let m = parseInt(parts[1] || '0', 10);
+            if (isNaN(h)) h = 12;
+            if (isNaN(m)) m = 0;
+            h = Math.max(0, Math.min(23, h));
+            m = Math.max(0, Math.min(59, m));
+            return `${pad(h)}:${pad(m)}`;
+        };
 
+        // ====== 合併模式專用的手動時間更新函式 ======
+        window.updateMergedTimeDirect = (el, isBlur = false) => {
+            let val = el.value;
+            if (isBlur) {
+                val = window.formatManualTimeInput(val, window.mergedBatchForm.time || '12:00');
+                el.value = val;
+            }
+            window.mergedBatchForm.time = val;
             const fullCode = `${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`;
             window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
         };
 
-        // ====== 單張模式專用的時間更新函式 ======
-        window.updateTimePart = (tempId, part, val) => {
+        // ====== 單張模式專用的手動時間更新函式 ======
+        window.updateTimeDirect = (tempId, el, isBlur = false) => {
             const item = window.pendingUploadImages.find(x => x.tempId === tempId);
             if (!item) return;
-            let [h, m] = (item.time || '00:00').split(':');
-            if (part === 'h') h = val; else m = val;
-            item.time = `${h}:${m}`;
-
+            let val = el.value;
+            if (isBlur) {
+                val = window.formatManualTimeInput(val, item.time || '12:00');
+                el.value = val;
+            }
+            item.time = val;
             window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${tempId}`, false, tempId);
+        };
+
+        // ====== 十宮格虛擬鍵盤專屬核心邏輯 ======
+        window.activeKeypadTarget = 'merged';
+        window.keypadStore = {};
+
+        window.setKeypadTarget = (targetId) => {
+            if (!targetId) {
+                targetId = window.isBatchMergedView ? 'merged' : (window.pendingUploadImages[0]?.tempId || 'merged');
+            }
+            window.activeKeypadTarget = targetId;
+
+            if (window.keypadStore[targetId] === undefined) {
+                const currentVal = (targetId === 'merged') 
+                    ? (window.mergedBatchForm.code || '')
+                    : (window.pendingUploadImages.find(x => x.tempId === targetId)?.code || '');
+                window.keypadStore[targetId] = currentVal ? String(currentVal).replace(/\D/g, '') : '';
+            }
+
+            document.querySelectorAll('[id^="keypadDisplay-"]').forEach(el => {
+                el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/50');
+            });
+            const activeEl = document.getElementById(`keypadDisplay-${targetId}`);
+            if (activeEl) {
+                activeEl.classList.add('ring-2', 'ring-blue-500', 'bg-blue-100/50');
+            }
+            window.updateKeypadDisplayUI();
+        };
+
+        window.onKeypadPress = (key, forcedOwnerId = null) => {
+            const targetId = forcedOwnerId || window.activeKeypadTarget || 'merged';
+            window.activeKeypadTarget = targetId;
+
+            if (window.keypadStore[targetId] === undefined) {
+                window.keypadStore[targetId] = '';
+            }
+
+            let raw = window.keypadStore[targetId];
+
+            if (key === 'CLEAR') {
+                raw = '';
+            } else if (key === 'BACK') {
+                raw = raw.slice(0, -1);
+            } else {
+                if (raw.length < 3) {
+                    raw += String(key);
+                }
+            }
+            window.keypadStore[targetId] = raw;
+
+            const formatted = raw ? raw.padStart(3, '0') : '';
+
+            if (targetId === 'merged') {
+                window.mergedBatchForm.code = formatted;
+                const fullCode = `${window.mergedBatchForm.prefix || ''}${formatted}`.trim();
+                window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
+            } else {
+                const item = window.pendingUploadImages.find(x => x.tempId === targetId);
+                if (item) {
+                    item.code = formatted;
+                    item.title = `${item.prefix || ''}${formatted}`.trim();
+                    window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${item.tempId}`, false, item.tempId);
+                }
+            }
+
+            const displayEl = document.getElementById(`keypadDisplay-${targetId}`);
+            if (displayEl) {
+                displayEl.textContent = raw || '---';
+            }
+        };
+
+        window.updateKeypadDisplayUI = () => {
+            const targetId = window.activeKeypadTarget || 'merged';
+            const raw = window.keypadStore[targetId] || '';
+            const displayEl = document.getElementById(`keypadDisplay-${targetId}`);
+            if (displayEl) {
+                displayEl.textContent = raw || '---';
+            }
+        };
+
+        window.addEventListener('keydown', (e) => {
+            const modal = document.getElementById('uploadBatchModal');
+            if (!modal || modal.classList.contains('hidden')) return;
+            // 🌟 若目前游標正在手動輸入時間，不攔截數字鍵！
+            if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) return;
+
+            if (e.key >= '0' && e.key <= '9') {
+                e.preventDefault();
+                window.onKeypadPress(e.key);
+            } else if (e.key === 'Backspace') {
+                e.preventDefault();
+                window.onKeypadPress('BACK');
+            } else if (e.key === 'Escape' || e.key === 'Delete' || e.key.toLowerCase() === 'c') {
+                e.preventDefault();
+                window.onKeypadPress('CLEAR');
+            }
+        });
+
+        window.renderKeypadGridHtml = (ownerId = 'merged') => {
+            const keys = [
+                ['1', '2', '3'],
+                ['4', '5', '6'],
+                ['7', '8', '9'],
+                ['CLEAR', '0', 'BACK']
+            ];
+
+            return `
+            <!-- 數字盤：按鍵上下高度再 +2px (h-[32px] sm:h-[34px]) -->
+            <div class="grid grid-cols-3 gap-[2px] w-full select-none mt-0.5">
+                ${keys.flat().map(k => {
+                    let label = k;
+                    let style = "bg-white text-slate-800 border-[1px] border-slate-200 shadow-2xs text-[20px] font-black hover:bg-slate-50";
+                    if (k === 'CLEAR') {
+                        label = '<span class="text-[12.5px] font-black text-rose-600 leading-none">清空</span>';
+                        style = "bg-rose-50/80 border-[1px] border-rose-200 text-rose-600 hover:bg-rose-100";
+                    } else if (k === 'BACK') {
+                        label = '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-slate-700 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6-6h12a2 2 0 012 2v8a2 2 0 01-2 2H9l-6-6z" /></svg>';
+                        style = "bg-slate-100/80 border-[1px] border-slate-200 text-slate-700 hover:bg-slate-200";
+                    }
+                    return `
+                    <button type="button" onclick="window.onKeypadPress('${k}', '${ownerId}')" 
+                        class="h-[32px] sm:h-[34px] rounded-lg font-mono border flex items-center justify-center p-0 leading-none active:scale-90 active:bg-blue-100 active:shadow-inner transition-all ${style}">
+                        ${label}
+                    </button>`;
+                }).join('')}
+            </div>`;
+        };
+
+        window.renderUploadBatchList = () => {
+            const list = $('uploadBatchList');
+            const total = window.pendingUploadImages.length;
+            if ($('uploadBatchCount'))$('uploadBatchCount').textContent = total;
+            if (!total) return window.closeUploadBatchModal();
+
+            const toggleBtn = $('toggleMergeViewBtn');
+            if (toggleBtn) {
+                toggleBtn.innerHTML = window.isBatchMergedView
+                    ? `<i data-lucide="layout-grid" class="w-3.5 h-3.5 mr-1"></i>展開分開`
+                    : `<i data-lucide="layers" class="w-3.5 h-3.5 mr-1"></i>合併疊加`;
+            }
+
+            const catList = ['提早收工', '營業相', '開工-雞相', '測溫相'];
+
+            if (window.isBatchMergedView) {
+                window.setKeypadTarget('merged');
+                const curTimeStr = window.mergedBatchForm.time || '12:00';
+                list.innerHTML = `
+                <div class="flex flex-col items-center animate-pop-in pb-0.5">
+                    <div class="photo-deck-container cursor-pointer !h-[75px] !mb-1" onclick="window.openFullscreenImg('${window.pendingUploadImages[0]?.src}')" title="點擊放大預覽">
+                        ${window.pendingUploadImages.slice(0, 5).map((img) => `
+                            <div class="deck-card !w-[130px] !h-[70px]">
+                                <img src="${img.src}" class="w-full h-full object-contain p-0.5">
+                            </div>
+                        `).join('')}
+                        <div class="absolute -bottom-1 bg-slate-900/85 backdrop-blur-md text-white text-[11.5px] font-black px-2 py-0.2 rounded-full shadow-lg border border-white/40 flex items-center z-20">
+                            共疊加 ${total} 張相片
+                        </div>
+                    </div>
+
+                    <div class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-2 shadow-xs space-y-1 mt-0.5">
+                        <div id="batchMergedAutoHint" class="opacity-0 pointer-events-none h-0 p-0 text-[12px] font-bold border border-transparent transition-all flex items-center bg-transparent"></div>
+
+                        <!-- 橫排 4 個分類鍵 (上下高度 +2px: py-[5px]) -->
+                        <div class="flex items-center gap-1 w-full">
+                            ${catList.map(cat => `
+                                <button type="button" id="merged-cat-btn-${cat}" onclick="window.setMergedCategory('${cat}', true)" 
+                                    class="flex-1 py-[5px] rounded-lg text-[13px] font-bold border transition-all active:scale-95 ${window.mergedBatchForm.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
+                                    ${cat}
+                                </button>
+                            `).join('')}
+                        </div>
+
+                        <div class="flex items-center gap-1.5">
+                            <!-- 時間改為可手動打字修改版 (高度同步 +2px 為 h-[42px]) -->
+                            <div class="flex items-center justify-center bg-white border border-slate-300 rounded-xl px-2 h-[42px] shadow-inner shrink-0 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-400">
+                                <input type="text" value="${curTimeStr}" maxlength="5" placeholder="HH:MM"
+                                    oninput="window.updateMergedTimeDirect(this, false)"
+                                    onblur="window.updateMergedTimeDirect(this, true)"
+                                    class="w-[54px] bg-transparent font-mono font-black text-[16px] text-slate-800 text-center focus:outline-none">
+                            </div>
+
+                            <!-- 樓層按鍵：上下高度 +2px (h-[24px]) -->
+                            <div class="w-14 flex flex-col space-y-1 shrink-0">
+                                <button type="button" id="merged-prefix-1-" onclick="window.setMergedPrefix('1-')" class="w-full h-[24px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+                                <button type="button" id="merged-prefix-R-" onclick="window.setMergedPrefix('R-')" class="w-full h-[24px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+                                <button type="button" id="merged-prefix-J-" onclick="window.setMergedPrefix('J-')" class="w-full h-[24px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
+                            </div>
+
+                            <!-- 檔號顯示 (高度同步 +2px 為 h-[42px]) -->
+                            <div class="flex-1 h-[42px] bg-blue-50/80 border-2 border-blue-400 rounded-xl px-2 flex items-center justify-center font-mono font-black text-[23px] text-blue-700 tracking-widest shadow-inner cursor-default select-none" id="keypadDisplay-merged">
+                                ${window.keypadStore['merged'] || '---'}
+                            </div>
+                        </div>
+
+                        ${window.renderKeypadGridHtml('merged')}
+                    </div>
+                </div>`;
+                window.updateBatchAutoHintUI(`${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
+            } else {
+                // 展開分開模式
+                list.innerHTML = window.pendingUploadImages.map(item => {
+                    const curTimeStr = item.time || '12:00';
+                    const curDigits = window.keypadStore[item.tempId] || '';
+                    return `
+                    <div class="bg-slate-50 border border-slate-200 rounded-xl p-1.5 flex flex-col h-full flex-1 min-h-0 justify-between gap-1 shadow-xs overflow-hidden">
+                        <div class="relative w-full rounded-lg overflow-hidden cursor-zoom-in group border border-slate-300 shadow-xs bg-slate-100 flex items-center justify-center flex-1 min-h-[60px] max-h-[175px]" onclick="window.openFullscreenImg('${item.src}')">
+                            <img src="${item.src}" class="w-full h-full object-contain block">
+                            
+                            <button type="button" onclick="window.rotatePendingUploadItem('${item.tempId}', -90, event)" class="absolute left-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向左轉 90°">
+                                <i data-lucide="rotate-ccw" class="w-4 h-4 pointer-events-none"></i>
+                            </button>
+
+                            <button type="button" onclick="window.rotatePendingUploadItem('${item.tempId}', 90, event)" class="absolute right-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向右轉 90°">
+                                <i data-lucide="rotate-cw" class="w-4 h-4 pointer-events-none"></i>
+                            </button>
+
+                            <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1 right-1 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="刪除">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
+                            </button>
+                        </div>
+
+                        <div id="hint-pending-${item.tempId}" class="opacity-0 pointer-events-none h-0 p-0 text-[12px] font-bold border border-transparent transition-all flex items-center bg-transparent shrink-0"></div>
+
+                        <!-- 分類選擇 (上下高度 +2px: py-[5px]) -->
+                        <div class="flex items-center gap-1 w-full shrink-0">
+                            ${catList.map(cat => `
+                                <button type="button" id="btn-cat-${item.tempId}-${cat}" onclick="window.setPendingItemCategory('${item.tempId}', '${cat}', true)" 
+                                    class="flex-1 py-[5px] rounded-lg text-[13px] font-bold border transition-all active:scale-95 ${item.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
+                                    ${cat}
+                                </button>
+                            `).join('')}
+                        </div>
+
+                        <div class="flex items-center space-x-1.5 shrink-0">
+                            <!-- 時間改為可手動打字修改版 (高度同步 +2px 為 h-[38px]) -->
+                            <div class="flex items-center justify-center bg-white border border-slate-300 rounded-lg px-2 shadow-inner shrink-0 h-[38px] focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-400">
+                                <input type="text" value="${curTimeStr}" maxlength="5" placeholder="HH:MM"
+                                    oninput="window.updateTimeDirect('${item.tempId}', this, false)"
+                                    onblur="window.updateTimeDirect('${item.tempId}', this, true)"
+                                    class="w-[54px] bg-transparent font-mono font-black text-[15px] text-slate-800 text-center focus:outline-none">
+                            </div>
+
+                            <!-- 樓層按鍵：上下高度 +2px (h-[24px]) -->
+                            <div class="w-14 flex flex-col space-y-1 shrink-0">
+                                <button type="button" id="btn-prefix-${item.tempId}-1-" onclick="window.selectPrefixOption('${item.tempId}', '1-')" class="w-full h-[24px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-R-" onclick="window.selectPrefixOption('${item.tempId}', 'R-')" class="w-full h-[24px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
+                                <button type="button" id="btn-prefix-${item.tempId}-J-" onclick="window.selectPrefixOption('${item.tempId}', 'J-')" class="w-full h-[24px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
+                            </div>
+
+                            <!-- 檔號顯示 (高度同步 +2px 為 h-[38px]) -->
+                            <div onclick="window.setKeypadTarget('${item.tempId}')" class="flex-1 h-[38px] bg-white border-2 border-blue-300 rounded-xl px-2 flex items-center justify-center font-mono font-black text-[23px] text-blue-600 tracking-widest shadow-inner cursor-pointer select-none" id="keypadDisplay-${item.tempId}">
+                                ${curDigits || '---'}
+                            </div>
+                        </div>
+
+                        <div class="w-full shrink-0">
+                            ${window.renderKeypadGridHtml(item.tempId)}
+                        </div>
+                    </div>`;
+                }).join('');
+
+                window.pendingUploadImages.forEach(it => {
+                    window.updateBatchAutoHintUI(it.title, it.time, `hint-pending-${it.tempId}`, false, it.tempId);
+                });
+
+                if (window.pendingUploadImages.length > 0) {
+                    const curId = (window.activeKeypadTarget && window.activeKeypadTarget !== 'merged') 
+                        ? window.activeKeypadTarget 
+                        : window.pendingUploadImages[0].tempId;
+                    setTimeout(() => window.setKeypadTarget(curId), 50);
+                }
+            }
+            lucide.createIcons();
         };
 
         // ====== 十宮格虛擬鍵盤專屬核心邏輯 (修復版) ======
