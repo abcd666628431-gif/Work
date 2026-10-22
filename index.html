@@ -131,13 +131,14 @@
             window.renderGalleryLogs();
         };
 
-        window.writeGalleryLog = async (action, targetName, detail = '') => {
+       // 👇 擴充支援傳入 customUser 與 customColor
+        window.writeGalleryLog = async (action, targetName, detail = '', customUser = null, customColor = null) => {
             if (!currentUser || !db) return;
             try {
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs'), {
                     timestamp: Date.now(),
-                    user: sysUserName,
-                    color: sysUserColor,
+                    user: customUser || sysUserName,
+                    color: customColor || sysUserColor,
                     action: action,
                     targetName: targetName || '無標題',
                     detail: detail || ''
@@ -3301,6 +3302,10 @@ window.writeGalleryLog('清空剔檔', targetDate, '清空該日全部巡查紀�
                 XLSX.utils.book_append_sheet(wb, wsPatrol, '剔檔表');
                 XLSX.utils.book_append_sheet(wb, wsTemp, '溫度');
                 XLSX.writeFile(wb, `匯出報表_${currentPatrolDate}.xlsx`);
+                
+                // 👇 補上操作日誌記錄
+                window.writeGalleryLog('導出報表', `巡查與溫度報表`, `日期: ${currentPatrolDate}`);
+
                 window.showToast(`✅ 已匯出報表 (${currentPatrolDate})！`);
             } else {
                 window.showToast('匯出模組尚未載入，請稍候再試', true);
@@ -3535,7 +3540,10 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 }
             }
 
-            window.writeGalleryLog('每日歸檔', `${yesterdayItems.length} 張昨日相片`, '跨日自動移至還原清單');
+            await saveGalleryItemsSafe(galleryItems);
+
+            // 👇 明確指定為「系統自動」，並配上沉穩的灰色系標籤 (#64748b)
+            window.writeGalleryLog('每日歸檔', `${yesterdayItems.length} 張昨日相片`, '跨日自動移至還原清單', '系統自動', '#64748b');
             window._lastRenderFingerprint = '';
             if (!$('galleryPage')?.classList.contains('hidden')) {
                 window.renderGallery();
@@ -4765,6 +4773,9 @@ window.deleteSelectedGalleryItems = () => {
                 // 🌟 保存至本地快取
                 await saveGalleryItemsSafe(galleryItems);
 
+                // 👇 補上操作日誌記錄
+                window.writeGalleryLog('導出圖片', `${targetItems.length} 張相片`, `分類: ${currentGalleryCategory}`);
+
                 window.showToast(`✅ 成功導出 ${successCount} / ${targetItems.length} 張 PNG 圖片！`);
                 
                 // 自動取消選取狀態並關閉選取模式，強制刷新畫面顯示綠色剔號
@@ -4879,6 +4890,9 @@ window.deleteSelectedGalleryItems = () => {
             link.href = URL.createObjectURL(blob);
             link.download = `攤販提早收工資料表_${new Date().toISOString().slice(0, 10)}.csv`;
             link.click();
+
+            // 👇 補上操作日誌記錄
+            window.writeGalleryLog('導出報表', '提早收工資料表', `共 ${targetItems.length} 筆資料`);
 
            // 🌟 標記已成功導出並同步至雲端與本機
             targetItems.forEach(item => {
