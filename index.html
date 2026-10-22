@@ -7170,7 +7170,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             return 1;
         };
 
-                window.renderCellLinesHtml = (rawText, locId, dateStr = '', start = '', end = '', forceRows = 0) => {
+               window.renderCellLinesHtml = (rawText, locId, dateStr = '', start = '', end = '', forceRows = 0) => {
             const minRows = window.getLocMinRows(locId);
             let lines = [];
             if (rawText !== undefined && rawText !== null && rawText !== '') {
@@ -7179,39 +7179,40 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     return clean ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean) : '';
                 });
             }
+            
+            // 🌟 核心過濾：去除尾端多餘的連續空行，但保留最低行數
+            while (lines.length > minRows && !lines[lines.length - 1] && !lines[lines.length - 2]) {
+                lines.pop();
+            }
+
             const totalRows = Math.max(minRows, lines.length, forceRows || 0);
             while (lines.length < totalRows) {
                 lines.push('');
             }
 
-            const isMemberFocus = activeGridMember && activeGridMember !== 'ERASER' && activeGridMember !== 'SPLITTER';
+            // 🌟 嚴格判定：只有在「有選取特定人員」且「不是橡皮擦/拆分」時才啟動聚焦過濾
+    const isMemberFocus = activeGridMember && activeGridMember !== 'ERASER' && activeGridMember !== 'SPLITTER';
 
-            let html = '';
-            for (let i = 0; i < totalRows; i++) {
-                const n = lines[i] || '';
-                const canon = n ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n) : '';
-                const col = canon ? window.getMemberColorClass(canon) : null;
-                const borderCls = i < totalRows - 1 ? 'border-b border-slate-300' : '';
-                const dispText = canon ? (window.getScheduleDisplayLabel ? window.getScheduleDisplayLabel(canon) : canon) : '';
+    let html = '';
+    for (let i = 0; i < totalRows; i++) {
+        const n = lines[i] || '';
+        const canon = n ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n) : '';
+        const col = canon ? window.getMemberColorClass(canon) : null;
+        const borderCls = i < totalRows - 1 ? 'border-b border-slate-300' : '';
+        const dispText = canon ? (window.getScheduleDisplayLabel ? window.getScheduleDisplayLabel(canon) : canon) : '';
 
-                // 🌟 表格內人名底色判定：選中某人時，其他人全部變為白底無底色；未選取時全員彩色
-                let bgCls = 'bg-white hover:bg-blue-50/60';
-                let textCls = 'text-slate-900 font-black';
+        let bgCls = col ? col.bg : 'bg-white hover:bg-blue-50/60';
+        let textCls = 'text-slate-900 font-black'; // 預設一律粗黑
 
-                if (canon) {
-                    if (isMemberFocus) {
-                        if (canon === activeGridMember) {
-                            bgCls = col ? col.bg : 'bg-blue-100';
-                            textCls = 'text-slate-900 font-black';
-                        } else {
-                            bgCls = 'bg-white';
-                            textCls = 'text-slate-400 font-normal';
-                        }
-                    } else {
-                        bgCls = col ? col.bg : 'bg-white';
-                        textCls = 'text-slate-900 font-black';
-                    }
-                }
+        if (canon && isMemberFocus) {
+            if (canon === activeGridMember) {
+                bgCls = col ? col.bg : 'bg-blue-100';
+                textCls = 'text-slate-900 font-black';
+            } else {
+                bgCls = 'bg-white';
+                textCls = 'text-slate-400 font-normal'; // 只有當別人被聚焦時，沒被選中的才會變淡
+            }
+        }
 
                 html += `<div data-name="${canon}" data-line-idx="${i}" onclick="window.handleSubLineClick(event, this, '${dateStr}', '${locId}', '${start}', '${end}', ${i})" class="sub-line-item w-full h-[22px] min-h-[22px] flex items-center justify-center ${borderCls} ${bgCls} ${textCls} text-[10px] leading-none truncate px-0.5 select-none cursor-pointer transition-colors active:scale-95 pointer-events-auto">${dispText}</div>`;
             }
@@ -7228,8 +7229,8 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             return (containerEl.textContent || '').trim();
         };
 
-        // 🌟 精準行點擊函式：點哪一行就精準改哪一行
-                window.handleSubLineClick = (e, lineEl, dateStr, locId, start, end, lineIdx) => {
+        // 🌟 精準行點擊函式：點哪一行就精準改哪一行，修復重複點擊同名人無限新增行的问题
+        window.handleSubLineClick = (e, lineEl, dateStr, locId, start, end, lineIdx) => {
             if (e) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -7287,36 +7288,40 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             } else {
                 const targetCanonical = window.resolveMemberIdentity ? window.resolveMemberIdentity(activeGridMember) : activeGridMember;
                 const resolve = (n) => n ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n) : '';
-                const currentInLine = resolve(currentLines[lineIdx]);
 
-                // 同一格同一人只留一處
-                for (let j = 0; j < currentLines.length; j++) {
-                    if (j !== lineIdx && resolve(currentLines[j]) === targetCanonical) {
-                        currentLines[j] = '';
-                    }
-                }
+                // 🌟 修正防呆：檢查這格裡面是否已經有這個人了
+                const existingIndex = currentLines.findIndex(line => resolve(line) === targetCanonical);
 
-                if (currentInLine === targetCanonical) {
-                    currentLines[lineIdx] = '';
-                    window.showToast(`➖ 已移除第 ${lineIdx + 1} 行「${targetCanonical}」`);
-                } else if (currentInLine && currentInLine !== targetCanonical) {
-                    // 該行已有別人 → 不覆蓋，下面新增一條軌道
-                    currentLines.push(targetCanonical);
-                    window.showToast(`➕ 已自動新增第 ${currentLines.length} 行並指派「${targetCanonical}」`);
+                if (existingIndex !== -1) {
+                    // 如果這格已經有他了（不管點在哪一行），直接清除該行，實現完美的切換/取消
+                    currentLines[existingIndex] = '';
+                    window.showToast(`➖ 已移除「${targetCanonical}」`);
                 } else {
-                    // ★ 重點：上面可以空白，照樣寫入「被點到的那一行」
-                    currentLines[lineIdx] = targetCanonical;
-                    window.showToast(`➕ 第 ${lineIdx + 1} 行已指派「${targetCanonical}」`);
+                    const currentInLine = resolve(currentLines[lineIdx]);
+
+                    if (currentInLine) {
+                        // 該行已有其他人 → 真正需要新增一行來容納新成員
+                        currentLines.push(targetCanonical);
+                        window.showToast(`➕ 已自動新增行並指派「${targetCanonical}」`);
+                    } else {
+                        // 該行是空的 → 直接填入
+                        currentLines[lineIdx] = targetCanonical;
+                        window.showToast(`➕ 第 ${lineIdx + 1} 行已指派「${targetCanonical}」`);
+                    }
                 }
             }
 
+            // 自動收回多餘的連續空白行
+            while (currentLines.length > minRows && !currentLines[currentLines.length - 1] && !currentLines[currentLines.length - 2]) {
+                currentLines.pop();
+            }
+
             const hasAny = currentLines.some(n => !!n);
-            const joinedVal = hasAny ? currentLines.join('\n') : '';
+            const joinedVal = hasAny ? currentLines.filter(Boolean).join('\n') : ''; // 🌟 加上 filter(Boolean) 確保不存入空字串行
             window._tempGridValues[cellKey] = joinedVal;
-            const needRows = Math.max(window.getLocMinRows(locId), currentLines.length);
+            const needRows = Math.max(minRows, currentLines.filter(Boolean).length);
             displayDiv.innerHTML = window.renderCellLinesHtml(joinedVal, locId, dateStr, start, end, needRows);
 
-            // 同一崗位其他時段對齊行數
             if (window.syncLocTrackRows) {
                 window.syncLocTrackRows(dateStr, locId, needRows);
             }
