@@ -765,11 +765,37 @@ const tabMetadataMap = {
             return clean;
         };
 
-        // 🌟 恢復排班總表直接顯示真實姓名
+       // 🌟 控制排班總表是否將「外地人」轉換顯示為員工編號 ('name' = 顯示名稱, 'id' = 外地人顯示編號)
+        window.nonLocalDisplayMode = getLocal('work_cache_nonlocal_disp_mode', 'name');
+
+        window.toggleNonLocalDisplayMode = () => {
+            window.captureAll5DayDomValues(); // 切換前先保存畫面上的臨時排班變更
+            window.nonLocalDisplayMode = window.nonLocalDisplayMode === 'name' ? 'id' : 'name';
+            safeSetLocal('work_cache_nonlocal_disp_mode', window.nonLocalDisplayMode);
+            
+            const scrollArea = document.getElementById('scheduleGridScrollArea');
+            const savedScroll = scrollArea ? scrollArea.scrollTop : 0;
+            
+            window.renderScheduleManager();
+            
+            const newScrollArea = document.getElementById('scheduleGridScrollArea');
+            if (newScrollArea) newScrollArea.scrollTop = savedScroll;
+            
+            window.showToast(window.nonLocalDisplayMode === 'id' ? '🔢 外地人員已切換顯示為【員工編號】' : '👤 外地人員已切換顯示為【真實姓名】');
+        };
+
+        // 🌟 排班總表顯示標籤：若開啟轉換且該員為「外地」且有員工編號，則顯示員工編號
         window.getScheduleDisplayLabel = (nameOrId) => {
             if (!nameOrId) return '';
             const clean = nameOrId.trim();
-            return window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean;
+            const canonical = window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean;
+            if (window.nonLocalDisplayMode === 'id') {
+                const prof = window.getMemberProfile ? window.getMemberProfile(canonical) : null;
+                if (prof && prof.residency === '外地' && prof.id && prof.id.trim()) {
+                    return prof.id.trim();
+                }
+            }
+            return canonical;
         };
 
         // 🌟 同步將 5 日排班表與暫存格內的舊名字/舊編號替換為新名字，並自動合併相連時段
@@ -823,13 +849,13 @@ const tabMetadataMap = {
         };
 
        window.getMemberProfile = (name) => {
-            if (!name) return { id: '', avatar: '', gender: '女', prefs: [] };
+            if (!name) return { id: '', avatar: '', gender: '女', residency: '本地', prefs: [] };
             const canonical = window.resolveMemberIdentity ? window.resolveMemberIdentity(name) : name;
             if (!memberProfilesStore[canonical]) {
                 const autoId = window.isStaffIdFormat(canonical) ? canonical.toUpperCase() : '';
                 const defaultMales = ['林浩霆', '黃永超', '譚建安', '甘永寧'];
                 const defGender = defaultMales.includes(canonical) ? '男' : '女';
-                memberProfilesStore[canonical] = { id: autoId, avatar: '', gender: defGender, prefs: [] };
+                memberProfilesStore[canonical] = { id: autoId, avatar: '', gender: defGender, residency: '本地', prefs: [] };
             }
             if (memberProfilesStore[canonical].id) {
                 memberProfilesStore[canonical].id = memberProfilesStore[canonical].id.replace(/^#/, '');
@@ -837,6 +863,9 @@ const tabMetadataMap = {
             if (!memberProfilesStore[canonical].gender) {
                 const defaultMales = ['林浩霆', '黃永超', '譚建安', '甘永寧'];
                 memberProfilesStore[canonical].gender = defaultMales.includes(canonical) ? '男' : '女';
+            }
+            if (!memberProfilesStore[canonical].residency) {
+                memberProfilesStore[canonical].residency = '本地';
             }
             if (!Array.isArray(memberProfilesStore[canonical].prefs)) {
                 memberProfilesStore[canonical].prefs = [];
@@ -926,7 +955,7 @@ const tabMetadataMap = {
             if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
         };
 
-        // 🌟 切換人員性別（自動在左男右女板塊間移動）
+       // 🌟 切換人員性別（自動在左男右女板塊間移動）
         window.setMemberGender = (name, gender) => {
             window.saveMemberProfile(name, { gender });
             if ($('memberProfileModal') && !$('memberProfileModal').classList.contains('hidden')) {
@@ -937,6 +966,27 @@ const tabMetadataMap = {
             }
             if ($('scheduleManageModal')?.classList.contains('flex')) {
                 window.renderScheduleManager();
+            }
+        };
+
+        // 🌟 切換人員「本地 / 外地」屬性（支援名單直接點擊與個人設定卡點擊）
+        window.setMemberResidency = (name, residency, e) => {
+            if (e) e.stopPropagation();
+            const curProf = window.getMemberProfile(name);
+            const nextRes = residency || (curProf.residency === '外地' ? '本地' : '外地');
+            window.saveMemberProfile(name, { residency: nextRes });
+            if ($('memberProfileModal') && !$('memberProfileModal').classList.contains('hidden')) {
+                window.openMemberProfilePopup(name, window._currentPopupLocation);
+            }
+            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
+                window.renderMemberRosterListsOnly();
+            }
+            if ($('scheduleManageModal')?.classList.contains('flex')) {
+                const scrollArea = document.getElementById('scheduleGridScrollArea');
+                const savedScroll = scrollArea ? scrollArea.scrollTop : 0;
+                window.renderScheduleManager();
+                const newScrollArea = document.getElementById('scheduleGridScrollArea');
+                if (newScrollArea) newScrollArea.scrollTop = savedScroll;
             }
         };
 
@@ -1199,6 +1249,12 @@ const tabMetadataMap = {
                     ? 'bg-white border-slate-200 shadow-2xs'
                     : 'bg-slate-100/70 border-slate-200 opacity-50';
 
+                const isCleanRole = window.currentMapRole === 'clean';
+                const resType = prof.residency || '本地';
+                const residencyBtnHtml = isCleanRole
+                    ? `<button type="button" onclick="window.setMemberResidency('${safeName}', null, event)" class="px-1.5 py-0.5 rounded-md text-[10px] font-black border transition-all active:scale-95 shrink-0 ${resType === '外地' ? 'bg-amber-500 text-white border-amber-600 shadow-2xs' : 'bg-teal-50 text-teal-700 border-teal-300 hover:bg-teal-100'}" title="點擊切換：本地人 / 外地人">${resType}人</button>`
+                    : '';
+
                 return `
                 <div class="p-2 rounded-xl border transition-all ${cardOpacityCls} flex items-center justify-between gap-2">
                     <div class="flex items-center gap-2 min-w-0 flex-1 cursor-pointer select-none" onclick="window.toggleDutyMemberActive('${safeName}', this.parentElement)" title="點擊勾選/取消當日出勤">
@@ -1207,6 +1263,7 @@ const tabMetadataMap = {
                         <span class="font-black text-xs text-slate-900 ${col.bg} px-2 py-0.5 rounded-md border ${col.border} truncate">${displayTitle}</span>
                     </div>
                     <div class="flex items-center gap-1 shrink-0">
+                        ${residencyBtnHtml}
                         <button type="button" onclick="window.openMemberProfilePopup('${safeName}', '人員名單設定')" class="p-1.5 rounded-lg bg-slate-50 hover:bg-blue-50 text-blue-600 border border-slate-200/80 active:scale-95 transition-all" title="修改名稱、編號、性別、頭像與優先級"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
                         <button type="button" onclick="window.deleteMemberByName('${safeName}')" class="p-1.5 rounded-lg bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 border border-slate-200/80 active:scale-95 transition-all" title="刪除成員"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
                     </div>
@@ -1877,7 +1934,7 @@ const tabMetadataMap = {
                         </button>
                     </div>
 
-                    <!-- 性別與員工編號 -->
+                    <!-- 性別、本地/外地與員工編號 -->
                     <div class="w-full mt-1.5 bg-slate-50 p-2 rounded-xl border border-slate-200 space-y-2">
                         <div class="flex items-center justify-between">
                             <span class="text-[11px] font-bold text-slate-500">性別分組：</span>
@@ -1886,6 +1943,14 @@ const tabMetadataMap = {
                                 <button type="button" onclick="window.setMemberGender('${safeNameAttr}', '女')" class="px-3 py-0.5 rounded-md text-xs font-black border transition-all ${curGender === '女' ? 'bg-rose-500 text-white border-rose-500 shadow-2xs' : 'bg-white text-slate-600 border-slate-200'}">女</button>
                             </div>
                         </div>
+                        ${window.currentMapRole === 'clean' ? `
+                        <div class="flex items-center justify-between">
+                            <span class="text-[11px] font-bold text-slate-500">人員身分別：</span>
+                            <div class="flex gap-1">
+                                <button type="button" onclick="window.setMemberResidency('${safeNameAttr}', '本地', event)" class="px-2.5 py-0.5 rounded-md text-xs font-black border transition-all ${(profile.residency || '本地') === '本地' ? 'bg-teal-600 text-white border-teal-600 shadow-2xs' : 'bg-white text-slate-600 border-slate-200'}">本地人</button>
+                                <button type="button" onclick="window.setMemberResidency('${safeNameAttr}', '外地', event)" class="px-2.5 py-0.5 rounded-md text-xs font-black border transition-all ${profile.residency === '外地' ? 'bg-amber-500 text-white border-amber-500 shadow-2xs' : 'bg-white text-slate-600 border-slate-200'}">外地人</button>
+                            </div>
+                        </div>` : ''}
                         <div class="flex items-center justify-between">
                             <span class="text-[11px] font-bold text-slate-500">員工編號：</span>
                             <input type="text" id="popupMemberIdInput" value="${(profile.id || '').replace(/^#/, '')}" placeholder="例如: EH0047" 
@@ -7270,8 +7335,8 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             if (!containerEl) return '';
             const items = containerEl.querySelectorAll('.sub-line-item');
             if (items.length > 0) {
-                // 保留換行空位，不再用 filter(Boolean) 抹煞行數
-                return Array.from(items).map(el => el.textContent.trim()).join('\n');
+                // 🌟 優先讀取 dataset.name，確保外地人切換顯示為「員工編號」時，底層依舊精準存取人員身分
+                return Array.from(items).map(el => (el.dataset.name !== undefined ? el.dataset.name : el.textContent).trim()).join('\n');
             }
             return (containerEl.textContent || '').trim();
         };
@@ -7318,7 +7383,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             const subItems = Array.from(displayDiv.querySelectorAll('.sub-line-item'));
             const minRows = window.getLocMinRows(locId);
             let totalRows = Math.max(minRows, subItems.length, (lineIdx | 0) + 1);
-            let currentLines = subItems.map(item => (item.textContent || '').trim());
+            let currentLines = subItems.map(item => (item.dataset.name !== undefined ? item.dataset.name : (item.textContent || '')).trim());
             while (currentLines.length < totalRows) currentLines.push('');
             if (lineIdx >= currentLines.length) {
                 while (currentLines.length <= lineIdx) currentLines.push('');
@@ -8057,6 +8122,14 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             <button type="button" onclick="window.toggleMapRoleMode('clean'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${isCleanRole ? 'bg-white text-teal-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧹 清潔排班</button>
                         </div>
                         <button type="button" onclick="document.getElementById('sched-day-card-${getNowInputStrs().date}')?.scrollIntoView({ behavior: 'smooth', block: 'center' })" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-2.5 py-1 rounded-lg text-[10.5px] font-black active:scale-95">📍 定位今日</button>
+                        
+                        <!-- 🌟 外地人專屬：名稱 / 員工編號 顯示轉換按鈕 -->
+                        <button type="button" onclick="window.toggleNonLocalDisplayMode()" class="px-2.5 py-1 rounded-lg text-[10.5px] font-black border transition-all active:scale-95 flex items-center gap-1 shadow-2xs ${window.nonLocalDisplayMode === 'id' ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300'}" title="點擊切換排班表上的外地人員顯示格式（本地人維持顯示姓名）">
+                            <i data-lucide="repeat" class="w-3 h-3"></i>
+                            <span>外地人：${window.nonLocalDisplayMode === 'id' ? '顯示編號' : '顯示名稱'}</span>
+                        </button>
+
+                        <!-- 顯示目前選取的人員或工具 -->
                         
                         <!-- 顯示目前選取的人員或工具 -->
                         <div id="activeMemberBadge" class="text-[10.5px] font-black px-2.5 py-1 rounded-lg border ${!activeGridMember ? 'bg-slate-50 text-slate-400 border-slate-200 font-bold' : (activeGridMember === 'ERASER' ? 'bg-pink-50 text-pink-600 border-pink-200 animate-pulse' : (activeGridMember === 'SPLITTER' ? 'bg-indigo-50 text-indigo-600 border-indigo-200 animate-pulse' : `${curActiveCol.bg} ${curActiveCol.text}${curActiveCol.border} shadow-2xs`))}">
