@@ -940,157 +940,7 @@ const tabMetadataMap = {
             }
         };
 
-        // 🌟 勾選/取消當日出勤人員
-        window.toggleDutyMemberActive = (name) => {
-            const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
-            window.activeDutyMembersFilter[roleKey] = window.activeDutyMembersFilter[roleKey] || [];
-            const list = window.activeDutyMembersFilter[roleKey];
-            const idx = list.indexOf(name);
-            if (idx === -1) list.push(name);
-            else list.splice(idx, 1);
-            safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
-            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal();
-            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
-        };
-
-        window.selectAllDutyMembers = (selectAll) => {
-            const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
-            window.activeDutyMembersFilter[roleKey] = selectAll ? [...teamMembers] : [];
-            safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
-            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal();
-            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
-        };
-
-        // 🌟 在「人員名單」視窗內直接新增男/女成員
-        window.addTeamMemberWithGender = (gender = '女') => {
-            const isClean = window.currentMapRole === 'clean';
-            const rawInput = prompt(`請輸入新【${gender}性】${isClean ? '清潔' : '客服'}成員姓名（可寫「姓名-編號」，例如：王大明-EH0088）：`);
-            if (!rawInput || !rawInput.trim()) return;
-            const parts = rawInput.trim().split(/[-—_]/);
-            const name = parts[0].trim();
-            const staffId = (parts[1] || '').trim().toUpperCase();
-            if (!name) return;
-
-            if (!teamMembers.includes(name)) {
-                teamMembers.push(name);
-                if (isClean) {
-                    cleanMembersStore = [...teamMembers];
-                    safeSetLocal('work_cache_clean_members', cleanMembersStore);
-                    syncConfig('clean_team_members', { members: cleanMembersStore });
-                } else {
-                    csMembersStore = [...teamMembers];
-                    safeSetLocal('work_cache_team_members', csMembersStore);
-                    syncConfig('team_members', { members: csMembersStore });
-                }
-            }
-            window.saveMemberProfile(name, { gender, ...(staffId ? { id: staffId } : {}) });
-            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal();
-            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
-            window.showToast(`✅ 已新增${gender}性成員「${name}」`);
-        };
-
-        window.deleteMemberByName = (name) => {
-            window.showConfirm('刪除成員', `確定要從名單中刪除「${name}」嗎？`, () => {
-                const idx = teamMembers.indexOf(name);
-                if (idx !== -1) window.removeTeamMember(idx);
-                if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal();
-            });
-        };
-
-        // 🌟 開啟「人員名單」專屬整合彈窗（男左女右、名稱-員工編號、名單與優先級、勾選出勤人員合一）
-        window.openMemberRosterModal = () => {
-            let modal = $('memberRosterModal');
-            if (!modal) {
-                modal = document.createElement('div');
-                modal.id = 'memberRosterModal';
-                modal.className = 'fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[280] hidden flex-col items-center justify-center p-2 sm:p-4';
-                modal.onclick = (e) => { if (e.target === modal) window.closeMemberRosterModal(); };
-                document.body.appendChild(modal);
-            }
-            window.renderMemberRosterModal();
-            modal.classList.remove('hidden');
-            modal.classList.add('flex');
-        };
-
-        window.closeMemberRosterModal = () => {
-            const modal = $('memberRosterModal');
-            if (modal) {
-                modal.classList.add('hidden');
-                modal.classList.remove('flex');
-            }
-            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
-        };
-
-        window._rosterSearchQuery = '';
-
-        window.filterMemberRosterSearch = (val) => {
-            window._rosterSearchQuery = (val || '').trim().toLowerCase();
-            window.renderMemberRosterListsOnly();
-        };
-
-        window.renderMemberRosterListsOnly = () => {
-            const isClean = window.currentMapRole === 'clean';
-            const roleKey = isClean ? 'clean' : 'cs';
-            const activeFilterList = window.activeDutyMembersFilter[roleKey] || [];
-            const isFilterEnabled = activeFilterList.length > 0;
-            const q = window._rosterSearchQuery || '';
-
-            const maleMembers = [];
-            const femaleMembers = [];
-            teamMembers.forEach(m => {
-                const prof = window.getMemberProfile(m);
-                const staffIdStr = (prof.id || '').trim().toLowerCase();
-                if (q && !m.toLowerCase().includes(q) && !staffIdStr.includes(q)) return;
-
-                if (prof.gender === '男') maleMembers.push(m);
-                else femaleMembers.push(m);
-            });
-
-            const renderMemberCard = (name) => {
-                const prof = window.getMemberProfile(name);
-                const col = window.getMemberColorClass(name);
-                const safeName = name.replace(/'/g, "\\'");
-                const isChecked = !isFilterEnabled || activeFilterList.includes(name);
-                const staffIdStr = (prof.id || '').trim();
-                const displayTitle = staffIdStr && staffIdStr.toUpperCase() !== name.toUpperCase()
-                    ? `${name} - <span class="font-mono text-[11px] text-slate-600">${staffIdStr}</span>`
-                    : `${name}`;
-
-                const avatarHtml = prof.avatar
-                    ? `<img src="${prof.avatar}" class="w-8 h-8 rounded-full object-cover border border-slate-300 shrink-0 shadow-2xs">`
-                    : `<div class="w-8 h-8 rounded-full ${col.bg} ${col.border} border flex items-center justify-center shrink-0 shadow-2xs"><i data-lucide="user" class="w-4 h-4 text-slate-700"></i></div>`;
-
-                return `
-                <div class="p-2 rounded-xl border transition-all ${isChecked ? 'bg-white border-slate-200 shadow-2xs' : 'bg-slate-100/70 border-slate-200 opacity-60'} flex items-center justify-between gap-2">
-                    <!-- 勾選出勤 + 頭像 + 名稱-員工編號 -->
-                    <div class="flex items-center gap-2 min-w-0 flex-1 cursor-pointer select-none" onclick="window.toggleDutyMemberActive('${safeName}')" title="點擊勾選/取消當日出勤">
-                        <input type="checkbox" ${isChecked ? 'checked' : ''} class="w-4 h-4 rounded text-emerald-600 pointer-events-none shrink-0">
-                        ${avatarHtml}
-                        <span class="font-black text-xs text-slate-900 ${col.bg} px-2 py-0.5 rounded-md border ${col.border} truncate">${displayTitle}</span>
-                    </div>
-                    <!-- 右側僅保留：修改筆號（點擊進入設定性別/編號/優先級/頭像）與 刪除鍵 -->
-                    <div class="flex items-center gap-1 shrink-0">
-                        <button type="button" onclick="window.openMemberProfilePopup('${safeName}', '人員名單設定')" class="p-1.5 rounded-lg bg-slate-50 hover:bg-blue-50 text-blue-600 border border-slate-200/80 active:scale-95 transition-all" title="修改名稱、編號、性別、頭像與優先級"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
-                        <button type="button" onclick="window.deleteMemberByName('${safeName}')" class="p-1.5 rounded-lg bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 border border-slate-200/80 active:scale-95 transition-all" title="刪除成員"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
-                    </div>
-                </div>`;
-            };
-
-            const maleListEl = $('rosterMaleList');
-            const femaleListEl = $('rosterFemaleList');
-            if ($('rosterMaleCount'))$('rosterMaleCount').textContent = maleMembers.length;
-            if ($('rosterFemaleCount'))$('rosterFemaleCount').textContent = femaleMembers.length;
-            if ($('rosterDutySummary'))$('rosterDutySummary').textContent = `當日出勤：${isFilterEnabled ? activeFilterList.length : teamMembers.length} / ${teamMembers.length} 人`;
-
-            if (maleListEl) {
-                maleListEl.innerHTML = maleMembers.length ? maleMembers.map(m => renderMemberCard(m)).join('') : '<div class="text-center py-8 text-xs font-bold text-slate-400">無相符男性成員</div>';
-            }
-            if (femaleListEl) {
-                femaleListEl.innerHTML = femaleMembers.length ? femaleMembers.map(m => renderMemberCard(m)).join('') : '<div class="text-center py-8 text-xs font-bold text-slate-400">無相符女性成員</div>';
-            }
-            const modal = $('memberRosterModal');
-            if (modal && window.lucide) lucide.createIcons({ root: modal });
-        };
+       
 
         // 🌟 取得當前角色已勾選的出勤名單（首次預設全選）
         window.getCheckedDutyList = () => {
@@ -1415,7 +1265,39 @@ const tabMetadataMap = {
             window.updateRosterHeaderButtonsUI();
         };
 
-        // 🌟 一鍵智慧自動排班（依據當日勾選的出勤人員 + 每人 Top 3 優先崗位自動填入）
+       // 🌟 清潔員專屬排班時段：06:30~20:00 (每 30 分鐘一格) + 20:00~22:00 (一格)
+        window.getCleanScheduleSlots = () => {
+            const slots = [];
+            let curMins = 6 * 60 + 30; // 06:30
+            const endMins = 20 * 60;   // 20:00
+            
+            // 06:30 ~ 20:00 每半小時（30分鐘）一格
+            while (curMins < endMins) {
+                const nextMins = curMins + 30;
+                const sH = String(Math.floor(curMins / 60)).padStart(2, '0');
+                const sM = String(curMins % 60).padStart(2, '0');
+                const eH = String(Math.floor(nextMins / 60)).padStart(2, '0');
+                const eM = String(nextMins % 60).padStart(2, '0');
+                slots.push({
+                    start: `${sH}:${sM}`,
+                    end: `${eH}:${eM}`,
+                    label: `${sH}:${sM}`,
+                    isHalf: true
+                });
+                curMins = nextMins;
+            }
+            
+            // 20:00 後面 1 格為 20:00~22:00
+            slots.push({
+                start: '20:00',
+                end: '22:00',
+                label: '20:00~22:00',
+                isHalf: false
+            });
+            return slots;
+        };
+
+// 🌟 一鍵智慧自動排班（清潔模式內建官方休息時間與替更頂位規則）
         window.autoAssignDaySchedule = (targetDateStr) => {
             window.captureAll5DayDomValues();
             const isClean = window.currentMapRole === 'clean';
@@ -1428,88 +1310,356 @@ const tabMetadataMap = {
                 return window.showToast("⚠️ 請先在「編輯名單」勾選今日出勤人員！", true);
             }
 
-            window.showConfirm('✨ 智慧自動排班', `將根據目前 ${dutyMembers.length} 位出勤人員的「優先級設定」，自動排入【${targetDateStr}】的班表，確定執行嗎？`, () => {
+            window.showConfirm('✨ 智慧自動排班', `確定要將【${targetDateStr}】自動排入班表嗎？\n（系統將依人員性別與志願優先級進行配對，並排入休息時間）`, () => {
                 const rolePrefix = isClean ? 'clean_' : 'cs_';
+                window._tempGridValues = window._tempGridValues || {};
+
+                // 1. 清空目標日的所有舊排班格子
                 Object.keys(window._tempGridValues).forEach(k => {
                     if (k.startsWith(`${targetDateStr}_`)) delete window._tempGridValues[k];
                 });
 
-                const timeSlots = Array.from({length: 15}, (_, i) => `${pad(i + 7)}:00-${pad(i + 8)}:00`);
-                const locTargets = isClean
-                    ? [
-                        { id: 'pt_8', max: 1 },
-                        { id: 'pt_9', max: 1 },
-                        { id: 'pt_3', max: 1 },
-                        { id: 'pt_1', max: 1 },
-                        { id: 'pt_4', max: 3 },
-                        { id: 'pt_6', max: 4 }
-                      ]
-                    : [
+                if (isClean) {
+                    // ==========================================
+                    // 🧹 清潔員專屬：做法 B (性別 + 志願加權智慧配對)
+                    // ==========================================
+                    const cleanSlots = window.getCleanScheduleSlots();
+
+                    // 13 個標準更次：定義「主崗位 prefLoc」與「性別限制 prefGender」
+                    const cleanRosterTemplates = [
+                        // 1. 花園仔男廁長班：限男性，主崗位 pt_8
+                        {
+                            matchKey: 'EH0011-2',
+                            prefLoc: 'pt_8',
+                            prefGender: '男',
+                            title: '花園仔男廁長班',
+                            getLoc: (s, e) => {
+                                if (s >= '10:00' && e <= '12:00') return 'pt_7'; // 休息
+                                if (s >= '17:00' && e <= '19:00') return 'pt_7'; // 休息
+                                return 'pt_8';
+                            }
+                        },
+                        // 2. 花園仔女廁+傷健 早班：限女性，主崗位 pt_9
+                        {
+                            matchKey: '余秋瑩',
+                            prefLoc: 'pt_9',
+                            prefGender: '女',
+                            title: '女廁+傷健早班',
+                            getLoc: (s, e) => {
+                                if (s >= '06:30' && e <= '15:30') {
+                                    if (s >= '11:00' && e <= '12:00') return 'pt_7'; // 休息
+                                    return 'pt_9';
+                                }
+                                return null;
+                            }
+                        },
+                        // 3. 花園仔女廁+傷健 晚班：限女性，主崗位 pt_9
+                        {
+                            matchKey: 'EH0147-1',
+                            prefLoc: 'pt_9',
+                            prefGender: '女',
+                            title: '女廁+傷健晚班',
+                            getLoc: (s, e) => {
+                                if (s >= '15:30' && e <= '22:00') return 'pt_9';
+                                return null;
+                            }
+                        },
+                        // 4. 花園仔公共區 白班：主崗位 pt_3
+                        {
+                            matchKey: '梁桂明',
+                            prefLoc: 'pt_3',
+                            prefGender: '',
+                            title: '花園仔白班',
+                            getLoc: (s, e) => {
+                                if (s >= '08:00' && e <= '19:00') {
+                                    if (s >= '11:00' && e <= '12:00') return 'pt_7'; // 休息
+                                    return 'pt_3';
+                                }
+                                return null;
+                            }
+                        },
+                        // 5. 地面G層/魚檔 早班1：主崗位 pt_4
+                        {
+                            matchKey: 'EH0132',
+                            prefLoc: 'pt_4',
+                            prefGender: '',
+                            title: '地面早班1',
+                            getLoc: (s, e) => {
+                                if (s >= '06:30' && e <= '13:00') {
+                                    if (s >= '10:00' && e <= '11:00') return 'pt_7'; // 休息
+                                    return 'pt_4';
+                                }
+                                return null;
+                            }
+                        },
+                        // 6. 地面G層/魚檔 晚班1：主崗位 pt_4
+                        {
+                            matchKey: '歐陽球',
+                            prefLoc: 'pt_4',
+                            prefGender: '',
+                            title: '地面晚班1',
+                            getLoc: (s, e) => {
+                                if (s >= '13:00' && e <= '22:00') {
+                                    if (s >= '18:00' && e <= '19:00') return 'pt_7'; // 休息
+                                    return 'pt_4';
+                                }
+                                return null;
+                            }
+                        },
+                        // 7. 地面G層/魚檔 長班：主崗位 pt_4
+                        {
+                            matchKey: 'EH0136',
+                            prefLoc: 'pt_4',
+                            prefGender: '',
+                            title: '地面長班',
+                            getLoc: (s, e) => {
+                                if (s >= '06:30' && e <= '20:00') {
+                                    if (s >= '11:00' && e <= '13:00') return 'pt_7'; // 休息
+                                    if (s >= '16:30' && e <= '17:30') return 'pt_7'; // 休息
+                                    return 'pt_4';
+                                }
+                                return null;
+                            }
+                        },
+                        // 8. 地面G層/魚檔 早班2：主崗位 pt_4
+                        {
+                            matchKey: 'EH0045-2',
+                            prefLoc: 'pt_4',
+                            prefGender: '',
+                            title: '地面早班2',
+                            getLoc: (s, e) => {
+                                if (s >= '06:30' && e <= '13:00') {
+                                    if (s >= '08:00' && e <= '09:30') return 'pt_7'; // 休息
+                                    return 'pt_4';
+                                }
+                                return null;
+                            }
+                        },
+                        // 9. 地面G層/魚檔 晚班2：主崗位 pt_4
+                        {
+                            matchKey: '鄭玉英',
+                            prefLoc: 'pt_4',
+                            prefGender: '',
+                            title: '地面晚班2',
+                            getLoc: (s, e) => {
+                                if (s >= '13:00' && e <= '22:00') {
+                                    if (s >= '17:30' && e <= '18:30') return 'pt_7'; // 休息
+                                    return 'pt_4';
+                                }
+                                return null;
+                            }
+                        },
+                        // 10. 街市一樓+廁所 長班：主崗位 pt_1
+                        {
+                            matchKey: 'EH0072',
+                            prefLoc: 'pt_1',
+                            prefGender: '',
+                            title: '一樓長班',
+                            getLoc: (s, e) => {
+                                if (s >= '08:00' && e <= '10:00') return 'pt_7'; // 休息
+                                if (s >= '15:00' && e <= '17:00') return 'pt_7'; // 休息
+                                return 'pt_1';
+                            }
+                        },
+                        // 11. 機動長班1 (頂男廁)：限男性，主崗位 pt_6 (兼頂 pt_8)
+                        {
+                            matchKey: 'EH0044',
+                            prefLoc: 'pt_6',
+                            prefGender: '男',
+                            title: '機動1(頂男廁)',
+                            getLoc: (s, e) => {
+                                if (s >= '08:00' && e <= '10:00') return 'pt_7'; // 休息
+                                if (s >= '15:00' && e <= '17:00') return 'pt_7'; // 休息
+                                if (s >= '10:00' && e <= '12:00') return 'pt_8'; // 頂位：花園仔男廁
+                                if (s >= '17:00' && e <= '19:00') return 'pt_8'; // 頂位：花園仔男廁
+                                return 'pt_6';
+                            }
+                        },
+                        // 12. 機動長班2：主崗位 pt_6
+                        {
+                            matchKey: 'EH0041',
+                            prefLoc: 'pt_6',
+                            prefGender: '',
+                            title: '機動2',
+                            getLoc: (s, e) => {
+                                if (s >= '10:00' && e <= '12:00') return 'pt_7'; // 休息
+                                if (s >= '17:00' && e <= '19:00') return 'pt_7'; // 休息
+                                return 'pt_6';
+                            }
+                        },
+                        // 13. 機動日班 (頂女廁與一樓)：限女性，主崗位 pt_6 (兼頂 pt_9、pt_1)
+                        {
+                            matchKey: '黃金妹',
+                            prefLoc: 'pt_6',
+                            prefGender: '女',
+                            title: '機動3(頂一樓及女廁)',
+                            getLoc: (s, e) => {
+                                if (s >= '08:00' && e <= '19:00') {
+                                    if (s >= '08:00' && e <= '10:00') return 'pt_1'; // 頂位：一樓
+                                    if (s >= '11:00' && e <= '12:00') return 'pt_9'; // 頂位：女廁+傷健
+                                    if (s >= '12:00' && e <= '13:00') return 'pt_7'; // 休息
+                                    if (s >= '15:00' && e <= '17:00') return 'pt_1'; // 頂位：一樓
+                                    return 'pt_6';
+                                }
+                                return null;
+                            }
+                        }
+                    ];
+
+                    const memberRoleMap = new Map();
+                    const availableMembers = [...dutyMembers];
+
+                    // 🌟 步驟 1：優先精準比對 (若有人的姓名或工號剛好符合 matchKey 則優先認領)
+                    cleanRosterTemplates.forEach(tmpl => {
+                        let matchedIdx = availableMembers.findIndex(m => {
+                            const prof = window.getMemberProfile(m);
+                            const idStr = (prof.id || '').toUpperCase();
+                            const nameStr = m.toUpperCase();
+                            const target = tmpl.matchKey.toUpperCase();
+                            return idStr.includes(target) || nameStr.includes(target) || target.includes(nameStr);
+                        });
+
+                        if (matchedIdx !== -1) {
+                            memberRoleMap.set(tmpl, availableMembers[matchedIdx]);
+                            availableMembers.splice(matchedIdx, 1);
+                        }
+                    });
+
+                    // 🌟 步驟 2：核心「做法 B」智慧評分配對 (依性別相符 + Top 3 志願優先級)
+                    cleanRosterTemplates.forEach(tmpl => {
+                        if (memberRoleMap.has(tmpl) || availableMembers.length === 0) return;
+
+                        let bestMemberIdx = -1;
+                        let bestScore = -9999;
+
+                        availableMembers.forEach((m, idx) => {
+                            const prof = window.getMemberProfile(m);
+                            const gender = prof.gender || '女';
+                            const prefs = Array.isArray(prof.prefs) ? prof.prefs : [];
+
+                            let score = 0;
+
+                            // 1. 性別符合度評分
+                            if (tmpl.prefGender) {
+                                if (gender === tmpl.prefGender) {
+                                    score += 100; // 性別符合大幅加分
+                                } else {
+                                    score -= 500; // 性別不合嚴格扣分 (例如男廁絕不給女員)
+                                }
+                            } else {
+                                score += 20; // 不限性別崗位
+                            }
+
+                            // 2. 個人 Top 3 優先崗位符合度加權
+                            if (prefs[0] && prefs[0] === tmpl.prefLoc) {
+                                score += 60; // 符合第 1 優先
+                            } else if (prefs[1] && prefs[1] === tmpl.prefLoc) {
+                                score += 35; // 符合第 2 優先
+                            } else if (prefs[2] && prefs[2] === tmpl.prefLoc) {
+                                score += 15; // 符合第 3 優先
+                            }
+
+                            if (score > bestScore) {
+                                bestScore = score;
+                                bestMemberIdx = idx;
+                            }
+                        });
+
+                        if (bestMemberIdx !== -1) {
+                            memberRoleMap.set(tmpl, availableMembers[bestMemberIdx]);
+                            availableMembers.splice(bestMemberIdx, 1);
+                        }
+                    });
+
+                    // 🌟 步驟 3：若還有剩餘崗位名額且有名單成員，依序補入
+                    cleanRosterTemplates.forEach(tmpl => {
+                        if (!memberRoleMap.has(tmpl) && availableMembers.length > 0) {
+                            memberRoleMap.set(tmpl, availableMembers.shift());
+                        }
+                    });
+
+                    // 🌟 步驟 4：將配對完成的人員班次與休息時段填入表格暫存字典
+                    cleanSlots.forEach(slot => {
+                        cleanRosterTemplates.forEach(tmpl => {
+                            const personName = memberRoleMap.get(tmpl);
+                            if (!personName) return;
+
+                            const locId = tmpl.getLoc(slot.start, slot.end);
+                            if (locId) {
+                                const gridKey = `${targetDateStr}_${locId}_${slot.start}_${slot.end}`;
+                                const curText = window._tempGridValues[gridKey] || '';
+                                const namesList = curText ? curText.split('\n') : [];
+                                if (!namesList.includes(personName)) {
+                                    namesList.push(personName);
+                                    window._tempGridValues[gridKey] = namesList.join('\n');
+                                }
+                            }
+                        });
+                    });
+
+                } else {
+                    // ==========================================
+                    // 🎧 客服人員原版排班模型 (維持不變)
+                    // ==========================================
+                    const timeSlots = Array.from({length: 15}, (_, i) => `${pad(i + 7)}:00-${pad(i + 8)}:00`);
+                    const locTargets = [
                         { id: 'pt_1', max: 2 },
                         { id: 'pt_3', max: 1 },
                         { id: 'pt_4', max: 1 },
                         { id: 'pt_5', max: 1 }
-                      ];
+                    ];
 
-                timeSlots.forEach((ts, slotIdx) => {
-                    const [tStart, tEnd] = ts.split('-');
-                    const assignedInSlot = new Set();
-                    const locAssignedMap = {};
-                    Object.keys(mapData.points).forEach(k => locAssignedMap[k] = []);
+                    timeSlots.forEach((ts, slotIdx) => {
+                        const [tStart, tEnd] = ts.split('-');
+                        const assignedInSlot = new Set();
+                        const locAssignedMap = {};
+                        Object.keys(mapData.points).forEach(k => locAssignedMap[k] = []);
 
-                    for (let prefRank = 0; prefRank < 3; prefRank++) {
-                        const rotatedMembers = dutyMembers.map((_, idx) => dutyMembers[(idx + slotIdx) % dutyMembers.length]);
-                        rotatedMembers.forEach(m => {
-                            if (assignedInSlot.has(m)) return;
-                            const prof = window.getMemberProfile(m);
-                            const prefLoc = prof.prefs?.[prefRank];
-                            if (prefLoc && mapData.points[prefLoc] && prefLoc !== 'pt_7') {
-                                const targetObj = locTargets.find(x => x.id === prefLoc);
-                                const maxCap = targetObj ? targetObj.max : 1;
-                                if (locAssignedMap[prefLoc].length < maxCap) {
-                                    locAssignedMap[prefLoc].push(m);
+                        for (let prefRank = 0; prefRank < 3; prefRank++) {
+                            const rotatedMembers = dutyMembers.map((_, idx) => dutyMembers[(idx + slotIdx) % dutyMembers.length]);
+                            rotatedMembers.forEach(m => {
+                                if (assignedInSlot.has(m)) return;
+                                const prof = window.getMemberProfile(m);
+                                const prefLoc = prof.prefs?.[prefRank];
+                                if (prefLoc && mapData.points[prefLoc] && prefLoc !== 'pt_7') {
+                                    const targetObj = locTargets.find(x => x.id === prefLoc);
+                                    const maxCap = targetObj ? targetObj.max : 1;
+                                    if (locAssignedMap[prefLoc].length < maxCap) {
+                                        locAssignedMap[prefLoc].push(m);
+                                        assignedInSlot.add(m);
+                                    }
+                                }
+                            });
+                        }
+
+                        const remainingMembers = dutyMembers.filter(m => !assignedInSlot.has(m));
+                        remainingMembers.forEach(m => {
+                            let placed = false;
+                            for (const targetObj of locTargets) {
+                                if (locAssignedMap[targetObj.id] && locAssignedMap[targetObj.id].length < targetObj.max) {
+                                    locAssignedMap[targetObj.id].push(m);
                                     assignedInSlot.add(m);
+                                    placed = true;
+                                    break;
                                 }
                             }
-                        });
-                    }
-
-                    const remainingMembers = dutyMembers.filter(m => !assignedInSlot.has(m));
-                    remainingMembers.forEach(m => {
-                        let placed = false;
-                        for (const targetObj of locTargets) {
-                            if (locAssignedMap[targetObj.id] && locAssignedMap[targetObj.id].length < targetObj.max) {
-                                locAssignedMap[targetObj.id].push(m);
-                                assignedInSlot.add(m);
-                                placed = true;
-                                break;
+                            if (!placed) {
+                                if (locAssignedMap['pt_1']) locAssignedMap['pt_1'].push(m);
                             }
-                        }
-                        if (!placed) {
-                            const fallbackLoc = isClean ? 'pt_6' : 'pt_1';
-                            if (locAssignedMap[fallbackLoc]) locAssignedMap[fallbackLoc].push(m);
-                        }
-                    });
+                        });
 
-                    Object.entries(locAssignedMap).forEach(([locId, namesArr]) => {
-                        if (namesArr.length > 0) {
-                            const stateKey = `${rolePrefix}${targetDateStr}_${locId}_${tStart}`;
-                            if (splitHoursState[stateKey]) {
-                                const [sH] = tStart.split(':'), [eH] = tEnd.split(':');
-                                window._tempGridValues[`${targetDateStr}_${locId}_${sH}:00_${sH}:30`] = namesArr.join('\n');
-                                window._tempGridValues[`${targetDateStr}_${locId}_${sH}:30_${eH}:00`] = namesArr.join('\n');
-                            } else {
+                        Object.entries(locAssignedMap).forEach(([locId, namesArr]) => {
+                            if (namesArr.length > 0) {
                                 window._tempGridValues[`${targetDateStr}_${locId}_${tStart}_${tEnd}`] = namesArr.join('\n');
                             }
-                        }
+                        });
                     });
-                });
+                }
 
                 window.renderScheduleManager();
-                window.showToast(`✨ 已完成【${targetDateStr}】智慧自動排班！請檢查後點擊儲存。`);
+                window.showToast(`✨ 已完成【${targetDateStr}】自動排班！性別、志願與休息已排妥。`);
             });
         };
-
         // 🌟 處理人員頭像上傳、自動縮圖壓縮與儲存
         window.handleUploadMemberAvatar = async (name, input) => {
             const file = input.files?.[0];
@@ -5946,292 +6096,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             lucide.createIcons();
         };
 
-        // ====== 十宮格虛擬鍵盤專屬核心邏輯 (修復版) ======
-        window.activeKeypadTarget = 'merged';
-        window.keypadStore = {}; // 專門存放每張卡片當前輸入的純數字字串，防止被 001 鎖死長度
-
-        window.setKeypadTarget = (targetId) => {
-            if (!targetId) {
-                targetId = window.isBatchMergedView ? 'merged' : (window.pendingUploadImages[0]?.tempId || 'merged');
-            }
-            window.activeKeypadTarget = targetId;
-
-            // 讀取既有純數字
-            if (window.keypadStore[targetId] === undefined) {
-                const currentVal = (targetId === 'merged') 
-                    ? (window.mergedBatchForm.code || '')
-                    : (window.pendingUploadImages.find(x => x.tempId === targetId)?.code || '');
-                window.keypadStore[targetId] = currentVal ? String(currentVal).replace(/\D/g, '') : '';
-            }
-
-            // 更新選中外框藍光
-            document.querySelectorAll('[id^="keypadDisplay-"]').forEach(el => {
-                el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/50');
-            });
-            const activeEl = document.getElementById(`keypadDisplay-${targetId}`);
-            if (activeEl) {
-                activeEl.classList.add('ring-2', 'ring-blue-500', 'bg-blue-100/50');
-            }
-            window.updateKeypadDisplayUI();
-        };
-
-        window.onKeypadPress = (key, forcedOwnerId = null) => {
-            const targetId = forcedOwnerId || window.activeKeypadTarget || 'merged';
-            window.activeKeypadTarget = targetId;
-
-            if (window.keypadStore[targetId] === undefined) {
-                window.keypadStore[targetId] = '';
-            }
-
-            let raw = window.keypadStore[targetId];
-
-            if (key === 'CLEAR') {
-                raw = '';
-            } else if (key === 'BACK') {
-                raw = raw.slice(0, -1);
-            } else {
-                // 最多輸入 3 位數檔號
-                if (raw.length < 3) {
-                    raw += String(key);
-                }
-            }
-            window.keypadStore[targetId] = raw;
-
-            // 儲存格式化後的 3 位數檔號
-            const formatted = raw ? raw.padStart(3, '0') : '';
-
-            if (targetId === 'merged') {
-                window.mergedBatchForm.code = formatted;
-                const fullCode = `${window.mergedBatchForm.prefix || ''}${formatted}`.trim();
-                window.updateBatchAutoHintUI(fullCode, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
-            } else {
-                const item = window.pendingUploadImages.find(x => x.tempId === targetId);
-                if (item) {
-                    item.code = formatted;
-                    item.title = `${item.prefix || ''}${formatted}`.trim();
-                    window.updateBatchAutoHintUI(item.title, item.time, `hint-pending-${item.tempId}`, false, item.tempId);
-                }
-            }
-
-            // 顯示當前輸入數字或三條橫線
-            const displayEl = document.getElementById(`keypadDisplay-${targetId}`);
-            if (displayEl) {
-                displayEl.textContent = raw || '---';
-            }
-        };
-
-        window.updateKeypadDisplayUI = () => {
-            const targetId = window.activeKeypadTarget || 'merged';
-            const raw = window.keypadStore[targetId] || '';
-            const displayEl = document.getElementById(`keypadDisplay-${targetId}`);
-            if (displayEl) {
-                displayEl.textContent = raw || '---';
-            }
-        };
-
-        window.addEventListener('keydown', (e) => {
-            const modal = document.getElementById('uploadBatchModal');
-            if (!modal || modal.classList.contains('hidden')) return;
-
-            if (e.key >= '0' && e.key <= '9') {
-                e.preventDefault();
-                window.onKeypadPress(e.key);
-            } else if (e.key === 'Backspace') {
-                e.preventDefault();
-                window.onKeypadPress('BACK');
-            } else if (e.key === 'Escape' || e.key === 'Delete' || e.key.toLowerCase() === 'c') {
-                e.preventDefault();
-                window.onKeypadPress('CLEAR');
-            }
-        });
-
-        window.renderKeypadGridHtml = (ownerId = 'merged') => {
-            const keys = [
-                ['1', '2', '3'],
-                ['4', '5', '6'],
-                ['7', '8', '9'],
-                ['CLEAR', '0', 'BACK']
-            ];
-
-            return `
-            <!-- 數字盤：按鍵上下高度 +4px (h-[30px] sm:h-[32px]) -->
-            <div class="grid grid-cols-3 gap-[2px] w-full select-none mt-0.5">
-                ${keys.flat().map(k => {
-                    let label = k;
-                    let style = "bg-white text-slate-800 border-[1px] border-slate-200 shadow-2xs text-[20px] font-black hover:bg-slate-50";
-                    if (k === 'CLEAR') {
-                        label = '<span class="text-[12.5px] font-black text-rose-600 leading-none">清空</span>';
-                        style = "bg-rose-50/80 border-[1px] border-rose-200 text-rose-600 hover:bg-rose-100";
-                    } else if (k === 'BACK') {
-                        label = '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-slate-700 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6-6h12a2 2 0 012 2v8a2 2 0 01-2 2H9l-6-6z" /></svg>';
-                        style = "bg-slate-100/80 border-[1px] border-slate-200 text-slate-700 hover:bg-slate-200";
-                    }
-                    return `
-                    <button type="button" onclick="window.onKeypadPress('${k}', '${ownerId}')" 
-                        class="h-[30px] sm:h-[32px] rounded-lg font-mono border flex items-center justify-center p-0 leading-none active:scale-90 active:bg-blue-100 active:shadow-inner transition-all ${style}">
-                        ${label}
-                    </button>`;
-                }).join('')}
-            </div>`;
-        };
-
-        window.renderUploadBatchList = () => {
-            const list = $('uploadBatchList');
-            const total = window.pendingUploadImages.length;
-            if ($('uploadBatchCount'))$('uploadBatchCount').textContent = total;
-            if (!total) return window.closeUploadBatchModal();
-
-            const toggleBtn = $('toggleMergeViewBtn');
-            if (toggleBtn) {
-                toggleBtn.innerHTML = window.isBatchMergedView
-                    ? `<i data-lucide="layout-grid" class="w-3.5 h-3.5 mr-1"></i>展開分開`
-                    : `<i data-lucide="layers" class="w-3.5 h-3.5 mr-1"></i>合併疊加`;
-            }
-
-            const catList = ['提早收工', '營業相', '開工-雞相', '測溫相'];
-
-            if (window.isBatchMergedView) {
-                window.setKeypadTarget('merged');
-                const [hStr, mStr] = (window.mergedBatchForm.time || '00:00').split(':');
-                list.innerHTML = `
-                <div class="flex flex-col items-center animate-pop-in pb-0.5">
-                    <div class="photo-deck-container cursor-pointer !h-[75px] !mb-1" onclick="window.openFullscreenImg('${window.pendingUploadImages[0]?.src}')" title="點擊放大預覽">
-                        ${window.pendingUploadImages.slice(0, 5).map((img) => `
-                            <div class="deck-card !w-[130px] !h-[70px]">
-                                <img src="${img.src}" class="w-full h-full object-contain p-0.5">
-                            </div>
-                        `).join('')}
-                        <div class="absolute -bottom-1 bg-slate-900/85 backdrop-blur-md text-white text-[11.5px] font-black px-2 py-0.2 rounded-full shadow-lg border border-white/40 flex items-center z-20">
-                            共疊加 ${total} 張相片
-                        </div>
-                    </div>
-
-                    <div class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-2 shadow-xs space-y-1 mt-0.5">
-                        <div id="batchMergedAutoHint" class="opacity-0 pointer-events-none h-0 p-0 text-[12px] font-bold border border-transparent transition-all flex items-center bg-transparent"></div>
-
-                        <!-- 橫排 4 個分類鍵 (加大2px: text-[13px]) -->
-                        <div class="flex items-center gap-1 w-full">
-                            ${catList.map(cat => `
-                                <button type="button" id="merged-cat-btn-${cat}" onclick="window.setMergedCategory('${cat}', true)" 
-                                    class="flex-1 py-1 rounded-lg text-[13px] font-bold border transition-all active:scale-95 ${window.mergedBatchForm.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
-                                    ${cat}
-                                </button>
-                            `).join('')}
-                        </div>
-
-                        <div class="flex items-center gap-1.5">
-                            <!-- 時間選擇 (數字加大3px: text-[15px]) -->
-                            <div class="flex items-center justify-center font-mono font-bold text-[15px] bg-white border border-slate-300 rounded-xl px-1.5 h-10 shadow-inner shrink-0">
-                                <select onchange="window.updateMergedTimePart('h', this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
-                                    ${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
-                                </select>
-                                <span class="px-0.5">:</span>
-                                <select onchange="window.updateMergedTimePart('m', this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
-                                    ${Array.from({length: 60}, (_, i) => `<option value="${pad(i)}" ${pad(i) === mStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
-                                </select>
-                            </div>
-
-                            <!-- 樓層按鍵：固定高度防止介面跳動 -->
-                            <div class="w-14 flex flex-col space-y-1 shrink-0">
-                                <button type="button" id="merged-prefix-1-" onclick="window.setMergedPrefix('1-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
-                                <button type="button" id="merged-prefix-R-" onclick="window.setMergedPrefix('R-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
-                                <button type="button" id="merged-prefix-J-" onclick="window.setMergedPrefix('J-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${window.mergedBatchForm.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
-                            </div>
-
-                            <!-- 檔號顯示 (數字加大3px: text-[23px]) -->
-                            <div class="flex-1 h-10 bg-blue-50/80 border-2 border-blue-400 rounded-xl px-2 flex items-center justify-center font-mono font-black text-[23px] text-blue-700 tracking-widest shadow-inner cursor-default select-none" id="keypadDisplay-merged">
-                                ${window.keypadStore['merged'] || '---'}
-                            </div>
-                        </div>
-
-                        ${window.renderKeypadGridHtml('merged')}
-                    </div>
-                </div>`;
-                window.updateBatchAutoHintUI(`${window.mergedBatchForm.prefix || ''}${window.mergedBatchForm.code || ''}`, window.mergedBatchForm.time, 'batchMergedAutoHint', true);
-            } else {
-                // 展開分開模式
-                list.innerHTML = window.pendingUploadImages.map(item => {
-                    const [hStr, mStr] = (item.time || '00:00').split(':');
-                    const curDigits = window.keypadStore[item.tempId] || '';
-                    return `
-                    <div class="bg-slate-50 border border-slate-200 rounded-xl p-1.5 flex flex-col h-full flex-1 min-h-0 justify-between gap-1 shadow-xs overflow-hidden">
-                        <!-- 彈性預覽圖容器 -->
-                        <div class="relative w-full rounded-lg overflow-hidden cursor-zoom-in group border border-slate-300 shadow-xs bg-slate-100 flex items-center justify-center flex-1 min-h-[60px] max-h-[175px]" onclick="window.openFullscreenImg('${item.src}')">
-                            <img src="${item.src}" class="w-full h-full object-contain block">
-                            
-                            <!-- 左轉按鈕 (向右移動對齊左側紅圈位置) -->
-                            <button type="button" onclick="window.rotatePendingUploadItem('${item.tempId}', -90, event)" class="absolute left-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向左轉 90°">
-                                <i data-lucide="rotate-ccw" class="w-4 h-4 pointer-events-none"></i>
-                            </button>
-
-                            <!-- 右轉按鈕 (對齊右側紅圈位置) -->
-                            <button type="button" onclick="window.rotatePendingUploadItem('${item.tempId}', 90, event)" class="absolute right-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向右轉 90°">
-                                <i data-lucide="rotate-cw" class="w-4 h-4 pointer-events-none"></i>
-                            </button>
-
-                            <!-- 右上角刪除按鈕 -->
-                            <button type="button" onclick="event.stopPropagation(); window.removePendingUploadItem('${item.tempId}')" class="absolute top-1 right-1 text-slate-500 hover:text-red-500 p-1 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="刪除">
-                                <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
-                            </button>
-                        </div>
-
-                        <div id="hint-pending-${item.tempId}" class="opacity-0 pointer-events-none h-0 p-0 text-[12px] font-bold border border-transparent transition-all flex items-center bg-transparent shrink-0"></div>
-
-                        <!-- 分類選擇 (加大2px: text-[13px]) -->
-                        <div class="flex items-center gap-1 w-full shrink-0">
-                            ${catList.map(cat => `
-                                <button type="button" id="btn-cat-${item.tempId}-${cat}" onclick="window.setPendingItemCategory('${item.tempId}', '${cat}', true)" 
-                                    class="flex-1 py-1 rounded-lg text-[13px] font-bold border transition-all active:scale-95 ${item.category === cat ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}">
-                                    ${cat}
-                                </button>
-                            `).join('')}
-                        </div>
-
-                        <div class="flex items-center space-x-1.5 shrink-0">
-                            <!-- 時間 (數字加大3px: text-[15px]) -->
-                            <div class="flex items-center justify-center font-mono font-bold text-[15px] bg-white border border-slate-300 rounded-lg px-1.5 py-0.5 shadow-inner shrink-0 h-9">
-                                <select onchange="window.updateTimePart('${item.tempId}','h',this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
-                                    ${Array.from({length: 24}, (_, i) => `<option value="${pad(i)}" ${pad(i) === hStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
-                                </select>
-                                <span class="px-0.5">:</span>
-                                <select onchange="window.updateTimePart('${item.tempId}','m',this.value)" class="bg-transparent font-mono p-0 focus:outline-none cursor-pointer">
-                                    ${Array.from({length: 60}, (_, i) => `<option value="${pad(i)}" ${pad(i) === mStr ? 'selected' : ''}>${pad(i)}</option>`).join('')}
-                                </select>
-                            </div>
-
-                            <!-- 樓層按鍵：固定高度防止介面跳動 -->
-                            <div class="w-14 flex flex-col space-y-1 shrink-0">
-                                <button type="button" id="btn-prefix-${item.tempId}-1-" onclick="window.selectPrefixOption('${item.tempId}', '1-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === '1-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">一樓</button>
-                                <button type="button" id="btn-prefix-${item.tempId}-R-" onclick="window.selectPrefixOption('${item.tempId}', 'R-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === 'R-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">魚檔</button>
-                                <button type="button" id="btn-prefix-${item.tempId}-J-" onclick="window.selectPrefixOption('${item.tempId}', 'J-')" class="w-full h-[22px] rounded-lg text-[12.5px] font-black border flex items-center justify-center p-0 leading-none transition-all ${item.prefix === 'J-' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'}">雞檔</button>
-                            </div>
-
-                            <!-- 檔號顯示 (數字加大3px: text-[23px]) -->
-                            <div onclick="window.setKeypadTarget('${item.tempId}')" class="flex-1 h-9 bg-white border-2 border-blue-300 rounded-xl px-2 flex items-center justify-center font-mono font-black text-[23px] text-blue-600 tracking-widest shadow-inner cursor-pointer select-none" id="keypadDisplay-${item.tempId}">
-                                ${curDigits || '---'}
-                            </div>
-                        </div>
-
-                        <div class="w-full shrink-0">
-                            ${window.renderKeypadGridHtml(item.tempId)}
-                        </div>
-                    </div>`;
-                }).join('');
-
-                window.pendingUploadImages.forEach(it => {
-                    window.updateBatchAutoHintUI(it.title, it.time, `hint-pending-${it.tempId}`, false, it.tempId);
-                });
-
-                if (window.pendingUploadImages.length > 0) {
-                    const curId = (window.activeKeypadTarget && window.activeKeypadTarget !== 'merged') 
-                        ? window.activeKeypadTarget 
-                        : window.pendingUploadImages[0].tempId;
-                    setTimeout(() => window.setKeypadTarget(curId), 50);
-                }
-            }
-            lucide.createIcons();
-        };
-
+        
         // ====== 斷點續傳與後台防中斷管理 ======
         window._uploadQueue = [];
         window._uploadWakeLock = null;
@@ -7170,7 +7035,18 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             lucide.createIcons(); document.querySelectorAll('.member-dynamic-marker[data-active="false"]').forEach(el => el.remove());
         };
 
-        window.openScheduleManager = () => { window.renderScheduleManager(); $('scheduleManageModal')?.classList.replace('hidden', 'flex'); };
+        window.openScheduleManager = () => {
+            window.renderScheduleManager();
+            $('scheduleManageModal')?.classList.replace('hidden', 'flex');
+            // 🌟 打開排班總表時，自動將畫面捲動定位至「今日 (當日)」
+            setTimeout(() => {
+                const todayStr = getNowInputStrs().date;
+                const todayCard = document.getElementById(`sched-day-card-${todayStr}`);
+                if (todayCard) {
+                    todayCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }, 80);
+        };
         window.closeScheduleManager = () => { $('scheduleManageModal')?.classList.replace('flex', 'hidden'); window.updateMapSimulation(); };
         window.toggleEditMembers = () => { window.openMemberRosterModal(); };
 
@@ -7208,66 +7084,66 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
         window.selectGridMember = (name) => {
             activeGridMember = (activeGridMember === name) ? null : name;
-            // 頂部按鈕保持正常外觀與選中狀態
+            // 更新左側抽屜內單列按鈕的外觀與選中狀態
             document.querySelectorAll('.member-btn-container').forEach(c => {
                 const cName = c.dataset.name, sel = cName === activeGridMember, isEraser = cName === 'ERASER', isSplitter = cName === 'SPLITTER', div = c.querySelector('div');
                 if (!div) return;
                 if (isSplitter) {
-                    div.className = `px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-105' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-sm'}`;
+                    div.className = `w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${sel ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-[1.02]' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-2xs'}`;
                 } else if (isEraser) {
-                    div.className = `px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${sel ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}`;
+                    div.className = `w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${sel ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-[1.02]' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-2xs'}`;
                 } else {
                     const col = window.getMemberColorClass(cName);
-                    div.className = `px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center gap-1.5 ${sel ? `${col.activeBg} text-white border-transparent shadow-md scale-105` : `${col.bg} ${col.text}${col.border} hover:opacity-80 shadow-sm`}`;
+                    div.className = `w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-between gap-1 ${sel ? `${col.activeBg} text-white border-transparent shadow-md scale-[1.02]` : `${col.bg} ${col.text}${col.border} hover:opacity-80 shadow-2xs`}`;
                 }
             });
 
-          // 🌟 核心：即時切換【表格中】所有人名的底色
+            // 更新頂部控制列的「目前選取狀態徽章」
+            const statusBadge = $('activeMemberBadge');
+            if (statusBadge) {
+                if (!activeGridMember) {
+                    statusBadge.className = 'text-[10.5px] font-bold px-2.5 py-1 rounded-lg border bg-slate-50 text-slate-400 border-slate-200';
+                    statusBadge.innerHTML = '尚未選取工具/人員 (移至左側邊緣展開選單)';
+                } else if (activeGridMember === 'ERASER') {
+                    statusBadge.className = 'text-[10.5px] font-black px-2.5 py-1 rounded-lg border bg-pink-50 text-pink-600 border-pink-200 animate-pulse';
+                    statusBadge.innerHTML = '🧹 目前工具：橡皮擦模式';
+                } else if (activeGridMember === 'SPLITTER') {
+                    statusBadge.className = 'text-[10.5px] font-black px-2.5 py-1 rounded-lg border bg-indigo-50 text-indigo-600 border-indigo-200 animate-pulse';
+                    statusBadge.innerHTML = '✂️ 目前工具：拆分/合併模式';
+                } else {
+                    const col = window.getMemberColorClass(activeGridMember);
+                    statusBadge.className = `text-[10.5px] font-black px-2.5 py-1 rounded-lg border ${col.bg} ${col.text} ${col.border} shadow-2xs`;
+                    statusBadge.innerHTML = `當前選取：${activeGridMember}`;
+                }
+            }
+
+            // 🌟 核心：即時切換【表格中】所有人名的底色
             const isMemberFocus = activeGridMember && activeGridMember !== 'ERASER' && activeGridMember !== 'SPLITTER';
             document.querySelectorAll('.sub-line-item').forEach(el => {
                 const canon = el.dataset.name || el.textContent.trim();
                 if (!canon) return;
                 const col = window.getMemberColorClass(canon);
                 
-                // 只精準清理背景色 (bg-*) 與文字顏色 (text-slate-*)，保留字體大小 text-[10px]
                 el.className = el.className.replace(/\bbg-\S+/g, '').replace(/\btext-slate-\S+/g, '');
 
                 if (isMemberFocus) {
                     if (canon === activeGridMember) {
-                        // 只有被點選的人名：保留專屬彩色底色高亮
                         el.classList.add(col ? col.bg : 'bg-blue-100', 'text-slate-900');
                         el.classList.remove('bg-white', 'text-slate-400');
                     } else {
-                        // 其他所有人名：全部變回無底色（純白底，文字變淡）
                         el.classList.add('bg-white', 'text-slate-400');
                         el.classList.remove('text-slate-900');
                     }
                 } else {
-                    // 取消點選（無選取）時：全員恢復各自的彩色底色
                     el.classList.add(col ? col.bg : 'bg-white', 'text-slate-900');
                     el.classList.remove('text-slate-400');
                 }
 
-                // 確保 text-[10px] 永久保留，文字絕不變大
                 if (!el.classList.contains('text-[10px]')) {
                     el.classList.add('text-[10px]');
                 }
             });
 
-            const hint = $('grid-hint-text');
-            if (hint) {
-                if (activeGridMember === 'SPLITTER') {
-                    hint.className = 'mt-1.5 text-[10px] text-indigo-600 font-bold animate-pulse px-1 block text-center';
-                    hint.innerHTML = '✂️ 拆分/合併模式：點擊任何格子可切換「半小時兩半格」或「一小時整格」。';
-                } else if (activeGridMember === 'ERASER') {
-                    hint.className = 'mt-1.5 text-[10px] text-pink-600 font-bold animate-pulse px-1 block text-center';
-                    hint.innerHTML = '👉 橡皮擦模式：點擊表格以清除格子內容。';
-                } else {
-                    // 選取人名時完全隱藏提示，保持介面清爽不佔空間
-                    hint.className = 'hidden';
-                    hint.innerHTML = '';
-                }
-            }
             document.querySelectorAll('.grid-input').forEach(ta => { ta.classList.toggle('cursor-pointer', !!activeGridMember); ta.classList.toggle('select-none', !!activeGridMember); });
         };
 
@@ -7890,11 +7766,13 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             const multiStore = isCleanRole ? cleanMultiDaySchedules : csMultiDaySchedules;
 
             let domVals = window._tempGridValues || {};
-            const timeSlots = Array.from({length: 15}, (_, i) => `${pad(i + 7)}:00-${pad(i + 8)}:00`);
-            const validCountSlots = ['13:00-14:00', '14:00-15:00', '19:00-20:00', '20:00-21:00', '21:00-22:00'];
             const curTotalMins = window.getNow().getHours() * 60 + window.getNow().getMinutes();
 
-            // 🌟 依照您指定的最新順序：花園仔(男廁) > 花園仔(女廁)+(傷健廁所) > 花園仔 > 魚檔 > 一樓+廁所 > 機動 > 休息中
+            // 🌟 區分清潔專屬時段 (06:30~20:00 半格 + 20:00~22:00) 與 客服原版時段 (07:00~22:00)
+            const cleanSlots = window.getCleanScheduleSlots();
+            const csTimeSlots = Array.from({length: 15}, (_, i) => `${pad(i + 7)}:00-${pad(i + 8)}:00`);
+            const validCountSlots = ['13:00-14:00', '14:00-15:00', '19:00-20:00', '20:00-21:00', '21:00-22:00'];
+
             const order = ['pt_8', 'pt_9', 'pt_3', 'pt_4', 'pt_5', 'pt_1', 'pt_2', 'pt_6', 'pt_7'];
             let sortedLocs = Object.entries(mapData.points).sort(([a], [b]) => (order.indexOf(a) === -1 ? 999 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 999 : order.indexOf(b)));
 
@@ -7907,77 +7785,128 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 const prevDateStr = dayIdx > 0 ? fiveDays[dayIdx - 1].dateStr : null;
 
                 let th = `<th class="sticky left-0 bg-slate-100 p-1 z-10 w-[64px] min-w-[64px] max-w-[64px] border border-slate-300 text-slate-600 font-black text-[9.5px] text-center align-middle whitespace-nowrap shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">崗位 \\ 時間</th>`;
-                timeSlots.forEach(ts => {
-                    const [sH, sM] = ts.split('-')[0].split(':').map(Number), [eH, eM] = ts.split('-')[1].split(':').map(Number);
-                    const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
-                    th += `<th class="p-1 border border-slate-300 w-[52px] min-w-[52px] text-[8.5px] font-bold ${isCurrentHour ? 'now-glowing-header bg-gradient-to-b from-sky-400 to-sky-500 text-white font-black shadow-md' : 'text-slate-500 bg-slate-50'} whitespace-nowrap text-center align-middle">${isCurrentHour ? '<div class="flex items-center justify-center space-x-0.5 mb-0.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-300 animate-ping"></span><span class="text-[7.5px] bg-amber-300 text-slate-900 px-1 py-0.2 rounded font-black tracking-tight leading-none shadow-xs">現在</span></div>' : ''}${ts}</th>`;
-                });
+
+                if (isCleanRole) {
+                    // 🧹 清潔員專屬表頭：06:30~20:00 全半格 + 20:00~22:00
+                    cleanSlots.forEach(slot => {
+                        const [sH, sM] = slot.start.split(':').map(Number);
+                        const [eH, eM] = slot.end.split(':').map(Number);
+                        const isCurrentSlot = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
+                        const colWidth = slot.start === '20:00' ? 'w-[64px] min-w-[64px]' : 'w-[36px] min-w-[36px]';
+                        th += `<th class="p-0.5 border border-slate-300 ${colWidth} text-[8.5px] font-bold ${isCurrentSlot ? 'now-glowing-header bg-gradient-to-b from-sky-400 to-sky-500 text-white font-black shadow-md' : 'text-slate-500 bg-slate-50'} whitespace-nowrap text-center align-middle">
+                            ${isCurrentSlot ? '<div class="text-[7px] bg-amber-300 text-slate-900 rounded font-black leading-none mb-0.5 px-0.5">現在</div>' : ''}
+                            <div class="leading-none">${slot.label}</div>
+                            <div class="text-[7.5px] text-slate-400 font-normal leading-none mt-0.5">${slot.end}</div>
+                        </th>`;
+                    });
+                } else {
+                    // 🎧 客服原版表頭：15 個小時格
+                    csTimeSlots.forEach(ts => {
+                        const [sH, sM] = ts.split('-')[0].split(':').map(Number), [eH, eM] = ts.split('-')[1].split(':').map(Number);
+                        const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
+                        th += `<th class="p-1 border border-slate-300 w-[52px] min-w-[52px] text-[8.5px] font-bold ${isCurrentHour ? 'now-glowing-header bg-gradient-to-b from-sky-400 to-sky-500 text-white font-black shadow-md' : 'text-slate-500 bg-slate-50'} whitespace-nowrap text-center align-middle">${isCurrentHour ? '<div class="flex items-center justify-center space-x-0.5 mb-0.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-300 animate-ping"></span><span class="text-[7.5px] bg-amber-300 text-slate-900 px-1 py-0.2 rounded font-black tracking-tight leading-none shadow-xs">現在</span></div>' : ''}${ts}</th>`;
+                    });
+                }
 
                 let rows = '';
                 sortedLocs.forEach(([locId, pt]) => {
                     const minRows = window.getLocMinRows(locId);
                     const minH = minRows * 22;
                     rows += `<tr><td class="sticky left-0 ${getLocColorClass(locId)} border border-slate-300 font-black text-[10px] p-0.5 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center align-middle break-words leading-tight w-[64px] min-w-[64px] max-w-[64px]">${pt.name.replace(/\s*大清點/, '<br>大清點').replace('+(傷健廁所)', '<br>+(傷健)')}</td>`;
-                    timeSlots.forEach(ts => {
-                        const [tStart, tEnd] = ts.split('-');
-                        const [sH, sM] = tStart.split(':').map(Number), [eH, eM] = tEnd.split(':').map(Number);
-                        const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
-                        const isHalfAActive = isCurrentHour && (curTotalMins < (sH * 60 + sM) + 30);
-                        const isHalfBActive = isCurrentHour && (curTotalMins >= (sH * 60 + sM) + 30);
-                        const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border border-slate-300' : 'border border-slate-300';
 
-                        if (!isCleanRole && (locId === 'pt_2' || locId === 'pt_6') && !validCountSlots.includes(ts)) {
-                            rows += `<td class="p-0 border border-slate-300 bg-slate-200/60 pointer-events-none align-middle w-[52px] min-w-[52px]"><div class="w-full h-full" style="min-height:${minH}px"></div></td>`;
-                        } else {
-                            const [startH] = tStart.split(':'), [endH] = tEnd.split(':');
-                            const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
-                            const getNamesForHalf = (sStr, eStr) => {
-                                const sNum = parseInt(sStr.replace(':',''), 10), eNum = parseInt(eStr.replace(':',''), 10), res = [];
-                                daySchedules.forEach(s => { if (s.locationId === locId && parseInt(s.start.replace(':',''), 10) <= sNum && parseInt(s.end.replace(':',''), 10) >= eNum) res.push(s.name); });
-                                return res.join('\n');
-                            };
-                            const namesHalfA = getNamesForHalf(hA_s, hA_e);
-                            const namesHalfB = getNamesForHalf(hB_s, hB_e);
-                            const stateKey = `${rolePrefix}${dStr}_${locId}_${tStart}`;
-                            if (splitHoursState[stateKey] === undefined && namesHalfA !== namesHalfB) {
-                                splitHoursState[stateKey] = true;
-                            }
-                            const isSplit = !!(splitHoursState[stateKey] ?? (isToday ? splitHoursState[`${rolePrefix}${locId}_${tStart}`] : false));
+                    if (isCleanRole) {
+                        // 🧹 清潔員專屬單元格生成
+                        cleanSlots.forEach(slot => {
+                            const [sH, sM] = slot.start.split(':').map(Number);
+                            const [eH, eM] = slot.end.split(':').map(Number);
+                            const isCurrentSlot = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
+                            const cellSlotClass = isCurrentSlot ? 'now-glowing-slot bg-sky-50/30 border border-slate-300' : 'border border-slate-300';
+                            const colWidth = slot.start === '20:00' ? 'w-[64px] min-w-[64px]' : 'w-[36px] min-w-[36px]';
 
-                            if (isSplit) {
-                                const kA = `${dStr}_${locId}_${hA_s}_${hA_e}`, kB = `${dStr}_${locId}_${hB_s}_${hB_e}`;
-                                let cA = domVals[kA], cB = domVals[kB];
-                                if (cA === undefined) cA = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : namesHalfA;
-                                if (cB === undefined) cB = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : namesHalfB;
-
-                                const htmlA = window.renderCellLinesHtml(cA, locId, dStr, hA_s, hA_e);
-                                const htmlB = window.renderCellLinesHtml(cB, locId, dStr, hB_s, hB_e);
-
-                                rows += `<td class="p-0 ${cellSlotClass} bg-white relative align-top w-[52px] min-w-[52px]">
-                                    <div class="flex w-full h-full">
-                                        <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hA_s}', '${hA_e}')" class="grid-input-display flex-1 min-w-[26px] border-r border-slate-300 flex flex-col justify-start ${isHalfAActive ? 'now-glowing-sub ring-1 ring-sky-400' : ''} cursor-pointer select-none overflow-hidden" data-date="${dStr}" data-loc="${locId}" data-start="${hA_s}" data-end="${hA_e}">${htmlA}</div>
-                                        <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hB_s}', '${hB_e}')" class="grid-input-display flex-1 min-w-[26px] flex flex-col justify-start ${isHalfBActive ? 'now-glowing-sub ring-1 ring-sky-400' : ''} cursor-pointer select-none overflow-hidden" data-date="${dStr}" data-loc="${locId}" data-start="${hB_s}" data-end="${hB_e}">${htmlB}</div>
-                                    </div>
-                                </td>`;
-                            } else {
-                                const cKey = `${dStr}_${locId}_${tStart}_${tEnd}`; let val = domVals[cKey];
-                                if (val === undefined) {
-                                    const kA = `${startH}:00_${startH}:30`, kB = `${startH}:30_${endH}:00`;
-                                    if (domVals[`${dStr}_${locId}_${kA}`] !== undefined || domVals[`${dStr}_${locId}_${kB}`] !== undefined) {
-                                        val = Array.from(new Set([...(domVals[`${dStr}_${locId}_${kA}`] || '').split(/[\n\s]+/), ...(domVals[`${dStr}_${locId}_${kB}`] || '').split(/[\n\s]+/)])).map(n => n.trim()).filter(Boolean).join('\n');
-                                    } else {
-                                        let names = []; daySchedules.forEach(s => { if (s.locationId === locId && parseInt(s.start.replace(':',''), 10) <= parseInt(tStart.replace(':',''), 10) && parseInt(s.end.replace(':',''), 10) >= parseInt(tEnd.replace(':',''), 10)) names.push(s.name); });
-                                        val = names.join('\n');
+                            const cKey = `${dStr}_${locId}_${slot.start}_${slot.end}`;
+                            let val = domVals[cKey];
+                            if (val === undefined) {
+                                let names = [];
+                                const sNum = sH * 60 + sM;
+                                const eNum = eH * 60 + eM;
+                                daySchedules.forEach(s => {
+                                    if (s.locationId === locId) {
+                                        const [sh, sm] = s.start.split(':').map(Number);
+                                        const [eh, em] = s.end.split(':').map(Number);
+                                        const schedStart = sh * 60 + sm;
+                                        const schedEnd = eh * 60 + em;
+                                        if (schedStart <= sNum && schedEnd >= eNum) {
+                                            names.push(s.name);
+                                        }
                                     }
-                                }
-
-                                const htmlFull = window.renderCellLinesHtml(val, locId, dStr, tStart, tEnd);
-
-                                // 🌟 移除原本的 pointer-events-none，啟用 pointer-events-auto 讓每行皆可被精準點選
-                                rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} bg-white relative align-top w-[52px] min-w-[52px] cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display w-full flex flex-col justify-start overflow-hidden pointer-events-auto">${htmlFull}</div></td>`;
+                                });
+                                val = names.join('\n');
                             }
-                        }
-                    });
+
+                            const htmlFull = window.renderCellLinesHtml(val, locId, dStr, slot.start, slot.end);
+                            rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${slot.start}', '${slot.end}')" class="p-0 ${cellSlotClass} bg-white relative align-top ${colWidth} cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${slot.start}" data-end="${slot.end}"><div class="grid-input-display w-full flex flex-col justify-start overflow-hidden pointer-events-auto">${htmlFull}</div></td>`;
+                        });
+                    } else {
+                        // 🎧 客服原版單元格生成 (保持 15 小時格與拆分功能)
+                        csTimeSlots.forEach(ts => {
+                            const [tStart, tEnd] = ts.split('-');
+                            const [sH, sM] = tStart.split(':').map(Number), [eH, eM] = tEnd.split(':').map(Number);
+                            const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
+                            const isHalfAActive = isCurrentHour && (curTotalMins < (sH * 60 + sM) + 30);
+                            const isHalfBActive = isCurrentHour && (curTotalMins >= (sH * 60 + sM) + 30);
+                            const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border border-slate-300' : 'border border-slate-300';
+
+                            if ((locId === 'pt_2' || locId === 'pt_6') && !validCountSlots.includes(ts)) {
+                                rows += `<td class="p-0 border border-slate-300 bg-slate-200/60 pointer-events-none align-middle w-[52px] min-w-[52px]"><div class="w-full h-full" style="min-height:${minH}px"></div></td>`;
+                            } else {
+                                const [startH] = tStart.split(':'), [endH] = tEnd.split(':');
+                                const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
+                                const getNamesForHalf = (sStr, eStr) => {
+                                    const sNum = parseInt(sStr.replace(':',''), 10), eNum = parseInt(eStr.replace(':',''), 10), res = [];
+                                    daySchedules.forEach(s => { if (s.locationId === locId && parseInt(s.start.replace(':',''), 10) <= sNum && parseInt(s.end.replace(':',''), 10) >= eNum) res.push(s.name); });
+                                    return res.join('\n');
+                                };
+                                const namesHalfA = getNamesForHalf(hA_s, hA_e);
+                                const namesHalfB = getNamesForHalf(hB_s, hB_e);
+                                const stateKey = `${rolePrefix}${dStr}_${locId}_${tStart}`;
+                                if (splitHoursState[stateKey] === undefined && namesHalfA !== namesHalfB) {
+                                    splitHoursState[stateKey] = true;
+                                }
+                                const isSplit = !!(splitHoursState[stateKey] ?? (isToday ? splitHoursState[`${rolePrefix}${locId}_${tStart}`] : false));
+
+                                if (isSplit) {
+                                    const kA = `${dStr}_${locId}_${hA_s}_${hA_e}`, kB = `${dStr}_${locId}_${hB_s}_${hB_e}`;
+                                    let cA = domVals[kA], cB = domVals[kB];
+                                    if (cA === undefined) cA = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : namesHalfA;
+                                    if (cB === undefined) cB = domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] !== undefined ? domVals[`${dStr}_${locId}_${tStart}_${tEnd}`] : namesHalfB;
+
+                                    const htmlA = window.renderCellLinesHtml(cA, locId, dStr, hA_s, hA_e);
+                                    const htmlB = window.renderCellLinesHtml(cB, locId, dStr, hB_s, hB_e);
+
+                                    rows += `<td class="p-0 ${cellSlotClass} bg-white relative align-top w-[52px] min-w-[52px]">
+                                        <div class="flex w-full h-full">
+                                            <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hA_s}', '${hA_e}')" class="grid-input-display flex-1 min-w-[26px] border-r border-slate-300 flex flex-col justify-start ${isHalfAActive ? 'now-glowing-sub ring-1 ring-sky-400' : ''} cursor-pointer select-none overflow-hidden" data-date="${dStr}" data-loc="${locId}" data-start="${hA_s}" data-end="${hA_e}">${htmlA}</div>
+                                            <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hB_s}', '${hB_e}')" class="grid-input-display flex-1 min-w-[26px] flex flex-col justify-start ${isHalfBActive ? 'now-glowing-sub ring-1 ring-sky-400' : ''} cursor-pointer select-none overflow-hidden" data-date="${dStr}" data-loc="${locId}" data-start="${hB_s}" data-end="${hB_e}">${htmlB}</div>
+                                        </div>
+                                    </td>`;
+                                } else {
+                                    const cKey = `${dStr}_${locId}_${tStart}_${tEnd}`; let val = domVals[cKey];
+                                    if (val === undefined) {
+                                        const kA = `${startH}:00_${startH}:30`, kB = `${startH}:30_${endH}:00`;
+                                        if (domVals[`${dStr}_${locId}_${kA}`] !== undefined || domVals[`${dStr}_${locId}_${kB}`] !== undefined) {
+                                            val = Array.from(new Set([...(domVals[`${dStr}_${locId}_${kA}`] || '').split(/[\n\s]+/), ...(domVals[`${dStr}_${locId}_${kB}`] || '').split(/[\n\s]+/)])).map(n => n.trim()).filter(Boolean).join('\n');
+                                        } else {
+                                            let names = []; daySchedules.forEach(s => { if (s.locationId === locId && parseInt(s.start.replace(':',''), 10) <= parseInt(tStart.replace(':',''), 10) && parseInt(s.end.replace(':',''), 10) >= parseInt(tEnd.replace(':',''), 10)) names.push(s.name); });
+                                            val = names.join('\n');
+                                        }
+                                    }
+
+                                    const htmlFull = window.renderCellLinesHtml(val, locId, dStr, tStart, tEnd);
+                                    rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} bg-white relative align-top w-[52px] min-w-[52px] cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display w-full flex flex-col justify-start overflow-hidden pointer-events-auto">${htmlFull}</div></td>`;
+                                }
+                            }
+                        });
+                    }
                     rows += `</tr>`;
                 });
 
@@ -8022,21 +7951,52 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 ? [...teamMembers]
                 : teamMembers.filter(m => checkedList.includes(m));
 
+            // 🌟 區分「上男、下女」單列名單
+            const maleVisible = visibleMembers.filter(m => (window.getMemberProfile(m)?.gender || '女') === '男');
+            const femaleVisible = visibleMembers.filter(m => (window.getMemberProfile(m)?.gender || '女') !== '男');
+
+            const renderDrawerMemberBtn = (name) => {
+                const c = window.getMemberColorClass(name), sel = activeGridMember === name;
+                const profile = window.getMemberProfile(name);
+                const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== name.trim().toUpperCase();
+                const safeNameAttr = name.replace(/'/g, "\\'");
+
+                return `
+                <div class="w-full cursor-pointer member-btn-container" data-name="${name}" onclick="window.selectGridMember('${safeNameAttr}')">
+                    <div class="w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-between gap-1 ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-[1.02]` : `${c.bg} ${c.text}${c.border} hover:opacity-80 shadow-2xs`}">
+                        <div class="flex items-center gap-1.5 min-w-0 truncate">
+                            ${isCleanRole && profile.avatar ? `<img src="${profile.avatar}" class="w-4 h-4 rounded-full object-cover shrink-0 border border-white/60">` : ''}
+                            <span class="truncate">${name}</span>
+                        </div>
+                        ${hasUniqueId ? `<span class="text-[9px] font-mono opacity-80 bg-black/10 px-1 py-0.2 rounded shrink-0">${profile.id.trim()}</span>` : ''}
+                    </div>
+                </div>`;
+            };
+
+            const curActiveCol = (activeGridMember && activeGridMember !== 'ERASER' && activeGridMember !== 'SPLITTER')
+                ? window.getMemberColorClass(activeGridMember)
+                : null;
+
             list.innerHTML = `
-            <!-- 🌟 置頂浮動控制盤：只顯示當日出勤人員按鍵，所有人員管理統一併入「編輯名單」 -->
-            <div class="sticky top-0 z-30 mb-3 p-2 bg-white/95 backdrop-blur-md border-2 border-slate-200 rounded-xl shadow-md w-full">
-                <div class="flex flex-wrap justify-between items-center gap-2 mb-2 pb-1.5 border-b border-slate-100">
-                    <div class="flex items-center gap-1.5 flex-wrap">
+            <div class="relative flex flex-col w-full h-full overflow-hidden bg-[#fdfbf7]">
+                
+                <!-- 🌟 1. 獨立固定頂部控制列（不會隨捲動被表格穿過） -->
+                <div class="shrink-0 z-40 px-3 py-2 bg-white border-b-2 border-slate-200 shadow-xs flex flex-wrap justify-between items-center gap-2 w-full">
+                    <div class="flex items-center gap-2 flex-wrap">
                         <div class="flex bg-slate-200 p-0.5 rounded-lg border border-slate-300 shadow-inner">
                             <button type="button" onclick="window.toggleMapRoleMode('cs'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${!isCleanRole ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🎧 客服排班 (5日)</button>
                             <button type="button" onclick="window.toggleMapRoleMode('clean'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${isCleanRole ? 'bg-white text-teal-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧹 清潔排班 (5日)</button>
                         </div>
-                        <button type="button" onclick="document.getElementById('sched-day-card-${getNowInputStrs().date}')?.scrollIntoView({ behavior: 'smooth', block: 'center' })" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-2 py-1 rounded-lg text-[10px] font-black active:scale-95">定位今日</button>
+                        <button type="button" onclick="document.getElementById('sched-day-card-${getNowInputStrs().date}')?.scrollIntoView({ behavior: 'smooth', block: 'center' })" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-2.5 py-1 rounded-lg text-[10.5px] font-black active:scale-95">📍 定位今日</button>
+                        
+                        <!-- 顯示目前選取的人員或工具 -->
+                        <div id="activeMemberBadge" class="text-[10.5px] font-black px-2.5 py-1 rounded-lg border ${!activeGridMember ? 'bg-slate-50 text-slate-400 border-slate-200 font-bold' : (activeGridMember === 'ERASER' ? 'bg-pink-50 text-pink-600 border-pink-200 animate-pulse' : (activeGridMember === 'SPLITTER' ? 'bg-indigo-50 text-indigo-600 border-indigo-200 animate-pulse' : `${curActiveCol.bg} ${curActiveCol.text}${curActiveCol.border} shadow-2xs`))}">
+                            ${!activeGridMember ? '尚未選取工具/人員 (移至左側邊緣展開選單)' : (activeGridMember === 'ERASER' ? '🧹 目前工具：橡皮擦模式' : (activeGridMember === 'SPLITTER' ? '✂️ 目前工具：拆分/合併模式' : `當前選取：${activeGridMember}`))}
+                        </div>
                     </div>
 
                     <div class="flex items-center gap-1.5">
                         <input type="file" id="scheduleExcelImportInput" accept=".csv" class="hidden" onchange="window.importScheduleCSV(event)">
-                        <!-- 🌟 點擊「編輯名單」開啟男左女右「人員名單」新視窗 -->
                         <button type="button" onclick="window.openMemberRosterModal()" class="text-[11px] font-black transition-colors px-3 py-1.5 rounded-lg border shadow-2xs bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 flex items-center active:scale-95">
                             <i data-lucide="users" class="w-3.5 h-3.5 mr-1 text-amber-600"></i>編輯名單 (${visibleMembers.length}/${teamMembers.length})
                         </button>
@@ -8045,45 +8005,64 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     </div>
                 </div>
 
-                <!-- 當日出勤人員快選按鍵列 -->
-                <div class="flex flex-wrap gap-1.5 px-1 justify-start items-center">
-                    <div class="relative group cursor-pointer member-btn-container" data-name="SPLITTER" onclick="window.selectGridMember('SPLITTER')">
-                        <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-105' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-sm'}">
-                            ✂️ 拆分/合併
-                        </div>
-                    </div>
+                <!-- 🌟 2. 下方主工作區：左側懸浮人員抽屜 + 右側獨立捲動表格 -->
+                <div class="relative flex-1 min-h-0 flex overflow-hidden">
+                    
+                    <!-- 👈 左方直行懸浮板塊（滑鼠移向自動展開、點擊亦可開關，絕對定位 z-50 不影響表格寬度、不用讓位） -->
+                    <div id="schedLeftDrawer"
+                         onmouseenter="this.classList.remove('-translate-x-[calc(100%-22px)]'); this.classList.add('translate-x-0');"
+                         onmouseleave="if(!this.dataset.pinned){ this.classList.add('-translate-x-[calc(100%-22px)]'); this.classList.remove('translate-x-0'); }"
+                         class="absolute left-0 top-0 bottom-0 z-50 flex items-stretch -translate-x-[calc(100%-22px)] transition-transform duration-200 ease-out pointer-events-auto">
+                        
+                        <!-- 抽屜內容：單列直排、上男下女 -->
+                        <div class="w-[175px] bg-white/95 backdrop-blur-md border-r-2 border-slate-300 shadow-2xl flex flex-col h-full overflow-y-auto p-2 space-y-2.5 scrollbar-hide">
+                            
+                            <div class="space-y-1 shrink-0 pb-2 border-b border-slate-200">
+                                <div class="text-[10px] font-black text-slate-400 px-1 tracking-wider">排班工具</div>
+                                ${!isCleanRole ? `
+                                <div class="w-full cursor-pointer member-btn-container" data-name="SPLITTER" onclick="window.selectGridMember('SPLITTER')">
+                                    <div class="w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-[1.02]' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-2xs'}">
+                                        ✂️ 拆分/合併時段
+                                    </div>
+                                </div>` : ''}
 
-                    <div class="relative group cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')">
-                        <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-105' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-sm'}">
-                            <i data-lucide="eraser" class="w-3.5 h-3.5 mr-1"></i>橡皮擦
-                        </div>
-                    </div>
-
-                    ${visibleMembers.map((name) => {
-                        const c = window.getMemberColorClass(name), sel = activeGridMember === name;
-                        const profile = window.getMemberProfile(name);
-                        const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== name.trim().toUpperCase();
-                        const safeNameAttr = name.replace(/'/g, "\\'");
-
-                        return `
-                        <div class="relative group cursor-pointer member-btn-container" data-name="${name}" onclick="window.selectGridMember('${safeNameAttr}')">
-                            <div class="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-center gap-1 ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-105` : `${c.bg} ${c.text} ${c.border} hover:opacity-80 shadow-sm`}">
-                                ${isCleanRole && profile.avatar ? `<img src="${profile.avatar}" class="w-4 h-4 rounded-full object-cover shrink-0 border border-white/60">` : ''}
-                                <span>${name}</span>${hasUniqueId ? `<span class="text-[9px] font-mono opacity-80 bg-black/10 px-1 py-0.2 rounded">${profile.id.trim()}</span>` : ''}
+                                <div class="w-full cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')">
+                                    <div class="w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-[1.02]' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-2xs'}">
+                                        <i data-lucide="eraser" class="w-3.5 h-3.5 mr-1.5"></i>橡皮擦
+                                    </div>
+                                </div>
                             </div>
-                        </div>`;
-                    }).join('')}
-                </div>
-                <<div id="grid-hint-text" class="${activeGridMember === 'ERASER' || activeGridMember === 'SPLITTER' ? 'mt-1.5 text-[10px] font-bold animate-pulse px-1 block text-center text-pink-600' : 'hidden'}">
-                    ${activeGridMember === 'ERASER' ? '👉 橡皮擦模式：點擊下方表格以清除格子內容。' : (activeGridMember === 'SPLITTER' ? '✂️ 拆分/合併模式：點擊任何格子可切換「半小時兩半格」或「一小時整格」。' : '')}
-                </div>
-            </div>
 
-            <!-- 🌟 5日上下垂直對照排班表 -->
-            <div class="space-y-3 pb-4">
-                ${fiveDayTablesHtml}
+                            <!-- 人員選擇區 -->
+                            <div class="space-y-1.5 pt-1 flex-1 overflow-y-auto pr-0.5">
+                                <div class="text-[10px] font-black text-slate-400 px-1 tracking-wider">
+                                    人員名單 (${visibleMembers.length})
+                                </div>
+                                ${visibleMembers.map((name) => {
+                                    const c = window.getMemberColorClass(name), sel = activeGridMember === name;
+                                    const profile = window.getMemberProfile(name);
+                                    const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== name.trim().toUpperCase();
+                                    const safeNameAttr = name.replace(/'/g, "\\'");
+
+                                    return `
+                                    <div class="w-full cursor-pointer member-btn-container" data-name="${name}" onclick="window.selectGridMember('${safeNameAttr}')">
+                                        <div class="w-full px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start gap-1.5 ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-[1.02]` : `${c.bg} ${c.text}${c.border} hover:opacity-80 shadow-2xs`}">
+                                            ${isCleanRole && profile.avatar ? `<img src="${profile.avatar}" class="w-4 h-4 rounded-full object-cover shrink-0 border border-white/60">` : ''}
+                                            <span class="truncate">${name}</span>${hasUniqueId ? `<span class="text-[9px] font-mono opacity-80 bg-black/10 px-1 py-0.2 rounded shrink-0 ml-auto">${profile.id.trim()}</span>` : ''}
+                                        </div>
+                                    </div>`;
+                                }).join('')}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 表格滾動主區域 -->
+                    <div class="flex-1 overflow-auto p-1.5 sm:p-2">
+                        ${fiveDayTablesHtml}
+                    </div>
+                </div>
             </div>`;
-            lucide.createIcons();
+            if (window.lucide) lucide.createIcons();
         };
 
         window.toggleTask = async (taskId) => {
@@ -8212,7 +8191,6 @@ window.crSaveData = () => {
             }
             $('crAddModal')?.classList.replace('hidden', 'flex');
         };
-        window.crCloseAddModal = () => $('crAddModal')?.classList.replace('flex', 'hidden');
         window.crCloseAddModal = () => $('crAddModal')?.classList.replace('flex', 'hidden');
 
         window.crSubmitAddRecord = () => {
@@ -9761,12 +9739,6 @@ window.pushMeetingReportsToAllIframes = (reports) => {
 };
 
         window.closeMeetingReportModal = () => {
-            const iframe = document.getElementById('meetingReportIframe');
-            if (iframe && iframe.contentWindow) {
-                try { iframe.contentWindow.postMessage({ type: 'FLUSH_MEETING_REPORT' }, '*'); } catch (e) {}
-            }
-            document.getElementById('meetingReportModal')?.classList.replace('flex', 'hidden');
-        };window.closeMeetingReportModal = () => {
             const iframe = document.getElementById('meetingReportIframe');
             if (iframe && iframe.contentWindow) {
                 try { iframe.contentWindow.postMessage({ type: 'FLUSH_MEETING_REPORT' }, '*'); } catch (e) {}
