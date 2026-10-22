@@ -324,14 +324,15 @@
             document.getElementById('userNameModal')?.classList.replace('flex', 'hidden');
         };
 
-        window.saveUserName = async () => {
+       window.saveUserName = async () => {
             const name = document.getElementById('newUserNameInput')?.value.trim();
             const color = document.getElementById('newUserColorInput')?.value || '#38bdf8';
             if (!name) return window.showToast("請輸入姓名/暱稱", true);
 
-            // 若管理員（「手提電腦」或「雲」）正在修改其他用戶的名稱與顏色
-            if (window._editingTargetLogUser && (sysUserName === '手提電腦' || sysUserName === '雲')) {
-                const oldName = window._editingTargetLogUser;
+            // 👇 拿掉身分限制：只要有指定目標用戶或正在改自己的名，舊紀錄全部跟著更新
+            const targetUserToUpdate = window._editingTargetLogUser || sysUserName;
+            if (targetUserToUpdate) {
+                const oldName = targetUserToUpdate;
                 const logsToUpdate = galleryLogsStore.filter(l => l.user === oldName);
 
                 logsToUpdate.forEach(l => {
@@ -353,21 +354,18 @@
                             await batch.commit();
                         }
                     } catch (e) {
-                        console.error("更新其他用戶日誌失敗:", e);
+                        console.error("更新歷史日誌失敗:", e);
                     }
                 }
 
-                // 若剛好改到自己的名字，也一併更新本機
-                if (oldName === sysUserName) {
-                    sysUserName = name;
-                    sysUserColor = color;
-                    localStorage.setItem('gallery_user_name', sysUserName);
-                    localStorage.setItem('gallery_user_color', sysUserColor);
-                }
+                sysUserName = name;
+                sysUserColor = color;
+                localStorage.setItem('gallery_user_name', sysUserName);
+                localStorage.setItem('gallery_user_color', sysUserColor);
 
                 window.closeUserNameModal();
                 window.renderGalleryLogs();
-                window.showToast(`✅ 已將「${oldName}」修改為「${name}」並更新顏色！`);
+                window.showToast(`✅ 已將「${oldName}」修改為「${name}」並同步更新所有歷史日誌！`);
                 return;
             }
 
@@ -3302,9 +3300,9 @@ window.writeGalleryLog('清空剔檔', targetDate, '清空該日全部巡查紀�
                 XLSX.utils.book_append_sheet(wb, wsPatrol, '剔檔表');
                 XLSX.utils.book_append_sheet(wb, wsTemp, '溫度');
                 XLSX.writeFile(wb, `匯出報表_${currentPatrolDate}.xlsx`);
-                
-                // 👇 補上操作日誌記錄
-                window.writeGalleryLog('導出報表', `巡查與溫度報表`, `日期: ${currentPatrolDate}`);
+
+                // 🌟 記錄導出巡查 Excel 報表操作日誌
+                window.writeGalleryLog('導出巡查報表', `日期: ${currentPatrolDate}`, '剔檔與溫度雙分頁 Excel 報表');
 
                 window.showToast(`✅ 已匯出報表 (${currentPatrolDate})！`);
             } else {
@@ -4773,8 +4771,8 @@ window.deleteSelectedGalleryItems = () => {
                 // 🌟 保存至本地快取
                 await saveGalleryItemsSafe(galleryItems);
 
-                // 👇 補上操作日誌記錄
-                window.writeGalleryLog('導出圖片', `${targetItems.length} 張相片`, `分類: ${currentGalleryCategory}`);
+                // 🌟 記錄導出圖片操作日誌
+                window.writeGalleryLog('導出圖片', `分類: ${currentGalleryCategory}`, `成功導出 ${successCount} / ${targetItems.length} 張圖片`);
 
                 window.showToast(`✅ 成功導出 ${successCount} / ${targetItems.length} 張 PNG 圖片！`);
                 
@@ -8367,7 +8365,12 @@ window.crSaveData = () => {
             const rows = [['紀錄ID', '狀態', '檔主', '經手客服', '類型', '初始數量', '剩餘數量', '存入時間'], ...crRecords.map(r => [r.id, r.status === 'active' ? '存放中' : '歷史', r.tenant, r.staff || '未指定', r.type || '未指定', r.depositQuantity, r.remainingQuantity, new Date(r.depositTime).toLocaleString('zh-TW', { hour12: false })])];
             const blob = new Blob(["\uFEFF" + rows.map(r => r.map(f => `"${f}"`).join(',')).join('\n')], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a"); link.href = URL.createObjectURL(blob);
-            link.download = `雪房存貨紀錄_${new Date().toISOString().slice(0,10)}.csv`; link.click(); window.showToast('已導出CSV');
+            link.download = `雪房存貨紀錄_${new Date().toISOString().slice(0,10)}.csv`; link.click();
+            
+            // 🌟 記錄導出雪房 CSV 操作日誌
+            window.writeGalleryLog('導出雪房表', '雪房存貨紀錄', `共導出 ${crRecords.length} 筆資料`);
+            
+            window.showToast('已導出CSV');
         };
 
         window.crFormatTime = (ms) => { const d = new Date(ms); return `${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
@@ -8736,6 +8739,10 @@ window.crSaveData = () => {
             try {
                 const blob = new Blob([JSON.stringify({ version: "6.0", exportDate: new Date().toISOString(), dailyScheduleData, taskCompletionState, subTaskCompletionState, galleryCategories, galleryItems, tabVisibilityState, crRecords, crItemTypes, stallList: window.stallList }, null, 2)], { type: 'application/json' });
                 const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `工作記錄本_備份_${new Date().toISOString().slice(0,10)}.json`; a.click();
+                
+                // 🌟 記錄導出系統 JSON 備份操作日誌
+                window.writeGalleryLog('導出系統備份', 'JSON 檔案', '完整系統數據備份匯出');
+
                 window.showToast("導出成功！"); $('settingsDropdown')?.classList.add('hidden');
             } catch(e) { window.showToast("導出失敗", true); }
         };
