@@ -1095,7 +1095,26 @@ const tabMetadataMap = {
             });
         };
 
+        // 🌟 輔助函式：自動找出目前排班總表真正產生捲動的容器（相容外層彈窗與內層列表）
+        window.getScheduleScrollContainer = () => {
+            const list = document.getElementById('scheduleManageList');
+            const modal = document.getElementById('scheduleManageModal');
+            // 優先檢查有實際捲動高度 (>0) 的容器
+            if (list && list.scrollTop > 0) return list;
+            if (modal && modal.scrollTop > 0) return modal;
+            // 若都為 0，回傳可捲動高度大於可視高度者
+            if (list && list.scrollHeight > list.clientHeight) return list;
+            if (modal && modal.scrollHeight > modal.clientHeight) return modal;
+            return list || modal;
+        };
+
+       // 🌟 打開名單前：精確抓取表格滾動主區域 (scheduleGridScrollArea) 的捲動位置
         window.openMemberRosterModal = () => {
+            const scrollArea = document.getElementById('scheduleGridScrollArea');
+            if (scrollArea) {
+                window._lastSchedScrollTop = scrollArea.scrollTop;
+            }
+
             let modal = $('memberRosterModal');
             if (!modal) {
                 modal = document.createElement('div');
@@ -1109,13 +1128,32 @@ const tabMetadataMap = {
             modal.classList.add('flex');
         };
 
+        // 🌟 關閉名單：平滑無縫銜接，不破壞滾動條高度
         window.closeMemberRosterModal = () => {
             const modal = $('memberRosterModal');
             if (modal) {
                 modal.classList.add('hidden');
                 modal.classList.remove('flex');
             }
-            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+
+            if ($('scheduleManageModal')?.classList.contains('flex')) {
+                const scrollArea = document.getElementById('scheduleGridScrollArea');
+                const savedScrollTop = (scrollArea && scrollArea.scrollTop > 0) 
+                    ? scrollArea.scrollTop 
+                    : window._lastSchedScrollTop;
+
+                // 🌟 核心技巧：暫時隱藏滾動區域的渲染變化，重繪後在同一幀（0延遲）直接鎖定高度
+                if (scrollArea) {
+                    scrollArea.style.scrollBehavior = 'auto'; // 關閉平滑滾動，避免回滾動畫
+                }
+
+                window.renderScheduleManager();
+
+                const newScrollArea = document.getElementById('scheduleGridScrollArea');
+                if (newScrollArea && savedScrollTop !== undefined) {
+                    newScrollArea.scrollTop = savedScrollTop; // 同步立即賦值，肉眼完全看不到跳頂
+                }
+            }
         };
 
         window._rosterSearchQuery = '';
@@ -1908,7 +1946,7 @@ const tabMetadataMap = {
             else csSchedulesStore = [...memberSchedules];
         };
 
-        window.toggleMapRoleMode = (forceMode) => {
+       window.toggleMapRoleMode = (forceMode) => {
             window.currentMapRole = forceMode || (window.currentMapRole === 'cs' ? 'clean' : 'cs');
             const isClean = window.currentMapRole === 'clean';
 
@@ -1955,6 +1993,15 @@ const tabMetadataMap = {
             if (modal && modal.classList.contains('flex')) {
                 requestAnimationFrame(() => {
                     window.renderScheduleManager();
+                    
+                    // 🌟 補上這行：切換清潔/客服排班時，自動將畫面捲動定位至今日卡片
+                    setTimeout(() => {
+                        const todayStr = getNowInputStrs().date;
+                        const todayCard = document.getElementById(`sched-day-card-${todayStr}`);
+                        if (todayCard) {
+                            todayCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    }, 50);
                 });
             }
         };
@@ -8062,7 +8109,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     </div>
 
                     <!-- 表格滾動主區域 -->
-                    <div class="flex-1 overflow-auto p-1.5 sm:p-2">
+                    <div id="scheduleGridScrollArea" class="flex-1 overflow-auto p-1.5 sm:p-2">
                         ${fiveDayTablesHtml}
                     </div>
                 </div>
