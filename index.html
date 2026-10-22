@@ -7895,8 +7895,25 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                 val = names.join('\n');
                             }
 
+                            // 🌟 重新定義各崗位缺人最低門檻：魚檔至少2人、機動至少0人(不警示)、休息0人、其餘常態崗位至少1人
+                            let requiredMinStaff = 1;
+                            if (locId === 'pt_4') {
+                                requiredMinStaff = 2; // 魚檔：最少要有 2 個人
+                            } else if (locId === 'pt_6' || locId === 'pt_7') {
+                                requiredMinStaff = 0; // 機動與休息：最少可以 0 人（不亮紅框）
+                            }
+
+                            // 計算該格實際填寫的人數
+                            const filledNamesCount = String(val || '').split('\n').map(n => n.trim()).filter(Boolean).length;
+                            const isUnderstaffed = filledNamesCount < requiredMinStaff;
+
+                            // 🌟 柔和淺紅框樣式：border-red-300 + 微淡紅底 bg-red-50/30（視覺不刺眼）
+                            const alertBorderClass = isUnderstaffed 
+                                ? 'border-2 border-red-300/90 bg-red-50/30' 
+                                : `${cellSlotClass} bg-white`;
+
                             const htmlFull = window.renderCellLinesHtml(val, locId, dStr, slot.start, slot.end);
-                            rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${slot.start}', '${slot.end}')" class="p-0 ${cellSlotClass} bg-white relative align-top ${colWidth} cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${slot.start}" data-end="${slot.end}"><div class="grid-input-display w-full flex flex-col justify-start overflow-hidden pointer-events-auto">${htmlFull}</div></td>`;
+                            rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${slot.start}', '${slot.end}')" class="p-0 ${alertBorderClass} relative align-top ${colWidth} cursor-pointer select-none transition-colors" data-date="${dStr}" data-loc="${locId}" data-start="${slot.start}" data-end="${slot.end}"><div class="grid-input-display w-full flex flex-col justify-start overflow-hidden pointer-events-auto">${htmlFull}</div></td>`;
                         });
                     } else {
                         // 🎧 客服原版單元格生成 (保持 15 小時格與拆分功能)
