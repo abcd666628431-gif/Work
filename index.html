@@ -1602,75 +1602,90 @@ const tabMetadataMap = {
                         }
                     ];
 
-                    const memberRoleMap = new Map();
+                   const memberRoleMap = new Map();
                     const availableMembers = [...dutyMembers];
 
-                    // 🌟 步驟 1：優先精準比對 (若有人的姓名或工號剛好符合 matchKey 則優先認領)
-                    cleanRosterTemplates.forEach(tmpl => {
-                        let matchedIdx = availableMembers.findIndex(m => {
-                            const prof = window.getMemberProfile(m);
-                            const idStr = (prof.id || '').toUpperCase();
-                            const nameStr = m.toUpperCase();
-                            const target = tmpl.matchKey.toUpperCase();
-                            return idStr.includes(target) || nameStr.includes(target) || target.includes(nameStr);
+                    // 輔助檢查：嚴格確認性別是否符合該班次要求（男廁絕不排女、女廁絕不排男）
+                    const isGenderAllowed = (memberName, tmpl) => {
+                        if (!tmpl.prefGender) return true;
+                        const g = window.getMemberProfile(memberName).gender || '女';
+                        return g === tmpl.prefGender;
+                    };
+
+                    // 🌟 階段 1：嚴格按照全體人員的「第 1 優先 ➔ 第 2 優先 ➔ 第 3 優先」三輪全域最佳配對
+                    for (let rank = 0; rank < 3; rank++) {
+                        let candidatesPairs = [];
+
+                        cleanRosterTemplates.forEach((tmpl, tIdx) => {
+                            if (memberRoleMap.has(tmpl)) return;
+
+                            availableMembers.forEach((m, mIdx) => {
+                                if (!isGenderAllowed(m, tmpl)) return; // 性別不符直接淘汰
+
+                                const prof = window.getMemberProfile(m);
+                                const prefs = Array.isArray(prof.prefs) ? prof.prefs : [];
+
+                                // 檢查該員在當前順位 (第 rank+1 志願) 是否選擇了此崗位
+                                if (prefs[rank] === tmpl.prefLoc) {
+                                    let score = (3 - rank) * 1000; // 第1志願3000分、第2志願2000分、第3志願1000分
+
+                                    // 加分項 A：限定性別的專屬崗位（男廁/女廁）優先鎖定對應性別人員
+                                    if (tmpl.prefGender) score += 200;
+
+                                    // 加分項 B：若此人沒有填後續其他志願，優先滿足他唯一的志願
+                                    const validPrefCount = prefs.filter(Boolean).length;
+                                    score += (4 - validPrefCount) * 30;
+
+                                    // 加分項 C：若姓名或工號剛好吻合預設班底，同分時優先配對
+                                    const idStr = (prof.id || '').toUpperCase();
+                                    const target = (tmpl.matchKey || '').toUpperCase();
+                                    if (target && (idStr.includes(target) || m.toUpperCase().includes(target))) {
+                                        score += 50;
+                                    }
+
+                                    candidatesPairs.push({ tmpl, m, score, tIdx, mIdx });
+                                }
+                            });
                         });
 
+                        // 依總分由高到低排序，確保最高優先度的人與崗位優先成交
+                        candidatesPairs.sort((a, b) => b.score - a.score || a.tIdx - b.tIdx || a.mIdx - b.mIdx);
+
+                        candidatesPairs.forEach(pair => {
+                            if (!memberRoleMap.has(pair.tmpl) && availableMembers.includes(pair.m)) {
+                                memberRoleMap.set(pair.tmpl, pair.m);
+                                availableMembers.splice(availableMembers.indexOf(pair.m), 1);
+                            }
+                        });
+                    }
+
+                    // 🌟 階段 2：尚未配對的崗位，優先匹配預設習慣班底（仍須符合性別限制）
+                    cleanRosterTemplates.forEach(tmpl => {
+                        if (memberRoleMap.has(tmpl) || availableMembers.length === 0) return;
+                        const matchedIdx = availableMembers.findIndex(m => {
+                            if (!isGenderAllowed(m, tmpl)) return false;
+                            const prof = window.getMemberProfile(m);
+                            const idStr = (prof.id || '').toUpperCase();
+                            const target = (tmpl.matchKey || '').toUpperCase();
+                            return target && (idStr.includes(target) || m.toUpperCase().includes(target));
+                        });
                         if (matchedIdx !== -1) {
                             memberRoleMap.set(tmpl, availableMembers[matchedIdx]);
                             availableMembers.splice(matchedIdx, 1);
                         }
                     });
 
-                    // 🌟 步驟 2：核心「做法 B」智慧評分配對 (依性別相符 + Top 3 志願優先級)
-                    cleanRosterTemplates.forEach(tmpl => {
-                        if (memberRoleMap.has(tmpl) || availableMembers.length === 0) return;
+                    // 🌟 階段 3：剩餘空缺崗位安全補位（先排有性別限制的廁所/替更，再排一般崗位）
+                    const remainingTemplates = cleanRosterTemplates
+                        .filter(tmpl => !memberRoleMap.has(tmpl))
+                        .sort((a, b) => (b.prefGender ? 1 : 0) - (a.prefGender ? 1 : 0));
 
-                        let bestMemberIdx = -1;
-                        let bestScore = -9999;
-
-                        availableMembers.forEach((m, idx) => {
-                            const prof = window.getMemberProfile(m);
-                            const gender = prof.gender || '女';
-                            const prefs = Array.isArray(prof.prefs) ? prof.prefs : [];
-
-                            let score = 0;
-
-                            // 1. 性別符合度評分
-                            if (tmpl.prefGender) {
-                                if (gender === tmpl.prefGender) {
-                                    score += 100; // 性別符合大幅加分
-                                } else {
-                                    score -= 500; // 性別不合嚴格扣分 (例如男廁絕不給女員)
-                                }
-                            } else {
-                                score += 20; // 不限性別崗位
-                            }
-
-                            // 2. 個人 Top 3 優先崗位符合度加權
-                            if (prefs[0] && prefs[0] === tmpl.prefLoc) {
-                                score += 60; // 符合第 1 優先
-                            } else if (prefs[1] && prefs[1] === tmpl.prefLoc) {
-                                score += 35; // 符合第 2 優先
-                            } else if (prefs[2] && prefs[2] === tmpl.prefLoc) {
-                                score += 15; // 符合第 3 優先
-                            }
-
-                            if (score > bestScore) {
-                                bestScore = score;
-                                bestMemberIdx = idx;
-                            }
-                        });
-
-                        if (bestMemberIdx !== -1) {
-                            memberRoleMap.set(tmpl, availableMembers[bestMemberIdx]);
-                            availableMembers.splice(bestMemberIdx, 1);
-                        }
-                    });
-
-                    // 🌟 步驟 3：若還有剩餘崗位名額且有名單成員，依序補入
-                    cleanRosterTemplates.forEach(tmpl => {
-                        if (!memberRoleMap.has(tmpl) && availableMembers.length > 0) {
-                            memberRoleMap.set(tmpl, availableMembers.shift());
+                    remainingTemplates.forEach(tmpl => {
+                        if (availableMembers.length === 0) return;
+                        const validIdx = availableMembers.findIndex(m => isGenderAllowed(m, tmpl));
+                        if (validIdx !== -1) {
+                            memberRoleMap.set(tmpl, availableMembers[validIdx]);
+                            availableMembers.splice(validIdx, 1);
                         }
                     });
 
@@ -1753,6 +1768,22 @@ const tabMetadataMap = {
                                     namesList.push(personName);
                                     window._tempGridValues[gridKey] = namesList.join('\n');
                                 }
+                            }
+                       });
+
+                        // 🌟 若當天勾選出勤超過 13 人，剩餘人員依其 Top 3 志願排入常規班次 (避開男/女廁所)
+                        availableMembers.forEach(extraPerson => {
+                            if (slot.start < '08:00' || slot.end > '19:00') return;
+                            const prof = window.getMemberProfile(extraPerson);
+                            const prefs = (prof.prefs || []).filter(Boolean);
+                            let targetLoc = prefs.find(p => p !== 'pt_8' && p !== 'pt_9') || 'pt_6';
+                            if (slot.start >= '12:00' && slot.end <= '13:00') targetLoc = 'pt_7'; // 中午休息
+
+                            const gKey = `${targetDateStr}_${targetLoc}_${slot.start}_${slot.end}`;
+                            const nList = window._tempGridValues[gKey] ? window._tempGridValues[gKey].split('\n') : [];
+                            if (!nList.includes(extraPerson)) {
+                                nList.push(extraPerson);
+                                window._tempGridValues[gKey] = nList.join('\n');
                             }
                         });
                     });
