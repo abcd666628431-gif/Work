@@ -1885,6 +1885,54 @@ const tabMetadataMap = {
             window.confirmRenameMember(oldName);
         };
 
+        window.removeMemberFutureSchedule = (name, idx) => {
+            const profile = window.getMemberProfile(name);
+            const schedules = Array.isArray(profile.futureSchedules) ? [...profile.futureSchedules] : [];
+            schedules.splice(idx, 1);
+            window.saveMemberProfile(name, { futureSchedules: schedules });
+            window.openMemberFutureScheduleModal(name);
+            window.showToast('🗑️ 已刪除該筆特殊排程');
+        };
+
+        // 🌟 把它貼在這裡：強制的「所屬分類」切換執行函式
+        window.setMemberRoleCategory = (name, targetRole) => {
+            const canonical = window.resolveMemberIdentity ? window.resolveMemberIdentity(name) : name;
+            
+            // 從兩邊陣列先清除
+            csMembersStore = csMembersStore.filter(m => m !== canonical);
+            cleanMembersStore = cleanMembersStore.filter(m => m !== canonical);
+
+            // 加入目標陣列
+            if (targetRole === 'clean') {
+                if (!cleanMembersStore.includes(canonical)) cleanMembersStore.push(canonical);
+            } else {
+                if (!csMembersStore.includes(canonical)) csMembersStore.push(canonical);
+            }
+
+            // 同步儲存至本機與雲端
+            safeSetLocal('work_cache_team_members', csMembersStore);
+            safeSetLocal('work_cache_clean_members', cleanMembersStore);
+            syncConfig('team_members', { members: csMembersStore });
+            syncConfig('clean_team_members', { members: cleanMembersStore });
+
+            // 若目前正處於該角色，更新全域 teamMembers
+            teamMembers = (window.currentMapRole === 'clean') ? [...cleanMembersStore] : [...csMembersStore];
+
+            // 重新整理介面
+            if ($('memberProfileModal') && !$('memberProfileModal').classList.contains('hidden')) {
+                window.openMemberProfilePopup(canonical, window._currentPopupLocation);
+            }
+            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
+                window.renderMemberRosterListsOnly();
+                window.updateRosterHeaderButtonsUI();
+            }
+            if ($('scheduleManageModal')?.classList.contains('flex')) {
+                window.renderScheduleManager();
+            }
+
+            window.showToast(`✅ 已將「${canonical}」成功歸類至【${targetRole === 'clean' ? '清潔' : '客服'}】名單！`);
+        };
+
         window.openMemberProfilePopup = (name, locationName) => {
             const canonicalName = window.resolveMemberIdentity ? window.resolveMemberIdentity(name) : (name || '').trim();
             const profile = window.getMemberProfile(canonicalName);
@@ -1934,7 +1982,7 @@ const tabMetadataMap = {
                         </button>
                     </div>
 
-                    <!-- 性別、本地/外地與員工編號 -->
+                   <!-- 性別、分類、本地/外地與員工編號 -->
                     <div class="w-full mt-1.5 bg-slate-50 p-2 rounded-xl border border-slate-200 space-y-2">
                         <div class="flex items-center justify-between">
                             <span class="text-[11px] font-bold text-slate-500">性別分組：</span>
@@ -1943,7 +1991,17 @@ const tabMetadataMap = {
                                 <button type="button" onclick="window.setMemberGender('${safeNameAttr}', '女')" class="px-3 py-0.5 rounded-md text-xs font-black border transition-all ${curGender === '女' ? 'bg-rose-500 text-white border-rose-500 shadow-2xs' : 'bg-white text-slate-600 border-slate-200'}">女</button>
                             </div>
                         </div>
-                        ${window.currentMapRole === 'clean' ? `
+
+                        <!-- 🌟 新增：成員所屬分類切換（客服 / 清潔） -->
+                        <div class="flex items-center justify-between">
+                            <span class="text-[11px] font-bold text-slate-500">所屬分類：</span>
+                            <div class="flex gap-1">
+                                <button type="button" onclick="window.setMemberRoleCategory('${safeNameAttr}', 'cs')" class="px-2.5 py-0.5 rounded-md text-xs font-black border transition-all ${cleanMembersStore.includes(canonicalName) ? 'bg-white text-slate-600 border-slate-200' : 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'}">客服</button>
+                                <button type="button" onclick="window.setMemberRoleCategory('${safeNameAttr}', 'clean')" class="px-2.5 py-0.5 rounded-md text-xs font-black border transition-all ${cleanMembersStore.includes(canonicalName) ? 'bg-teal-600 text-white border-teal-600 shadow-2xs' : 'bg-white text-slate-600 border-slate-200'}">清潔</button>
+                            </div>
+                        </div>
+
+                        ${profile.residency !== undefined || window.currentMapRole === 'clean' ? `
                         <div class="flex items-center justify-between">
                             <span class="text-[11px] font-bold text-slate-500">人員身分別：</span>
                             <div class="flex gap-1">
@@ -1951,6 +2009,7 @@ const tabMetadataMap = {
                                 <button type="button" onclick="window.setMemberResidency('${safeNameAttr}', '外地', event)" class="px-2.5 py-0.5 rounded-md text-xs font-black border transition-all ${profile.residency === '外地' ? 'bg-amber-500 text-white border-amber-500 shadow-2xs' : 'bg-white text-slate-600 border-slate-200'}">外地人</button>
                             </div>
                         </div>` : ''}
+                        
                         <div class="flex items-center justify-between">
                             <span class="text-[11px] font-bold text-slate-500">員工編號：</span>
                             <input type="text" id="popupMemberIdInput" value="${(profile.id || '').replace(/^#/, '')}" placeholder="例如: EH0047" 
