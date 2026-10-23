@@ -6613,8 +6613,10 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
                 if (window.currentMapRole !== 'clean') {
                     window.syncActiveTodaySchedule();
+                    // 🌟 若未在手動編輯中，清除暫存以強制顯示雲端最新同步過來的班表
+                    if (!window._hasUnsavedGridEdits) window._tempGridValues = null;
                     if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
-                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager(true);
                 }
                 if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
             });
@@ -6637,8 +6639,10 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
                 if (window.currentMapRole === 'clean') {
                     window.syncActiveTodaySchedule();
+                    // 🌟 若未在手動編輯中，清除暫存以強制顯示雲端最新同步過來的班表
+                    if (!window._hasUnsavedGridEdits) window._tempGridValues = null;
                     if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
-                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager(true);
                 }
             });
 
@@ -7490,16 +7494,51 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             const hasAny = currentLines.some(n => !!n);
             const joinedVal = hasAny ? currentLines.filter(Boolean).join('\n') : ''; // 🌟 加上 filter(Boolean) 確保不存入空字串行
             window._tempGridValues[cellKey] = joinedVal;
+            window._hasUnsavedGridEdits = true; // 🌟 標記目前有未儲存的手動修改，保護不被雲端洗掉
             const needRows = Math.max(minRows, currentLines.filter(Boolean).length);
             displayDiv.innerHTML = window.renderCellLinesHtml(joinedVal, locId, dateStr, start, end, needRows);
+
+            // 🌟 即時更新該格的缺人紅框狀態（清潔模式）
+            if (window.currentMapRole === 'clean' && hostCell) {
+                let reqMin = (locId === 'pt_4') ? 2 : ((locId === 'pt_6' || locId === 'pt_7') ? 0 : 1);
+                const filledCnt = currentLines.filter(Boolean).length;
+                if (filledCnt < reqMin) {
+                    hostCell.classList.add('border-2', 'border-red-300/90', 'bg-red-50/30');
+                    hostCell.classList.remove('bg-white');
+                } else {
+                    hostCell.classList.remove('border-2', 'border-red-300/90', 'bg-red-50/30');
+                    hostCell.classList.add('bg-white');
+                }
+            }
 
             if (window.syncLocTrackRows) {
                 window.syncLocTrackRows(dateStr, locId, needRows);
             }
         };
 
+        // 🌟 補齊遺失的橫向行數同步函式：當某格新增行時，同一崗位當天高度與行數自動對齊
+        window.syncLocTrackRows = (dateStr, locId) => {
+            const minRows = window.getLocMinRows(locId);
+            const allDisplays = Array.from(document.querySelectorAll(`td[data-date="${dateStr}"][data-loc="${locId}"] .grid-input-display, .grid-input-display[data-date="${dateStr}"][data-loc="${locId}"]`));
+            if (!allDisplays.length) return;
 
-                     window.handleCellMobileClick = (el, dateStr, locId, start, end) => {
+            let maxFilledRows = minRows;
+            allDisplays.forEach(div => {
+                const raw = window.extractCellText(div);
+                const cnt = String(raw || '').split('\n').map(n => n.trim()).filter(Boolean).length;
+                if (cnt > maxFilledRows) maxFilledRows = cnt;
+            });
+
+            allDisplays.forEach(div => {
+                const host = div.closest('[data-loc][data-date]') || div;
+                const s = host.dataset.start || '';
+                const e = host.dataset.end || '';
+                const raw = window.extractCellText(div);
+                div.innerHTML = window.renderCellLinesHtml(raw, locId, dateStr, s, e, maxFilledRows);
+            });
+        };
+
+                       window.handleCellMobileClick = (el, dateStr, locId, start, end) => {
             const cell = (el && el.closest) ? (el.closest('[data-loc][data-date]') || el) : el;
             const d = (cell && cell.dataset) ? cell.dataset : {};
             dateStr = d.date || dateStr;
@@ -7933,11 +7972,53 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         }[id] || 'bg-white text-slate-700');
 
         // 🌟 6. 核心渲染：套用最新順序 + 魚檔3行/機動4行/滿人自動加行(每行帶格線) + 出勤勾選過濾 + 智慧自動排班
-        window.renderScheduleManager = () => {
+        // 🌟 輔助函式：定義崗位所屬的「分類區域」，讓每一個獨立崗位之間都自動插入空白分隔列
+        window.getLocCategoryGroup = (locId, isClean) => {
+            if (isClean) {
+                // 清潔排班：每一個站點（男廁、女廁、花園仔、魚檔、一樓...）都自成一組，彼此之間自動隔開空白列
+                if (locId === 'pt_8') return 'clean_r8';       // 花園仔(男廁)
+                if (locId === 'pt_9') return 'clean_r9';       // 花園仔(女廁)+(傷健)
+                if (locId === 'pt_3') return 'clean_r3';       // 花園仔
+                if (locId === 'pt_4') return 'clean_r4';       // 魚檔
+                if (locId === 'pt_5') return 'clean_r5';       // 整體巡邏
+                if (locId === 'pt_1') return 'clean_r1';       // 一樓+廁所
+                if (locId === 'pt_6') return 'clean_r6';       // 機動
+                if (locId === 'pt_7') return 'clean_r7';       // 休息中
+            } else {
+                // 客服排班：花園仔、魚檔、整體巡邏、客服室之間也各自獨立隔開
+                if (locId === 'pt_3') return 'cs_r3';          // 花園仔
+                if (locId === 'pt_4') return 'cs_r4';          // 魚檔
+                if (locId === 'pt_5') return 'cs_r5';          // 整體巡邏
+                if (locId === 'pt_1') return 'cs_r1';          // 客服室
+                if (locId === 'pt_2') return 'cs_r2';          // 一樓大清點
+                if (locId === 'pt_6') return 'cs_r6';          // 地面層大清點
+                if (locId === 'pt_7') return 'cs_r7';          // 休息中
+            }
+            return locId;
+        };
+
+        // 🌟 6. 核心渲染：自帶全自動防彈回鎖定 + 每個崗位分類之間自動加入空白分隔列 + 智慧自動排班
+        window.renderScheduleManager = (skipDomCapture = false) => {
             const list = $('scheduleManageList');
             if (!list) return;
+
+            // 🌟 防彈回鎖定步驟 A：重繪前自動記錄目前垂直捲動高度與各天表格的水平捲動位置
+            const existingScrollArea = document.getElementById('scheduleGridScrollArea');
+            const savedScrollTop = existingScrollArea ? existingScrollArea.scrollTop : window._lastSchedScrollTop;
+            const savedHorizScrolls = {};
+            document.querySelectorAll('[id^="sched-day-card-"]').forEach(card => {
+                const hWrap = card.querySelector('.overflow-x-auto');
+                if (hWrap) savedHorizScrolls[card.id] = hWrap.scrollLeft;
+            });
+
+            // 🌟 防吃資料保護：若排班表已經在畫面上且同角色，重繪前自動把畫面上的臨時修改抓進 _tempGridValues
             const isCleanRole = window.currentMapRole === 'clean';
             const roleKey = isCleanRole ? 'clean' : 'cs';
+            if (!skipDomCapture && existingScrollArea && window._lastRenderedRoleKey === roleKey && window._tempGridValues) {
+                window.captureAll5DayDomValues();
+            }
+            window._lastRenderedRoleKey = roleKey;
+
             const rolePrefix = isCleanRole ? 'clean_' : 'cs_';
             const multiStore = isCleanRole ? cleanMultiDaySchedules : csMultiDaySchedules;
 
@@ -7953,6 +8034,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             let sortedLocs = Object.entries(mapData.points).sort(([a], [b]) => (order.indexOf(a) === -1 ? 999 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 999 : order.indexOf(b)));
 
             const fiveDays = window.get5DayScheduleDates();
+            const totalColSpan = 1 + (isCleanRole ? cleanSlots.length : csTimeSlots.length);
 
             const fiveDayTablesHtml = fiveDays.map((dayInfo, dayIdx) => {
                 const dStr = dayInfo.dateStr;
@@ -7985,7 +8067,16 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 }
 
                 let rows = '';
+                let prevCategoryGroup = null;
+
                 sortedLocs.forEach(([locId, pt]) => {
+                    // 🌟 每個分類之間自動插入一條 8px 空白隔離帶，讓視覺分區一目了然
+                    const curCategoryGroup = window.getLocCategoryGroup(locId, isCleanRole);
+                    if (prevCategoryGroup !== null && prevCategoryGroup !== curCategoryGroup) {
+                        rows += `<tr class="h-[8px] bg-[#f0ebe1]/85 pointer-events-none select-none"><td colspan="${totalColSpan}" class="p-0 border-y border-slate-300/90 bg-[#f0ebe1]/85"></td></tr>`;
+                    }
+                    prevCategoryGroup = curCategoryGroup;
+
                     const minRows = window.getLocMinRows(locId);
                     const minH = minRows * 22;
                     rows += `<tr><td class="sticky left-0 ${getLocColorClass(locId)} border border-slate-300 font-black text-[10px] p-0.5 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center align-middle break-words leading-tight w-[64px] min-w-[64px] max-w-[64px]">${pt.name.replace(/\s*大清點/, '<br>大清點').replace('+(傷健廁所)', '<br>+(傷健)')}</td>`;
@@ -8257,13 +8348,26 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         </div>
                     </div>
 
-                    <!-- 表格滾動主區域 -->
+                   <!-- 表格滾動主區域 -->
                     <div id="scheduleGridScrollArea" class="flex-1 overflow-auto p-1.5 sm:p-2">
                         ${fiveDayTablesHtml}
                     </div>
                 </div>
             </div>`;
             if (window.lucide) lucide.createIcons();
+
+            // 🌟 防彈回鎖定步驟 B：在 DOM 生成的同一幀立即恢復垂直與水平捲動位置（0延遲、無閃爍）
+            const newScrollArea = document.getElementById('scheduleGridScrollArea');
+            if (newScrollArea && savedScrollTop !== undefined && savedScrollTop > 0) {
+                newScrollArea.style.scrollBehavior = 'auto';
+                newScrollArea.scrollTop = savedScrollTop;
+                window._lastSchedScrollTop = savedScrollTop;
+            }
+            Object.entries(savedHorizScrolls).forEach(([cardId, sLeft]) => {
+                const card = document.getElementById(cardId);
+                const hWrap = card ? card.querySelector('.overflow-x-auto') : null;
+                if (hWrap && sLeft > 0) hWrap.scrollLeft = sLeft;
+            });
         };
 
         window.toggleTask = async (taskId) => {
