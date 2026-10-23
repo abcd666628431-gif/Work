@@ -7923,45 +7923,55 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             window.showToast(`📋 已將 ${prevDateStr.slice(5)} 的排班複製到 ${targetDateStr.slice(5)}！`);
         };
 
-        // 🌟 4. 單獨清空某一天排班（立即存檔並同步雲端與地圖）
+        // 🌟 4. 單獨清空某一天排班（立即清空暫存、存檔並強制刷新畫面）
         window.clearSingleDaySchedule = (targetDateStr) => {
-            window.showConfirm('清空單日排班', `確定要清空【${targetDateStr}】當天的排班內容嗎？（其他日子不受影響）`, () => {
-                window.captureAll5DayDomValues();
-                Object.keys(window._tempGridValues).forEach(k => {
-                    if (k.startsWith(`${targetDateStr}_`)) {
-                        delete window._tempGridValues[k];
-                    }
-                });
-                const isClean = window.currentMapRole === 'clean';
-                const rolePrefix = isClean ? 'clean_' : 'cs_';
-                Object.keys(splitHoursState).forEach(sk => {
-                    if (sk.startsWith(`${rolePrefix}${targetDateStr}_`)) {
-                        delete splitHoursState[sk];
-                    }
-                });
-                safeSetLocal('work_cache_split_hours', splitHoursState);
+            if (!confirm(`確定要清空【${targetDateStr}】當天的排班內容嗎？\n（其他日子不受影響）`)) return;
 
-                const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
-                multiStore[targetDateStr] = [];
+            window.captureAll5DayDomValues();
+            window._tempGridValues = window._tempGridValues || {};
 
-                const todayStr = getNowInputStrs().date;
-                window.syncActiveTodaySchedule();
-
-                if (isClean) {
-                    safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
-                    safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
-                    syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
-                } else {
-                    safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
-                    safeSetLocal('work_cache_member_schedules', csSchedulesStore);
-                    syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
+            // 1. 徹底清空當日所有暫存格子
+            Object.keys(window._tempGridValues).forEach(k => {
+                if (k.startsWith(`${targetDateStr}_`)) {
+                    delete window._tempGridValues[k];
                 }
-
-                window.renderScheduleManager();
-                window.updateMapSimulation();
-                window.showToast(`🧹 已清空並儲存 ${targetDateStr} 的排班`);
             });
+
+            // 2. 清理拆分狀態
+            const isClean = window.currentMapRole === 'clean';
+            const rolePrefix = isClean ? 'clean_' : 'cs_';
+            Object.keys(splitHoursState).forEach(sk => {
+                if (sk.startsWith(`${rolePrefix}${targetDateStr}_`)) {
+                    delete splitHoursState[sk];
+                }
+            });
+            safeSetLocal('work_cache_split_hours', splitHoursState);
+
+            // 3. 清空該日存檔陣列
+            const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+            multiStore[targetDateStr] = [];
+
+            const todayStr = getNowInputStrs().date;
+            window.syncActiveTodaySchedule();
+
+            // 4. 同步至本地快取與雲端
+            if (isClean) {
+                safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
+                safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+                syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
+            } else {
+                safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+                safeSetLocal('work_cache_member_schedules', csSchedulesStore);
+                syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
+            }
+
+            // 5. 標記暫存並強制重繪排班表 DOM
+            window._hasUnsavedGridEdits = true;
+            window.renderScheduleManager(true); // 傳入 true 強制重繪 DOM
+            window.updateMapSimulation();
+            window.showToast(`🧹 已清空並儲存【${targetDateStr}】排班！`);
         };
+
 
         // 🌟 5. 儲存全部 5 日排班表（完整支援多行 sub-line-item 讀取）
         window.saveGridSchedule = () => {
