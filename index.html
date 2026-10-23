@@ -1721,53 +1721,51 @@ const tabMetadataMap = {
                         const slotEndM = toMins(slot.end);
 
                         cleanRosterTemplates.forEach(tmpl => {
-                            const personName = memberRoleMap.get(tmpl);
-                            if (!personName) return;
+    const personName = memberRoleMap.get(tmpl);
+    if (!personName) return;
 
-                            const prof = window.getMemberProfile(personName);
-                            let locId = tmpl.getLoc(slot.start, slot.end);
+    const prof = window.getMemberProfile(personName);
+    
+    // 1. 取得該員的所有指定休息區間（包含未來特殊排程與個人常態自訂的第 1、第 2 次休息）
+    const specialSched = (prof.futureSchedules || []).find(sc => sc.date === targetDateStr);
+    let customRestIntervals = [];
 
-                            // 優先級 A：檢查當日是否有「未來特定日期排程」設定
-                            const specialSched = (prof.futureSchedules || []).find(sc => sc.date === targetDateStr);
-                            let customRestIntervals = [];
+    let shStartM = 6 * 60 + 30, shEndM = 22 * 60; // 預設清潔全時段範圍
+    if (specialSched && specialSched.shiftTime) {
+        const normShift = specialSched.shiftTime.replace(/[～~—–－]/g, '-');
+        if (normShift.includes('-')) {
+            const [shStart, shEnd] = normShift.split('-');
+            shStartM = toMins(shStart);
+            shEndM = toMins(shEnd);
+        }
+    }
 
-                            if (specialSched) {
-                                let shStartM = 6 * 60 + 30, shEndM = 20 * 60;
-                                if (specialSched.shiftTime) {
-                                    const normShift = specialSched.shiftTime.replace(/[～~—–－]/g, '-');
-                                    if (normShift.includes('-')) {
-                                        const [shStart, shEnd] = normShift.split('-');
-                                        shStartM = toMins(shStart);
-                                        shEndM = toMins(shEnd);
-                                        if (slotStartM < shStartM || slotEndM > shEndM) {
-                                            locId = null; // 超出指定上班時間不排班
-                                        } else if (!locId) {
-                                            locId = tmpl.prefLoc || 'pt_6'; // 在指定上班時間內自動補上主崗位
-                                        }
-                                    }
-                                }
+    if (specialSched) {
+        const restDurHours = specialSched.restDurationNum || parseFloat(specialSched.restHours) || 0;
+        if (restDurHours > 0) {
+            const restDurMins = Math.round(restDurHours * 60);
+            const idealList = parseIdealIntervals(prof.idealRestTime);
+            let rStartM = idealList.length > 0 ? idealList[0][0] : Math.floor(((shStartM + (shEndM - shStartM) * 0.45)) / 30) * 30;
+            customRestIntervals = [[rStartM, rStartM + restDurMins]];
+        }
+    }
 
-                                // 若有設定「預計休息幾小時 (1, 2, 3)h」，智慧推算休息起訖分鐘
-                                const restDurHours = specialSched.restDurationNum || parseFloat(specialSched.restHours) || 0;
-                                if (restDurHours > 0) {
-                                    const restDurMins = Math.round(restDurHours * 60);
-                                    const idealList = parseIdealIntervals(prof.idealRestTime);
-                                    let rStartM = idealList.length > 0 ? idealList[0][0] : Math.floor(((shStartM + (shEndM - shStartM) * 0.45)) / 30) * 30;
-                                    customRestIntervals = [[rStartM, rStartM + restDurMins]];
-                                }
-                            }
+    const idealIntervals = customRestIntervals.length > 0 ? customRestIntervals : parseIdealIntervals(prof.idealRestTime);
 
-                           // 優先級 B：套用「當日特殊休息」或個人常態「理想休息時間（支援 2 次分開）」
-                            const idealIntervals = customRestIntervals.length > 0 ? customRestIntervals : parseIdealIntervals(prof.idealRestTime);
-
-                            if (locId && idealIntervals.length > 0) {
-                                if (isSlotInRest(slotStartM, slotEndM, idealIntervals)) {
-                                    locId = 'pt_7'; // 命中第 1 或第 2 次休息 -> 排入休息中
-                                } else if (locId === 'pt_7') {
-                                    // 🌟 關鍵修復：既然員工已自訂理想休息時間，原本模板寫死的預設休息時段必須還原回他的主崗位！
-                                    locId = tmpl.prefLoc || 'pt_6';
-                                }
-                            }
+    // 2. 🌟【最高絕對優先級】：如果落在員工指定的休息時段，強制且無條件排入「pt_7 休息中」！
+    let locId = null;
+    if (idealIntervals.length > 0 && isSlotInRest(slotStartM, slotEndM, idealIntervals)) {
+        locId = 'pt_7'; // 命中自訂休息時段 -> 絕對強制休息！
+    } else {
+        // 不在指定休息時間內，才依照排班模板計算工作崗位
+        if (slotStartM >= shStartM && slotEndM <= shEndM) {
+            locId = tmpl.getLoc(slot.start, slot.end);
+            // 🌟 關鍵防護：如果模板自帶的預設休息時間到了，但員工已有自訂休息時間，不能讓模板把工作時間吃掉，必須還原回他的主要崗位！
+            if (locId === 'pt_7' && idealIntervals.length > 0) {
+                locId = tmpl.prefLoc || 'pt_6';
+            }
+        }
+    }
 
                             if (locId) {
                                 const gridKey = `${targetDateStr}_${locId}_${slot.start}_${slot.end}`;
