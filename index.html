@@ -1757,12 +1757,12 @@ const tabMetadataMap = {
                                 }
                             }
 
-                            // 優先級 B：套用「當日特殊休息」或個人常態「理想休息時間（支援 2 次分開）」
+                           // 優先級 B：套用「當日特殊休息」或個人常態「理想休息時間（支援 2 次分開）」
                             const idealIntervals = customRestIntervals.length > 0 ? customRestIntervals : parseIdealIntervals(prof.idealRestTime);
 
                             if (locId && idealIntervals.length > 0) {
                                 if (isSlotInRest(slotStartM, slotEndM, idealIntervals)) {
-                                    locId = 'pt_7'; // 命中理想休息時間 -> 排入休息
+                                    locId = 'pt_7'; // 命中第 1 或第 2 次休息 -> 排入休息中
                                 } else if (locId === 'pt_7') {
                                     // 🌟 關鍵修復：既然員工已自訂理想休息時間，原本模板寫死的預設休息時段必須還原回他的主崗位！
                                     locId = tmpl.prefLoc || 'pt_6';
@@ -2222,6 +2222,40 @@ window.showToast(`✨ 已完成【${targetDateStr}】自動排班！性別、志
             window.showToast(`✅ 已將「${canonical}」成功歸類至【${targetRole === 'clean' ? '清潔' : '客服'}】名單！`);
         };
 
+// 🌟 理想休息 2 個獨立輸入框的動態時數加總與自動儲存
+        window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
+            const inp1 = document.getElementById('idealRestTimeInput1')?.value.trim() || '';
+            const inp2 = document.getElementById('idealRestTimeInput2')?.value.trim() || '';
+            const tag = document.getElementById('idealRestHoursTag');
+
+            const toMinutes = (t) => {
+                const [h, m] = String(t || '00:00').trim().replace(/：/g, ':').split(':').map(Number);
+                return (h || 0) * 60 + (m || 0);
+            };
+
+            let totalMinutes = 0;
+            [inp1, inp2].forEach(val => {
+                const norm = val.replace(/[～~—–－]/g, '-').replace(/：/g, ':');
+                if (norm.includes('-')) {
+                    const [s, e] = norm.split('-');
+                    const sM = toMinutes(s), eM = toMinutes(e);
+                    if (!isNaN(sM) && !isNaN(eM) && eM > sM) {
+                        totalMinutes += (eM - sM);
+                    }
+                }
+            });
+
+            if (tag) {
+                tag.innerText = totalMinutes > 0 ? `${totalMinutes / 60}h` : '0h';
+            }
+
+            if (shouldSave && memberName) {
+                const combined = [inp1, inp2].filter(Boolean).join(', ');
+                window.saveMemberProfile(memberName, { idealRestTime: combined });
+                window.showToast(combined ? `✅ 已儲存休息時段（共 ${totalMinutes / 60}h）` : '🧹 已清空理想休息時間');
+            }
+        };
+
         window.openMemberProfilePopup = (name, locationName) => {
             const canonicalName = window.resolveMemberIdentity ? window.resolveMemberIdentity(name) : (name || '').trim();
             const profile = window.getMemberProfile(canonicalName);
@@ -2308,54 +2342,39 @@ window.showToast(`✨ 已完成【${targetDateStr}】自動排班！性別、志
                     </div>
 
                     <div class="w-full mt-2 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-200/80 text-left space-y-2">
-                        <!-- ① 理想休息時間設定（支援 2 次分開輸入，自動加總顯示總時數） -->
-                        <div class="flex items-center justify-between pb-1.5 border-b border-indigo-200/60">
-                            <div class="flex items-center min-w-0">
+                      <!-- ① 理想休息時間設定（分開 2 個獨立輸入框） -->
+                        <div class="space-y-1.5 pb-2 border-b border-indigo-200/60 text-left">
+                            <div class="flex items-center justify-between">
                                 <span class="text-[11px] font-black text-indigo-800 flex items-center shrink-0">
-                                    <i data-lucide="coffee" class="w-3.5 h-3.5 mr-1 text-indigo-600"></i>理想休息
+                                    <i data-lucide="coffee" class="w-3.5 h-3.5 mr-1 text-indigo-600"></i>理想休息時段
                                 </span>
-                                <span id="idealRestHoursTag" class="text-[10px] font-mono font-black text-emerald-700 bg-emerald-100/80 border border-emerald-300 px-1.5 py-0.2 rounded ml-1.5">
-                                    ${(() => {
-                                        const v = profile.idealRestTime || '';
-                                        if (!v.includes('-')) return '未設定';
-                                        const ranges = v.split(/[,、/ ]+/).filter(Boolean);
-                                        let totalDiff = 0;
-                                        ranges.forEach(r => {
-                                            if (!r.includes('-')) return;
-                                            const [s, e] = r.split('-');
-                                            const [sh, sm] = (s || '').split(':').map(Number);
-                                            const [eh, em] = (e || '').split(':').map(Number);
-                                            if (!isNaN(sh) && !isNaN(eh)) {
-                                                const d = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
-                                                if (d > 0) totalDiff += d;
-                                            }
-                                        });
-                                        return totalDiff > 0 ? (totalDiff / 60) + 'h' : '0h';
-                                    })()}
+                                <span id="idealRestHoursTag" class="text-[10px] font-mono font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-1.5 py-0.2 rounded">
+                                    0h
                                 </span>
                             </div>
-                            <input type="text" value="${profile.idealRestTime || ''}" placeholder="例: 10:00-11:00, 15:00-16:00" 
-                                oninput="(() => {
-                                    const tag = document.getElementById('idealRestHoursTag');
-                                    if (!tag) return;
-                                    const v = this.value.trim();
-                                    if (!v.includes('-')) { tag.innerText = '未設定'; return; }
-                                    const ranges = v.split(/[,、/ ]+/).filter(Boolean);
-                                    let totalDiff = 0;
-                                    ranges.forEach(r => {
-                                        if (!r.includes('-')) return;
-                                        const [s, e] = r.split('-');
-                                        const [sh, sm] = (s || '').split(':').map(Number);
-                                        const [eh, em] = (e || '').split(':').map(Number);
-                                        if (!isNaN(sh) && !isNaN(eh)) {
-                                            const d = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
-                                            if (d > 0) totalDiff += d;
-                                        }
-                                    });
-                                    tag.innerText = totalDiff > 0 ? (totalDiff / 60) + 'h' : '0h';
-                                })()"
-                                onchange="window.saveMemberProfile('${safeNameAttr}', { idealRestTime: this.value.trim() }); window.showToast('✅ 已儲存理想休息時間');"
-                                class="bg-white border border-indigo-300 rounded-md px-1.5 py-0.5 text-[11px] font-mono font-bold text-center w-36 focus:outline-none focus:border-indigo-500" title="可填寫 2 次，例如：10:00-11:00, 15:00-16:00">
+
+                            <!-- 拆解現有理想休息字串 -->
+                            ${(() => {
+                                const raw = (profile.idealRestTime || '').replace(/[～~—–－]/g, '-').replace(/：/g, ':');
+                                const parts = raw.split(/[,，、/\s]+/).filter(Boolean);
+                                const t1 = parts[0] || '';
+                                const t2 = parts[1] || '';
+                                return `
+                                <div class="flex items-center justify-between gap-1.5">
+                                    <span class="text-[10.5px] font-bold text-slate-600 shrink-0">第 1 次：</span>
+                                    <input type="text" id="idealRestTimeInput1" value="${t1}" placeholder="例: 10:00-11:00"
+                                        oninput="window.calcAndSaveDualRest('${safeNameAttr}', false)"
+                                        onchange="window.calcAndSaveDualRest('${safeNameAttr}', true)"
+                                        class="flex-1 bg-white border border-indigo-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
+                                </div>
+                                <div class="flex items-center justify-between gap-1.5">
+                                    <span class="text-[10.5px] font-bold text-slate-600 shrink-0">第 2 次：</span>
+                                    <input type="text" id="idealRestTimeInput2" value="${t2}" placeholder="例: 15:00-16:00 (選填)"
+                                        oninput="window.calcAndSaveDualRest('${safeNameAttr}', false)"
+                                        onchange="window.calcAndSaveDualRest('${safeNameAttr}', true)"
+                                        class="flex-1 bg-white border border-indigo-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
+                                </div>`;
+                            })()}
                         </div>
 
                         <!-- ② 未來特定日期特殊排程 -->
