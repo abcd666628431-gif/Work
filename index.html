@@ -1673,13 +1673,34 @@ const tabMetadataMap = {
                         }
                     });
 
-                    // 🌟 步驟 4：將配對完成的人員班次與休息時段填入表格暫存字典
+                   // 🌟 步驟 4：將配對完成的人員班次與休息時段填入表格暫存字典（優先考慮個人特殊排程與理想休息）
                     cleanSlots.forEach(slot => {
                         cleanRosterTemplates.forEach(tmpl => {
                             const personName = memberRoleMap.get(tmpl);
                             if (!personName) return;
 
-                            const locId = tmpl.getLoc(slot.start, slot.end);
+                            const prof = window.getMemberProfile(personName);
+                            let locId = tmpl.getLoc(slot.start, slot.end);
+
+                            // 優先級 A：檢查當日是否有「未來特定日期排程」設定
+                            const specialSched = (prof.futureSchedules || []).find(sc => sc.date === targetDateStr);
+                            if (specialSched) {
+                                if (specialSched.shiftTime && specialSched.shiftTime.includes('-')) {
+                                    const [shStart, shEnd] = specialSched.shiftTime.split('-');
+                                    if (slot.start < shStart || slot.end > shEnd) {
+                                        locId = null; // 不在上班範圍內不排班
+                                    }
+                                }
+                            }
+
+                            // 優先級 B：檢查個人設定的「理想休息時間」，精準插入 pt_7 (休息)
+                            if (locId && prof.idealRestTime && prof.idealRestTime.includes('-')) {
+                                const [rStart, rEnd] = prof.idealRestTime.split('-');
+                                if (slot.start >= rStart && slot.end <= rEnd) {
+                                    locId = 'pt_7'; // 強制優先切換為休息崗位
+                                }
+                            }
+
                             if (locId) {
                                 const gridKey = `${targetDateStr}_${locId}_${slot.start}_${slot.end}`;
                                 const curText = window._tempGridValues[gridKey] || '';
@@ -1879,12 +1900,6 @@ const tabMetadataMap = {
             if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
         };
 
-        window.renameMember = (oldName, newNameVal) => {
-            const input = $('popupMemberNameInput');
-            if (input) input.value = newNameVal;
-            window.confirmRenameMember(oldName);
-        };
-
         window.removeMemberFutureSchedule = (name, idx) => {
             const profile = window.getMemberProfile(name);
             const schedules = Array.isArray(profile.futureSchedules) ? [...profile.futureSchedules] : [];
@@ -2018,8 +2033,57 @@ const tabMetadataMap = {
                         </div>
                     </div>
 
-                    <div class="w-full mt-2 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-200/80 text-left space-y-1.5">
-                        <div class="text-[11px] font-black text-indigo-800 flex items-center">
+                    <div class="w-full mt-2 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-200/80 text-left space-y-2">
+                        <!-- ① 理想休息時間設定（自動換算顯示多少小時） -->
+                        <div class="flex items-center justify-between pb-1.5 border-b border-indigo-200/60">
+                            <div class="flex items-center min-w-0">
+                                <span class="text-[11px] font-black text-indigo-800 flex items-center shrink-0">
+                                    <i data-lucide="coffee" class="w-3.5 h-3.5 mr-1 text-indigo-600"></i>理想休息
+                                </span>
+                                <span id="idealRestHoursTag" class="text-[10px] font-mono font-black text-emerald-700 bg-emerald-100/80 border border-emerald-300 px-1.5 py-0.2 rounded ml-1.5">
+                                    ${(() => {
+                                        const v = profile.idealRestTime || '';
+                                        if (!v.includes('-')) return '未設定';
+                                        const [s, e] = v.split('-');
+                                        const [sh, sm] = (s || '').split(':').map(Number);
+                                        const [eh, em] = (e || '').split(':').map(Number);
+                                        if (isNaN(sh) || isNaN(eh)) return '格式錯誤';
+                                        const diff = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
+                                        return diff > 0 ? (diff / 60) + 'h' : '0h';
+                                    })()}
+                                </span>
+                            </div>
+                            <input type="text" value="${profile.idealRestTime || ''}" placeholder="例: 12:00-13:00" 
+                                oninput="(() => {
+                                    const tag = document.getElementById('idealRestHoursTag');
+                                    if (!tag) return;
+                                    const v = this.value.trim();
+                                    if (!v.includes('-')) { tag.innerText = '未設定'; return; }
+                                    const [s, e] = v.split('-');
+                                    const [sh, sm] = (s || '').split(':').map(Number);
+                                    const [eh, em] = (e || '').split(':').map(Number);
+                                    if (isNaN(sh) || isNaN(eh)) { tag.innerText = '格式錯誤'; return; }
+                                    const diff = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
+                                    tag.innerText = diff > 0 ? (diff / 60) + 'h' : '0h';
+                                })()"
+                                onchange="window.saveMemberProfile('${safeNameAttr}', { idealRestTime: this.value.trim() }); window.showToast('✅ 已儲存理想休息時間');"
+                                class="bg-white border border-indigo-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center w-28 focus:outline-none focus:border-indigo-500">
+                        </div>
+
+                        <!-- ② 未來特定日期特殊排程 -->
+                        <div class="space-y-1 pb-1.5 border-b border-indigo-200/60">
+                            <div class="flex items-center justify-between">
+                                <span class="text-[10.5px] font-black text-indigo-800 flex items-center">
+                                    <i data-lucide="calendar-plus" class="w-3.5 h-3.5 mr-1 text-indigo-600"></i>未來特定排程
+                                </span>
+                                <button type="button" onclick="window.openMemberFutureScheduleModal('${safeNameAttr}')" class="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-[10px] font-black shadow-2xs active:scale-95 flex items-center">
+                                    <i data-lucide="plus" class="w-3 h-3 mr-0.5"></i>新增/管理
+                                </button>
+                            </div>
+                            <div class="text-[9.5px] text-slate-500">已生效特殊排程：<span class="font-black text-indigo-700">${(profile.futureSchedules || []).length}</span> 筆（優先排班）</div>
+                        </div>
+
+                        <div class="text-[11px] font-black text-indigo-800 flex items-center pt-0.5">
                             <i data-lucide="sparkles" class="w-3.5 h-3.5 mr-1 text-indigo-600"></i>優先排班崗位 (自動排班用)
                         </div>
                         ${[0, 1, 2].map(idx => `
@@ -12338,6 +12402,9 @@ window.pushMeetingReportsToAllIframes = (reports) => {
         <iframe id="meetingReportIframe" class="w-full flex-1 border-none bg-[#f1f5f9] dark:bg-slate-900"></iframe>
     </div>
 </div>
+
+    <!-- 補齊外層手機主容器的閉合標籤 -->
+    </div>
 
 </body>
 </html>
