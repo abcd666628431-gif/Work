@@ -2227,13 +2227,18 @@ window.showToast(`✨ 已完成【${targetDateStr}】自動排班！性別、志
             const tag = document.getElementById('idealRestHoursTag');
 
             const toMinutes = (t) => {
-                const [h, m] = String(t || '00:00').trim().replace(/：/g, ':').split(':').map(Number);
-                return (h || 0) * 60 + (m || 0);
+                if (!t) return 0;
+                const cleanT = String(t).trim().replace(/：/g, ':');
+                const parts = cleanT.split(':');
+                const h = parseInt(parts[0], 10) || 0;
+                const m = parseInt(parts[1], 10) || 0;
+                return h * 60 + m;
             };
 
             let totalMinutes = 0;
             [inp1, inp2].forEach(val => {
-                const norm = val.replace(/[～~—–－]/g, '-').replace(/：/g, ':');
+                if (!val) return;
+                const norm = val.replace(/[～~—–－至到]/g, '-').replace(/：/g, ':').replace(/\s+/g, '');
                 if (norm.includes('-')) {
                     const [s, e] = norm.split('-');
                     const sM = toMinutes(s), eM = toMinutes(e);
@@ -2244,13 +2249,16 @@ window.showToast(`✨ 已完成【${targetDateStr}】自動排班！性別、志
             });
 
             if (tag) {
-                tag.innerText = totalMinutes > 0 ? `${totalMinutes / 60}h` : '0h';
+                const totalHours = totalMinutes / 60;
+                // 自動去除多餘的小數點零（如 4.0h -> 4h）
+                tag.innerText = totalHours > 0 ? `${parseFloat(totalHours.toFixed(2))}h` : '0h';
             }
 
             if (shouldSave && memberName) {
                 const combined = [inp1, inp2].filter(Boolean).join(', ');
                 window.saveMemberProfile(memberName, { idealRestTime: combined });
-                window.showToast(combined ? `✅ 已儲存休息時段（共 ${totalMinutes / 60}h）` : '🧹 已清空理想休息時間');
+                const totalHours = totalMinutes / 60;
+                window.showToast(combined ? `✅ 已儲存休息時段（共 ${parseFloat(totalHours.toFixed(2))}h）` : '🧹 已清空理想休息時間');
             }
         };
 
@@ -2405,6 +2413,11 @@ window.showToast(`✨ 已完成【${targetDateStr}】自動排班！性別、志
             `;
             popup.classList.remove('hidden');
             if (window.lucide) lucide.createIcons({ root: popup });
+
+            // 🌟 核心修復：彈窗生成後立即計算當前填入的時數，讓 0h 變為正確的總時數！
+            if (window.calcAndSaveDualRest) {
+                window.calcAndSaveDualRest(canonicalName, false);
+            }
         };
 
         // 🌟 計算「前2日、昨日、當日、明日、後2日」共 5 天的日期陣列
