@@ -7764,36 +7764,16 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     currentLines[existingIndex] = '';
                     window.showToast(`➖ 已移除「${targetCanonical}」`);
                } else {
-                    // 🧠 智能化功能：檢查同一天、同一時段，該員工是否已經在其他崗位上班（防止分身衝堂）
-                    let movedFromLocName = '';
-                    Object.keys(mapData.points).forEach(otherLoc => {
-                        if (otherLoc === locId) return;
-                        const otherKey = `${dateStr}_${otherLoc}_${start}_${end}`;
-                        const otherCell = document.querySelector(`td[data-date="${dateStr}"][data-loc="${otherLoc}"][data-start="${start}"][data-end="${end}"] .grid-input-display, .grid-input-display[data-date="${dateStr}"][data-loc="${otherLoc}"][data-start="${start}"][data-end="${end}"]`);
-                        if (otherCell) {
-                            const otherLines = window.extractCellText(otherCell).split('\n').map(x => resolve(x.trim()));
-                            if (otherLines.includes(targetCanonical)) {
-                                const cleaned = otherLines.filter(x => x && x !== targetCanonical).join('\n');
-                                window._tempGridValues[otherKey] = cleaned;
-                                otherCell.innerHTML = window.renderCellLinesHtml(cleaned, otherLoc, dateStr, start, end);
-                                movedFromLocName = mapData.points[otherLoc]?.name || otherLoc;
-                            }
-                        }
-                    });
+                   // 允許同時間兼任多個崗位，不再自動從其他崗位刪除
+                   const currentInLine = resolve(currentLines[lineIdx]);
+                   if (currentInLine) {
+                       currentLines.push(targetCanonical);
+                   } else {
+                       currentLines[lineIdx] = targetCanonical;
+                   }
 
-                    const currentInLine = resolve(currentLines[lineIdx]);
-                    if (currentInLine) {
-                        currentLines.push(targetCanonical);
-                    } else {
-                        currentLines[lineIdx] = targetCanonical;
-                    }
-
-                    if (movedFromLocName) {
-                        window.showToast(`🔄 已將「${targetCanonical}」從【${movedFromLocName}】調動至此崗位`);
-                    } else {
-                        window.showToast(`➕ 已指派「${targetCanonical}」`);
-                    }
-                }
+                   window.showToast(`➕ 已指派「${targetCanonical}」`);
+               }
             }
 
             // 自動收回多餘的連續空白行
