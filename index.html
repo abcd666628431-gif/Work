@@ -1060,6 +1060,7 @@ const tabMetadataMap = {
                 isNowChecked = false;
             }
             safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
+            syncConfig('duty_filter', { filter: window.activeDutyMembersFilter }); // 👈 新增：同步至雲端
 
             if (cardEl) {
                 const chk = cardEl.querySelector('input[type="checkbox"]');
@@ -1075,7 +1076,7 @@ const tabMetadataMap = {
             }
         };
 
-        // 🌟 切換鍵 1：一鍵全剔選 / 全部取消
+       // 🌟 切換鍵 1：一鍵全剔選 / 全部取消
         window.toggleAllDutyMembers = () => {
             const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
             const list = window.getCheckedDutyList();
@@ -1084,6 +1085,7 @@ const tabMetadataMap = {
 
             window.activeDutyMembersFilter[roleKey] = isAllChecked ? [] : [...teamMembers];
             safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
+            syncConfig('duty_filter', { filter: window.activeDutyMembersFilter }); // 👈 新增：同步至雲端
             window.renderMemberRosterListsOnly();
             window.updateRosterHeaderButtonsUI();
             if ($('scheduleManageModal')?.classList.contains('flex')) {
@@ -1098,7 +1100,7 @@ const tabMetadataMap = {
             const cur = window.dutyFilterModeEnabled[roleKey] !== false;
             window.dutyFilterModeEnabled[roleKey] = !cur;
             safeSetLocal('work_cache_duty_filter_mode', window.dutyFilterModeEnabled);
-            
+            syncConfig('duty_filter_mode', { mode: window.dutyFilterModeEnabled }); // 👈 新增：同步至雲端
             window.updateRosterHeaderButtonsUI();
             window.renderMemberRosterListsOnly();
             // 立刻重繪外面排班表頂部的人員按鍵！
@@ -1122,6 +1124,7 @@ const tabMetadataMap = {
                 const list = window.getCheckedDutyList();
                 if (!list.includes(name)) list.push(name);
                 safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
+                syncConfig('duty_filter', { filter: window.activeDutyMembersFilter }); // 👈 新增：同步至雲端
 
                 if (isClean) {
                     cleanMembersStore = [...teamMembers];
@@ -6945,13 +6948,43 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 }
             });
 
-            // 🌟 成員檔案（頭像與工號）雲端監聽同步
+           // 🌟 成員檔案（頭像與工號）雲端監聽同步
             bindSync('member_profiles', 'work_cache_member_profiles', d => {
                 if (d.profiles) {
                     memberProfilesStore = d.profiles;
                     safeSetLocal('work_cache_member_profiles', memberProfilesStore);
                     if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
                     if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                }
+            });
+
+            // 🌟 新增：出勤剔選名單 (duty_filter) 雲端即時同步
+            bindSync('duty_filter', 'work_cache_duty_filter', d => {
+                if (d && d.filter) {
+                    window.activeDutyMembersFilter = d.filter;
+                    safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
+                    if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
+                        window.renderMemberRosterListsOnly();
+                        window.updateRosterHeaderButtonsUI();
+                    }
+                    if ($('scheduleManageModal')?.classList.contains('flex')) {
+                        window.renderScheduleManager();
+                    }
+                }
+            });
+
+            // 🌟 新增：出勤顯示模式 (duty_filter_mode) 雲端即時同步
+            bindSync('duty_filter_mode', 'work_cache_duty_filter_mode', d => {
+                if (d && d.mode) {
+                    window.dutyFilterModeEnabled = d.mode;
+                    safeSetLocal('work_cache_duty_filter_mode', window.dutyFilterModeEnabled);
+                    if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
+                        window.renderMemberRosterListsOnly();
+                        window.updateRosterHeaderButtonsUI();
+                    }
+                    if ($('scheduleManageModal')?.classList.contains('flex')) {
+                        window.renderScheduleManager();
+                    }
                 }
             });
 
