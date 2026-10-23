@@ -1564,7 +1564,7 @@ const tabMetadataMap = {
                                 return 'pt_1';
                             }
                         },
-                        // 11. 機動長班1 (頂男廁)：限男性，主崗位 pt_6 (兼頂 pt_8)
+                        // 11. 機動長班1 (頂男廁)：限男性，主崗位 pt_6 (當男廁正選在休息時才頂位)
                         {
                             matchKey: 'EH0044',
                             prefLoc: 'pt_6',
@@ -1573,20 +1573,13 @@ const tabMetadataMap = {
                             getLoc: (s, e) => {
                                 if (s >= '08:00' && e <= '10:00') return 'pt_7'; // 休息
                                 if (s >= '15:00' && e <= '17:00') return 'pt_7'; // 休息
-                                if (s >= '10:00' && e <= '12:00') return 'pt_8'; // 頂位：花園仔男廁
-                                if (s >= '17:00' && e <= '19:00') return 'pt_8'; // 頂位：花園仔男廁
-                                return 'pt_6';
-                            }
-                        },
-                        // 12. 機動長班2：主崗位 pt_6
-                        {
-                            matchKey: 'EH0041',
-                            prefLoc: 'pt_6',
-                            prefGender: '',
-                            title: '機動2',
-                            getLoc: (s, e) => {
-                                if (s >= '10:00' && e <= '12:00') return 'pt_7'; // 休息
-                                if (s >= '17:00' && e <= '19:00') return 'pt_7'; // 休息
+                                // 🌟 檢查男廁正選是否正在休息；如果正選沒休，機動就留在 pt_6 機動崗位，絕不強行擠入男廁
+                                const tmpl1 = cleanRosterTemplates[0];
+                                const mainPerson = memberRoleMap.get(tmpl1);
+                                if (mainPerson && (s >= '10:00' && e <= '12:00' || s >= '17:00' && e <= '19:00')) {
+                                    // 只有當正選不在男廁上班時，才過來頂男廁
+                                    return 'pt_8';
+                                }
                                 return 'pt_6';
                             }
                         },
@@ -1742,11 +1735,21 @@ const tabMetadataMap = {
                                 }
                             }
 
-                            if (locId) {
+                           if (locId) {
                                 const gridKey = `${targetDateStr}_${locId}_${slot.start}_${slot.end}`;
                                 const curText = window._tempGridValues[gridKey] || '';
                                 const namesList = curText ? curText.split('\n') : [];
-                                if (!namesList.includes(personName)) {
+                                
+                                // 🌟 男廁 (pt_8) 上限嚴格鎖定為 1 人：如果已經有人，後者自動轉回機動 (pt_6)
+                                if (locId === 'pt_8' && namesList.length >= 1 && !namesList.includes(personName)) {
+                                    const fallbackKey = `${targetDateStr}_pt_6_${slot.start}_${slot.end}`;
+                                    const fbText = window._tempGridValues[fallbackKey] || '';
+                                    const fbList = fbText ? fbText.split('\n') : [];
+                                    if (!fbList.includes(personName)) {
+                                        fbList.push(personName);
+                                        window._tempGridValues[fallbackKey] = fbList.join('\n');
+                                    }
+                                } else if (!namesList.includes(personName)) {
                                     namesList.push(personName);
                                     window._tempGridValues[gridKey] = namesList.join('\n');
                                 }
