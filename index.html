@@ -61,8 +61,9 @@
         .btn-style-capsule { border-radius: 9999px !important; border-width: 2.5px !important; transition: all 0.15s ease; }
         .btn-style-capsule:active { transform: scale(0.96); }
 
-        .now-glowing-slot, .now-glowing-header { animation: sky-time-glow 2.8s infinite ease-in-out; border-left: 2px solid #38bdf8 !important; border-right: 2px solid #38bdf8 !important; position: relative; }
+        .now-glowing-slot, .now-glowing-header { box-shadow: inset 0 0 0 1.5px #38bdf8; border-left: 2px solid #38bdf8 !important; border-right: 2px solid #38bdf8 !important; position: relative; }
         .now-glowing-slot { z-index: 15; } .now-glowing-header { z-index: 25; border-top: 2px solid #38bdf8 !important; }
+        #scheduleManageModal *, #memberRosterModal * { -webkit-backface-visibility: hidden; backface-visibility: hidden; }
         .now-glowing-sub { box-shadow: 0 0 8px rgba(56, 189, 248, 0.5) inset; border: 1.5px solid #38bdf8 !important; border-radius: 4px; }
         body.dark-mode { background-color: #0f172a !important; color: #cbd5e1 !important; color-scheme: dark; }
         .dark-mode .bg-\[\#fdfbf7\], .dark-mode .bg-white, .dark-mode .timeline-card { background-color: #1e293b !important; border-color: #334155 !important; }
@@ -769,17 +770,24 @@ const tabMetadataMap = {
         window.nonLocalDisplayMode = getLocal('work_cache_nonlocal_disp_mode', 'name');
 
         window.toggleNonLocalDisplayMode = () => {
-            window.captureAll5DayDomValues(); // 切換前先保存畫面上的臨時排班變更
             window.nonLocalDisplayMode = window.nonLocalDisplayMode === 'name' ? 'id' : 'name';
             safeSetLocal('work_cache_nonlocal_disp_mode', window.nonLocalDisplayMode);
             
-            const scrollArea = document.getElementById('scheduleGridScrollArea');
-            const savedScroll = scrollArea ? scrollArea.scrollTop : 0;
-            
-            window.renderScheduleManager();
-            
-            const newScrollArea = document.getElementById('scheduleGridScrollArea');
-            if (newScrollArea) newScrollArea.scrollTop = savedScroll;
+            // 局部直接更新所有排班格內的文字，完全不重建表格 DOM（徹底消除閃動）
+            document.querySelectorAll('.sub-line-item').forEach(el => {
+                const canon = el.dataset.name;
+                if (canon) {
+                    el.textContent = window.getScheduleDisplayLabel(canon);
+                }
+            });
+
+            // 同步更新切換按鈕本身的外觀與文字
+            const btn = document.getElementById('btnToggleNonLocalDisp');
+            if (btn) {
+                btn.className = `px-2.5 py-1 rounded-lg text-[10.5px] font-black border transition-colors flex items-center gap-1 shadow-2xs ${window.nonLocalDisplayMode === 'id' ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300'}`;
+                const span = btn.querySelector('span');
+                if (span) span.textContent = `外地人：${window.nonLocalDisplayMode === 'id' ? '顯示編號' : '顯示名稱'}`;
+            }
             
             window.showToast(window.nonLocalDisplayMode === 'id' ? '🔢 外地人員已切換顯示為【員工編號】' : '👤 外地人員已切換顯示為【真實姓名】');
         };
@@ -1393,7 +1401,7 @@ const tabMetadataMap = {
         };
 
 // 🌟 一鍵智慧自動排班（清潔模式內建官方休息時間與替更頂位規則）
-        window.autoAssignDaySchedule = (targetDateStr) => {
+       window.autoAssignDaySchedule = (targetDateStr) => {
             window.captureAll5DayDomValues();
             const isClean = window.currentMapRole === 'clean';
             const roleKey = isClean ? 'clean' : 'cs';
@@ -1673,7 +1681,7 @@ const tabMetadataMap = {
                         }
                     });
 
-                   // 🌟 步驟 4：將配對完成的人員班次與休息時段填入表格暫存字典（優先考慮個人特殊排程與理想休息）
+                  // 🌟 步驟 4：將配對完成的人員班次與休息時段填入表格暫存字典（自動推算 1h/2h/3h 休息區間）
                     cleanSlots.forEach(slot => {
                         cleanRosterTemplates.forEach(tmpl => {
                             const personName = memberRoleMap.get(tmpl);
@@ -1682,22 +1690,55 @@ const tabMetadataMap = {
                             const prof = window.getMemberProfile(personName);
                             let locId = tmpl.getLoc(slot.start, slot.end);
 
+                            const toMins = (t) => { const [h, m] = (t || '00:00').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+                            const slotStartM = toMins(slot.start);
+                            const slotEndM = toMins(slot.end);
+
                             // 優先級 A：檢查當日是否有「未來特定日期排程」設定
                             const specialSched = (prof.futureSchedules || []).find(sc => sc.date === targetDateStr);
+                            let customRestRange = null;
+
                             if (specialSched) {
+                                let shStartM = 6 * 60 + 30, shEndM = 20 * 60;
                                 if (specialSched.shiftTime && specialSched.shiftTime.includes('-')) {
                                     const [shStart, shEnd] = specialSched.shiftTime.split('-');
-                                    if (slot.start < shStart || slot.end > shEnd) {
-                                        locId = null; // 不在上班範圍內不排班
+                                    shStartM = toMins(shStart);
+                                    shEndM = toMins(shEnd);
+                                    if (slotStartM < shStartM || slotEndM > shEndM) {
+                                        locId = null; // 超出指定上班時間不排班
+                                    } else if (!locId) {
+                                        locId = tmpl.prefLoc || 'pt_6'; // 在指定上班時間內自動補上主崗位
                                     }
+                                }
+
+                                // 若有設定「預計休息幾小時 (1, 2, 3)h」，智慧推算休息起訖分鐘
+                                const restDurHours = specialSched.restDurationNum || parseFloat(specialSched.restHours) || 0;
+                                if (restDurHours > 0) {
+                                    const restDurMins = Math.round(restDurHours * 60);
+                                    let rStartM = 12 * 60; // 預設 12:00 開始休
+                                    if (prof.idealRestTime && prof.idealRestTime.includes('-')) {
+                                        rStartM = toMins(prof.idealRestTime.split('-')[0]);
+                                    } else {
+                                        // 取上班時段正中間偏早作為休息起點（對齊 30 分鐘格）
+                                        rStartM = Math.floor(((shStartM + (shEndM - shStartM) * 0.45)) / 30) * 30;
+                                    }
+                                    customRestRange = [rStartM, rStartM + restDurMins];
                                 }
                             }
 
-                            // 優先級 B：檢查個人設定的「理想休息時間」，精準插入 pt_7 (休息)
-                            if (locId && prof.idealRestTime && prof.idealRestTime.includes('-')) {
-                                const [rStart, rEnd] = prof.idealRestTime.split('-');
-                                if (slot.start >= rStart && slot.end <= rEnd) {
-                                    locId = 'pt_7'; // 強制優先切換為休息崗位
+                            // 優先級 B：套用當日特殊休息時數，或個人常態「理想休息時間」
+                            if (locId) {
+                                if (customRestRange) {
+                                    if (slotStartM >= customRestRange[0] && slotEndM <= customRestRange[1]) {
+                                        locId = 'pt_7';
+                                    } else if (locId === 'pt_7') {
+                                        locId = tmpl.prefLoc || 'pt_6'; // 覆蓋原模板預設休息，改用自訂休息時數
+                                    }
+                                } else if (prof.idealRestTime && prof.idealRestTime.includes('-')) {
+                                    const [rStart, rEnd] = prof.idealRestTime.split('-');
+                                    if (slotStartM >= toMins(rStart) && slotEndM <= toMins(rEnd)) {
+                                        locId = 'pt_7';
+                                    }
                                 }
                             }
 
@@ -1772,8 +1813,9 @@ const tabMetadataMap = {
                     });
                 }
 
-                window.renderScheduleManager();
-                window.showToast(`✨ 已完成【${targetDateStr}】自動排班！性別、志願與休息已排妥。`);
+               window._hasUnsavedGridEdits = true; // 標記為未儲存的暫存編輯，讓渲染函式強制從 _tempGridValues 讀取
+window.renderScheduleManager(true); // 傳入 true 強制重新整理 DOM 畫面
+window.showToast(`✨ 已完成【${targetDateStr}】自動排班！性別、志願與休息已排妥。`);
             });
         };
         // 🌟 處理人員頭像上傳、自動縮圖壓縮與儲存
@@ -1910,7 +1952,7 @@ const tabMetadataMap = {
             window.showToast('🗑️ 已刪除該筆特殊排程');
         };
 
-        // 🌟 補齊：未來特定日期排程管理彈窗（設定日期、上班範圍、預計休息，優先影響智慧排班）
+        // 🌟 補齊：未來特定日期排程管理彈窗（預計休息改為直接輸入幾小時 1, 2, 3 h）
         window.openMemberFutureScheduleModal = (name) => {
             const canonical = window.resolveMemberIdentity ? window.resolveMemberIdentity(name) : (name || '').trim();
             const profile = window.getMemberProfile(canonical);
@@ -1958,29 +2000,28 @@ const tabMetadataMap = {
                         </div>
                         <div class="flex items-center justify-between gap-1.5">
                             <span class="text-[10.5px] font-bold text-slate-600 shrink-0">上班時段：</span>
-                            <input type="text" id="futureSchedShiftInput" placeholder="例: 08:00-17:00" class="flex-1 bg-white border border-slate-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
+                            <input type="text" id="futureSchedShiftInput" placeholder="例: 08:00-19:00" class="flex-1 bg-white border border-slate-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
                         </div>
                         <div class="flex items-center justify-between gap-1.5">
                             <span class="text-[10.5px] font-bold text-slate-600 shrink-0">預計休息：</span>
-                            <div class="flex items-center gap-1 flex-1">
-                                <input type="text" id="futureSchedRestInput" placeholder="例: 12:00-13:00" 
+                            <div class="flex items-center gap-1 flex-1 justify-end">
+                                <div class="flex gap-1 mr-1">
+                                    ${[1, 2, 3].map(h => `
+                                        <button type="button" onclick="const inp=document.getElementById('futureSchedRestInput'); inp.value='${h}'; document.getElementById('futureSchedRestTag').innerText='${h}h';" class="px-1.5 py-0.5 bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded text-[10px] font-mono font-black transition-colors">${h}h</button>
+                                    `).join('')}
+                                </div>
+                                <input type="number" id="futureSchedRestInput" min="0" max="8" step="0.5" placeholder="幾h" 
                                     oninput="(() => {
                                         const tag = document.getElementById('futureSchedRestTag');
                                         if (!tag) return;
-                                        const v = this.value.trim();
-                                        if (!v.includes('-')) { tag.innerText = '0h'; return; }
-                                        const [s, e] = v.split('-');
-                                        const [sh, sm] = (s || '').split(':').map(Number);
-                                        const [eh, em] = (e || '').split(':').map(Number);
-                                        if (isNaN(sh) || isNaN(eh)) { tag.innerText = '0h'; return; }
-                                        const diff = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
-                                        tag.innerText = diff > 0 ? (diff / 60) + 'h' : '0h';
+                                        const num = parseFloat(this.value.trim());
+                                        tag.innerText = (!isNaN(num) && num > 0) ? num + 'h' : '0h';
                                     })()"
-                                    class="w-full bg-white border border-slate-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
-                                <span id="futureSchedRestTag" class="text-[10px] font-mono font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-1 py-0.5 rounded shrink-0">0h</span>
+                                    class="w-14 bg-white border border-slate-300 rounded-md px-1.5 py-0.5 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
+                                <span id="futureSchedRestTag" class="text-[10px] font-mono font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-1.5 py-0.5 rounded shrink-0">0h</span>
                             </div>
                         </div>
-                        <button type="button" onclick="window.saveMemberFutureScheduleAction('${safeName}')" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-1.5 text-xs font-black shadow-xs active:scale-95 transition-all">
+                        <button type="button" onclick="window.saveMemberFutureScheduleAction('${safeName}')" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-1.5 text-xs font-black shadow-xs transition-colors">
                             確認新增特殊排程
                         </button>
                     </div>
@@ -1991,9 +2032,9 @@ const tabMetadataMap = {
                             <div class="bg-slate-50 border border-slate-200 rounded-xl p-2 flex items-center justify-between text-xs">
                                 <div class="min-w-0 pr-1">
                                     <div class="font-mono font-black text-indigo-700 text-[11px]">${sc.date}</div>
-                                    <div class="text-[10px] text-slate-600">上班: <strong class="font-mono">${sc.shiftTime || '常態'}</strong> ${sc.restHours ? `· 休息: <strong class="font-mono text-emerald-700">${sc.restHours}</strong>` : ''}</div>
+                                    <div class="text-[10px] text-slate-600">上班: <strong class="font-mono">${sc.shiftTime || '常態'}</strong> ${sc.restHours ? `· 預計休息: <strong class="font-mono text-emerald-700">${sc.restHours}</strong>` : ''}</div>
                                 </div>
-                                <button type="button" onclick="window.removeMemberFutureSchedule('${safeName}', ${idx})" class="p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 active:scale-90 transition-all shrink-0">
+                                <button type="button" onclick="window.removeMemberFutureSchedule('${safeName}', ${idx})" class="p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
                                     <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                                 </button>
                             </div>
@@ -2001,7 +2042,7 @@ const tabMetadataMap = {
                     </div>
 
                     <div class="pt-2 mt-2 border-t border-slate-100 flex justify-end">
-                        <button type="button" onclick="document.getElementById('memberFutureSchedModal').classList.add('hidden')" class="px-4 py-1.5 bg-slate-800 text-white rounded-xl text-xs font-bold active:scale-95 shadow-xs">
+                        <button type="button" onclick="document.getElementById('memberFutureSchedModal').classList.add('hidden')" class="px-4 py-1.5 bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs">
                             關閉
                         </button>
                     </div>
@@ -2011,39 +2052,29 @@ const tabMetadataMap = {
             if (window.lucide) lucide.createIcons({ root: modal });
         };
 
-        // 🌟 儲存未來排程按鈕邏輯
+        // 🌟 儲存未來排程按鈕邏輯（直接儲存輸入的小時數，例如 1 -> 1h）
         window.saveMemberFutureScheduleAction = (name) => {
             const canonical = window.resolveMemberIdentity ? window.resolveMemberIdentity(name) : (name || '').trim();
             const dateVal = document.getElementById('futureSchedDateInput')?.value.trim();
             const shiftVal = document.getElementById('futureSchedShiftInput')?.value.trim();
-            const restVal = document.getElementById('futureSchedRestInput')?.value.trim();
+            const restRaw = document.getElementById('futureSchedRestInput')?.value.trim();
 
             if (!dateVal) return window.showToast('⚠️ 請選擇指定日期', true);
 
-            let restHours = '';
-            if (restVal && restVal.includes('-')) {
-                const [s, e] = restVal.split('-');
-                const [sh, sm] = (s || '').split(':').map(Number);
-                const [eh, em] = (e || '').split(':').map(Number);
-                if (!isNaN(sh) && !isNaN(eh)) {
-                    const diff = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
-                    restHours = diff > 0 ? (diff / 60) + 'h' : '';
-                }
-            }
+            const restNum = parseFloat(restRaw);
+            const restHours = (!isNaN(restNum) && restNum > 0) ? `${restNum}h` : '';
 
             const profile = window.getMemberProfile(canonical);
             const schedules = Array.isArray(profile.futureSchedules) ? [...profile.futureSchedules] : [];
 
-            // 移除同日期的舊設定，覆蓋為最新設定
             const filtered = schedules.filter(sc => sc.date !== dateVal);
             filtered.push({
                 date: dateVal,
                 shiftTime: shiftVal || '',
-                restTime: restVal || '',
-                restHours: restHours || ''
+                restDurationNum: (!isNaN(restNum) && restNum > 0) ? restNum : 0,
+                restHours: restHours
             });
 
-            // 按日期先後排序
             filtered.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
             window.saveMemberProfile(canonical, { futureSchedules: filtered });
@@ -2051,7 +2082,7 @@ const tabMetadataMap = {
             if (document.getElementById('memberProfileModal') && !document.getElementById('memberProfileModal').classList.contains('hidden')) {
                 window.openMemberProfilePopup(canonical, window._currentPopupLocation);
             }
-            window.showToast(`✅ 已新增【${dateVal}】特殊排程！`);
+            window.showToast(`✅ 已新增【${dateVal}】特殊排程（休息 ${restHours || '0h'}）！`);
         };
 
         // 🌟 把它貼在這裡：強制的「所屬分類」切換執行函式
@@ -7488,16 +7519,34 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 if (!activeGridMember) {
                     statusBadge.className = 'text-[10.5px] font-bold px-2.5 py-1 rounded-lg border bg-slate-50 text-slate-400 border-slate-200';
                     statusBadge.innerHTML = '尚未選取工具/人員 (移至左側邊緣展開選單)';
-                } else if (activeGridMember === 'ERASER') {
-                    statusBadge.className = 'text-[10.5px] font-black px-2.5 py-1 rounded-lg border bg-pink-50 text-pink-600 border-pink-200 animate-pulse';
+               } else if (activeGridMember === 'ERASER') {
+                    statusBadge.className = 'text-[10.5px] font-black px-2.5 py-1 rounded-lg border bg-pink-50 text-pink-600 border-pink-200';
                     statusBadge.innerHTML = '🧹 目前工具：橡皮擦模式';
                 } else if (activeGridMember === 'SPLITTER') {
-                    statusBadge.className = 'text-[10.5px] font-black px-2.5 py-1 rounded-lg border bg-indigo-50 text-indigo-600 border-indigo-200 animate-pulse';
+                    statusBadge.className = 'text-[10.5px] font-black px-2.5 py-1 rounded-lg border bg-indigo-50 text-indigo-600 border-indigo-200';
                     statusBadge.innerHTML = '✂️ 目前工具：拆分/合併模式';
                 } else {
                     const col = window.getMemberColorClass(activeGridMember);
+                    // 🧠 智能統計：計算該員今日已排工時與休息時數
+                    const todayStr = getNowInputStrs().date;
+                    let workMins = 0, restMins = 0;
+                    document.querySelectorAll(`[data-date="${todayStr}"][data-loc][data-start][data-end]`).forEach(cell => {
+                        const disp = cell.classList.contains('grid-input-display') ? cell : cell.querySelector('.grid-input-display');
+                        if (!disp) return;
+                        const names = window.extractCellText(disp).split('\n').map(x => x.trim());
+                        if (names.includes(activeGridMember)) {
+                            const [sh, sm] = (cell.dataset.start || '0:0').split(':').map(Number);
+                            const [eh, em] = (cell.dataset.end || '0:0').split(':').map(Number);
+                            const dur = (eh * 60 + em) - (sh * 60 + sm);
+                            if (dur > 0) {
+                                if (cell.dataset.loc === 'pt_7') restMins += dur;
+                                else workMins += dur;
+                            }
+                        }
+                    });
+                    const statsText = (workMins > 0 || restMins > 0) ? ` (今日: 上班${workMins/60}h · 休${restMins/60}h)` : '';
                     statusBadge.className = `text-[10.5px] font-black px-2.5 py-1 rounded-lg border ${col.bg} ${col.text} ${col.border} shadow-2xs`;
-                    statusBadge.innerHTML = `當前選取：${activeGridMember}`;
+                    statusBadge.innerHTML = `當前選取：${activeGridMember}<span class="font-mono text-[10px] ml-1 opacity-85">${statsText}</span>`;
                 }
             }
 
@@ -7680,17 +7729,35 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     // 如果這格已經有他了（不管點在哪一行），直接清除該行，實現完美的切換/取消
                     currentLines[existingIndex] = '';
                     window.showToast(`➖ 已移除「${targetCanonical}」`);
-                } else {
-                    const currentInLine = resolve(currentLines[lineIdx]);
+               } else {
+                    // 🧠 智能化功能：檢查同一天、同一時段，該員工是否已經在其他崗位上班（防止分身衝堂）
+                    let movedFromLocName = '';
+                    Object.keys(mapData.points).forEach(otherLoc => {
+                        if (otherLoc === locId) return;
+                        const otherKey = `${dateStr}_${otherLoc}_${start}_${end}`;
+                        const otherCell = document.querySelector(`td[data-date="${dateStr}"][data-loc="${otherLoc}"][data-start="${start}"][data-end="${end}"] .grid-input-display, .grid-input-display[data-date="${dateStr}"][data-loc="${otherLoc}"][data-start="${start}"][data-end="${end}"]`);
+                        if (otherCell) {
+                            const otherLines = window.extractCellText(otherCell).split('\n').map(x => resolve(x.trim()));
+                            if (otherLines.includes(targetCanonical)) {
+                                const cleaned = otherLines.filter(x => x && x !== targetCanonical).join('\n');
+                                window._tempGridValues[otherKey] = cleaned;
+                                otherCell.innerHTML = window.renderCellLinesHtml(cleaned, otherLoc, dateStr, start, end);
+                                movedFromLocName = mapData.points[otherLoc]?.name || otherLoc;
+                            }
+                        }
+                    });
 
+                    const currentInLine = resolve(currentLines[lineIdx]);
                     if (currentInLine) {
-                        // 該行已有其他人 → 真正需要新增一行來容納新成員
                         currentLines.push(targetCanonical);
-                        window.showToast(`➕ 已自動新增行並指派「${targetCanonical}」`);
                     } else {
-                        // 該行是空的 → 直接填入
                         currentLines[lineIdx] = targetCanonical;
-                        window.showToast(`➕ 第 ${lineIdx + 1} 行已指派「${targetCanonical}」`);
+                    }
+
+                    if (movedFromLocName) {
+                        window.showToast(`🔄 已將「${targetCanonical}」從【${movedFromLocName}】調動至此崗位`);
+                    } else {
+                        window.showToast(`➕ 已指派「${targetCanonical}」`);
                     }
                 }
             }
@@ -8482,16 +8549,14 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         </div>
                         <button type="button" onclick="document.getElementById('sched-day-card-${getNowInputStrs().date}')?.scrollIntoView({ behavior: 'smooth', block: 'center' })" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-2.5 py-1 rounded-lg text-[10.5px] font-black active:scale-95">📍 定位今日</button>
                         
-                        <!-- 🌟 外地人專屬：名稱 / 員工編號 顯示轉換按鈕 -->
-                        <button type="button" onclick="window.toggleNonLocalDisplayMode()" class="px-2.5 py-1 rounded-lg text-[10.5px] font-black border transition-all active:scale-95 flex items-center gap-1 shadow-2xs ${window.nonLocalDisplayMode === 'id' ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300'}" title="點擊切換排班表上的外地人員顯示格式（本地人維持顯示姓名）">
+                      <!-- 🌟 外地人專屬：名稱 / 員工編號 顯示轉換按鈕 -->
+                        <button type="button" id="btnToggleNonLocalDisp" onclick="window.toggleNonLocalDisplayMode()" class="px-2.5 py-1 rounded-lg text-[10.5px] font-black border transition-colors flex items-center gap-1 shadow-2xs ${window.nonLocalDisplayMode === 'id' ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300'}" title="點擊切換排班表上的外地人員顯示格式（本地人維持顯示姓名）">
                             <i data-lucide="repeat" class="w-3 h-3"></i>
                             <span>外地人：${window.nonLocalDisplayMode === 'id' ? '顯示編號' : '顯示名稱'}</span>
                         </button>
 
-                        <!-- 顯示目前選取的人員或工具 -->
-                        
-                        <!-- 顯示目前選取的人員或工具 -->
-                        <div id="activeMemberBadge" class="text-[10.5px] font-black px-2.5 py-1 rounded-lg border ${!activeGridMember ? 'bg-slate-50 text-slate-400 border-slate-200 font-bold' : (activeGridMember === 'ERASER' ? 'bg-pink-50 text-pink-600 border-pink-200 animate-pulse' : (activeGridMember === 'SPLITTER' ? 'bg-indigo-50 text-indigo-600 border-indigo-200 animate-pulse' : `${curActiveCol.bg} ${curActiveCol.text}${curActiveCol.border} shadow-2xs`))}">
+                        <!-- 顯示目前選取的人員或工具（移除 animate-pulse 避免閃爍） -->
+                        <div id="activeMemberBadge" class="text-[10.5px] font-black px-2.5 py-1 rounded-lg border ${!activeGridMember ? 'bg-slate-50 text-slate-400 border-slate-200 font-bold' : (activeGridMember === 'ERASER' ? 'bg-pink-50 text-pink-600 border-pink-200' : (activeGridMember === 'SPLITTER' ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : `${curActiveCol.bg} ${curActiveCol.text}${curActiveCol.border} shadow-2xs`))}">
                             ${!activeGridMember ? '尚未選取工具/人員 (移至左側邊緣展開選單)' : (activeGridMember === 'ERASER' ? '🧹 目前工具：橡皮擦模式' : (activeGridMember === 'SPLITTER' ? '✂️ 目前工具：拆分/合併模式' : `當前選取：${activeGridMember}`))}
                         </div>
                     </div>
