@@ -8094,6 +8094,149 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             window.showToast(`📋 已將 ${prevDateStr.slice(5)} 的排班複製到 ${targetDateStr.slice(5)}！`);
         };
 
+// 🌟 新增：一鍵導出當日「同事本日休息時間」文字公告（支援自動合併時段、一鍵複製與下載 .txt）
+        window.exportDayBreakScheduleText = (targetDateStr) => {
+            window.captureAll5DayDomValues();
+            const domVals = window._tempGridValues || {};
+            const isClean = window.currentMapRole === 'clean';
+            const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+            const daySchedules = multiStore[targetDateStr] || [];
+
+            // 1. 收集該日所有在 pt_7 (休息中) 的時段
+            let rawRestSlots = []; // 格式: { name, start, end }
+            const prefix = `${targetDateStr}_pt_7_`;
+            let foundInDom = false;
+
+            Object.keys(domVals).forEach(k => {
+                if (k.startsWith(prefix)) {
+                    foundInDom = true;
+                    const restPart = k.slice(prefix.length); // 例如 08:00_08:30
+                    const [start, end] = restPart.split('_');
+                    const text = domVals[k] || '';
+                    text.split(/[\n\s,、/]+/).forEach(rawName => {
+                        const clean = rawName.trim();
+                        if (clean && !clean.includes('休') && !clean.includes('...')) {
+                            const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean;
+                            rawRestSlots.push({ name: canon, start, end });
+                        }
+                    });
+                }
+            });
+
+            // 若暫存沒抓到，從已存檔的排班紀錄抓取
+            if (!foundInDom && daySchedules.length > 0) {
+                daySchedules.filter(s => s.locationId === 'pt_7').forEach(s => {
+                    const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(s.name) : s.name;
+                    rawRestSlots.push({ name: canon, start: s.start, end: s.end });
+                });
+            }
+
+            if (rawRestSlots.length === 0) {
+                return window.showToast(`⚠️ 【${targetDateStr}】尚無任何「休息中」的排班資料！`, true);
+            }
+
+            // 2. 依人員分組並自動合併相連的休息時段（例如 08:00-08:30 + 08:30-09:00 -> 08:00-09:00）
+            const memberRestMap = new Map();
+            rawRestSlots.forEach(slot => {
+                if (!memberRestMap.has(slot.name)) memberRestMap.set(slot.name, []);
+                memberRestMap.get(slot.name).push({ start: slot.start, end: slot.end });
+            });
+
+            const memberBlocks = [];
+            memberRestMap.forEach((slots, canonName) => {
+                // 按開始時間排序並去重
+                slots.sort((a, b) => a.start.localeCompare(b.start));
+                const merged = [];
+                let cur = null;
+                slots.forEach(s => {
+                    if (!cur) {
+                        cur = { ...s };
+                    } else if (cur.end >= s.start) {
+                        if (s.end > cur.end) cur.end = s.end;
+                    } else {
+                        merged.push(cur);
+                        cur = { ...s };
+                    }
+                });
+                if (cur) merged.push(cur);
+
+                // 🌟 決定顯示名稱：外地人若有設定員工編號則優先顯示編號（如 EH0045-2），本地人或本身即為編號者直接顯示
+                const prof = window.getMemberProfile ? window.getMemberProfile(canonName) : null;
+                let displayLabel = canonName;
+                if (prof && prof.id && prof.id.trim()) {
+                    if (prof.residency === '外地' || window.nonLocalDisplayMode === 'id' || window.isStaffIdFormat(canonName)) {
+                        displayLabel = prof.id.trim();
+                    }
+                }
+
+                memberBlocks.push({
+                    label: displayLabel,
+                    firstStart: merged[0]?.start || '99:99',
+                    intervals: merged.map(m => `(${m.start}-${m.end})`)
+                });
+            });
+
+            // 3. 依照第一段休息的開始時間由早到晚排序（符合您範例中 08:00 -> 08:30 -> 10:00 -> 11:00 -> 18:00 的順序）
+            memberBlocks.sort((a, b) => a.firstStart.localeCompare(b.firstStart) || a.label.localeCompare(b.label));
+
+            // 4. 組裝成您指定的標準公告格式
+            const bodySections = memberBlocks.map(b => `${b.label}\n${b.intervals.join('\n')}`).join('\n\n');
+            const finalOutput = `${targetDateStr}\n同事本日休息時間\nColleague's break time today\n\n${bodySections}\n\n麻煩大家留意自己的休息時間以及互相告知，謝謝`;
+
+            // 5. 自動複製到剪貼簿並彈出預覽視窗
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(finalOutput).then(() => {
+                    window.showToast('📋 已自動複製休息時間公告！可直接貼上群組');
+                }).catch(() => {});
+            }
+
+            let modal = document.getElementById('breakExportPreviewModal');
+            if (modal) modal.remove();
+
+            const modalHtml = `
+            <div id="breakExportPreviewModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[10050] flex items-center justify-center p-4" onclick="if(event.target === this) this.remove()">
+                <div class="bg-white rounded-2xl p-4 w-full max-w-[360px] max-h-[85vh] shadow-2xl border border-slate-200 flex flex-col animate-pop-in" onclick="event.stopPropagation()">
+                    <div class="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-100 shrink-0">
+                        <div class="flex items-center space-x-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                            <h3 class="font-black text-sm text-slate-800">當日休息時間公告預覽</h3>
+                        </div>
+                        <button type="button" onclick="document.getElementById('breakExportPreviewModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+
+                    <textarea id="breakExportTextarea" class="w-full flex-1 min-h-[300px] bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs font-mono font-bold text-slate-800 leading-relaxed focus:outline-none focus:border-amber-500 resize-none scrollbar-hide">${finalOutput}</textarea>
+
+                    <div class="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0">
+                        <button type="button" onclick="(() => {
+                            const txt = document.getElementById('breakExportTextarea').value;
+                            const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+                            const a = document.createElement('a');
+                            a.href = URL.createObjectURL(blob);
+                            a.download = '同事休息時間_${targetDateStr}.txt';
+                            a.click();
+                            window.showToast('💾 已下載 .txt 檔案');
+                        })()" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center active:scale-95 transition-all">
+                            <i data-lucide="download" class="w-3.5 h-3.5 mr-1"></i>下載檔案
+                        </button>
+
+                        <button type="button" onclick="(() => {
+                            const ta = document.getElementById('breakExportTextarea');
+                            ta.select();
+                            navigator.clipboard.writeText(ta.value);
+                            window.showToast('✅ 已複製！可直接貼上至微信/WhatsApp');
+                        })()" class="flex-1 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-black shadow-sm flex items-center justify-center active:scale-95 transition-all">
+                            <i data-lucide="copy" class="w-3.5 h-3.5 mr-1.5"></i>一鍵複製全文
+                        </button>
+                    </div>
+                </div>
+            </div>`;
+
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            if (window.lucide) lucide.createIcons({ root: document.getElementById('breakExportPreviewModal') });
+        };
+
         // 🌟 4. 單獨清空某一天排班（立即清空暫存、存檔並強制刷新畫面）
         window.clearSingleDaySchedule = (targetDateStr) => {
             if (!confirm(`確定要清空【${targetDateStr}】當天的排班內容嗎？\n（其他日子不受影響）`)) return;
@@ -8409,7 +8552,10 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     }
 
                     safeSetLocal('work_cache_split_hours', splitHoursState); 
-                    window.renderScheduleManager();
+                    // 🌟 核心關鍵修復：必須傳入 true (skipDomCapture = true)！
+                    // 否則 renderScheduleManager 一開頭會把畫面上舊的空白格抓回來，蓋掉剛匯入的整點資料！
+                    window._hasUnsavedGridEdits = false;
+                    window.renderScheduleManager(true);
                     window.updateMapSimulation();
                     window.showToast(`✅ 已匯入並自動儲存【${targetDateStr}】排班！`);
                 } catch(err) { 
@@ -8669,7 +8815,8 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             <span class="text-xs font-mono font-black text-slate-800">${dayInfo.dateStr} (${dayInfo.weekDay})</span>
                             ${isToday ? '<span class="text-[10px] font-black text-blue-600 bg-white px-1.5 py-0.2 rounded border border-blue-200">📍 地圖即時生效中</span>' : ''}
                         </div>
-                        <div class="flex items-center gap-1.5 flex-wrap">
+                       <div class="flex items-center gap-1.5 flex-wrap">
+                            <button type="button" onclick="window.exportDayBreakScheduleText('${dStr}')" class="bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出當日同事休息時間公告"><i data-lucide="coffee" class="w-3 h-3 mr-1"></i>導出休息</button>
                             <button type="button" onclick="window.autoAssignDaySchedule('${dStr}')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="依出勤名單與每人優先級自動排班"><i data-lucide="sparkles" class="w-3 h-3 mr-1"></i>智慧排班</button>
                             ${prevDateStr ? `<button type="button" onclick="window.copyPrevDaySchedule('${dStr}', '${prevDateStr}')" class="bg-white hover:bg-blue-50 text-blue-600 font-bold text-[10px] px-2 py-1 rounded-lg border border-blue-200 shadow-2xs transition-colors flex items-center active:scale-95" title="複製前一日排班"><i data-lucide="copy" class="w-3 h-3 mr-1"></i>複製前日</button>` : ''}
                             <button type="button" onclick="window.triggerDayCSVImport('${dStr}')" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[10px] px-2 py-1 rounded-lg border border-emerald-200 transition-colors flex items-center active:scale-95"><i data-lucide="file-up" class="w-3 h-3 mr-1"></i>匯入此日</button>
