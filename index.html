@@ -7111,12 +7111,8 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
             });
 
-            // 🌟 新增：客服 7日固定班次更表與班次設定雲端即時同步（含防閃爍回音攔截）
+            // 🌟 新增：客服 7日固定班次更表與班次設定雲端即時同步
             bindSync('cs_weekly_roster', 'work_cache_cs_weekly_roster', d => {
-                // 🛡️ 核心防閃動：如果是自己這台設備在 1.2 秒內剛點擊儲存的回音，直接忽略不重繪！
-                if (window._lastCsRosterLocalSaveTime && (Date.now() - window._lastCsRosterLocalSaveTime) < 1200) {
-                    return;
-                }
                 if (d && d.roster) {
                     window.csWeeklyRosterStore = d.roster;
                     safeSetLocal('work_cache_cs_weekly_roster', window.csWeeklyRosterStore);
@@ -7773,8 +7769,6 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         };
 
         window.saveCsWeeklyRosterData = () => {
-            // 🛡️ 標記本機儲存時間戳，阻擋 Firebase onSnapshot 瞬間回彈重繪造成閃爍
-            window._lastCsRosterLocalSaveTime = Date.now();
             safeSetLocal('work_cache_cs_weekly_roster', window.csWeeklyRosterStore);
             safeSetLocal('work_cache_cs_shift_presets', window.csShiftPresets);
             syncConfig('cs_weekly_roster', {
@@ -7832,6 +7826,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
         window.selectCsShiftBrush = (brushId) => {
             window.activeCsShiftBrush = brushId;
+            // 🌟 點選畫筆時只更新畫筆按鈕的選取框，完全不觸動下方表格！
             const presets = window.getCsShiftPresets();
             presets.forEach(p => {
                 const btn = document.getElementById(`cs-brush-btn-${p.id}`);
@@ -7852,7 +7847,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             }
         };
 
-        // 🌟 點擊儲存格：純局部 DOM 替換，0 重繪、0 閃動
+        // 🌟 補回缺失的點擊儲存格填班函式（局部更新，不閃爍不彈動）
         window.applyCsRosterCell = (dateStr, memberName, cellEl) => {
             const brush = window.activeCsShiftBrush;
             if (!brush) return window.showToast('請先在上方選取要填入的班次畫筆！', true);
@@ -7897,296 +7892,1126 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         </div>`;
                 }
 
-                cellEl.className = `p-1 border-r border-slate-200 cursor-pointer hover:bg-indigo-50/50 transition-colors select-none align-middle h-[54px] ${cellBg}`;
+                cellEl.className = `p-1 border-r border-slate-200 cursor-pointer hover:bg-indigo-50/50 active:scale-[0.98] transition-all select-none align-middle h-[54px] ${cellBg}`;
                 cellEl.innerHTML = cellContent;
                 return;
             }
-        };
 
-        // 點擊姓名右側閃電圖示：將當前畫筆一鍵填滿該員整週 7 天
-        window.fillMemberWholeWeekCsRoster = (memberName, e) => {
-            if (e) e.stopPropagation();
-            const brush = window.activeCsShiftBrush;
-            if (!brush) return;
-            const weekDays = window.getCsWeekDates(window.csRosterWeekOffset);
-            weekDays.forEach(d => {
-                if (!window.csWeeklyRosterStore[d.dateStr]) window.csWeeklyRosterStore[d.dateStr] = {};
-                if (brush === 'CLEAR') delete window.csWeeklyRosterStore[d.dateStr][memberName];
-                else window.csWeeklyRosterStore[d.dateStr][memberName] = brush;
-            });
-            window.saveCsWeeklyRosterData();
             window.renderCsWeeklyRosterModal();
-            window.showToast(brush === 'CLEAR' ? `🧹 已清空「${memberName}」本週班次` : `⚡ 已將「${memberName}」整週填滿指定班次`);
         };
 
-        // 一鍵複製上一週的 7日更表到本週
-        window.copyPrevWeekCsRoster = () => {
-            const curWeek = window.getCsWeekDates(window.csRosterWeekOffset);
-            const prevWeek = window.getCsWeekDates(window.csRosterWeekOffset - 1);
-            curWeek.forEach((d, idx) => {
-                const prevDateStr = prevWeek[idx].dateStr;
-                const prevData = window.csWeeklyRosterStore[prevDateStr];
-                if (prevData) {
-                    window.csWeeklyRosterStore[d.dateStr] = JSON.parse(JSON.stringify(prevData));
-                }
-            });
-            window.saveCsWeeklyRosterData();
-            window.renderCsWeeklyRosterModal();
-            window.showToast('📋 已成功將上一週的班次更表複製到本週！');
-        };
+        window.renderCsWeeklyRosterModal = () => {
+            const modal = $('csWeeklyRosterModal');
+            if (!modal) return;
 
-        // 清空當前檢視週的全部班次
-        window.clearCurrentWeekCsRoster = () => {
-            if (!confirm('確定要清空目前這一週（7天）的所有客服班次嗎？')) return;
-            const curWeek = window.getCsWeekDates(window.csRosterWeekOffset);
-            curWeek.forEach(d => {
-                delete window.csWeeklyRosterStore[d.dateStr];
-            });
-            window.saveCsWeeklyRosterData();
-            window.renderCsWeeklyRosterModal();
-            window.showToast('🧹 已清空本週班次更表');
-        };
+            // 🌟 1. 記憶目前滾動條位置（垂直與水平）
+            const scrollArea = document.getElementById('csRosterTableScrollArea');
+            const savedScrollTop = scrollArea ? scrollArea.scrollTop : 0;
+            const savedScrollLeft = scrollArea ? scrollArea.scrollLeft : 0;
 
-        // 修改固定班次的名稱、上下班時段或休息時數（自動重算工時）
-        window.updateCsPresetItem = (idx, field, val) => {
             const presets = window.getCsShiftPresets();
-            if (!presets[idx]) return;
-            presets[idx][field] = val.trim();
-
-            if (field === 'time' || field === 'rest') {
-                const norm = String(presets[idx].time || '').replace(/[～~—–－至到]/g, '-').replace(/：/g, ':');
-                const match = norm.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
-                if (match) {
-                    const sm = parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
-                    const em = parseInt(match[3], 10) * 60 + parseInt(match[4], 10);
-                    const restH = parseFloat(presets[idx].rest) || 0;
-                    if (em > sm) {
-                        const netHours = parseFloat(((em - sm) / 60 - restH).toFixed(1));
-                        presets[idx].work = `${Math.max(0, netHours)}h`;
-                    }
-                }
-            }
-            window.saveCsWeeklyRosterData();
-            window.renderCsWeeklyRosterModal();
-        };
-
-        // 🌟 導出更表 CSV：依照「姓名, 21星期三, 22星期四...」標準格式匯出
-        window.exportCsWeeklyRosterCSV = () => {
             const weekDays = window.getCsWeekDates(window.csRosterWeekOffset);
             const csList = (Array.isArray(csMembersStore) && csMembersStore.length > 0) ? csMembersStore : teamMembers;
-            const presets = window.getCsShiftPresets();
+            const curBrush = window.activeCsShiftBrush;
 
-            const headers = ['姓名', ...weekDays.map(d => {
-                const dayNum = parseInt(d.dateStr.split('-')[2], 10);
-                return `${dayNum}${d.weekDay}`;
-            })];
-            const rows = [headers];
+            const weekRangeLabel = `${weekDays[0].shortDate} ～ ${weekDays[6].shortDate}`;
 
-            csList.forEach(memberName => {
-                const row = [memberName];
-                weekDays.forEach(d => {
-                    const shiftId = window.csWeeklyRosterStore?.[d.dateStr]?.[memberName] || '';
-                    if (shiftId === 'OFF') {
-                        row.push('休息');
-                    } else if (shiftId) {
-                        const matchedP = presets.find(p => p.id === shiftId);
-                        if (matchedP) {
-                            const restNum = parseFloat(matchedP.rest) || 1;
-                            const workNum = parseFloat(matchedP.work) || 8;
-                            row.push(`${matchedP.time} (${restNum}) ${workNum}`);
-                        } else {
-                            row.push('');
-                        }
-                    } else {
-                        row.push('0.0');
-                    }
-                });
-                rows.push(row);
+            modal.innerHTML = `
+                <div class="bg-[#fdfbf7] rounded-2xl w-full max-w-[920px] max-h-[92vh] shadow-2xl border-2 border-slate-200 flex flex-col overflow-hidden animate-pop-in" onclick="event.stopPropagation()">
+                    <!-- 頂部標題與週次切換列 -->
+                    <header class="px-3.5 py-2.5 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                        <div class="flex items-center space-x-2">
+                            <div class="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-xs">
+                                <i data-lucide="calendar-days" class="w-4 h-4"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-black text-sm text-slate-800 flex items-center gap-1.5">
+                                    客服 7日班次更表
+                                    <span class="text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">固定班次 · 連動智慧排班</span>
+                                </h3>
+                            </div>
+                        </div>
+
+                        <!-- 週次切換與快捷工具 -->
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                            <div class="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
+                                <button type="button" onclick="window.csRosterWeekOffset--; window.renderCsWeeklyRosterModal();" class="px-2 py-1 hover:bg-white rounded-lg text-xs font-black text-slate-700 active:scale-95 transition-all" title="上一週">◀</button>
+                                <button type="button" onclick="window.csRosterWeekOffset = 0; window.renderCsWeeklyRosterModal();" class="px-2.5 py-1 text-xs font-mono font-black ${window.csRosterWeekOffset === 0 ? 'text-indigo-700 bg-white rounded-lg shadow-2xs' : 'text-slate-700 hover:text-indigo-600'}">
+                                    ${window.csRosterWeekOffset === 0 ? '本週' : (window.csRosterWeekOffset < 0 ? `前${Math.abs(window.csRosterWeekOffset)}週` : `後${window.csRosterWeekOffset}週`)} (${weekRangeLabel})
+                                </button>
+                                <button type="button" onclick="window.csRosterWeekOffset++; window.renderCsWeeklyRosterModal();" class="px-2 py-1 hover:bg-white rounded-lg text-xs font-black text-slate-700 active:scale-95 transition-all" title="下一週">▶</button>
+                            </div>
+
+                            <button type="button" onclick="window.copyPrevWeekCsRoster()" class="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-[11px] font-black flex items-center active:scale-95 transition-all">
+                                <i data-lucide="copy" class="w-3 h-3 mr-1"></i>複製上週
+                            </button>
+                            <button type="button" onclick="window.clearCurrentWeekCsRoster()" class="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-[11px] font-black flex items-center active:scale-95 transition-all">
+                                <i data-lucide="trash-2" class="w-3 h-3 mr-1"></i>清空本週
+                            </button>
+                            <button type="button" onclick="window.closeCsWeeklyRosterModal()" class="p-1 text-slate-400 hover:text-slate-600 rounded-lg ml-1">
+                                <i data-lucide="x" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                    </header>
+
+                    <!-- 固定班次畫筆選擇器 -->
+                    <div class="px-3.5 py-2 bg-slate-50 border-b border-slate-200 flex flex-col gap-2 shrink-0">
+                        <div class="flex items-center justify-between gap-2 flex-wrap">
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <span class="text-[11px] font-black text-slate-500 mr-1">1. 選取班次畫筆：</span>
+                                ${presets.map(p => {
+                                    const isSel = curBrush === p.id;
+                                    return `
+                                    <button type="button" id="cs-brush-btn-${p.id}" onclick="window.selectCsShiftBrush('${p.id}')" class="px-2.5 py-1 rounded-xl border text-left transition-all flex items-center gap-1.5 active:scale-95 ${p.bg} ${p.text} ${p.border} ${isSel ? `ring-2 ${p.activeRing} shadow-sm scale-[1.03]` : 'opacity-80 hover:opacity-100'}">
+                                        <span class="font-black text-xs">${p.code}</span>
+                                        <span class="text-[10px] font-mono font-bold bg-white/75 px-1.5 py-0.2 rounded border border-black/5">${p.time} (上${p.work}·休${p.rest})</span>
+                                    </button>`;
+                                }).join('')}
+
+                                <button type="button" id="cs-brush-btn-OFF" onclick="window.selectCsShiftBrush('OFF')" class="px-3 py-1 rounded-xl border text-xs font-black transition-all active:scale-95 ${curBrush === 'OFF' ? 'bg-slate-700 text-white border-slate-800 ring-2 ring-slate-500 shadow-sm scale-[1.03]' : 'bg-slate-200 text-slate-700 border-slate-300 opacity-80 hover:opacity-100'}">
+                                    🏖️ 例休 (OFF)
+                                </button>
+
+                                <button type="button" id="cs-brush-btn-CLEAR" onclick="window.selectCsShiftBrush('CLEAR')" class="px-2.5 py-1 rounded-xl border text-xs font-bold transition-all active:scale-95 ${curBrush === 'CLEAR' ? 'bg-rose-500 text-white border-rose-600 ring-2 ring-rose-400 shadow-sm scale-[1.03]' : 'bg-white text-rose-600 border-rose-200 hover:bg-rose-50'}">
+                                    🧹 清除
+                                </button>
+                            </div>
+
+                            <button type="button" onclick="window.isEditingCsPresets = !window.isEditingCsPresets; window.renderCsWeeklyRosterModal();" class="px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all flex items-center ${window.isEditingCsPresets ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'}">
+                                <i data-lucide="sliders-horizontal" class="w-3 h-3 mr-1"></i>${window.isEditingCsPresets ? '收起設定' : '設定班次時間'}
+                            </button>
+                        </div>
+
+                        <!-- 展開式：自訂固定班次時間與休息時數設定面板 -->
+                        ${window.isEditingCsPresets ? `
+                        <div class="p-2.5 bg-white rounded-xl border border-indigo-200 shadow-inner grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 animate-pop-in">
+                            ${presets.map((p, idx) => `
+                                <div class="p-2 rounded-lg border ${p.border} ${p.bg} space-y-1.5">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[10.5px] font-black ${p.text}">班次名稱：</span>
+                                        <input type="text" value="${p.code}" onchange="window.updateCsPresetItem(${idx}, 'code', this.value)" class="w-20 bg-white border border-slate-300 rounded px-1.5 py-0.5 text-xs font-black text-center text-slate-800">
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[10.5px] font-bold ${p.text}">起訖時間：</span>
+                                        <input type="text" value="${p.time}" placeholder="07:00-15:00" onchange="window.updateCsPresetItem(${idx}, 'time', this.value)" class="w-28 bg-white border border-slate-300 rounded px-1.5 py-0.5 text-[11px] font-mono font-bold text-center text-slate-800">
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[10.5px] font-bold ${p.text}">休息時數：</span>
+                                        <div class="flex items-center gap-1">
+                                            <input type="text" value="${p.rest}" placeholder="1h" onchange="window.updateCsPresetItem(${idx}, 'rest', this.value)" class="w-14 bg-white border border-slate-300 rounded px-1.5 py-0.5 text-[11px] font-mono font-bold text-center text-slate-800">
+                                            <span class="text-[10px] font-mono font-black ${p.text}">(上${p.work})</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>` : ''}
+                    </div>
+
+                    <!-- 7日棋盤式表格主體（加上專屬 id 用於鎖定滾動條） -->
+                    <div id="csRosterTableScrollArea" class="flex-1 overflow-auto p-2.5 sm:p-3 min-h-0" style="scroll-behavior: auto;">
+                        <table class="w-full border-collapse text-center bg-white rounded-xl overflow-hidden shadow-xs border border-slate-300">
+                            <thead>
+                                <tr class="bg-slate-100 border-b border-slate-300">
+                                    <th class="sticky left-0 z-20 bg-slate-100 p-2 border-r border-slate-300 w-[115px] min-w-[115px] text-xs font-black text-slate-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.08)]">
+                                        客服成員 \\ 日期
+                                    </th>
+                                    ${weekDays.map(d => `
+                                        <th class="p-1.5 border-r border-slate-300 min-w-[92px] ${d.isToday ? 'bg-blue-600 text-white' : (d.isWeekend ? 'bg-amber-50/70 text-amber-900' : 'text-slate-700')}">
+                                            <div class="text-[10px] font-bold opacity-85 leading-none">${d.weekDay} ${d.isToday ? '· 今日' : ''}</div>
+                                            <div class="text-xs font-mono font-black mt-0.5 leading-tight">${d.shortDate}</div>
+                                        </th>
+                                    `).join('')}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${csList.map(memberName => {
+                                    const col = window.getMemberColorClass(memberName);
+                                    const safeName = memberName.replace(/'/g, "\\'");
+                                    return `
+                                    <tr class="border-b border-slate-200 hover:bg-slate-50/60 transition-colors">
+                                        <td class="sticky left-0 z-10 bg-white p-1.5 border-r border-slate-300 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.06)]">
+                                            <div class="flex items-center justify-between gap-1 px-1">
+                                                <span class="font-black text-xs px-2 py-0.5 rounded-md border ${col.bg} ${col.text} ${col.border} truncate">${memberName}</span>
+                                                <button type="button" onclick="window.fillMemberWholeWeekCsRoster('${safeName}', event)" class="p-1 rounded hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 transition-colors shrink-0" title="將目前選取的班次一鍵填滿此人整週 7 天">
+                                                    <i data-lucide="zap" class="w-3.5 h-3.5"></i>
+                                                </button>
+                                            </div>
+                                        </td>
+                                        ${weekDays.map(d => {
+                                            const shiftId = window.csWeeklyRosterStore?.[d.dateStr]?.[memberName] || '';
+                                            const matchedP = presets.find(p => p.id === shiftId);
+                                            let cellContent = `<span class="text-[11px] text-slate-300 font-bold select-none">+ 點擊排班</span>`;
+                                            let cellBg = d.isToday ? 'bg-blue-50/20' : 'bg-white';
+
+                                            if (shiftId === 'OFF') {
+                                                cellBg = 'bg-slate-100/90';
+                                                cellContent = `
+                                                    <div class="inline-flex flex-col items-center justify-center px-2.5 py-1 rounded-lg bg-slate-200 text-slate-600 border border-slate-300 font-black text-xs">
+                                                        <span>🏖️ 例休</span>
+                                                    </div>`;
+                                            } else if (matchedP) {
+                                                cellBg = matchedP.bg + '/40';
+                                                cellContent = `
+                                                    <div class="inline-flex flex-col items-center justify-center px-2 py-0.5 rounded-lg border ${matchedP.bg} ${matchedP.text} ${matchedP.border} shadow-2xs w-[92%] mx-auto">
+                                                        <div class="font-black text-xs leading-tight">${matchedP.code}</div>
+                                                        <div class="text-[9.5px] font-mono font-bold opacity-90 leading-tight mt-0.5">${matchedP.time}</div>
+                                                        <div class="text-[9px] font-mono opacity-75 leading-none mt-0.5">上${matchedP.work} · 休${matchedP.rest}</div>
+                                                    </div>`;
+                                            }
+
+                                            // 🌟 2. 這裡補上 data-is-today 並傳入 this
+                                            return `
+                                            <td data-is-today="${d.isToday}" onclick="window.applyCsRosterCell('${d.dateStr}', '${safeName}', this)" class="p-1 border-r border-slate-200 cursor-pointer hover:bg-indigo-50/50 active:scale-[0.98] transition-all select-none align-middle h-[54px] ${cellBg}">
+                                                ${cellContent}
+                                            </td>`;
+                                        }).join('')}
+                                    </tr>`;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- 底部提示列 -->
+                    <footer class="px-4 py-2.5 bg-white border-t border-slate-200 flex flex-wrap justify-between items-center gap-2 shrink-0">
+                        <span class="text-[11px] font-bold text-slate-500">💡 點擊格子即可填入班次；點擊姓名右側「⚡」可一鍵填滿該員整週。排妥後至 5日排班表按「✨ 智慧排班」即自動套用！</span>
+                        <button type="button" onclick="window.closeCsWeeklyRosterModal()" class="px-5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black shadow-sm active:scale-95">
+                            完成並關閉
+                        </button>
+                    </footer>
+                </div>
+            `;
+
+            if (window.lucide) lucide.createIcons({ root: modal });
+
+            // 🌟 3. 在同一幀（0延遲）無縫恢復捲動高度與寬度，徹底杜絕彈跳
+            const newScrollArea = document.getElementById('csRosterTableScrollArea');
+            if (newScrollArea && (savedScrollTop > 0 || savedScrollLeft > 0)) {
+                newScrollArea.scrollTop = savedScrollTop;
+                newScrollArea.scrollLeft = savedScrollLeft;
+            }
+        };
+
+        window.openScheduleManager = () => {
+            window.renderScheduleManager();
+            $('scheduleManageModal')?.classList.replace('hidden', 'flex');
+            // 🌟 打開排班總表時，自動將畫面捲動定位至「今日 (當日)」
+            setTimeout(() => {
+                const todayStr = getNowInputStrs().date;
+                const todayCard = document.getElementById(`sched-day-card-${todayStr}`);
+                if (todayCard) {
+                    todayCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }, 80);
+        };
+        window.closeScheduleManager = () => { $('scheduleManageModal')?.classList.replace('flex', 'hidden'); window.updateMapSimulation(); };
+        window.toggleEditMembers = () => { window.openMemberRosterModal(); };
+
+        window.addTeamMember = () => {
+            const isClean = window.currentMapRole === 'clean';
+            const name = prompt(`請輸入新${isClean ? '清潔' : '客服'}成員名字：`);
+            if (name && name.trim()) {
+                teamMembers.push(name.trim());
+                if (isClean) {
+                    cleanMembersStore = [...teamMembers];
+                    safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                    syncConfig('clean_team_members', { members: cleanMembersStore });
+                } else {
+                    csMembersStore = [...teamMembers];
+                    safeSetLocal('work_cache_team_members', csMembersStore);
+                    syncConfig('team_members', { members: csMembersStore });
+                }
+                window.renderScheduleManager();
+            }
+        };
+        window.removeTeamMember = (idx) => {
+            const isClean = window.currentMapRole === 'clean';
+            teamMembers.splice(idx, 1);
+            if (isClean) {
+                cleanMembersStore = [...teamMembers];
+                safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                syncConfig('clean_team_members', { members: cleanMembersStore });
+            } else {
+                csMembersStore = [...teamMembers];
+                safeSetLocal('work_cache_team_members', csMembersStore);
+                syncConfig('team_members', { members: csMembersStore });
+            }
+            window.renderScheduleManager();
+        };
+
+        window.selectGridMember = (name) => {
+            activeGridMember = (activeGridMember === name) ? null : name;
+            // 更新左側抽屜內單列按鈕的外觀與選中狀態
+            document.querySelectorAll('.member-btn-container').forEach(c => {
+                const cName = c.dataset.name, sel = cName === activeGridMember, isEraser = cName === 'ERASER', isSplitter = cName === 'SPLITTER', div = c.querySelector('div');
+                if (!div) return;
+                if (isSplitter) {
+                    div.className = `w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${sel ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-[1.02]' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-2xs'}`;
+                } else if (isEraser) {
+                    div.className = `w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${sel ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-[1.02]' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-2xs'}`;
+                } else {
+                    const col = window.getMemberColorClass(cName);
+                    div.className = `w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-between gap-1 ${sel ? `${col.activeBg} text-white border-transparent shadow-md scale-[1.02]` : `${col.bg} ${col.text}${col.border} hover:opacity-80 shadow-2xs`}`;
+                }
             });
 
-            const csvContent = "\uFEFF" + rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n');
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = `客服班次表_${weekDays[0].dateStr}.csv`;
-            a.click();
-            window.showToast('📥 已成功導出班次表 CSV！');
-        };
-
-        window.triggerCsWeeklyRosterImport = () => {
-            let input = document.getElementById('csWeeklyRosterCsvInput');
-            if (!input) {
-                input = document.createElement('input');
-                input.type = 'file';
-                input.id = 'csWeeklyRosterCsvInput';
-                input.accept = '.csv';
-                input.className = 'hidden';
-                input.onchange = window.importCsWeeklyRosterCSV;
-                document.body.appendChild(input);
+            // 更新頂部控制列的「目前選取狀態徽章」
+            const statusBadge = $('activeMemberBadge');
+            if (statusBadge) {
+                if (!activeGridMember) {
+                    statusBadge.className = 'text-[10.5px] font-bold px-2.5 py-1 rounded-lg border bg-slate-50 text-slate-400 border-slate-200';
+                    statusBadge.innerHTML = '尚未選取工具/人員 (移至左側邊緣展開選單)';
+               } else if (activeGridMember === 'ERASER') {
+                    statusBadge.className = 'text-[10.5px] font-black px-2.5 py-1 rounded-lg border bg-pink-50 text-pink-600 border-pink-200';
+                    statusBadge.innerHTML = '🧹 目前工具：橡皮擦模式';
+                } else if (activeGridMember === 'SPLITTER') {
+                    statusBadge.className = 'text-[10.5px] font-black px-2.5 py-1 rounded-lg border bg-indigo-50 text-indigo-600 border-indigo-200';
+                    statusBadge.innerHTML = '✂️ 目前工具：拆分/合併模式';
+                } else {
+                    const col = window.getMemberColorClass(activeGridMember);
+                    // 🧠 智能統計：計算該員今日已排工時與休息時數
+                    const todayStr = getNowInputStrs().date;
+                    let workMins = 0, restMins = 0;
+                    document.querySelectorAll(`[data-date="${todayStr}"][data-loc][data-start][data-end]`).forEach(cell => {
+                        const disp = cell.classList.contains('grid-input-display') ? cell : cell.querySelector('.grid-input-display');
+                        if (!disp) return;
+                        const names = window.extractCellText(disp).split('\n').map(x => x.trim());
+                        if (names.includes(activeGridMember)) {
+                            const [sh, sm] = (cell.dataset.start || '0:0').split(':').map(Number);
+                            const [eh, em] = (cell.dataset.end || '0:0').split(':').map(Number);
+                            const dur = (eh * 60 + em) - (sh * 60 + sm);
+                            if (dur > 0) {
+                                if (cell.dataset.loc === 'pt_7') restMins += dur;
+                                else workMins += dur;
+                            }
+                        }
+                    });
+                    const statsText = (workMins > 0 || restMins > 0) ? ` (今日: 上班${workMins/60}h · 休${restMins/60}h)` : '';
+                    statusBadge.className = `text-[10.5px] font-black px-2.5 py-1 rounded-lg border ${col.bg} ${col.text} ${col.border} shadow-2xs`;
+                    statusBadge.innerHTML = `當前選取：${activeGridMember}<span class="font-mono text-[10px] ml-1 opacity-85">${statsText}</span>`;
+                }
             }
-            input.click();
+
+            // 🌟 核心：即時切換【表格中】所有人名的底色
+            const isMemberFocus = activeGridMember && activeGridMember !== 'ERASER' && activeGridMember !== 'SPLITTER';
+            document.querySelectorAll('.sub-line-item').forEach(el => {
+                const canon = el.dataset.name || el.textContent.trim();
+                if (!canon) return;
+                const col = window.getMemberColorClass(canon);
+                
+                el.className = el.className.replace(/\bbg-\S+/g, '').replace(/\btext-slate-\S+/g, '');
+
+                if (isMemberFocus) {
+                    if (canon === activeGridMember) {
+                        el.classList.add(col ? col.bg : 'bg-blue-100', 'text-slate-900');
+                        el.classList.remove('bg-white', 'text-slate-400');
+                    } else {
+                        el.classList.add('bg-white', 'text-slate-400');
+                        el.classList.remove('text-slate-900');
+                    }
+                } else {
+                    el.classList.add(col ? col.bg : 'bg-white', 'text-slate-900');
+                    el.classList.remove('text-slate-400');
+                }
+
+                if (!el.classList.contains('text-[10px]')) {
+                    el.classList.add('text-[10px]');
+                }
+            });
+
+            document.querySelectorAll('.grid-input').forEach(ta => { ta.classList.toggle('cursor-pointer', !!activeGridMember); ta.classList.toggle('select-none', !!activeGridMember); });
         };
 
-        // 🌟 匯入更表 CSV：精準相容「姓名, 21星期三, 22星期四...」與「07:00-19:30 (1) 11.5」格式
-        window.importCsWeeklyRosterCSV = (event) => {
-            const file = event.target.files?.[0];
-            if (!file) return;
+        const applyGridAction = (el) => {
+            if (gridDragAction === 'erase') el.value = '';
+            else {
+                let names = (el.value || '').split(/[\n\s]+/).filter(Boolean);
+                if (gridDragAction === 'add' && !names.includes(activeGridMember)) names.push(activeGridMember);
+                else if (gridDragAction === 'remove') names = names.filter(n => n !== activeGridMember);
+                el.value = names.join('\n');
+            }
+        };
 
+        // ====== 手機版專屬：點擊格子直接填入或清除排班名字 ======
+        window._lastCellTapTime = 0;
+        window._lastCellTapKey = '';
+
+       // 🌟 輔助函式：產生帶有獨立格線的多行 HTML（魚檔預設3行、機動預設4行、其他預設1行，每多1人自動加1行）
+                        window.getLocMinRows = (locId) => {
+            const isClean = window.currentMapRole === 'clean';
+            if (locId === 'pt_4') return isClean ? 3 : 1; // 魚檔預設 3 行
+            if (locId === 'pt_6') return isClean ? 4 : 1; // 機動預設 4 行
+            if (locId === 'pt_1') return isClean ? 1 : 2;
+            return 1;
+        };
+
+               window.renderCellLinesHtml = (rawText, locId, dateStr = '', start = '', end = '', forceRows = 0) => {
+            const minRows = window.getLocMinRows(locId);
+            let lines = [];
+            if (rawText !== undefined && rawText !== null && rawText !== '') {
+                lines = String(rawText).split('\n').map(n => {
+                    const clean = n.trim();
+                    return clean ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean) : '';
+                });
+            }
+            
+            // 🌟 核心過濾：去除尾端多餘的連續空行，但保留最低行數
+            while (lines.length > minRows && !lines[lines.length - 1] && !lines[lines.length - 2]) {
+                lines.pop();
+            }
+
+            const totalRows = Math.max(minRows, lines.length, forceRows || 0);
+            while (lines.length < totalRows) {
+                lines.push('');
+            }
+
+            // 🌟 嚴格判定：只有在「有選取特定人員」且「不是橡皮擦/拆分」時才啟動聚焦過濾
+    const isMemberFocus = activeGridMember && activeGridMember !== 'ERASER' && activeGridMember !== 'SPLITTER';
+
+    let html = '';
+    for (let i = 0; i < totalRows; i++) {
+        const n = lines[i] || '';
+        const canon = n ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n) : '';
+        const col = canon ? window.getMemberColorClass(canon) : null;
+        const borderCls = i < totalRows - 1 ? 'border-b border-slate-300' : '';
+        const dispText = canon ? (window.getScheduleDisplayLabel ? window.getScheduleDisplayLabel(canon) : canon) : '';
+
+        let bgCls = col ? col.bg : 'bg-white hover:bg-blue-50/60';
+        let textCls = 'text-slate-900 font-black'; // 預設一律粗黑
+
+        if (canon && isMemberFocus) {
+            if (canon === activeGridMember) {
+                bgCls = col ? col.bg : 'bg-blue-100';
+                textCls = 'text-slate-900 font-black';
+            } else {
+                bgCls = 'bg-white';
+                textCls = 'text-slate-400 font-normal'; // 只有當別人被聚焦時，沒被選中的才會變淡
+            }
+        }
+
+                html += `<div data-name="${canon}" data-line-idx="${i}" onclick="window.handleSubLineClick(event, this, '${dateStr}', '${locId}', '${start}', '${end}', ${i})" class="sub-line-item w-full h-[22px] min-h-[22px] flex items-center justify-center ${borderCls} ${bgCls} ${textCls} text-[10px] leading-none truncate px-0.5 select-none cursor-pointer transition-colors active:scale-95 pointer-events-auto">${dispText}</div>`;
+            }
+            return html;
+        };
+
+        window.extractCellText = (containerEl) => {
+            if (!containerEl) return '';
+            const items = containerEl.querySelectorAll('.sub-line-item');
+            if (items.length > 0) {
+                // 🌟 優先讀取 dataset.name，確保外地人切換顯示為「員工編號」時，底層依舊精準存取人員身分
+                return Array.from(items).map(el => (el.dataset.name !== undefined ? el.dataset.name : el.textContent).trim()).join('\n');
+            }
+            return (containerEl.textContent || '').trim();
+        };
+
+        // 🌟 精準行點擊函式：點哪一行就精準改哪一行，修復重複點擊同名人無限新增行的问题
+        window.handleSubLineClick = (e, lineEl, dateStr, locId, start, end, lineIdx) => {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
+            if (activeGridMember === 'SPLITTER') {
+                window.toggleSplitHour(dateStr, locId, start);
+                return;
+            }
+
+            if (!activeGridMember) {
+                window.showToast("👉 請先在上方選取人員、橡皮擦或拆分工具！", true);
+                return;
+            }
+
+            const now = Date.now();
+            const tapKey = `${dateStr}_${locId}_${start}_${end}_${lineIdx}_${activeGridMember}`;
+            if (window._lastSubLineTapKey === tapKey && (now - window._lastSubLineTapTime) < 250) {
+                return;
+            }
+            window._lastSubLineTapTime = now;
+            window._lastSubLineTapKey = tapKey;
+
+            const displayDiv = lineEl.closest ? lineEl.closest('.grid-input-display') : null;
+            if (!displayDiv) return;
+
+            const hostCell = lineEl.closest ? lineEl.closest('[data-loc][data-date]') : null;
+            if (hostCell && hostCell.dataset) {
+                dateStr = hostCell.dataset.date || dateStr;
+                locId   = hostCell.dataset.loc  || locId;
+                start   = hostCell.dataset.start || start;
+                end     = hostCell.dataset.end   || end;
+            }
+
+            const cellKey = `${dateStr}_${locId}_${start}_${end}`;
+            window._tempGridValues = window._tempGridValues || {};
+
+            const subItems = Array.from(displayDiv.querySelectorAll('.sub-line-item'));
+            const minRows = window.getLocMinRows(locId);
+            let totalRows = Math.max(minRows, subItems.length, (lineIdx | 0) + 1);
+            let currentLines = subItems.map(item => (item.dataset.name !== undefined ? item.dataset.name : (item.textContent || '')).trim());
+            while (currentLines.length < totalRows) currentLines.push('');
+            if (lineIdx >= currentLines.length) {
+                while (currentLines.length <= lineIdx) currentLines.push('');
+            }
+
+            if (activeGridMember === 'ERASER') {
+                if (currentLines[lineIdx]) {
+                    const oldName = currentLines[lineIdx];
+                    currentLines[lineIdx] = '';
+                    window.showToast(`🧹 已清除第 ${lineIdx + 1} 行「${oldName}」`);
+                } else {
+                    window.showToast(`🧹 此行目前已是空的`);
+                }
+            } else {
+                const targetCanonical = window.resolveMemberIdentity ? window.resolveMemberIdentity(activeGridMember) : activeGridMember;
+                const resolve = (n) => n ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n) : '';
+
+                // 🌟 修正防呆：檢查這格裡面是否已經有這個人了
+                const existingIndex = currentLines.findIndex(line => resolve(line) === targetCanonical);
+
+                if (existingIndex !== -1) {
+                    // 如果這格已經有他了（不管點在哪一行），直接清除該行，實現完美的切換/取消
+                    currentLines[existingIndex] = '';
+                    window.showToast(`➖ 已移除「${targetCanonical}」`);
+               } else {
+                   // 允許同時間兼任多個崗位，不再自動從其他崗位刪除
+                   const currentInLine = resolve(currentLines[lineIdx]);
+                   if (currentInLine) {
+                       currentLines.push(targetCanonical);
+                   } else {
+                       currentLines[lineIdx] = targetCanonical;
+                   }
+
+                   window.showToast(`➕ 已指派「${targetCanonical}」`);
+               }
+            }
+
+            // 自動收回多餘的連續空白行
+            while (currentLines.length > minRows && !currentLines[currentLines.length - 1] && !currentLines[currentLines.length - 2]) {
+                currentLines.pop();
+            }
+
+            const hasAny = currentLines.some(n => !!n);
+            const joinedVal = hasAny ? currentLines.filter(Boolean).join('\n') : ''; // 🌟 加上 filter(Boolean) 確保不存入空字串行
+            window._tempGridValues[cellKey] = joinedVal;
+            window._hasUnsavedGridEdits = true; // 🌟 標記目前有未儲存的手動修改，保護不被雲端洗掉
+            const needRows = Math.max(minRows, currentLines.filter(Boolean).length);
+            displayDiv.innerHTML = window.renderCellLinesHtml(joinedVal, locId, dateStr, start, end, needRows);
+
+            // 🌟 即時更新該格的缺人紅框狀態（清潔模式）
+            if (window.currentMapRole === 'clean' && hostCell) {
+                let reqMin = (locId === 'pt_4') ? 2 : ((locId === 'pt_6' || locId === 'pt_7') ? 0 : 1);
+                const filledCnt = currentLines.filter(Boolean).length;
+                if (filledCnt < reqMin) {
+                    hostCell.classList.add('border-2', 'border-red-300/90', 'bg-red-50/30');
+                    hostCell.classList.remove('bg-white');
+                } else {
+                    hostCell.classList.remove('border-2', 'border-red-300/90', 'bg-red-50/30');
+                    hostCell.classList.add('bg-white');
+                }
+            }
+
+            if (window.syncLocTrackRows) {
+                window.syncLocTrackRows(dateStr, locId, needRows);
+            }
+        };
+
+        // 🌟 補齊遺失的橫向行數同步函式：當某格新增行時，同一崗位當天高度與行數自動對齊
+        window.syncLocTrackRows = (dateStr, locId) => {
+            const minRows = window.getLocMinRows(locId);
+            const allDisplays = Array.from(document.querySelectorAll(`td[data-date="${dateStr}"][data-loc="${locId}"] .grid-input-display, .grid-input-display[data-date="${dateStr}"][data-loc="${locId}"]`));
+            if (!allDisplays.length) return;
+
+            let maxFilledRows = minRows;
+            allDisplays.forEach(div => {
+                const raw = window.extractCellText(div);
+                const cnt = String(raw || '').split('\n').map(n => n.trim()).filter(Boolean).length;
+                if (cnt > maxFilledRows) maxFilledRows = cnt;
+            });
+
+            allDisplays.forEach(div => {
+                const host = div.closest('[data-loc][data-date]') || div;
+                const s = host.dataset.start || '';
+                const e = host.dataset.end || '';
+                const raw = window.extractCellText(div);
+                div.innerHTML = window.renderCellLinesHtml(raw, locId, dateStr, s, e, maxFilledRows);
+            });
+        };
+
+                       window.handleCellMobileClick = (el, dateStr, locId, start, end) => {
+            const cell = (el && el.closest) ? (el.closest('[data-loc][data-date]') || el) : el;
+            const d = (cell && cell.dataset) ? cell.dataset : {};
+            dateStr = d.date || dateStr;
+            locId   = d.loc  || locId;
+            start   = d.start || start;
+            end     = d.end   || end;
+
+            const displayDiv = (cell && cell.classList && cell.classList.contains('grid-input-display'))
+                ? cell
+                : ((cell && cell.querySelector) ? (cell.querySelector('.grid-input-display') || cell) : el);
+
+            const subItems = displayDiv ? Array.from(displayDiv.querySelectorAll('.sub-line-item')) : [];
+
+            let targetIdx = 0;
+            const lineEl = (el && el.closest) ? el.closest('.sub-line-item') : null;
+            if (lineEl && lineEl.dataset && lineEl.dataset.lineIdx !== undefined && lineEl.dataset.lineIdx !== '') {
+                targetIdx = parseInt(lineEl.dataset.lineIdx, 10) || 0;
+            } else if (subItems.length > 0) {
+                let foundEmpty = false;
+                for (let i = 0; i < subItems.length; i++) {
+                    if (!subItems[i].textContent.trim()) {
+                        targetIdx = i;
+                        foundEmpty = true;
+                        break;
+                    }
+                }
+                if (!foundEmpty) targetIdx = subItems.length - 1;
+            }
+
+            const targetEl = subItems[targetIdx] || displayDiv;
+            window.handleSubLineClick(null, targetEl, dateStr, locId, start, end, targetIdx);
+        };
+
+        window.startGridDrag = (el) => {
+            if (!activeGridMember) return; el.blur(); isGridDragging = true;
+            if (activeGridMember === 'ERASER') { gridDragAction = 'erase'; applyGridAction(el); }
+            else { let names = (el.value || '').split(/[\n\s]+/).filter(Boolean); gridDragAction = names.includes(activeGridMember) ? 'remove' : 'add'; applyGridAction(el); }
+        };
+        window.onGridDragEnter = (el) => { if (isGridDragging && activeGridMember) { el.blur(); applyGridAction(el); } };
+        window.onGridTouchMove = (e) => {
+            if (!isGridDragging || !activeGridMember) return; e.preventDefault();
+            const el = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
+            if (el && el.classList.contains('grid-input') && el !== window.lastTouchedEl) { window.lastTouchedEl = el; window.onGridDragEnter(el); }
+        };
+        window.stopGridDrag = () => { isGridDragging = false; gridDragAction = null; window.lastTouchedEl = null; };
+        document.addEventListener('mouseup', window.stopGridDrag); document.addEventListener('touchend', window.stopGridDrag);
+
+        // 🌟 捕捉當下 5 日所有 DOM 格子內容（支援多行 sub-line-item 解析）
+        window.captureAll5DayDomValues = () => {
+            window._tempGridValues = window._tempGridValues || {};
+                                    const normCellText = (txt) => {
+                if (!txt) return '';
+                // 保留空行（上面空白、下面有人）
+                return String(txt).split('\n').map(n => {
+                    const t = n.trim();
+                    if (!t) return '';
+                    return window.resolveMemberIdentity ? window.resolveMemberIdentity(t) : t;
+                }).join('\n');
+            };
+            document.querySelectorAll('.grid-input').forEach(i => {
+                if (i.dataset.date) window._tempGridValues[`${i.dataset.date}_${i.dataset.loc}_${i.dataset.start}_${i.dataset.end}`] = normCellText(i.value);
+            });
+            document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
+                const disp = td.querySelector('.grid-input-display');
+                if (disp) window._tempGridValues[`${td.dataset.date}_${td.dataset.loc}_${td.dataset.start}_${td.dataset.end}`] = normCellText(window.extractCellText(disp));
+            });
+            document.querySelectorAll('.grid-input-display[data-loc][data-date]').forEach(div => {
+                window._tempGridValues[`${div.dataset.date}_${div.dataset.loc}_${div.dataset.start}_${div.dataset.end}`] = normCellText(window.extractCellText(div));
+            });
+        };
+
+        window.toggleSplitHour = (dateStr, locId, hourStr) => {
+            const rolePrefix = window.currentMapRole === 'clean' ? 'clean_' : 'cs_';
+            const [startH] = hourStr.split(':'), endH = String(parseInt(startH, 10) + 1).padStart(2, '0');
+            const stateKey = `${rolePrefix}${dateStr}_${locId}_${hourStr}`, willBeSplit = !splitHoursState[stateKey];
+            window.captureAll5DayDomValues();
+
+            const fullKey = `${dateStr}_${locId}_${hourStr}_${endH}:00`, hA = `${dateStr}_${locId}_${startH}:00_${startH}:30`, hB = `${dateStr}_${locId}_${startH}:30_${endH}:00`;
+            if (willBeSplit) { const val = window._tempGridValues[fullKey] || ''; window._tempGridValues[hA] = val; window._tempGridValues[hB] = val; delete window._tempGridValues[fullKey]; }
+            else { const names = Array.from(new Set([...(window._tempGridValues[hA]||'').split(/[\n\s]+/), ...(window._tempGridValues[hB]||'').split(/[\n\s]+/)])).map(n => n.trim()).filter(Boolean); window._tempGridValues[fullKey] = names.join('\n'); delete window._tempGridValues[hA]; delete window._tempGridValues[hB]; }
+            splitHoursState[stateKey] = willBeSplit; safeSetLocal('work_cache_split_hours', splitHoursState); window.renderScheduleManager();
+        };
+
+        // 🌟 3. 一鍵「複製前一日」排班到當天
+        window.copyPrevDaySchedule = (targetDateStr, prevDateStr) => {
+            window.captureAll5DayDomValues();
+            const prefixPrev = `${prevDateStr}_`;
+            const prefixTarget = `${targetDateStr}_`;
+
+            Object.keys(window._tempGridValues).forEach(k => {
+                if (k.startsWith(prefixPrev)) {
+                    const suffix = k.slice(prefixPrev.length);
+                    window._tempGridValues[prefixTarget + suffix] = window._tempGridValues[k];
+                }
+            });
+
+            const rolePrefix = window.currentMapRole === 'clean' ? 'clean_' : 'cs_';
+            Object.keys(splitHoursState).forEach(sk => {
+                if (sk.startsWith(`${rolePrefix}${prevDateStr}_`)) {
+                    const rest = sk.slice(`${rolePrefix}${prevDateStr}_`.length);
+                    splitHoursState[`${rolePrefix}${targetDateStr}_${rest}`] = splitHoursState[sk];
+                }
+            });
+            safeSetLocal('work_cache_split_hours', splitHoursState);
+            window.renderScheduleManager();
+            window.showToast(`📋 已將 ${prevDateStr.slice(5)} 的排班複製到 ${targetDateStr.slice(5)}！`);
+        };
+
+// 🌟 新增：一鍵導出當日「同事本日休息時間」文字公告（支援自動合併時段、一鍵複製與下載 .txt）
+        window.exportDayBreakScheduleText = (targetDateStr) => {
+            window.captureAll5DayDomValues();
+            const domVals = window._tempGridValues || {};
+            const isClean = window.currentMapRole === 'clean';
+            const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+            const daySchedules = multiStore[targetDateStr] || [];
+
+            // 1. 收集該日所有在 pt_7 (休息中) 的時段
+            let rawRestSlots = []; // 格式: { name, start, end }
+            const prefix = `${targetDateStr}_pt_7_`;
+            let foundInDom = false;
+
+            Object.keys(domVals).forEach(k => {
+                if (k.startsWith(prefix)) {
+                    foundInDom = true;
+                    const restPart = k.slice(prefix.length); // 例如 08:00_08:30
+                    const [start, end] = restPart.split('_');
+                    const text = domVals[k] || '';
+                    text.split(/[\n\s,、/]+/).forEach(rawName => {
+                        const clean = rawName.trim();
+                        if (clean && !clean.includes('休') && !clean.includes('...')) {
+                            const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean;
+                            rawRestSlots.push({ name: canon, start, end });
+                        }
+                    });
+                }
+            });
+
+            // 若暫存沒抓到，從已存檔的排班紀錄抓取
+            if (!foundInDom && daySchedules.length > 0) {
+                daySchedules.filter(s => s.locationId === 'pt_7').forEach(s => {
+                    const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(s.name) : s.name;
+                    rawRestSlots.push({ name: canon, start: s.start, end: s.end });
+                });
+            }
+
+            if (rawRestSlots.length === 0) {
+                return window.showToast(`⚠️ 【${targetDateStr}】尚無任何「休息中」的排班資料！`, true);
+            }
+
+            // 2. 依人員分組並自動合併相連的休息時段（例如 08:00-08:30 + 08:30-09:00 -> 08:00-09:00）
+            const memberRestMap = new Map();
+            rawRestSlots.forEach(slot => {
+                if (!memberRestMap.has(slot.name)) memberRestMap.set(slot.name, []);
+                memberRestMap.get(slot.name).push({ start: slot.start, end: slot.end });
+            });
+
+            const memberBlocks = [];
+            memberRestMap.forEach((slots, canonName) => {
+                // 按開始時間排序並去重
+                slots.sort((a, b) => a.start.localeCompare(b.start));
+                const merged = [];
+                let cur = null;
+                slots.forEach(s => {
+                    if (!cur) {
+                        cur = { ...s };
+                    } else if (cur.end >= s.start) {
+                        if (s.end > cur.end) cur.end = s.end;
+                    } else {
+                        merged.push(cur);
+                        cur = { ...s };
+                    }
+                });
+                if (cur) merged.push(cur);
+
+                // 🌟 決定顯示名稱：外地人若有設定員工編號則優先顯示編號（如 EH0045-2），本地人或本身即為編號者直接顯示
+                const prof = window.getMemberProfile ? window.getMemberProfile(canonName) : null;
+                let displayLabel = canonName;
+                if (prof && prof.id && prof.id.trim()) {
+                    if (prof.residency === '外地' || window.nonLocalDisplayMode === 'id' || window.isStaffIdFormat(canonName)) {
+                        displayLabel = prof.id.trim();
+                    }
+                }
+
+                memberBlocks.push({
+                    label: displayLabel,
+                    firstStart: merged[0]?.start || '99:99',
+                    intervals: merged.map(m => `(${m.start}-${m.end})`)
+                });
+            });
+
+            // 3. 依照第一段休息的開始時間由早到晚排序（符合您範例中 08:00 -> 08:30 -> 10:00 -> 11:00 -> 18:00 的順序）
+            memberBlocks.sort((a, b) => a.firstStart.localeCompare(b.firstStart) || a.label.localeCompare(b.label));
+
+            // 4. 組裝成您指定的標準公告格式
+            const bodySections = memberBlocks.map(b => `${b.label}\n${b.intervals.join('\n')}`).join('\n\n');
+            const finalOutput = `${targetDateStr}\n同事本日休息時間\nColleague's break time today\n\n${bodySections}\n\n麻煩大家留意自己的休息時間以及互相告知，謝謝`;
+
+            // 5. 自動複製到剪貼簿並彈出預覽視窗
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(finalOutput).then(() => {
+                    window.showToast('📋 已自動複製休息時間公告！可直接貼上群組');
+                }).catch(() => {});
+            }
+
+            let modal = document.getElementById('breakExportPreviewModal');
+            if (modal) modal.remove();
+
+            const modalHtml = `
+            <div id="breakExportPreviewModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[10050] flex items-center justify-center p-4" onclick="if(event.target === this) this.remove()">
+                <div class="bg-white rounded-2xl p-4 w-full max-w-[360px] max-h-[85vh] shadow-2xl border border-slate-200 flex flex-col animate-pop-in" onclick="event.stopPropagation()">
+                    <div class="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-100 shrink-0">
+                        <div class="flex items-center space-x-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                            <h3 class="font-black text-sm text-slate-800">當日休息時間公告預覽</h3>
+                        </div>
+                        <button type="button" onclick="document.getElementById('breakExportPreviewModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+
+                    <textarea id="breakExportTextarea" class="w-full flex-1 min-h-[300px] bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs font-mono font-bold text-slate-800 leading-relaxed focus:outline-none focus:border-amber-500 resize-none scrollbar-hide">${finalOutput}</textarea>
+
+                    <div class="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0">
+                        <button type="button" onclick="(() => {
+                            const txt = document.getElementById('breakExportTextarea').value;
+                            const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+                            const a = document.createElement('a');
+                            a.href = URL.createObjectURL(blob);
+                            a.download = '同事休息時間_${targetDateStr}.txt';
+                            a.click();
+                            window.showToast('💾 已下載 .txt 檔案');
+                        })()" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center active:scale-95 transition-all">
+                            <i data-lucide="download" class="w-3.5 h-3.5 mr-1"></i>下載檔案
+                        </button>
+
+                        <button type="button" onclick="(() => {
+                            const ta = document.getElementById('breakExportTextarea');
+                            ta.select();
+                            navigator.clipboard.writeText(ta.value);
+                            window.showToast('✅ 已複製！可直接貼上至微信/WhatsApp');
+                        })()" class="flex-1 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-black shadow-sm flex items-center justify-center active:scale-95 transition-all">
+                            <i data-lucide="copy" class="w-3.5 h-3.5 mr-1.5"></i>一鍵複製全文
+                        </button>
+                    </div>
+                </div>
+            </div>`;
+
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            if (window.lucide) lucide.createIcons({ root: document.getElementById('breakExportPreviewModal') });
+        };
+
+        // 🌟 4. 單獨清空某一天排班（立即清空暫存、存檔並強制刷新畫面）
+        window.clearSingleDaySchedule = (targetDateStr) => {
+            if (!confirm(`確定要清空【${targetDateStr}】當天的排班內容嗎？\n（其他日子不受影響）`)) return;
+
+            window.captureAll5DayDomValues();
+            window._tempGridValues = window._tempGridValues || {};
+
+            // 1. 徹底清空當日所有暫存格子
+            Object.keys(window._tempGridValues).forEach(k => {
+                if (k.startsWith(`${targetDateStr}_`)) {
+                    delete window._tempGridValues[k];
+                }
+            });
+
+            // 2. 清理拆分狀態
+            const isClean = window.currentMapRole === 'clean';
+            const rolePrefix = isClean ? 'clean_' : 'cs_';
+            Object.keys(splitHoursState).forEach(sk => {
+                if (sk.startsWith(`${rolePrefix}${targetDateStr}_`)) {
+                    delete splitHoursState[sk];
+                }
+            });
+            safeSetLocal('work_cache_split_hours', splitHoursState);
+
+            // 3. 清空該日存檔陣列
+            const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+            multiStore[targetDateStr] = [];
+
+            const todayStr = getNowInputStrs().date;
+            window.syncActiveTodaySchedule();
+
+            // 4. 同步至本地快取與雲端
+            if (isClean) {
+                safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
+                safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+                syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
+            } else {
+                safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+                safeSetLocal('work_cache_member_schedules', csSchedulesStore);
+                syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
+            }
+
+            // 5. 標記暫存並強制重繪排班表 DOM
+            window._hasUnsavedGridEdits = true;
+            window.renderScheduleManager(true); // 傳入 true 強制重繪 DOM
+            window.updateMapSimulation();
+            window.showToast(`🧹 已清空並儲存【${targetDateStr}】排班！`);
+        };
+
+
+        // 🌟 5. 儲存全部 5 日排班表（完整支援多行 sub-line-item 讀取）
+        window.saveGridSchedule = () => {
+            window.captureAll5DayDomValues();
+
+            const isClean = window.currentMapRole === 'clean';
+            const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+            const locKeys = Object.keys(mapData.points);
+            const fiveDays = window.get5DayScheduleDates();
+            let rawByDate = {};
+            fiveDays.forEach(d => rawByDate[d.dateStr] = []);
+
+            const addSlotRecord = (date, loc, start, end, text) => {
+                if (!date || !text || !start || !end) return;
+                if (!rawByDate[date]) rawByDate[date] = [];
+                text.split(/[\n\s,、/]+/).forEach(r => {
+                    let rawClean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim();
+                    if (rawClean && !rawClean.includes('休') && !rawClean.includes('...')) {
+                        let clean = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawClean) : rawClean;
+                        const exists = rawByDate[date].some(x => x.name === clean && x.locationId === loc && x.start === start && x.end === end);
+                        if (!exists) {
+                            rawByDate[date].push({
+                                id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5),
+                                name: clean,
+                                locationId: loc,
+                                start,
+                                end
+                            });
+                        }
+                    }
+                });
+            };
+
+            document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
+                const { date, loc, start, end } = td.dataset;
+                const display = td.querySelector('.grid-input-display');
+                const text = display ? window.extractCellText(display) : '';
+                addSlotRecord(date, loc, start, end, text);
+            });
+
+            document.querySelectorAll('.grid-input-display[data-loc][data-date]').forEach(div => {
+                const { date, loc, start, end } = div.dataset;
+                const text = window.extractCellText(div);
+                addSlotRecord(date, loc, start, end, text);
+            });
+
+            document.querySelectorAll('.grid-input').forEach(i => {
+                const { date, loc, start, end } = i.dataset;
+                const text = (i.value || '').trim();
+                addSlotRecord(date, loc, start, end, text);
+            });
+
+            let totalSavedSlots = 0;
+            Object.keys(rawByDate).forEach(dStr => {
+                const dayScheds = rawByDate[dStr];
+                let merged = [];
+                locKeys.forEach(locId => {
+                    const uniqueNames = Array.from(new Set(dayScheds.filter(s => s.locationId === locId).map(s => s.name)));
+                    uniqueNames.forEach(name => {
+                        let slots = dayScheds.filter(s => s.locationId === locId && s.name === name).sort((a, b) => a.start.localeCompare(b.start));
+                        let cur = null;
+                        slots.forEach(s => { if (!cur) cur = { ...s }; else if (cur.end === s.start) cur.end = s.end; else { merged.push(cur); cur = { ...s }; } });
+                        if (cur) merged.push(cur);
+                    });
+                });
+                multiStore[dStr] = merged;
+                totalSavedSlots += merged.length;
+            });
+
+            const todayStr = getNowInputStrs().date;
+            safeSetLocal('work_cache_schedule_date', todayStr);
+            window.syncActiveTodaySchedule();
+
+            safeSetLocal('work_cache_split_hours', splitHoursState);
+
+            if (isClean) {
+                safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
+                safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+                syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
+            } else {
+                safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+                safeSetLocal('work_cache_member_schedules', csSchedulesStore);
+                syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
+            }
+            window._tempGridValues = null;
+            window.showToast(`✅ 5日${isClean ? '清潔' : '客服'}排班已全部儲存！（共 ${totalSavedSlots} 筆時段）`);
+            window.closeScheduleManager();
+        };
+
+        window.clearAllSchedules = () => {
+            const isClean = window.currentMapRole === 'clean';
+            window.showConfirm('清空 5 日排班', `確定要清空當前畫面 5 日所有的【${isClean ? '清潔' : '客服'}】排班資料嗎？`, () => {
+                const fiveDays = window.get5DayScheduleDates();
+                const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+                fiveDays.forEach(d => { multiStore[d.dateStr] = []; });
+                window._tempGridValues = {};
+                const todayStr = getNowInputStrs().date;
+                window.syncActiveTodaySchedule();
+                if (isClean) {
+                    safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
+                    safeSetLocal('work_cache_clean_schedules', []);
+                    syncConfig('clean_member_schedules', { schedules: [], multiDay: cleanMultiDaySchedules, date: todayStr });
+                } else {
+                    safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+                    safeSetLocal('work_cache_member_schedules', []);
+                    syncConfig('member_schedules', { schedules: [], multiDay: csMultiDaySchedules, date: todayStr });
+                }
+                window.renderScheduleManager();
+                window.showToast(`已清空 5 日${isClean ? '清潔' : '客服'}排班`);
+            });
+        };
+
+        window._csvImportTargetDate = '';
+        window.triggerDayCSVImport = (dateStr) => {
+            window._csvImportTargetDate = dateStr;
+            $('scheduleExcelImportInput')?.click();
+        };
+
+        window.importScheduleCSV = (event) => {
+            const file = event.target.files[0]; if (!file) return;
+            const targetDateStr = window._csvImportTargetDate || getNowInputStrs().date;
             const reader = new FileReader();
             reader.onload = (e) => {
                 try {
+                    window.captureAll5DayDomValues();
                     const text = (e.target.result || '').replace(/^\uFEFF/, '');
-                    const lines = text.split(/\r\n|\n|\r/).filter(l => l.trim().length > 0);
-                    if (lines.length < 2) return window.showToast('CSV 格式錯誤，無有效資料！', true);
+                    const rows = []; let row = [], cur = '', inQuotes = false;
+                    for (let i = 0; i < text.length; i++) {
+                        const c = text[i], next = text[i+1];
+                        if (c === '"') { if (inQuotes && next === '"') { cur += '"'; i++; } else inQuotes = !inQuotes; }
+                        else if (c === ',' && !inQuotes) { row.push(cur.trim()); cur = ''; }
+                        else if ((c === '\r' && next === '\n') && !inQuotes) { row.push(cur.trim()); rows.push(row); row = []; cur = ''; i++; }
+                        else if ((c === '\n' || c === '\r') && !inQuotes) { row.push(cur.trim()); rows.push(row); row = []; cur = ''; }
+                        else cur += c;
+                    }
+                    if (cur || row.length) { row.push(cur.trim()); rows.push(row); }
+                    const validRows = rows.filter(r => r.length > 0 && r.some(Boolean));
+                    if (validRows.length < 2) return window.showToast("匯入檔案內容格式不正確", true);
+                    
+                    const headers = validRows[0].map(h => h.replace(/^"+|"+$/g, '').trim());
+                    const isClean = window.currentMapRole === 'clean';
+                    const rolePrefix = isClean ? 'clean_' : 'cs_';
+                    const locMap = isClean
+                        ? { '一樓+廁所': 'pt_1', '一樓': 'pt_1', '魚檔': 'pt_4', '花園仔(男廁)': 'pt_8', '男廁': 'pt_8', '花園仔(女廁)+(傷健廁所)': 'pt_9', '花園仔(女廁)': 'pt_9', '女廁': 'pt_9', '傷健廁所': 'pt_9', '花園仔': 'pt_3', '機動': 'pt_6', '人員休息中': 'pt_7', '休息中': 'pt_7', '休息': 'pt_7' }
+                        : { '花園仔': 'pt_3', '魚檔': 'pt_4', '整體巡邏': 'pt_5', '客服室': 'pt_1', '一樓大清點': 'pt_2', '一樓': 'pt_2', '地面層大清點': 'pt_6', '地面層': 'pt_6', '人員休息中': 'pt_7', '休息中': 'pt_7', '休息': 'pt_7' };
+                    
+                    Object.keys(window._tempGridValues).forEach(k => {
+                        if (k.startsWith(`${targetDateStr}_`)) delete window._tempGridValues[k];
+                    });
+                    Object.keys(splitHoursState).forEach(sk => {
+                        if (sk.startsWith(`${rolePrefix}${targetDateStr}_`)) delete splitHoursState[sk];
+                    });
 
-                    const parseCSVLine = (lineStr) => {
-                        const row = [];
-                        let cur = '', inQuotes = false;
-                        for (let i = 0; i < lineStr.length; i++) {
-                            const c = lineStr[i], next = lineStr[i + 1];
-                            if (c === '"') {
-                                if (inQuotes && next === '"') { cur += '"'; i++; }
-                                else inQuotes = !inQuotes;
-                            } else if (c === ',' && !inQuotes) {
-                                row.push(cur.trim()); cur = '';
-                            } else {
-                                cur += c;
-                            }
-                        }
-                        row.push(cur.trim());
-                        return row;
+                    const normTime = (tStr) => {
+                        const parts = (tStr || '').trim().split(':');
+                        if (parts.length < 2) return '';
+                        const h = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
+                        if (isNaN(h) || isNaN(m)) return '';
+                        return `${pad(h)}:${pad(m)}`;
                     };
 
-                    const headerCols = parseCSVLine(lines[0]);
-                    const currentWeekDays = window.getCsWeekDates(window.csRosterWeekOffset);
-                    const presets = window.getCsShiftPresets();
+                    const importedRawDay = [];
 
-                    const colDateMap = [];
-                    for (let c = 1; c < headerCols.length; c++) {
-                        const colText = headerCols[c];
-                        const fullDateMatch = colText.match(/\d{4}-\d{2}-\d{2}/);
-                        if (fullDateMatch) {
-                            colDateMap[c] = fullDateMatch[0];
-                        } else {
-                            const dayNumMatch = colText.match(/\d+/);
-                            if (dayNumMatch) {
-                                const targetDay = parseInt(dayNumMatch[0], 10);
-                                const matchedDayObj = currentWeekDays.find(d => {
-                                    const dParts = d.dateStr.split('-');
-                                    return parseInt(dParts[2], 10) === targetDay;
-                                });
+                    for (let rowIdx = 1; rowIdx < validRows.length; rowIdx++) {
+                        const cols = validRows[rowIdx]; if (!cols.length) continue;
+                        const stationRaw = (cols[0] || '').replace(/\s+/g, '');
+                        let matchedLocId = null;
+                        for (let [k, v] of Object.entries(locMap)) {
+                            if (stationRaw.includes(k)) { matchedLocId = v; break; }
+                        }
+                        if (!matchedLocId) continue;
 
-                                if (matchedDayObj) {
-                                    colDateMap[c] = matchedDayObj.dateStr;
+                        for (let c = 1; c < headers.length; c++) {
+                            const timeCol = (headers[c] || '').replace(/[~～—–]/g, '-');
+                            const rawCellVal = cols[c] ? cols[c].replace(/^"+|"+$/g, '').trim() : '';
+                            const resolvedArr = rawCellVal
+                                ? rawCellVal.split(/[\n\s,、/]+/).map(token => {
+                                    const stripped = token.replace(/\(.*?\)/g, '').replace('頂', '').trim();
+                                    if (!stripped || stripped.includes('休') || stripped.includes('...')) return '';
+                                    return window.resolveMemberIdentity ? window.resolveMemberIdentity(stripped) : stripped;
+                                }).filter(Boolean)
+                                : [];
+                            const cellVal = Array.from(new Set(resolvedArr)).join('\n');
+                            if (!timeCol || !timeCol.includes('-')) continue;
+
+                            const [rawStart, rawEnd] = timeCol.split('-');
+                            const slotStart = normTime(rawStart);
+                            const slotEnd = normTime(rawEnd);
+                            if (!slotStart || !slotEnd) continue;
+
+                            const [sH, sM] = slotStart.split(':').map(Number);
+                            const [eH, eM] = slotEnd.split(':').map(Number);
+                            const diffMins = (eH * 60 + eM) - (sH * 60 + sM);
+                            const hStr = pad(sH);
+                            const nextHStr = pad(sH + 1);
+
+                            if (diffMins === 30) {
+                                const baseStartHour = `${hStr}:00`;
+                                splitHoursState[`${rolePrefix}${targetDateStr}_${matchedLocId}_${baseStartHour}`] = true;
+                                const halfKey = `${targetDateStr}_${matchedLocId}_${slotStart}_${slotEnd}`;
+                                window._tempGridValues[halfKey] = cellVal;
+                                delete window._tempGridValues[`${targetDateStr}_${matchedLocId}_${hStr}:00_${nextHStr}:00`];
+                            } else if (diffMins === 60) {
+                                if (splitHoursState[`${rolePrefix}${targetDateStr}_${matchedLocId}_${hStr}:00`]) {
+                                    window._tempGridValues[`${targetDateStr}_${matchedLocId}_${hStr}:00_${hStr}:30`] = cellVal;
+                                    window._tempGridValues[`${targetDateStr}_${matchedLocId}_${hStr}:30_${nextHStr}:00`] = cellVal;
                                 } else {
-                                    const baseParts = currentWeekDays[0].dateStr.split('-');
-                                    const y = baseParts[0];
-                                    const m = baseParts[1];
-                                    colDateMap[c] = `${y}-${m}-${String(targetDay).padStart(2, '0')}`;
+                                    splitHoursState[`${rolePrefix}${targetDateStr}_${matchedLocId}_${hStr}:00`] = false;
+                                    const fullKey = `${targetDateStr}_${matchedLocId}_${slotStart}_${slotEnd}`;
+                                    window._tempGridValues[fullKey] = cellVal;
                                 }
-                            } else if (currentWeekDays[c - 1]) {
-                                colDateMap[c] = currentWeekDays[c - 1].dateStr;
                             }
+
+                            resolvedArr.forEach(cleanName => {
+                                importedRawDay.push({
+                                    id: 'sch_csv_' + Date.now() + Math.random().toString(36).substr(2, 5),
+                                    name: cleanName,
+                                    locationId: matchedLocId,
+                                    start: slotStart,
+                                    end: slotEnd
+                                });
+                            });
                         }
                     }
 
-                    let importCount = 0;
-                    const shiftColors = [
-                        { bg: 'bg-sky-100', text: 'text-sky-800', border: 'border-sky-300', activeRing: 'ring-sky-500' },
-                        { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300', activeRing: 'ring-emerald-500' },
-                        { bg: 'bg-purple-100', text: 'text-purple-800', border: 'border-purple-300', activeRing: 'ring-purple-500' },
-                        { bg: 'bg-amber-100', text: 'text-amber-900', border: 'border-amber-300', activeRing: 'ring-amber-500' },
-                        { bg: 'bg-teal-100', text: 'text-teal-800', border: 'border-teal-300', activeRing: 'ring-teal-500' },
-                        { bg: 'bg-rose-100', text: 'text-rose-800', border: 'border-rose-300', activeRing: 'ring-rose-500' }
-                    ];
+                    const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+                    const mergedDay = [];
+                    Object.keys(mapData.points).forEach(locId => {
+                        const uNames = Array.from(new Set(importedRawDay.filter(s => s.locationId === locId).map(s => s.name)));
+                        uNames.forEach(name => {
+                            const slots = importedRawDay.filter(s => s.locationId === locId && s.name === name).sort((a, b) => a.start.localeCompare(b.start));
+                            let cur = null;
+                            slots.forEach(s => {
+                                if (!cur) cur = { ...s };
+                                else if (cur.end === s.start) cur.end = s.end;
+                                else { mergedDay.push(cur); cur = { ...s }; }
+                            });
+                            if (cur) mergedDay.push(cur);
+                        });
+                    });
+                    multiStore[targetDateStr] = mergedDay;
 
-                    for (let r = 1; r < lines.length; r++) {
-                        const cols = parseCSVLine(lines[r]);
-                        if (!cols.length || !cols[0]) continue;
+                    const importedMemberSet = new Set(teamMembers.map(m => window.resolveMemberIdentity ? window.resolveMemberIdentity(m) : m));
+                    importedRawDay.forEach(r => importedMemberSet.add(r.name));
 
-                        const rawName = cols[0].trim();
-                        const canonName = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawName) : rawName;
+                    teamMembers = Array.from(importedMemberSet);
+                    const todayStr = getNowInputStrs().date;
+                    window.syncActiveTodaySchedule();
 
-                        for (let c = 1; c < cols.length; c++) {
-                            const dateStr = colDateMap[c];
-                            if (!dateStr) continue;
-
-                            const cellVal = (cols[c] || '').trim();
-                            if (!window.csWeeklyRosterStore[dateStr]) {
-                                window.csWeeklyRosterStore[dateStr] = {};
-                            }
-
-                            if (!cellVal || cellVal === '0.0' || cellVal === '0' || /^(休|休息|例休|OFF|輪休)$/i.test(cellVal)) {
-                                if (cellVal && cellVal !== '0.0' && cellVal !== '0') {
-                                    window.csWeeklyRosterStore[dateStr][canonName] = 'OFF';
-                                    importCount++;
-                                } else if (cellVal === '0.0' || cellVal === '0') {
-                                    window.csWeeklyRosterStore[dateStr][canonName] = 'OFF';
-                                    importCount++;
-                                } else {
-                                    delete window.csWeeklyRosterStore[dateStr][canonName];
-                                }
-                                continue;
-                            }
-
-                            const timeMatch = cellVal.replace(/[～~—–－至到]/g, '-').replace(/：/g, ':').match(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/);
-                            if (timeMatch) {
-                                const sTime = timeMatch[1].padStart(5, '0');
-                                const eTime = timeMatch[2].padStart(5, '0');
-                                const timeRange = `${sTime}-${eTime}`;
-
-                                const restMatch = cellVal.match(/\(([\d.]+)\)/);
-                                const restH = restMatch ? parseFloat(restMatch[1]) : 1;
-                                const restStr = `${restH}h`;
-
-                                const workMatch = cellVal.match(/[\d.]+\s*$/);
-                                const workStr = workMatch ? `${parseFloat(workMatch[0])}h` : '8h';
-
-                                let matchedP = presets.find(p => {
-                                    const pNorm = (p.time || '').replace(/[～~—–－至到]/g, '-').replace(/：/g, ':').replace(/\s+/g, '');
-                                    return pNorm === timeRange;
-                                });
-
-                                if (!matchedP) {
-                                    const newShiftId = 'S_' + timeRange.replace(/[:\-]/g, '_');
-                                    let autoCode = '班次';
-                                    if (sTime <= '08:00' && eTime <= '15:00') autoCode = '早半班';
-                                    else if (sTime <= '08:00' && eTime >= '19:00') autoCode = '全日長班';
-                                    else if (sTime >= '12:00' && eTime >= '21:00') autoCode = '晚班';
-                                    else autoCode = `${sTime.slice(0, 2)}點班`;
-
-                                    const colStyle = shiftColors[presets.length % shiftColors.length];
-                                    matchedP = {
-                                        id: newShiftId,
-                                        code: autoCode,
-                                        time: timeRange,
-                                        work: workStr,
-                                        rest: restStr,
-                                        bg: colStyle.bg,
-                                        text: colStyle.text,
-                                        border: colStyle.border,
-                                        activeRing: colStyle.activeRing
-                                    };
-                                    presets.push(matchedP);
-                                    window.csShiftPresets = presets;
-                                    safeSetLocal('work_cache_cs_shift_presets', presets);
-                                }
-
-                                window.csWeeklyRosterStore[dateStr][canonName] = matchedP.id;
-                                importCount++;
-                            }
-                        }
+                    if (isClean) {
+                        cleanMembersStore = [...teamMembers];
+                        safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                        syncConfig('clean_team_members', { members: cleanMembersStore });
+                        safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
+                        safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+                        syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
+                    } else {
+                        csMembersStore = [...teamMembers];
+                        safeSetLocal('work_cache_team_members', csMembersStore);
+                        syncConfig('team_members', { members: csMembersStore });
+                        safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+                        safeSetLocal('work_cache_member_schedules', csSchedulesStore);
+                        syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
                     }
 
-                    window.saveCsWeeklyRosterData();
-                    window.renderCsWeeklyRosterModal();
-                    window.showToast(`✅ 已成功匯入 ${importCount} 筆客服班次（含工時與休息解析）！`);
-                } catch (err) {
-                    console.error('匯入 CSV 失敗:', err);
-                    window.showToast('⚠️ CSV 解析失敗，請確認檔案格式', true);
-                } finally {
-                    event.target.value = '';
+                    safeSetLocal('work_cache_split_hours', splitHoursState); 
+                    // 🌟 核心關鍵修復：必須傳入 true (skipDomCapture = true)！
+                    // 否則 renderScheduleManager 一開頭會把畫面上舊的空白格抓回來，蓋掉剛匯入的整點資料！
+                    window._hasUnsavedGridEdits = false;
+                    window.renderScheduleManager(true);
+                    window.updateMapSimulation();
+                    window.showToast(`✅ 已匯入並自動儲存【${targetDateStr}】排班！`);
+                } catch(err) { 
+                    window.showToast("解析失敗", true); 
                 }
+                event.target.value = '';
             };
             reader.readAsText(file);
         };
