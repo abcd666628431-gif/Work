@@ -1441,9 +1441,23 @@ const tabMetadataMap = {
                 const rolePrefix = isClean ? 'clean_' : 'cs_';
                 window._tempGridValues = window._tempGridValues || {};
 
-                // 1. 清空目標日的所有舊排班格子
+                // 1. 清空目標日的所有舊排班格子（保留周靜儀已排好的班次）
                 Object.keys(window._tempGridValues).forEach(k => {
-                    if (k.startsWith(`${targetDateStr}_`)) delete window._tempGridValues[k];
+                    if (k.startsWith(`${targetDateStr}_`)) {
+                        const curText = window._tempGridValues[k] || '';
+                        const names = curText.split('\n').filter(Boolean);
+                        const hasChow = names.some(n => {
+                            const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n;
+                            return canon === '周靜儀';
+                        });
+
+                        if (hasChow) {
+                            // 只留下周靜儀，其餘人員清空重排
+                            window._tempGridValues[k] = '周靜儀';
+                        } else {
+                            delete window._tempGridValues[k];
+                        }
+                    }
                 });
 
                 if (isClean) {
@@ -1869,15 +1883,22 @@ const tabMetadataMap = {
                         });
                     });
 
-              } else {
-                    // ==========================================
-                    // 🎧 客服人員排班模型 (連動「7日班次更表」+ 0.5h/1h 錯開休息 + 崗位自動互補頂位)
-                    // ==========================================
-                    const toMins = (t) => {
-                        const cleanT = String(t || '00:00').replace(/[^\d:：]/g, '').replace(/：/g, ':');
-                        const [h, m] = cleanT.split(':').map(Number);
-                        return (h || 0) * 60 + (m || 0);
-                    };
+             } else {
+                // ==========================================
+                // 🎧 客服人員排班模型 (連動「7日班次更表」+ 0.5h/1h 錯開休息 + 崗位自動互補頂位)
+                // ==========================================
+
+                // 🌟【排除周靜儀】：不參與自動排班計算
+                const activeCsDutyMembers = dutyMembers.filter(m => {
+                    const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(m) : m;
+                    return canon !== '周靜儀' && m !== '周靜儀';
+                });
+
+                const toMins = (t) => {
+                    const cleanT = String(t || '00:00').replace(/[^\d:：]/g, '').replace(/：/g, ':');
+                    const [h, m] = cleanT.split(':').map(Number);
+                    return (h || 0) * 60 + (m || 0);
+                };
                     const minsToStr = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
                     const parseIdealIntervals = (idealStr) => {
                         if (!idealStr) return [];
@@ -1897,11 +1918,11 @@ const tabMetadataMap = {
                     const presetsList = window.getCsShiftPresets ? window.getCsShiftPresets() : [];
 
                     // 記錄每個 30 分鐘時段已經有多少人休息，確保休息錯開以利互補
-                    const restLoadMap = {};
+                const restLoadMap = {};
 
-                    dutyMembers.forEach((m, mIdx) => {
-                        const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(m) : m;
-                        const prof = window.getMemberProfile(canon);
+                activeCsDutyMembers.forEach((m, mIdx) => {
+                    const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(m) : m;
+                    const prof = window.getMemberProfile(canon);
                         const rosterShiftId = dayRosterMap[canon] || dayRosterMap[m];
 
                         if (rosterShiftId === 'OFF') {
@@ -1933,6 +1954,19 @@ const tabMetadataMap = {
                             }
                             const spRest = specialSched.restDurationNum || parseFloat(specialSched.restHours) || 0;
                             if (spRest > 0) restDurHours = spRest;
+                        }
+
+                        // 🌟【新增保底邏輯】：若尚未在更表設定班次，依序分配早班(07:00-15:00)、中班(10:00-18:00)、晚班(14:00-22:00)
+                        if (!matchedPreset && !specialSched) {
+                            const defaultShifts = [
+                                { s: 7 * 60,  e: 15 * 60, r: 1 }, // 早班
+                                { s: 10 * 60, e: 18 * 60, r: 1 }, // 中班
+                                { s: 14 * 60, e: 22 * 60, r: 1 }  // 晚班
+                            ];
+                            const def = defaultShifts[mIdx % defaultShifts.length];
+                            shStartM = def.s;
+                            shEndM = def.e;
+                            restDurHours = def.r;
                         }
 
                         // 優先讀取個人理想休息；若無則自動尋找「最少人同時休」的時段錯開排休（支援 0.5h、1h、1.5h、2h）
@@ -1998,10 +2032,10 @@ const tabMetadataMap = {
                             const locAssigned = {};
                             Object.keys(mapData.points).forEach(k => locAssigned[k] = []);
 
-                            const activeInHalf = dutyMembers.filter(m => {
-                                const cfg = memberShiftConfig.get(m);
-                                return cfg && !cfg.isOff && sM >= cfg.shStartM && eM <= cfg.shEndM;
-                            });
+                           const activeInHalf = activeCsDutyMembers.filter(m => {
+                            const cfg = memberShiftConfig.get(m);
+                            return cfg && !cfg.isOff && sM >= cfg.shStartM && eM <= cfg.shEndM;
+                        });
 
                             // 1. 處於休息區間的人員排入 pt_7 (休息中)
                             activeInHalf.forEach(m => {
@@ -2031,9 +2065,10 @@ const tabMetadataMap = {
                                 });
                             }
 
-                            // 3. 強制互補檢查：若外場崗位 (pt_3, pt_4, pt_5) 因原人員休息而空缺，從剩餘在班人員自動派員頂位
-                            constrotatedRemain = workingInHalf.filter(m => !assignedInHalf.has(m));
-                            rotatedRemain.forEach(m => {
+                            // 🟢 修改後（補上空格）：
+// 3. 強制互補檢查：若外場崗位 (pt_3, pt_4, pt_5) 因原人員休息而空缺，從剩餘在班人員自動派員頂位
+const rotatedRemain = workingInHalf.filter(m => !assignedInHalf.has(m));
+rotatedRemain.forEach(m => {
                                 let placed = false;
                                 for (const tObj of locTargets) {
                                     if (locAssigned[tObj.id] && locAssigned[tObj.id].length < tObj.min) {
@@ -8925,8 +8960,273 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 </div>
             </div>`;
 
-            document.body.insertAdjacentHTML('beforeend', modalHtml);
+           document.body.insertAdjacentHTML('beforeend', modalHtml);
             if (window.lucide) lucide.createIcons({ root: document.getElementById('breakExportPreviewModal') });
+        };
+
+        // 🌟 智慧導出橫向排班總表（含 (休)、(頂)、(衛生巡查)、(跟大清) 等固定業務規則）
+        window.exportDayFullScheduleText = (targetDateStr) => {
+            window.captureAll5DayDomValues();
+            const domVals = window._tempGridValues || {};
+            const isClean = window.currentMapRole === 'clean';
+            const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+            const daySchedules = multiStore[targetDateStr] || [];
+
+            // 1. 取得表頭日期（如：10月25日）
+            let dateTitle = targetDateStr;
+            const dParts = targetDateStr.split('-');
+            if (dParts.length === 3) {
+                dateTitle = `${parseInt(dParts[1], 10)}月${parseInt(dParts[2], 10)}日`;
+            }
+
+            // 2. 定義圖中標準 16 個橫向欄位時段
+            const targetTimeColumns = [
+                { s: '07:00', e: '08:00', label: '7:00-8:00' },
+                { s: '08:00', e: '09:00', label: '8:00-9:00' },
+                { s: '09:00', e: '10:00', label: '9:00-10:00' },
+                { s: '10:00', e: '11:00', label: '10:00-11:00' },
+                { s: '11:00', e: '12:00', label: '11:00-12:00' },
+                { s: '12:00', e: '13:00', label: '12:00-13:00' },
+                { s: '13:00', e: '14:00', label: '13:00-14:00' },
+                { s: '14:00', e: '15:00', label: '14:00-15:00' },
+                { s: '15:00', e: '16:00', label: '15:00-16:00' },
+                { s: '16:00', e: '17:00', label: '16:00-17:00' },
+                { s: '17:00', e: '18:00', label: '17:00-18:00' },
+                { s: '18:00', e: '19:00', label: '18:00-19:00' },
+                { s: '19:00', e: '19:30', label: '19:00-19:30' },
+                { s: '19:30', e: '20:00', label: '19:30-20:00' },
+                { s: '20:00', e: '21:00', label: '20:00-21:00' },
+                { s: '21:00', e: '22:00', label: '21:00-22:00' }
+            ];
+
+            // 3. 收集全體人員在當天的所有「休息中 pt_7」時段
+            const restSlotsByMember = new Map();
+            const restPrefix = `${targetDateStr}_pt_7_`;
+            Object.keys(domVals).forEach(k => {
+                if (k.startsWith(restPrefix)) {
+                    const timeParts = k.slice(restPrefix.length).split('_');
+                    const [sTime, eTime] = timeParts;
+                    const val = domVals[k] || '';
+                    val.split(/[\n,、/]+/).forEach(n => {
+                        const clean = n.trim();
+                        if (clean && !clean.includes('休')) {
+                            const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean;
+                            if (!restSlotsByMember.has(canon)) restSlotsByMember.set(canon, []);
+                            restSlotsByMember.get(canon).push({ s: sTime, e: eTime });
+                        }
+                    });
+                }
+            });
+            // 補充存檔紀錄中的休息
+            daySchedules.filter(s => s.locationId === 'pt_7').forEach(s => {
+                const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(s.name) : s.name;
+                if (!restSlotsByMember.has(canon)) restSlotsByMember.set(canon, []);
+                restSlotsByMember.get(canon).push({ s: s.start, e: s.end });
+            });
+
+            // 合併相鄰休息時段
+            const mergedRestByMember = new Map();
+            restSlotsByMember.forEach((slots, mName) => {
+                slots.sort((a, b) => a.s.localeCompare(b.s));
+                const merged = [];
+                let cur = null;
+                slots.forEach(it => {
+                    if (!cur) cur = { ...it };
+                    else if (cur.e >= it.s) {
+                        if (it.e > cur.e) cur.e = it.e;
+                    } else {
+                        merged.push(cur);
+                        cur = { ...it };
+                    }
+                });
+                if (cur) merged.push(cur);
+                mergedRestByMember.set(mName, merged);
+            });
+
+            // 4. 輔助函式：提取特定崗位在指定時間段的人員名單
+            const getRawNamesForSlot = (locId, slotStart, slotEnd) => {
+                const directKey = `${targetDateStr}_${locId}_${slotStart}_${slotEnd}`;
+                if (domVals[directKey] !== undefined) {
+                    return domVals[directKey].split(/[\n,、/]+/).map(n => n.trim()).filter(Boolean);
+                }
+                const [sH] = slotStart.split(':').map(Number);
+                const [eH] = slotEnd.split(':').map(Number);
+                if (slotStart.endsWith(':30') || slotEnd.endsWith(':30')) {
+                    const fullKey = `${targetDateStr}_${locId}_${pad(sH)}:00_${pad(eH + (slotEnd.endsWith(':30') ? 1 : 0))}:00`;
+                    if (domVals[fullKey] !== undefined) {
+                        return domVals[fullKey].split(/[\n,、/]+/).map(n => n.trim()).filter(Boolean);
+                    }
+                }
+                const sMins = parseInt(slotStart.replace(':', ''), 10);
+                const eMins = parseInt(slotEnd.replace(':', ''), 10);
+                const matched = [];
+                daySchedules.forEach(s => {
+                    if (s.locationId === locId) {
+                        const schedS = parseInt(s.start.replace(':', ''), 10);
+                        const schedE = parseInt(s.end.replace(':', ''), 10);
+                        if (schedS < eMins && schedE > sMins) matched.push(s.name);
+                    }
+                });
+                return Array.from(new Set(matched));
+            };
+
+            // 5. 判斷該員在當天是否屬於「機動（客服室）」常態班底
+            const isHomeBaseOffice = (mName) => {
+                const prof = window.getMemberProfile ? window.getMemberProfile(mName) : null;
+                const prefs = prof?.prefs || [];
+                return prefs[0] === 'pt_1' || prefs[0] === 'pt_6' || (!prefs[0] && mName !== '麥少霞' && mName !== '姚桂菊');
+            };
+
+            // 6. 業務標註產生器：加入 (休)、(頂)、(衛生巡查)、(跟大清)
+            const formatPersonLabel = (personName, locId, colStart, colEnd, personIdx = 0, totalInCell = 1) => {
+                let label = personName;
+
+                // 規則 ①：休息時間標註，如 (10:00-10:30休)
+                const restList = mergedRestByMember.get(personName) || [];
+                const matchedRest = restList.find(r => (r.s >= colStart && r.s < colEnd) || (r.e > colStart && r.e <= colEnd) || (r.s <= colStart && r.e >= colEnd));
+                if (matchedRest) {
+                    label += `(${matchedRest.s}-${matchedRest.e}休)`;
+                }
+
+                // 規則 ②：原在客服室/機動，前往外場崗位（花園仔、魚檔、巡邏）支援時加上 (頂)
+                if (locId !== 'pt_1' && locId !== 'pt_6') {
+                    if (isHomeBaseOffice(personName) || (matchedRest && personIdx > 0)) {
+                        if (!label.includes('(頂)')) label += '(頂)';
+                    }
+                }
+
+                // 規則 ③：固定位置的業務後綴（固定時段與崗位，人名隨排班動態對應）
+                // A. 整體巡邏
+                if (locId === 'pt_5') {
+                    if (colStart === '11:00' && colEnd === '12:00') {
+                        label += '(巡邏後衛生巡查)';
+                    } else if (colStart === '13:00' || colStart === '14:00') {
+                        label += '(巡邏後跟地面大清)';
+                    }
+                }
+
+                // B. 機動（客服室）
+                if (locId === 'pt_1' || locId === 'pt_6') {
+                    if (colStart === '13:00' || colStart === '14:00') {
+                        if (personIdx === 0 && totalInCell >= 2) {
+                            label += '(跟一樓大清)';
+                        } else if (personIdx === 1) {
+                            label += '(跟地面大清)';
+                        }
+                    } else if (colStart === '19:30' || colStart === '20:00' || colStart === '21:00') {
+                        if (personIdx === 0) {
+                            label += '(跟地面大清)';
+                        } else if (personIdx === 1) {
+                            label += '(跟一樓大清)';
+                        }
+                    }
+                }
+
+                return label;
+            };
+
+            // 7. 定義欲導出的崗位列
+            const rowsConfig = isClean
+                ? [
+                    { id: 'pt_3', label: '花園仔' },
+                    { id: 'pt_4', label: '魚檔' },
+                    { id: 'pt_8', label: '男廁' },
+                    { id: 'pt_9', label: '女廁+傷健' },
+                    { id: 'pt_1', label: '一樓' },
+                    { id: 'pt_6', label: '機動' }
+                ]
+                : [
+                    { id: 'pt_3', label: '花園仔' },
+                    { id: 'pt_4', label: '魚檔' },
+                    { id: 'pt_5', label: '整體巡邏' },
+                    { id: 'pt_1', label: '機動' } // 客服室對應圖中「機動」
+                ];
+
+            // 8. 組裝符合 Excel 換行相容規範的 Tab 分隔表格字串
+            const tableRows = [];
+
+            // 表頭行
+            tableRows.push([dateTitle, ...targetTimeColumns.map(c => c.label)].join('\t'));
+
+            // 各崗位資料行
+            rowsConfig.forEach(rowCfg => {
+                const rowCells = [rowCfg.label];
+                targetTimeColumns.forEach(col => {
+                    const rawNames = getRawNamesForSlot(rowCfg.id, col.s, col.e);
+                    if (rawNames.length === 0) {
+                        rowCells.push('');
+                    } else {
+                        const formattedList = rawNames.map((name, pIdx) => 
+                            formatPersonLabel(name, rowCfg.id, col.s, col.e, pIdx, rawNames.length)
+                        );
+                        // 🌟 若儲存格有多人，使用雙引號封裝換行，貼到 Excel 就能完美在同一格內換行！
+                        const cellText = formattedList.length > 1
+                            ? `"${formattedList.join('\n')}"`
+                            : formattedList[0];
+                        rowCells.push(cellText);
+                    }
+                });
+                tableRows.push(rowCells.join('\t'));
+            });
+
+            const finalTableText = tableRows.join('\n');
+
+            // 9. 自動複製並開啟預覽視窗
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(finalTableText).then(() => {
+                    window.showToast('📋 已複製排班全表！可直接在 Excel 貼上');
+                }).catch(() => {});
+            }
+
+            let modal = document.getElementById('fullScheduleExportModal');
+            if (modal) modal.remove();
+
+            const modalHtml = `
+            <div id="fullScheduleExportModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[10050] flex items-center justify-center p-3 sm:p-4" onclick="if(event.target === this) this.remove()">
+                <div class="bg-white rounded-2xl p-4 w-full max-w-[680px] max-h-[85vh] shadow-2xl border border-slate-200 flex flex-col animate-pop-in" onclick="event.stopPropagation()">
+                    <div class="flex items-center justify-between pb-2.5 mb-2 border-b border-slate-100 shrink-0">
+                        <div class="flex items-center space-x-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+                            <h3 class="font-black text-sm text-slate-800">橫向排班總表預覽 (${dateTitle})</h3>
+                        </div>
+                        <button type="button" onclick="document.getElementById('fullScheduleExportModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+
+                    <div class="text-[11px] font-bold text-slate-500 mb-2">
+                        💡 已自動帶入 <strong>(休)</strong>、<strong>(頂)</strong>、<strong>(衛生巡查)</strong> 與 <strong>(跟大清)</strong> 業務標註。複製後在 Excel 或 Google 試算表直接按 <kbd class="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-slate-700">Ctrl+V</kbd> 貼上即可分格排版。
+                    </div>
+
+                    <textarea id="fullScheduleExportTextarea" class="w-full flex-1 min-h-[280px] bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs font-mono font-bold text-slate-800 leading-relaxed focus:outline-none focus:border-blue-500 resize-none whitespace-pre overflow-x-auto">${finalTableText}</textarea>
+
+                    <div class="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0">
+                        <button type="button" onclick="(() => {
+                            const txt = document.getElementById('fullScheduleExportTextarea').value;
+                            const blob = new Blob([txt], { type: 'text/tab-separated-values;charset=utf-8' });
+                            const a = document.createElement('a');
+                            a.href = URL.createObjectURL(blob);
+                            a.download = '排班總表_${targetDateStr}.txt';
+                            a.click();
+                            window.showToast('💾 已下載文字檔案');
+                        })()" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center active:scale-95 transition-all">
+                            <i data-lucide="download" class="w-3.5 h-3.5 mr-1"></i>下載檔案
+                        </button>
+
+                        <button type="button" onclick="(() => {
+                            const ta = document.getElementById('fullScheduleExportTextarea');
+                            ta.select();
+                            navigator.clipboard.writeText(ta.value);
+                            window.showToast('✅ 已複製整張表格！可直接貼至 Excel');
+                        })()" class="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black shadow-sm flex items-center justify-center active:scale-95 transition-all">
+                            <i data-lucide="copy" class="w-3.5 h-3.5 mr-1.5"></i>一鍵複製表格文字
+                        </button>
+                    </div>
+                </div>
+            </div>`;
+
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            if (window.lucide) lucide.createIcons({ root: document.getElementById('fullScheduleExportModal') });
         };
 
         // 🌟 4. 單獨清空某一天排班（立即清空暫存、存檔並強制刷新畫面）
@@ -9380,7 +9680,12 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                 const [sH, sM] = slot.start.split(':').map(Number);
                                 const [eH, eM] = slot.end.split(':').map(Number);
                                 const isCurrentSlot = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
-                                sepCells += `<td class="p-0 h-[7px] border-y border-slate-300/90 ${isCurrentSlot ? 'now-glowing-slot bg-sky-100/50' : 'bg-[#f0ebe1]/85'}"></td>`;
+                                // 1. 先確認是否為最後一個崗位
+const isLastLoc = locIdx === sortedLocs.length - 1;
+const bottomClass = (isCurrentSlot || isCurrentHour) && isLastLoc ? 'slot-table-bottom' : '';
+
+// 2. 套用到格子樣式中
+sepCells += `<td class="p-0 h-[7px] border-y border-slate-300/90 ${isCurrentSlot ? `now-glowing-slot ${bottomClass} bg-sky-100/50` : 'bg-[#f0ebe1]/85'}"></td>`;
                             });
                         } else {
                             csTimeSlots.forEach(ts => {
@@ -9529,8 +9834,10 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             ${isToday ? '<span class="text-[10px] font-black text-blue-600 bg-white px-1.5 py-0.2 rounded border border-blue-200">📍 地圖即時生效中</span>' : ''}
                         </div>
                        <div class="flex items-center gap-1.5 flex-wrap">
-                            <button type="button" onclick="window.exportDayBreakScheduleText('${dStr}')" class="bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出當日同事休息時間公告"><i data-lucide="coffee" class="w-3 h-3 mr-1"></i>導出休息</button>
-                            <button type="button" onclick="window.autoAssignDaySchedule('${dStr}')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="依出勤名單與每人優先級自動排班"><i data-lucide="sparkles" class="w-3 h-3 mr-1"></i>智慧排班</button>
+    <!-- 🌟 新增：導出全表按鈕 -->
+    <button type="button" onclick="window.exportDayFullScheduleText('${dStr}')" class="bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出整張橫向排班表文字"><i data-lucide="table" class="w-3 h-3 mr-1"></i>導出全表</button>
+    <button type="button" onclick="window.exportDayBreakScheduleText('${dStr}')" class="bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出當日同事休息時間公告"><i data-lucide="coffee" class="w-3 h-3 mr-1"></i>導出休息</button>
+    <button type="button" onclick="window.autoAssignDaySchedule('${dStr}')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="依出勤名單與每人優先級自動排班"><i data-lucide="sparkles" class="w-3 h-3 mr-1"></i>智慧排班</button>
                             ${prevDateStr ? `<button type="button" onclick="window.copyPrevDaySchedule('${dStr}', '${prevDateStr}')" class="bg-white hover:bg-blue-50 text-blue-600 font-bold text-[10px] px-2 py-1 rounded-lg border border-blue-200 shadow-2xs transition-colors flex items-center active:scale-95" title="複製前一日排班"><i data-lucide="copy" class="w-3 h-3 mr-1"></i>複製前日</button>` : ''}
                             <button type="button" onclick="window.triggerDayCSVImport('${dStr}')" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[10px] px-2 py-1 rounded-lg border border-emerald-200 transition-colors flex items-center active:scale-95"><i data-lucide="file-up" class="w-3 h-3 mr-1"></i>匯入此日</button>
                             <button type="button" onclick="window.clearSingleDaySchedule('${dStr}')" class="bg-white hover:bg-red-50 text-red-500 font-bold text-[10px] px-2 py-1 rounded-lg border border-red-200 transition-colors flex items-center active:scale-95"><i data-lucide="trash-2" class="w-3 h-3 mr-0.5"></i>清空此日</button>
