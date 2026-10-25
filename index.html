@@ -1805,37 +1805,27 @@ ${isClean ? `
                                 return 'pt_1';
                             }
                         },
-                        // 11. 機動長班1 (頂男廁)：限男性，主崗位 pt_6 (當男廁正選在休息時才頂位)
+                        // 11. 機動長班1：平時待在 pt_6 機動池，由下方全場補位引擎自動調度
                         {
                             matchKey: 'EH0044',
                             prefLoc: 'pt_6',
                             prefGender: '男',
-                            title: '機動1(頂男廁)',
+                            title: '機動1',
                             getLoc: (s, e) => {
-                                if (s >= '08:00' && e <= '10:00') return 'pt_7'; // 休息
-                                if (s >= '15:00' && e <= '17:00') return 'pt_7'; // 休息
-                                // 🌟 檢查男廁正選是否正在休息；如果正選沒休，機動就留在 pt_6 機動崗位，絕不強行擠入男廁
-                                const tmpl1 = cleanRosterTemplates[0];
-                                const mainPerson = memberRoleMap.get(tmpl1);
-                                if (mainPerson && (s >= '10:00' && e <= '12:00' || s >= '17:00' && e <= '19:00')) {
-                                    // 只有當正選不在男廁上班時，才過來頂男廁
-                                    return 'pt_8';
-                                }
+                                if (s >= '08:00' && e <= '10:00') return 'pt_7';
+                                if (s >= '15:00' && e <= '17:00') return 'pt_7';
                                 return 'pt_6';
                             }
                         },
-                        // 13. 機動日班 (頂女廁與一樓)：限女性，主崗位 pt_6 (兼頂 pt_9、pt_1)
+                        // 13. 機動日班：平時待在 pt_6 機動池，由下方全場補位引擎自動調度
                         {
                             matchKey: '黃金妹',
                             prefLoc: 'pt_6',
                             prefGender: '女',
-                            title: '機動3(頂一樓及女廁)',
+                            title: '機動3',
                             getLoc: (s, e) => {
                                 if (s >= '08:00' && e <= '19:00') {
-                                    if (s >= '08:00' && e <= '10:00') return 'pt_1'; // 頂位：一樓
-                                    if (s >= '11:00' && e <= '12:00') return 'pt_9'; // 頂位：女廁+傷健
-                                    if (s >= '12:00' && e <= '13:00') return 'pt_7'; // 休息
-                                    if (s >= '15:00' && e <= '17:00') return 'pt_1'; // 頂位：一樓
+                                    if (s >= '12:00' && e <= '13:00') return 'pt_7';
                                     return 'pt_6';
                                 }
                                 return null;
@@ -2075,21 +2065,127 @@ ${isClean ? `
                                 }
                             }
 
-                            if (targetLoc) {
-                                const gKey = `${targetDateStr}_${targetLoc}_${slot.start}_${slot.end}`;
-                                const nList = window._tempGridValues[gKey] ? window._tempGridValues[gKey].split('\n') : [];
-                                if (!nList.includes(extraPerson)) {
-                                    nList.push(extraPerson);
-                                    window._tempGridValues[gKey] = nList.join('\n');
+                            // ===【上方 5 行】===
+                                if (targetLoc) {
+                                    const gKey = `${targetDateStr}_${targetLoc}_${slot.start}_${slot.end}`;
+                                    const nList = window._tempGridValues[gKey] ? window._tempGridValues[gKey].split('\n') : [];
+                                    if (!nList.includes(extraPerson)) {
+                                        nList.push(extraPerson);
+                                        window._tempGridValues[gKey] = nList.join('\n');
+                                    }
                                 }
-                            }
-                        });
-                    });
+                            });
 
-             } else {
-                // ==========================================
-                // 🎧 客服人員排班模型 (連動「7日班次更表」+ 0.5h/1h 錯開休息 + 崗位自動互補頂位)
-                // ==========================================
+// ===【✨ 替換為「志願優先 ➔ 機動保底」終極補位引擎】===
+                            // 🌟 5. 終極動態補位引擎：志願者優先借調，機動永遠是最後沒人才動用的底牌！
+                            const checkTargets = [
+                                { id: 'pt_8', min: 1, gender: '男' }, // 花園仔(男廁)：至少 1 男
+                                { id: 'pt_9', min: 1, gender: '女' }, // 花園仔(女廁)+(傷健)：至少 1 女
+                                { id: 'pt_1', min: 1, gender: '' },   // 一樓+廁所：至少 1 人
+                                { id: 'pt_3', min: 1, gender: '' },   // 花園仔：至少 1 人
+                                { id: 'pt_4', min: 2, gender: '' }    // 魚檔：至少 2 人
+                            ];
+
+                            const getSlotNames = (loc) => {
+                                const k = `${targetDateStr}_${loc}_${slot.start}_${slot.end}`;
+                                return window._tempGridValues[k] ? window._tempGridValues[k].split('\n').map(x => x.trim()).filter(Boolean) : [];
+                            };
+                            const setSlotNames = (loc, arr) => {
+                                const k = `${targetDateStr}_${loc}_${slot.start}_${slot.end}`;
+                                if (arr.length > 0) window._tempGridValues[k] = arr.join('\n');
+                                else delete window._tempGridValues[k];
+                            };
+
+                            checkTargets.forEach(target => {
+                                let curList = getSlotNames(target.id);
+
+                                while (curList.length < target.min) {
+                                    let foundPerson = null;
+
+                                    // 👑【階段一：志願者最優先！】
+                                    // 檢查其他在班崗位（尤其是魚檔 > 2人），看是否有人的第 1 或 第 2 順位剛好是這個缺人崗位！
+                                    if (!foundPerson && target.id !== 'pt_4') {
+                                        let fishList = getSlotNames('pt_4');
+                                        if (fishList.length > 2) {
+                                            // 優先找第 1 或第 2 順位包含該目標崗位的人（例如攣毛選了男廁）
+                                            let volunteerIdx = fishList.findIndex(n => {
+                                                const p = window.getMemberProfile(n);
+                                                const gOk = !target.gender || (p.gender || '女') === target.gender;
+                                                const prefs = p.prefs || [];
+                                                return gOk && (prefs[0] === target.id || prefs[1] === target.id);
+                                            });
+
+                                            if (volunteerIdx !== -1) {
+                                                foundPerson = fishList.splice(volunteerIdx, 1)[0];
+                                                setSlotNames('pt_4', fishList);
+                                            }
+                                        }
+                                    }
+
+                                    // 🥈【階段二：機動池中有志願者】
+                                    // 檢查機動池裡的人，看有沒有人剛好把這個缺人崗位列為優先順位
+                                    if (!foundPerson) {
+                                        let rovingList = getSlotNames('pt_6');
+                                        if (rovingList.length > 0) {
+                                            let rVolunteerIdx = rovingList.findIndex(n => {
+                                                const p = window.getMemberProfile(n);
+                                                const gOk = !target.gender || (p.gender || '女') === target.gender;
+                                                return gOk && (p.prefs || []).includes(target.id);
+                                            });
+                                            if (rVolunteerIdx !== -1) {
+                                                foundPerson = rovingList.splice(rVolunteerIdx, 1)[0];
+                                                setSlotNames('pt_6', rovingList);
+                                            }
+                                        }
+                                    }
+
+                                    // 🥉【階段三：魚檔仍有富餘多餘人力（超過2人）】
+                                    if (!foundPerson && target.id !== 'pt_4') {
+                                        let fishList = getSlotNames('pt_4');
+                                        if (fishList.length > 2) {
+                                            let fIdx = fishList.findIndex(n => {
+                                                const p = window.getMemberProfile(n);
+                                                return !target.gender || (p.gender || '女') === target.gender;
+                                            });
+                                            if (fIdx !== -1) {
+                                                foundPerson = fishList.splice(fIdx, 1)[0];
+                                                setSlotNames('pt_4', fishList);
+                                            }
+                                        }
+                                    }
+
+                                    // 🛡️【階段四：最後底牌！全場都沒人想去、也沒富餘了，機動人員才出動保底】
+                                    if (!foundPerson) {
+                                        let rovingList = getSlotNames('pt_6');
+                                        if (rovingList.length > 0) {
+                                            let rIdx = rovingList.findIndex(n => {
+                                                const p = window.getMemberProfile(n);
+                                                return !target.gender || (p.gender || '女') === target.gender;
+                                            });
+                                            if (rIdx !== -1) {
+                                                foundPerson = rovingList.splice(rIdx, 1)[0];
+                                                setSlotNames('pt_6', rovingList);
+                                            }
+                                        }
+                                    }
+
+                                    // 填入目標崗位
+                                    if (foundPerson) {
+                                        curList.push(foundPerson);
+                                        setSlotNames(target.id, curList);
+                                    } else {
+                                        break; // 確實完全無任何可用人力
+                                    }
+                                }
+                            });
+
+// ===【下方 5 行】===
+                        });
+
+                    } else {
+                        // ==========================================
+                        // 🎧 客服人員排班模型 (連動「7日班次更表」+ 0.5h/1h 錯開休息 + 崗位自動互補頂位)
+                        // ==========================================
 
                 // 🌟【排除周靜儀】：不參與自動排班計算
                 const activeCsDutyMembers = dutyMembers.filter(m => {
@@ -2251,41 +2347,52 @@ ${isClean ? `
 
                             const workingInHalf = activeInHalf.filter(m => !assignedInHalf.has(m));
 
-                            // 2. 依員工志願與輪替順序，優先填滿花園仔、魚檔、整體巡邏，確保有人去休息時立刻有人互補頂上
-                            for (let prefRank = 0; prefRank < 3; prefRank++) {
-                                const rotated = workingInHalf.map((_, i) => workingInHalf[(i + Math.floor(slotIdx / 2)) % workingInHalf.length]);
-                                rotated.forEach(m => {
-                                    if (assignedInHalf.has(m)) return;
-                                    const prefLoc = window.getMemberProfile(m)?.prefs?.[prefRank];
-                                    if (prefLoc && mapData.points[prefLoc] && prefLoc !== 'pt_7') {
-                                        const tObj = locTargets.find(x => x.id === prefLoc);
-                                        const maxCap = tObj ? tObj.max : 1;
-                                        if (locAssigned[prefLoc].length < maxCap) {
-                                            locAssigned[prefLoc].push(m);
-                                            assignedInHalf.add(m);
-                                        }
-                                    }
-                                });
-                            }
+                            // 2. 嚴格志願順位清點 (第 1 順位 ➔ 第 2 順位 ➔ 第 3 順位，徹底移除 rotated 陣列偏移)
+for (let prefRank = 0; prefRank < 3; prefRank++) {
+    workingInHalf.forEach(m => {
+        if (assignedInHalf.has(m)) return;
 
-                            // 🟢 修改後（補上空格）：
-// 3. 強制互補檢查：若外場崗位 (pt_3, pt_4, pt_5) 因原人員休息而空缺，從剩餘在班人員自動派員頂位
-const rotatedRemain = workingInHalf.filter(m => !assignedInHalf.has(m));
-rotatedRemain.forEach(m => {
-                                let placed = false;
-                                for (const tObj of locTargets) {
-                                    if (locAssigned[tObj.id] && locAssigned[tObj.id].length < tObj.min) {
-                                        locAssigned[tObj.id].push(m);
-                                        assignedInHalf.add(m);
-                                        placed = true;
-                                        break;
-                                    }
-                                }
-                                if (!placed && locAssigned['pt_1']) {
-                                    locAssigned['pt_1'].push(m);
-                                    assignedInHalf.add(m);
-                                }
-                            });
+        const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(m) : m;
+        const prof = window.getMemberProfile(canon);
+        const prefLoc = prof?.prefs?.[prefRank];
+
+        if (prefLoc && mapData.points[prefLoc] && prefLoc !== 'pt_7') {
+            const tObj = locTargets.find(x => x.id === prefLoc);
+            const maxCap = tObj ? tObj.max : 1;
+
+            // 只要目標崗位還有名額，優先滿足志願
+            if (locAssigned[prefLoc].length < maxCap) {
+                locAssigned[prefLoc].push(m);
+                assignedInHalf.add(m);
+            }
+        }
+    });
+}
+
+// 3. 嚴格落選判定：僅有前 3 順位都滿額或無效的剩餘人員，才進入此處
+const trueRemainingMembers = workingInHalf.filter(m => !assignedInHalf.has(m));
+
+// 步驟 3-A：先檢查外場關鍵崗位 (花園仔、魚檔、整體巡邏) 是否缺人，優先補足最低人數
+trueRemainingMembers.forEach(m => {
+    if (assignedInHalf.has(m)) return;
+    for (const tObj of locTargets) {
+        if (tObj.id !== 'pt_1' && locAssigned[tObj.id].length < tObj.min) {
+            locAssigned[tObj.id].push(m);
+            assignedInHalf.add(m);
+            break;
+        }
+    }
+});
+
+// 步驟 3-B：外場最低門檻皆已滿足後，剩餘的落選人員才進入客服室 (pt_1) 保底池
+trueRemainingMembers.forEach(m => {
+    if (!assignedInHalf.has(m)) {
+        if (locAssigned['pt_1']) {
+            locAssigned['pt_1'].push(m);
+            assignedInHalf.add(m);
+        }
+    }
+});
 
                             Object.keys(locAssigned).forEach(locId => {
                                 halfHourResults[`${locId}_${sM}_${eM}`] = locAssigned[locId];
