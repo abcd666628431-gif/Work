@@ -118,6 +118,15 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, updateDoc, getDocs, deleteDoc, onSnapshot, writeBatch, addDoc, query, orderBy, limit, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // 🌟【加在這裡】全域安全人名拆分函式：只用換行、逗號、頓號、分號分割，保留「Mary Chan」中間的空格
+        window.splitMemberNamesSafe = (text) => {
+            if (!text) return [];
+            return String(text)
+                .split(/[\r\n,，、;；/]+/)
+                .map(n => n.trim())
+                .filter(Boolean);
+        };
+
         const CONFIG = { maxDim: 1200, quality: 0.6 };
         const firebaseConfig = {
             apiKey: "AIzaSyBsdBYBeJYqgeDDxF39lZ0pr785SMnwvJs",
@@ -830,51 +839,85 @@ const tabMetadataMap = {
         // 🌟 同步將 5 日排班表與暫存格內的舊名字/舊編號替換為新名字，並自動合併相連時段
         window.replaceMemberKeyEverywhere = (oldKey, newKey) => {
             if (!oldKey || !newKey || oldKey === newKey) return;
-            const isClean = window.currentMapRole === 'clean';
-            const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
 
-            Object.keys(multiStore || {}).forEach(dStr => {
-                let dayList = multiStore[dStr] || [];
-                let changed = false;
-                dayList.forEach(s => {
-                    if (s.name === oldKey) {
-                        s.name = newKey;
-                        changed = true;
+            // 1. 同時替換【客服】與【清潔】兩邊所有的 5 日多日排班庫，不再只換單邊
+            [csMultiDaySchedules, cleanMultiDaySchedules].forEach(multiStore => {
+                if (!multiStore) return;
+                Object.keys(multiStore).forEach(dStr => {
+                    let dayList = multiStore[dStr] || [];
+                    let changed = false;
+                    dayList.forEach(s => {
+                        if (s.name === oldKey) {
+                            s.name = newKey;
+                            changed = true;
+                        }
+                    });
+                    if (changed) {
+                        const merged = [];
+                        const locIds = Array.from(new Set(dayList.map(s => s.locationId)));
+                        locIds.forEach(locId => {
+                            const uNames = Array.from(new Set(dayList.filter(s => s.locationId === locId).map(s => s.name)));
+                            uNames.forEach(uName => {
+                                const slots = dayList.filter(s => s.locationId === locId && s.name === uName).sort((a, b) => a.start.localeCompare(b.start));
+                                let cur = null;
+                                slots.forEach(s => {
+                                    if (!cur) cur = { ...s };
+                                    else if (cur.end >= s.start) {
+                                        if (s.end > cur.end) cur.end = s.end;
+                                    } else {
+                                        merged.push(cur);
+                                        cur = { ...s };
+                                    }
+                                });
+                                if (cur) merged.push(cur);
+                            });
+                        });
+                        multiStore[dStr] = merged;
                     }
                 });
-                if (changed) {
-                    const merged = [];
-                    const locIds = Array.from(new Set(dayList.map(s => s.locationId)));
-                    locIds.forEach(locId => {
-                        const uNames = Array.from(new Set(dayList.filter(s => s.locationId === locId).map(s => s.name)));
-                        uNames.forEach(uName => {
-                            const slots = dayList.filter(s => s.locationId === locId && s.name === uName).sort((a, b) => a.start.localeCompare(b.start));
-                            let cur = null;
-                            slots.forEach(s => {
-                                if (!cur) cur = { ...s };
-                                else if (cur.end >= s.start) {
-                                    if (s.end > cur.end) cur.end = s.end;
-                                } else {
-                                    merged.push(cur);
-                                    cur = { ...s };
-                                }
-                            });
-                            if (cur) merged.push(cur);
-                        });
-                    });
-                    multiStore[dStr] = merged;
+            });
+
+            // 2. 同步更新當前生效班表陣列
+            [csSchedulesStore, cleanSchedulesStore, memberSchedules].forEach(store => {
+                if (Array.isArray(store)) {
+                    store.forEach(s => { if (s.name === oldKey) s.name = newKey; });
                 }
             });
 
+            // 3. 替換 7 日固定更表 (csWeeklyRosterStore)
+            if (window.csWeeklyRosterStore) {
+                Object.keys(window.csWeeklyRosterStore).forEach(dStr => {
+                    if (window.csWeeklyRosterStore[dStr] && window.csWeeklyRosterStore[dStr][oldKey] !== undefined) {
+                        window.csWeeklyRosterStore[dStr][newKey] = window.csWeeklyRosterStore[dStr][oldKey];
+                        delete window.csWeeklyRosterStore[dStr][oldKey];
+                    }
+                });
+            }
+
+            // 4. 替換暫存字典中的名字（使用安全拆分，不因空格分裂）
             if (window._tempGridValues) {
                 Object.keys(window._tempGridValues).forEach(k => {
                     const val = window._tempGridValues[k];
                     if (val) {
-                        const arr = val.split(/[\n\s]+/).filter(Boolean).map(n => n === oldKey ? newKey : n);
-                        window._tempGridValues[k] = Array.from(new Set(arr)).join('\n');
+                        const arr = String(val).split(/[\r\n,，、;；/]+/).map(n => n.trim()).filter(Boolean);
+                        const replaced = arr.map(n => n === oldKey ? newKey : n);
+                        window._tempGridValues[k] = Array.from(new Set(replaced)).join('\n');
                     }
                 });
             }
+
+            // 5. 🌟 關鍵防護：即刻同步更新畫面上已經渲染出來的 DOM，防止稍後 captureAll5DayDomValues 抓回舊名
+            document.querySelectorAll('.sub-line-item').forEach(el => {
+                if (el.dataset.name === oldKey) {
+                    el.dataset.name = newKey;
+                    el.textContent = window.getScheduleDisplayLabel ? window.getScheduleDisplayLabel(newKey) : newKey;
+                }
+            });
+            document.querySelectorAll('.member-btn-container').forEach(el => {
+                if (el.dataset.name === oldKey) {
+                    el.dataset.name = newKey;
+                }
+            });
         };
 
        window.getMemberProfile = (name) => {
@@ -1469,7 +1512,7 @@ const tabMetadataMap = {
                     : `${name}`;
 
                 const avatarHtml = prof.avatar
-                    ? `<img src="${prof.avatar}" class="w-8 h-8 rounded-full object-cover border border-slate-300 shrink-0 shadow-2xs">`
+                    ? `<img src="${prof.avatar}" class="w-8 h-8 rounded-full object-cover border border-slate-300 shrink-0 shadow-2xs bg-[#fdfbf7]">`
                     : `<div class="w-8 h-8 rounded-full ${col.bg} ${col.border} border flex items-center justify-center shrink-0 shadow-2xs"><i data-lucide="user" class="w-4 h-4 text-slate-700"></i></div>`;
 
                 // 當切換為「👁️ 顯示全部」時，所有成員卡片皆保持清晰不變暗，並標示「全部顯示中」
@@ -2337,11 +2380,16 @@ window.showToast(`✨ 已完成【${targetDateStr}】自動排班！性別、志
                             canvas.width = size;
                             canvas.height = size;
                             const ctx = canvas.getContext('2d');
+
+                            // 🌟 核心：在圖片繪入前，先填上一層經典米白色底色
+                            ctx.fillStyle = '#fdfbf7'; // 系統的主體米白色（若想更偏復古紙色可改用 '#f0ebe1'）
+                            ctx.fillRect(0, 0, size, size);
+
                             const minSide = Math.min(img.width, img.height);
                             const sx = (img.width - minSide) / 2;
                             const sy = (img.height - minSide) / 2;
                             ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, size, size);
-                            resolve(canvas.toDataURL('image/jpeg', 0.8));
+                            resolve(canvas.toDataURL('image/jpeg', 0.85));
                         };
                         img.onerror = () => reject(new Error('圖片讀取失敗'));
                         img.src = e.target.result;
@@ -2367,7 +2415,7 @@ window.showToast(`✨ 已完成【${targetDateStr}】自動排班！性別、志
         };
 
         // 🌟 點擊「修改名稱」按鈕時觸發
-        window.confirmRenameMember = (oldName) => {
+        window.confirmRenameMember = async (oldName) => {
             const input = $('popupMemberNameInput');
             if (!input) return;
             const newName = input.value.trim().replace(/^#/, '');
@@ -2383,66 +2431,95 @@ window.showToast(`✨ 已完成【${targetDateStr}】自動排班！性別、志
             }
 
             const isClean = window.currentMapRole === 'clean';
-            let list = isClean ? cleanMembersStore : csMembersStore;
 
-            const oldProf = memberProfilesStore[oldName] || { id: '', avatar: '', gender: '女', prefs: [] };
-            const targetProf = memberProfilesStore[newName] || { id: '', avatar: '', gender: '女', prefs: [] };
+            // 1. 遷移檔案設定，並從本地徹底刪除舊姓名 Key
+            const oldProf = memberProfilesStore[oldName] || { id: '', avatar: '', gender: '女', residency: '本地', prefs: [] };
+            const targetProf = memberProfilesStore[newName] || {};
 
             let preservedId = oldProf.id || targetProf.id || '';
             if (!preservedId && window.isStaffIdFormat(oldName)) {
                 preservedId = oldName.trim().toUpperCase();
             }
-            const preservedAvatar = oldProf.avatar || targetProf.avatar || '';
-            const preservedGender = oldProf.gender || targetProf.gender || '女';
-            const preservedPrefs = (oldProf.prefs && oldProf.prefs.length) ? oldProf.prefs : (targetProf.prefs || []);
 
-            memberProfilesStore[newName] = { id: preservedId, avatar: preservedAvatar, gender: preservedGender, prefs: preservedPrefs };
-            if (oldName !== newName) {
-                delete memberProfilesStore[oldName];
-            }
+            memberProfilesStore[newName] = {
+                id: preservedId,
+                avatar: oldProf.avatar || targetProf.avatar || '',
+                gender: oldProf.gender || targetProf.gender || '女',
+                residency: oldProf.residency || targetProf.residency || '本地',
+                prefs: (oldProf.prefs && oldProf.prefs.length) ? oldProf.prefs : (targetProf.prefs || []),
+                idealRestTime: oldProf.idealRestTime || targetProf.idealRestTime || '',
+                futureSchedules: oldProf.futureSchedules || targetProf.futureSchedules || []
+            };
+            delete memberProfilesStore[oldName];
             safeSetLocal('work_cache_member_profiles', memberProfilesStore);
-            if (currentUser && db) {
-                syncConfig('member_profiles', { profiles: memberProfilesStore });
+
+            // 2. 同時更新客服與清潔兩邊的名單陣列
+            csMembersStore = Array.from(new Set(csMembersStore.map(m => m === oldName ? newName : m)));
+            cleanMembersStore = Array.from(new Set(cleanMembersStore.map(m => m === oldName ? newName : m)));
+            teamMembers = isClean ? [...cleanMembersStore] : [...csMembersStore];
+
+            safeSetLocal('work_cache_team_members', csMembersStore);
+            safeSetLocal('work_cache_clean_members', cleanMembersStore);
+
+            // 3. 更新出勤勾選名單 (Duty Filter)
+            if (window.activeDutyMembersFilter) {
+                ['cs', 'clean'].forEach(role => {
+                    if (Array.isArray(window.activeDutyMembersFilter[role])) {
+                        window.activeDutyMembersFilter[role] = Array.from(new Set(
+                            window.activeDutyMembersFilter[role].map(m => m === oldName ? newName : m)
+                        ));
+                    }
+                });
+                safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
             }
 
-            if (list.includes(newName)) {
-                list = list.filter(m => m !== oldName);
-            } else {
-                const idx = list.indexOf(oldName);
-                if (idx !== -1) list[idx] = newName;
-                else list.push(newName);
-            }
-
+            // 4. 全域執行排班表替換（含 DOM 即時修正）
             window.replaceMemberKeyEverywhere(oldName, newName);
 
+            // 5. 同步今日班表與快取
             const todayStr = getNowInputStrs().date;
-            if (isClean) {
-                cleanMembersStore = [...list];
-                teamMembers = [...cleanMembersStore];
-                safeSetLocal('work_cache_clean_members', cleanMembersStore);
-                syncConfig('clean_team_members', { members: cleanMembersStore });
-                window.syncActiveTodaySchedule();
-                safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
-                safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
-                syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
-            } else {
-                csMembersStore = [...list];
-                teamMembers = [...csMembersStore];
-                safeSetLocal('work_cache_team_members', csMembersStore);
-                syncConfig('team_members', { members: csMembersStore });
-                window.syncActiveTodaySchedule();
-                safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
-                safeSetLocal('work_cache_member_schedules', csSchedulesStore);
-                syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
+            window.syncActiveTodaySchedule();
+            safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
+            safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+            safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+            safeSetLocal('work_cache_member_schedules', csSchedulesStore);
+
+            // 6. 🌟 雲端同步：以 deleteField() 明確刪除舊 Key，防止 onSnapshot 復活舊名分身
+            if (currentUser && db) {
+                try {
+                    syncConfig('team_members', { members: csMembersStore });
+                    syncConfig('clean_team_members', { members: cleanMembersStore });
+                    syncConfig('duty_filter', { filter: window.activeDutyMembersFilter });
+                    syncConfig('cs_weekly_roster', { roster: window.csWeeklyRosterStore, presets: window.csShiftPresets });
+                    syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
+                    syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
+
+                    const profDocRef = cfgDoc('member_profiles');
+                    await setDoc(profDocRef, {
+                        profiles: {
+                            [newName]: memberProfilesStore[newName],
+                            [oldName]: deleteField()
+                        }
+                    }, { merge: true });
+                } catch (e) {
+                    console.error("改名雲端同步失敗:", e);
+                }
             }
 
             if (activeGridMember === oldName) activeGridMember = newName;
 
-            window.showToast(`✅ 已修改名稱為「${newName}」（編號 ${preservedId || '無'} 維持不變）`);
+            window.showToast(`✅ 已將「${oldName}」修改為「${newName}」`);
             window.openMemberProfilePopup(newName, window._currentPopupLocation || '當前崗位');
             window.updateMapSimulation();
-            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal();
-            if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+
+            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
+                window.renderMemberRosterModal();
+            }
+
+            // 🌟 核心防護：必須傳入 true！禁止 captureAll5DayDomValues 抓舊畫面倒灌！
+            if ($('scheduleManageModal')?.classList.contains('flex')) {
+                window.renderScheduleManager(true);
+            }
         };
 
         window.removeMemberFutureSchedule = (name, idx) => {
@@ -2692,9 +2769,9 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                     </button>
                     
                     <div class="relative group cursor-pointer mb-2 mt-1">
-                        <div class="w-20 h-20 rounded-2xl border-2 border-slate-200 overflow-hidden shadow-inner flex items-center justify-center bg-slate-100">
-                            <img id="popupMemberAvatarImg" src="${profile.avatar || 'data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'100\' height=\'100\' fill=\'%23cbd5e1\'><rect width=\'100\' height=\'100\'/></svg>'}" class="w-full h-full object-cover">
-                        </div>
+                        <div class="w-20 h-20 rounded-2xl border-2 border-slate-200 overflow-hidden shadow-inner flex items-center justify-center bg-[#fdfbf7]">
+    <img id="popupMemberAvatarImg" src="..." class="w-full h-full object-cover">
+</div>
                         <label class="absolute inset-0 bg-black/40 text-white rounded-2xl flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold cursor-pointer">
                             <i data-lucide="camera" class="w-5 h-5 mb-1"></i>
                             <span>更換頭像</span>
@@ -2704,9 +2781,9 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
 
                     <div class="w-full mb-1.5 flex items-center gap-1">
                         <input type="text" id="popupMemberNameInput" value="${canonicalName}" placeholder="輸入成員姓名" 
-                            onkeydown="if(event.key==='Enter'){ event.preventDefault(); window.confirmRenameMember('${safeNameAttr}'); }"
+                            onkeydown="if(event.key==='Enter'){ event.preventDefault(); if(!window._isRenaming){ window._isRenaming=true; window.confirmRenameMember('${safeNameAttr}').finally(()=>{ window._isRenaming=false; }); } }"
                             class="bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-sm font-black text-slate-800 text-center flex-1 min-w-0 focus:outline-none focus:border-blue-500">
-                        <button type="button" onclick="window.confirmRenameMember('${safeNameAttr}')" 
+                        <button type="button" onclick="if(!window._isRenaming){ window._isRenaming=true; window.confirmRenameMember('${safeNameAttr}').finally(()=>{ window._isRenaming=false; }); }" 
                             class="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-lg text-xs font-bold active:scale-95 transition-all shrink-0 shadow-xs">
                             修改名稱
                         </button>
@@ -3617,40 +3694,43 @@ window.resumePatrolUploadQueue = async (showOnlineToast = false) => {
     }
 
     window._isSyncingPatrol = true;
-    const ref = cfgDoc('patrol_history');
 
     try {
         do {
             window._hasMorePatrolToSync = false;
             const snapshotQueue = JSON.parse(JSON.stringify(window._patrolPendingQueue || {}));
-            const nestedPayload = {};
             let batchCount = 0;
+            const batch = writeBatch(db);
 
+            // 🌟 將每個日期獨立寫入 cfgDoc(`patrol_history_${dKey}`)，徹底解決單一文件太臃腫的索引上限報錯
             Object.keys(snapshotQueue).forEach(dKey => {
                 const stalls = snapshotQueue[dKey] || {};
+                const datePayload = {};
+
                 Object.keys(stalls).forEach(sKey => {
                     const slots = stalls[sKey] || {};
+                    datePayload[sKey] = {};
                     Object.keys(slots).forEach(slotName => {
                         const item = slots[slotName];
-                        if (!nestedPayload[dKey]) nestedPayload[dKey] = {};
-                        if (!nestedPayload[dKey][sKey]) nestedPayload[dKey][sKey] = {};
-
-                        // 🌟 寫入時段狀態、手動鎖、原因與時間戳（即使是取消也明確寫入 '' 與最新 ts，讓手機與電腦同步取消）
-                        nestedPayload[dKey][sKey][slotName] = item.val || '';
-                        nestedPayload[dKey][sKey][`${slotName}_locked`] = !!item.locked;
-                        nestedPayload[dKey][sKey][`${slotName}_reason`] = item.reason || '';
-                        nestedPayload[dKey][sKey][`${slotName}_ts`] = item.ts;
+                        datePayload[sKey][slotName] = item.val || '';
+                        datePayload[sKey][`${slotName}_locked`] = !!item.locked;
+                        datePayload[sKey][`${slotName}_reason`] = item.reason || '';
+                        datePayload[sKey][`${slotName}_ts`] = item.ts;
                         batchCount++;
                     });
                 });
+
+                if (Object.keys(datePayload).length > 0) {
+                    const dateRef = cfgDoc(`patrol_history_${dKey}`);
+                    batch.set(dateRef, { [dKey]: datePayload }, { merge: true });
+                }
             });
 
             if (batchCount === 0) break;
 
-            // 🌟 採用 setDoc + { merge: true } 深層合併，只更新有異動的時段欄位，絕不洗掉他人或其他時段紀錄
-            await setDoc(ref, { history: nestedPayload }, { merge: true });
+            await batch.commit();
 
-            // 寫入成功後：比對時間戳，只清除「期間沒有被使用者再次點擊修改」的時段項目
+            // 寫入成功後：比對時間戳，清除佇列
             Object.keys(snapshotQueue).forEach(dKey => {
                 const stalls = snapshotQueue[dKey] || {};
                 Object.keys(stalls).forEach(sKey => {
@@ -3793,6 +3873,9 @@ window.setPatrolStatus = (stall, status, slot) => {
 
         window.setPatrolDate = (dateKey) => {
             currentPatrolDate = dateKey;
+            if (window.listenPatrolDateDoc) {
+                window.listenPatrolDateDoc(dateKey);
+            }
             patrolState = patrolHistoryStore[currentPatrolDate] || {};
             patrolFocusIndex = 0;
             window.clearFocusAutoTimer();
@@ -3839,7 +3922,7 @@ window.clearTodayPatrolData = (e) => {
     const ok = confirm(`確定要清除【${targetDate}】全部剔檔記錄？\n此操作會同步到雲端，且無法復原。`);
     if (!ok) return;
 
-    // 1. 清空該日離線佇列，防止刪除後被佇列死灰復燃蓋回來
+    // 1. 清空該日離線佇列，防止刪除後被佇列蓋回來
     if (window._patrolPendingQueue && window._patrolPendingQueue[targetDate]) {
         delete window._patrolPendingQueue[targetDate];
         safeSetLocal('work_pending_patrol_queue', window._patrolPendingQueue);
@@ -3853,16 +3936,16 @@ window.clearTodayPatrolData = (e) => {
     safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
     safeSetLocal('work_cache_patrol_records', {});
 
-    // 3. 清雲端該日紀錄
+    // 3. 🌟 清雲端該日獨立文件
     if (currentUser && db) {
-        const ref = cfgDoc('patrol_history');
-        updateDoc(ref, { [`history.${targetDate}`]: deleteField() }).catch(() => {});
+        const dateRef = cfgDoc(`patrol_history_${targetDate}`);
+        deleteDoc(dateRef).catch(() => {});
     }
 
     $('patrolCalendarPopover')?.classList.add('hidden');
     window.updatePatrolDateInputUI();
     window.renderPatrol();
-window.writeGalleryLog('清空剔檔', targetDate, '清空該日全部巡查紀錄');
+    window.writeGalleryLog('清空剔檔', targetDate, '清空該日全部巡查紀錄');
     window.showToast(`已清除 ${targetDate} 全部剔檔記錄`);
 };
         window.patrolJumpToToday = (e) => {
@@ -7526,63 +7609,66 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 window.applyTabVisibility(); 
             });
 
-            // 🌟 剔檔紀錄 (patrol_history) 雲端雙向即時同步（比對 _ts 時間戳，確保多機同時剔檔絕不互蓋）
-            onSnapshot(cfgDoc('patrol_history'), (snap) => {
-                if (!snap.exists()) return;
-                const remoteHistory = snap.data()?.history || {};
-                let hasUpdated = false;
+           // 🌟 剔檔紀錄獨立文件動態監聽（避免載入全部歷史造成 Firestore 索引超載）
+            window._patrolDateUnsubs = window._patrolDateUnsubs || {};
+            window.listenPatrolDateDoc = (dateKey) => {
+                if (!currentUser || !db || !dateKey) return;
+                if (window._patrolDateUnsubs[dateKey]) return; // 已經在監聽中，避免重複綁定
 
-                // 檢查雲端被整日清空的日期
-                Object.keys(patrolHistoryStore).forEach(dKey => {
-                    if (!remoteHistory[dKey] && !window._patrolPendingQueue?.[dKey]) {
-                        delete patrolHistoryStore[dKey];
-                        hasUpdated = true;
-                    }
-                });
+                const dateRef = cfgDoc(`patrol_history_${dateKey}`);
+                window._patrolDateUnsubs[dateKey] = onSnapshot(dateRef, (snap) => {
+                    let hasUpdated = false;
+                    if (!snap.exists()) {
+                        // 若雲端文件已被刪除，且本機無排隊上傳項目，則清理本機紀錄
+                        if (patrolHistoryStore[dateKey] && !window._patrolPendingQueue?.[dateKey]) {
+                            delete patrolHistoryStore[dateKey];
+                            hasUpdated = true;
+                        }
+                    } else {
+                        const remoteDay = snap.data()?.[dateKey] || {};
+                        if (!patrolHistoryStore[dateKey]) patrolHistoryStore[dateKey] = {};
+                        const localDay = patrolHistoryStore[dateKey];
 
-                Object.keys(remoteHistory).forEach(dKey => {
-                    const remoteDay = remoteHistory[dKey] || {};
-                    if (!patrolHistoryStore[dKey]) patrolHistoryStore[dKey] = {};
-                    const localDay = patrolHistoryStore[dKey];
+                        Object.keys(remoteDay).forEach(sKey => {
+                            const remoteStall = remoteDay[sKey] || {};
+                            if (!localDay[sKey]) localDay[sKey] = {};
+                            const localStall = localDay[sKey];
 
-                    Object.keys(remoteDay).forEach(sKey => {
-                        const remoteStall = remoteDay[sKey] || {};
-                        if (!localDay[sKey]) localDay[sKey] = {};
-                        const localStall = localDay[sKey];
+                            PATROL_TIME_SLOTS.forEach(slotName => {
+                                if (window._patrolPendingQueue?.[dateKey]?.[sKey]?.[slotName]) return;
 
-                        PATROL_TIME_SLOTS.forEach(slotName => {
-                            // 若本機該時段正在離線佇列等待上傳，優先保護本機最新操作
-                            if (window._patrolPendingQueue?.[dKey]?.[sKey]?.[slotName]) return;
+                                const rTs = remoteStall[`${slotName}_ts`] || 0;
+                                const lTs = localStall[`${slotName}_ts`] || 0;
 
-                            const rTs = remoteStall[`${slotName}_ts`] || 0;
-                            const lTs = localStall[`${slotName}_ts`] || 0;
-
-                            if (rTs >= lTs) {
-                                const rVal = remoteStall[slotName] || '';
-                                const rLoc = !!remoteStall[`${slotName}_locked`];
-                                const rRea = remoteStall[`${slotName}_reason`] || '';
-                                if (localStall[slotName] !== rVal || !!localStall[`${slotName}_locked`] !== rLoc || (localStall[`${slotName}_reason`] || '') !== rRea) {
-                                    localStall[slotName] = rVal;
-                                    localStall[`${slotName}_locked`] = rLoc;
-                                    localStall[`${slotName}_reason`] = rRea;
-                                    localStall[`${slotName}_ts`] = rTs;
-                                    hasUpdated = true;
+                                if (rTs >= lTs) {
+                                    const rVal = remoteStall[slotName] || '';
+                                    const rLoc = !!remoteStall[`${slotName}_locked`];
+                                    const rRea = remoteStall[`${slotName}_reason`] || '';
+                                    if (localStall[slotName] !== rVal || !!localStall[`${slotName}_locked`] !== rLoc || (localStall[`${slotName}_reason`] || '') !== rRea) {
+                                        localStall[slotName] = rVal;
+                                        localStall[`${slotName}_locked`] = rLoc;
+                                        localStall[`${slotName}_reason`] = rRea;
+                                        localStall[`${slotName}_ts`] = rTs;
+                                        hasUpdated = true;
+                                    }
                                 }
-                            }
+                            });
                         });
-                    });
-                });
-
-                if (hasUpdated) {
-                    patrolState = patrolHistoryStore[currentPatrolDate] || {};
-                    safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
-                    safeSetLocal('work_cache_patrol_records', patrolState);
-                    if (!$('patrolPage')?.classList.contains('hidden')) {
-                        window.renderPatrol();
                     }
-                }
-            }, console.error);
 
+                    if (hasUpdated && currentPatrolDate === dateKey) {
+                        patrolState = patrolHistoryStore[currentPatrolDate] || {};
+                        safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
+                        safeSetLocal('work_cache_patrol_records', patrolState);
+                        if (!$('patrolPage')?.classList.contains('hidden')) {
+                            window.renderPatrol();
+                        }
+                    }
+                }, console.error);
+            };
+
+            // 啟動當前日期的監聽
+            window.listenPatrolDateDoc(currentPatrolDate);
             // 🌟 溫度統計表獨立雙向即時同步
             bindSync('patrol_temp_records', 'work_cache_patrol_temp_records', d => {
                 if (window._lastTempInputTime && (Date.now() - window._lastTempInputTime) < 800) {
@@ -7992,7 +8078,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         const profile = window.getMemberProfile(name);
                         const col = window.getMemberColorClass(name);
                         const avatarHtml = profile.avatar 
-                            ? `<img src="${profile.avatar}" class="w-full h-full object-cover rounded-full">`
+                            ? `<img src="${profile.avatar}" class="w-full h-full object-cover rounded-full bg-[#fdfbf7]">`
                             : `<i data-lucide="user" class="w-4 h-4 text-white"></i>`;
                         const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== name.trim().toUpperCase();
 
@@ -8727,11 +8813,17 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         const applyGridAction = (el) => {
             if (gridDragAction === 'erase') el.value = '';
             else {
-                let names = (el.value || '').split(/[\n\s]+/).filter(Boolean);
+                let names = window.splitMemberNamesSafe(el.value || '');
                 if (gridDragAction === 'add' && !names.includes(activeGridMember)) names.push(activeGridMember);
                 else if (gridDragAction === 'remove') names = names.filter(n => n !== activeGridMember);
                 el.value = names.join('\n');
             }
+        };
+
+        window.startGridDrag = (el) => {
+            if (!activeGridMember) return; el.blur(); isGridDragging = true;
+            if (activeGridMember === 'ERASER') { gridDragAction = 'erase'; applyGridAction(el); }
+            else { let names = window.splitMemberNamesSafe(el.value || ''); gridDragAction = names.includes(activeGridMember) ? 'remove' : 'add'; applyGridAction(el); }
         };
 
         // ====== 手機版專屬：點擊格子直接填入或清除排班名字 ======
@@ -9227,16 +9319,16 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             const restSlotsByMember = new Map();
             const restPrefix = `${targetDateStr}_pt_7_`;
             Object.keys(domVals).forEach(k => {
-                if (k.startsWith(restPrefix)) {
-                    const timeParts = k.slice(restPrefix.length).split('_');
-                    const [sTime, eTime] = timeParts;
-                    const val = domVals[k] || '';
-                    val.split(/[\n,、/]+/).forEach(n => {
-                        const clean = n.trim();
-                        if (clean && !clean.includes('休')) {
+                if (k.startsWith(prefix)) {
+                    foundInDom = true;
+                    const restPart = k.slice(prefix.length); // 例如 08:00_08:30
+                    const [start, end] = restPart.split('_');
+                    const text = domVals[k] || '';
+                    window.splitMemberNamesSafe(text).forEach(rawName => {
+                        const clean = rawName.trim();
+                        if (clean && !clean.includes('休') && !clean.includes('...')) {
                             const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean;
-                            if (!restSlotsByMember.has(canon)) restSlotsByMember.set(canon, []);
-                            restSlotsByMember.get(canon).push({ s: sTime, e: eTime });
+                            rawRestSlots.push({ name: canon, start, end });
                         }
                     });
                 }
@@ -9517,7 +9609,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             const addSlotRecord = (date, loc, start, end, text) => {
                 if (!date || !text || !start || !end) return;
                 if (!rawByDate[date]) rawByDate[date] = [];
-                text.split(/[\n\s,、/]+/).forEach(r => {
+                window.splitMemberNamesSafe(text).forEach(r => {
                     let rawClean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim();
                     if (rawClean && !rawClean.includes('休') && !rawClean.includes('...')) {
                         let clean = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawClean) : rawClean;
@@ -11602,94 +11694,10 @@ setInterval(() => {
                 window.resumePatrolUploadQueue(true);
             }
 
-            onSnapshot(cfgDoc('patrol_history'), (snap) => {
-                const data = snap.exists() ? snap.data() : {};
-                const remote = JSON.parse(JSON.stringify(data?.history || {}));
-                const pendingQueue = window._patrolPendingQueue || {};
-
-                const allDates = new Set([
-                    ...Object.keys(patrolHistoryStore || {}),
-                    ...Object.keys(remote || {})
-                ]);
-
-                const mergedHistory = {};
-
-                allDates.forEach(dateKey => {
-                    if (!remote[dateKey] && !pendingQueue[dateKey] && snap.exists()) {
-                        return;
-                    }
-
-                    const localDay = patrolHistoryStore[dateKey] || {};
-                    const remoteDay = remote[dateKey] || {};
-                    const allStalls = new Set([
-                        ...Object.keys(localDay),
-                        ...Object.keys(remoteDay)
-                    ]);
-
-                    const mergedDay = {};
-
-                    allStalls.forEach(stallKey => {
-                        const localStall = localDay[stallKey] || {};
-                        const remoteStall = remoteDay[stallKey] || {};
-                        const pendingStall = pendingQueue[dateKey]?.[stallKey] || {};
-                        const mergedStall = {};
-
-                        PATROL_TIME_SLOTS.forEach(slotKey => {
-                            // 🌟 優先權 1：本機正在排隊等上傳的時段，優先保留本機
-                            if (pendingStall[slotKey]) {
-                                const p = pendingStall[slotKey];
-                                mergedStall[slotKey] = p.val || '';
-                                mergedStall[`${slotKey}_locked`] = !!p.locked;
-                                mergedStall[`${slotKey}_reason`] = p.reason || '';
-                                mergedStall[`${slotKey}_ts`] = p.ts;
-                                return;
-                            }
-
-                            // 🌟 優先權 2：比對雲端與本機在「該時段」的時間戳 (_ts)，誰最新就聽誰的！
-                            const rTs = remoteStall[`${slotKey}_ts`] || 0;
-                            const lTs = localStall[`${slotKey}_ts`] || 0;
-
-                            if (rTs >= lTs && (rTs > 0 || remoteStall[slotKey] !== undefined)) {
-                                mergedStall[slotKey] = remoteStall[slotKey] || '';
-                                if (remoteStall[`${slotKey}_locked`] !== undefined) {
-                                    mergedStall[`${slotKey}_locked`] = remoteStall[`${slotKey}_locked`];
-                                }
-                                if (remoteStall[`${slotKey}_reason`] !== undefined) {
-                                    mergedStall[`${slotKey}_reason`] = remoteStall[`${slotKey}_reason`];
-                                }
-                                if (rTs > 0) mergedStall[`${slotKey}_ts`] = rTs;
-                            } else if (lTs > rTs) {
-                                mergedStall[slotKey] = localStall[slotKey] || '';
-                                if (localStall[`${slotKey}_locked`] !== undefined) {
-                                    mergedStall[`${slotKey}_locked`] = localStall[`${slotKey}_locked`];
-                                }
-                                if (localStall[`${slotKey}_reason`] !== undefined) {
-                                    mergedStall[`${slotKey}_reason`] = localStall[`${slotKey}_reason`];
-                                }
-                                mergedStall[`${slotKey}_ts`] = lTs;
-                            }
-                        });
-
-                        if (Object.keys(mergedStall).length > 0) {
-                            mergedDay[stallKey] = mergedStall;
-                        }
-                    });
-
-                    if (Object.keys(mergedDay).length > 0) {
-                        mergedHistory[dateKey] = mergedDay;
-                    }
-                });
-
-                patrolHistoryStore = mergedHistory;
-                patrolState = patrolHistoryStore[currentPatrolDate] || {};
-                
-                safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
-                safeSetLocal('work_cache_patrol_records', patrolState);
-                
-                if (!$('patrolPage')?.classList.contains('hidden')) {
-                    window.renderPatrol();
-                }
-            }, console.error);
+            // 確保監聽當前開啟日期的獨立文件
+            if (window.listenPatrolDateDoc) {
+                window.listenPatrolDateDoc(currentPatrolDate);
+            }
         }
 
         onAuthStateChanged(auth, (user) => {
