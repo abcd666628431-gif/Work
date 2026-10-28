@@ -3362,50 +3362,47 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
 
         // 🌟 關閉溫度數字盤（自動清理結尾多餘小數點如 "26." -> "26"）
         window.closeTempKeypadModal = (force = false, e = null) => {
-            if (e && e.target && e.target.id !== 'tempKeypadModal') {
-                return;
-            }
-            if (!force && window._keypadOpenedAt && (Date.now() - window._keypadOpenedAt) < 280) {
-                return;
-            }
+    // 移除會導致點擊小鍵盤內部時被誤判關閉的限制，改為嚴格檢查點擊目標
+    if (e && e.target && e.target.id !== 'tempKeypadModal' && !e.target.closest('#tempKeypadModal > div')) {
+        return;
+    }
 
-            // 若當前輸入值以小數點結尾（例如 "26."），關閉時自動正規化為 "26"
-            const pointId = window.activeTempKeypadPointId;
-            const date = currentPatrolDate || getTodayDateStr();
-            const slot = patrolSlot || window.getAutoPatrolSlot();
-            if (pointId && patrolTempRecords[date]?.[slot]?.[pointId]) {
-                let curVal = String(patrolTempRecords[date][slot][pointId]).trim();
-                if (curVal.endsWith('.')) {
-                    curVal = curVal.slice(0, -1);
-                    const nowTs = Date.now();
-                    if (curVal === '') {
-                        delete patrolTempRecords[date][slot][pointId];
-                    } else {
-                        patrolTempRecords[date][slot][pointId] = curVal;
-                    }
-                    patrolTempRecords[date][slot][`${pointId}_ts`] = nowTs;
-                    safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
-                    window.syncTempSlotFieldToCloud(date, slot, {
-                        [pointId]: curVal,
-                        [`${pointId}_ts`]: nowTs
-                    });
-                    const displayEl = $(`tempDisplay-${pointId}`);
-                    if (displayEl) {
-                        displayEl.innerHTML = curVal ? `${curVal}<span class="text-[10px] font-bold text-slate-500 ml-0.5">°C</span>` : `---`;
-                    }
-                    window.updateTempProgressUI(date, slot);
-                }
+    const pointId = window.activeTempKeypadPointId;
+    const date = currentPatrolDate || getTodayDateStr();
+    const slot = patrolSlot || window.getAutoPatrolSlot();
+    if (pointId && patrolTempRecords[date]?.[slot]?.[pointId]) {
+        let curVal = String(patrolTempRecords[date][slot][pointId]).trim();
+        if (curVal.endsWith('.')) {
+            curVal = curVal.slice(0, -1);
+            const nowTs = Date.now();
+            if (curVal === '') {
+                delete patrolTempRecords[date][slot][pointId];
+            } else {
+                patrolTempRecords[date][slot][pointId] = curVal;
             }
-
-            const modal = $('tempKeypadModal');
-            if (modal) {
-                modal.classList.add('hidden');
-                modal.classList.remove('flex');
-            }
-            document.querySelectorAll('[id^="tempDisplay-"]').forEach(el => {
-                el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/60', 'border-blue-500');
+            patrolTempRecords[date][slot][`${pointId}_ts`] = nowTs;
+            safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
+            window.syncTempSlotFieldToCloud(date, slot, {
+                [pointId]: curVal,
+                [`${pointId}_ts`]: nowTs
             });
-        };
+            const displayEl = $(`tempDisplay-${pointId}`);
+            if (displayEl) {
+                displayEl.innerHTML = curVal ? `${curVal}<span class="text-[10px] font-bold text-slate-500 ml-0.5">°C</span>` : `---`;
+            }
+            window.updateTempProgressUI(date, slot);
+        }
+    }
+
+    const modal = $('tempKeypadModal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+    document.querySelectorAll('[id^="tempDisplay-"]').forEach(el => {
+        el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/60', 'border-blue-500');
+    });
+};
 
         // 🌟 溫度專屬虛擬鍵盤點擊處理
         window.onTempKeypadPress = (key) => {
@@ -13809,7 +13806,7 @@ window.pushMeetingReportsToAllIframes = (reports) => {
 </div>
 
 <!-- 🌟 溫度數字盤（置於統計表 DOM 之後、移除與 hidden 衝突的 flex、完成鍵傳入 true 強制秒關） -->
-<div id="tempKeypadModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-[10050] flex-col items-center justify-center p-4" onclick="window.closeTempKeypadModal(false, event)">
+<div id="tempKeypadModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-[10050] items-center justify-center p-4" onclick="window.closeTempKeypadModal(false, event)">
     <div class="bg-white rounded-3xl border-2 border-slate-200 p-4 shadow-2xl w-full max-w-[320px] space-y-2.5 animate-pop-in" onclick="event.stopPropagation()">
         <!-- 頂部資訊列 -->
         <div class="flex justify-between items-center px-1 pb-1 border-b border-slate-100">
