@@ -118,7 +118,7 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, updateDoc, getDocs, deleteDoc, onSnapshot, writeBatch, addDoc, query, orderBy, limit, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // 🌟【加在這裡】全域安全人名拆分函式：只用換行、逗號、頓號、分號分割，保留「Mary Chan」中間的空格
+      // 🌟【加在這裡】全域安全人名拆分函式：只用換行、逗號、頓號、分號分割，保留「Mary Chan」中間的空格
         window.splitMemberNamesSafe = (text) => {
             if (!text) return [];
             return String(text)
@@ -126,6 +126,20 @@
                 .map(n => n.trim())
                 .filter(Boolean);
         };
+
+        // 🌟【新增：預載手機語音庫】在瀏覽器載入發音人時，立即檢測手機是否具備廣東話能力
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.onvoiceschanged = () => {
+                const voices = window.speechSynthesis.getVoices() || [];
+                const hasCantonese = voices.some(v => {
+                    const l = (v.lang || '').toLowerCase();
+                    const n = (v.name || '').toLowerCase();
+                    return l === 'zh-hk' || l === 'zh-mo' || l.startsWith('yue') ||
+                           n.includes('cantonese') || n.includes('hong kong') || n.includes('粵') || n.includes('廣東');
+                });
+                window._hasCantoneseVoice = hasCantonese;
+            };
+        }
 
         const CONFIG = { maxDim: 1200, quality: 0.6 };
         const firebaseConfig = {
@@ -3222,22 +3236,24 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                 if (val.length < 5) val += String(key);
             }
 
+            const nowTs = Date.now();
             if (val === '') {
                 delete patrolTempRecords[date][slot][pointId];
             } else {
                 patrolTempRecords[date][slot][pointId] = val;
             }
+            patrolTempRecords[date][slot][`${pointId}_ts`] = nowTs;
 
             safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
-            
-            // 🌟 關鍵修復：setDoc + merge 必須使用「巢狀物件結構」，才會真正寫入 records 內且不覆蓋他人數據
+
             if (currentUser && db) {
                 const ref = cfgDoc('patrol_temp_records');
                 setDoc(ref, {
                     records: {
                         [date]: {
                             [slot]: {
-                                [pointId]: val === '' ? deleteField() : val
+                                [pointId]: val === '' ? '' : val,
+                                [`${pointId}_ts`]: nowTs
                             }
                         }
                     }
@@ -3264,22 +3280,24 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
         };
 
         window.setPointTempRecorder = (val) => {
-            window._lastTempInputTime = Date.now();
+            const nowTs = Date.now();
+            window._lastTempInputTime = nowTs;
             const date = currentPatrolDate;
             const slot = patrolSlot;
             if (!patrolTempRecords[date]) patrolTempRecords[date] = {};
             if (!patrolTempRecords[date][slot]) patrolTempRecords[date][slot] = {};
             patrolTempRecords[date][slot]['recorder'] = val;
+            patrolTempRecords[date][slot]['recorder_ts'] = nowTs;
             safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
-            
-            // 🌟 關鍵修復：使用巢狀物件結構寫入記錄者姓名
+
             if (currentUser && db) {
                 const ref = cfgDoc('patrol_temp_records');
                 setDoc(ref, {
                     records: {
                         [date]: {
                             [slot]: {
-                                recorder: val
+                                recorder: val,
+                                recorder_ts: nowTs
                             }
                         }
                     }
@@ -3684,6 +3702,8 @@ window.enqueuePatrolSync = (dateKey, stallKey, targetSlot = null) => {
     safeSetLocal('work_pending_patrol_queue', window._patrolPendingQueue);
 };
 
+window._patrolRetryTimer = null;
+
 window.resumePatrolUploadQueue = async (showOnlineToast = false) => {
     if (!navigator.onLine || !currentUser || !db) return;
     if (window.getPendingPatrolCount() === 0) return;
@@ -3691,6 +3711,11 @@ window.resumePatrolUploadQueue = async (showOnlineToast = false) => {
     if (window._isSyncingPatrol) {
         window._hasMorePatrolToSync = true;
         return;
+    }
+
+    if (window._patrolRetryTimer) {
+        clearTimeout(window._patrolRetryTimer);
+        window._patrolRetryTimer = null;
     }
 
     window._isSyncingPatrol = true;
@@ -3702,11 +3727,18 @@ window.resumePatrolUploadQueue = async (showOnlineToast = false) => {
             let batchCount = 0;
             const batch = writeBatch(db);
 
-            // 🌟 將每個日期獨立寫入 cfgDoc(`patrol_history_${dKey}`)，徹底解決單一文件太臃腫的索引上限報錯
             Object.keys(snapshotQueue).forEach(dKey => {
                 const stalls = snapshotQueue[dKey] || {};
-                const datePayload = {};
+                const dateRef = cfgDoc(`patrol_history_${dKey}`);
 
+                // 🌟 處理離線期間觸發的「整日清空」指令
+                if (stalls._CLEAR_ALL_DAY_) {
+                    batch.set(dateRef, { [dKey]: {}, _clearedAt: stalls._CLEAR_ALL_DAY_.ts }, { merge: false });
+                    batchCount++;
+                    return;
+                }
+
+                const datePayload = {};
                 Object.keys(stalls).forEach(sKey => {
                     const slots = stalls[sKey] || {};
                     datePayload[sKey] = {};
@@ -3721,7 +3753,6 @@ window.resumePatrolUploadQueue = async (showOnlineToast = false) => {
                 });
 
                 if (Object.keys(datePayload).length > 0) {
-                    const dateRef = cfgDoc(`patrol_history_${dKey}`);
                     batch.set(dateRef, { [dKey]: datePayload }, { merge: true });
                 }
             });
@@ -3733,7 +3764,13 @@ window.resumePatrolUploadQueue = async (showOnlineToast = false) => {
             // 寫入成功後：比對時間戳，清除佇列
             Object.keys(snapshotQueue).forEach(dKey => {
                 const stalls = snapshotQueue[dKey] || {};
+                if (stalls._CLEAR_ALL_DAY_) {
+                    if (window._patrolPendingQueue?.[dKey]?._CLEAR_ALL_DAY_?.ts <= stalls._CLEAR_ALL_DAY_.ts) {
+                        delete window._patrolPendingQueue[dKey]._CLEAR_ALL_DAY_;
+                    }
+                }
                 Object.keys(stalls).forEach(sKey => {
+                    if (sKey === '_CLEAR_ALL_DAY_') return;
                     const slots = stalls[sKey] || {};
                     Object.keys(slots).forEach(slotName => {
                         const uploadedTs = slots[slotName].ts;
@@ -3762,7 +3799,8 @@ window.resumePatrolUploadQueue = async (showOnlineToast = false) => {
     } finally {
         window._isSyncingPatrol = false;
         if (window.getPendingPatrolCount() > 0 && navigator.onLine) {
-            setTimeout(() => window.resumePatrolUploadQueue(false), 2000);
+            if (window._patrolRetryTimer) clearTimeout(window._patrolRetryTimer);
+            window._patrolRetryTimer = setTimeout(() => window.resumePatrolUploadQueue(false), 2000);
         }
     }
 };
@@ -3819,35 +3857,73 @@ window.setPatrolStatus = (stall, status, slot) => {
         window.showToast(navigator.onLine ? `${stall.id}：${desc}` : `💾 ${stall.id}：${desc} (離線已存)`);
         window.writeGalleryLog('剔檔標記', `${stall.floor} ${stall.id}`, `時段: ${targetSlot} · 狀態: [${status}] ${statusName}`);
       
-        if ('speechSynthesis' in window) {
+       if ('speechSynthesis' in window) {
             try {
+                if (window._speechSpeakTimer) {
+                    clearTimeout(window._speechSpeakTimer);
+                    window._speechSpeakTimer = null;
+                }
                 window.speechSynthesis.cancel();
-                
+
                 const cleanNum = String(stall.id).replace(/^[A-Za-z0-9]-?/, '').replace(/^0+/, '') || String(stall.id).replace(/\D/g, '').replace(/^0+/, '');
                 const speechText = `${stall.floor} ${cleanNum}號 ${statusName}`;
                 const utt = new SpeechSynthesisUtterance(speechText);
-                
-                // 🌟 OPPO / ColorOS 專用相容調整
-                utt.rate = 1.05; // 語速
-                utt.pitch = 1.0; // 音調
-                
-                // 動態搜尋手機內支援的中文語音（優先尋找粵語或普通話，解決 tts accessibility engine 讀不到的問題）
-                const voices = window.speechSynthesis.getVoices();
-                const targetVoice = voices.find(v => v.lang === 'zh-HK' || v.lang === 'zh-TW' || v.lang === 'yue-Hant-HK') ||
-                                    voices.find(v => v.lang.includes('zh') || v.lang.includes('cmn'));
-                
-                if (targetVoice) {
-                    utt.voice = targetVoice;
-                    utt.lang = targetVoice.lang;
-                } else {
-                    utt.lang = 'zh-HK'; // 保底設定
-                }
 
-                // 🌟 防止 OPPO 瀏覽器背景佇列卡死，加入強制喚醒延遲
-                setTimeout(() => {
-                    window.speechSynthesis.speak(utt);
-                }, 50);
+                utt.rate = 1.05;
+                utt.pitch = 1.0;
 
+                const applyVoiceAndSpeak = () => {
+    // 🌟 1. 裝置語音能力鎖定：一旦判定過這台手機的語音，就永久鎖定，絕不再隨機切換
+    const getBestVoice = () => {
+        if (window._lockedDeviceVoice) return window._lockedDeviceVoice;
+
+        const voices = window.speechSynthesis.getVoices() || [];
+        if (!voices.length) return null;
+
+        // 第一優先：嚴格尋找純廣東話（排除 zh-TW 台灣國語）
+        const cantonese = voices.find(v => {
+            const l = (v.lang || '').toLowerCase();
+            const n = (v.name || '').toLowerCase();
+            return l === 'zh-hk' || l === 'zh-mo' || l.startsWith('yue') ||
+                   n.includes('cantonese') || n.includes('hong kong') || n.includes('粵') || n.includes('廣東');
+        });
+
+        if (cantonese) {
+            window._lockedDeviceVoice = cantonese;
+            window._hasCantoneseVoice = true;
+            return cantonese;
+        }
+
+        // 第二優先：只有當整台手機完全沒有廣東話包時，才降級選普通話/國語
+        const mandarin = voices.find(v => {
+            const l = (v.lang || '').toLowerCase();
+            const n = (v.name || '').toLowerCase();
+            return l.includes('zh') || l.includes('cmn') || n.includes('chinese') || n.includes('普通話') || n.includes('國語');
+        });
+
+        if (mandarin) {
+            window._lockedDeviceVoice = mandarin;
+            window._hasCantoneseVoice = false;
+            return mandarin;
+        }
+
+        return null;
+    };
+
+    const targetVoice = getBestVoice();
+
+    if (targetVoice) {
+        utt.voice = targetVoice;
+        utt.lang = targetVoice.lang;
+    } else {
+        // 若語音清單尚未載入完成時的保底設定
+        utt.lang = window._hasCantoneseVoice === false ? 'zh-CN' : 'zh-HK';
+    }
+
+    window.speechSynthesis.speak(utt);
+};
+
+window._speechSpeakTimer = setTimeout(applyVoiceAndSpeak, 50);
             } catch(e) {
                 console.warn("語音播報失敗:", e);
             }
@@ -3922,11 +3998,14 @@ window.clearTodayPatrolData = (e) => {
     const ok = confirm(`確定要清除【${targetDate}】全部剔檔記錄？\n此操作會同步到雲端，且無法復原。`);
     if (!ok) return;
 
-    // 1. 清空該日離線佇列，防止刪除後被佇列蓋回來
-    if (window._patrolPendingQueue && window._patrolPendingQueue[targetDate]) {
-        delete window._patrolPendingQueue[targetDate];
-        safeSetLocal('work_pending_patrol_queue', window._patrolPendingQueue);
-    }
+    const clearTs = Date.now();
+
+    // 1. 將該日佇列替換為「整日清空指令」，確保即使離線清空，恢復連線後也會清空雲端
+    if (!window._patrolPendingQueue) window._patrolPendingQueue = {};
+    window._patrolPendingQueue[targetDate] = {
+        _CLEAR_ALL_DAY_: { ts: clearTs }
+    };
+    safeSetLocal('work_pending_patrol_queue', window._patrolPendingQueue);
 
     // 2. 清本機該日紀錄
     delete patrolHistoryStore[targetDate];
@@ -3936,11 +4015,8 @@ window.clearTodayPatrolData = (e) => {
     safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
     safeSetLocal('work_cache_patrol_records', {});
 
-    // 3. 🌟 清雲端該日獨立文件
-    if (currentUser && db) {
-        const dateRef = cfgDoc(`patrol_history_${targetDate}`);
-        deleteDoc(dateRef).catch(() => {});
-    }
+    // 3. 立即觸發佇列同步上傳清空指令
+    window.resumePatrolUploadQueue(false);
 
     $('patrolCalendarPopover')?.classList.add('hidden');
     window.updatePatrolDateInputUI();
@@ -4521,6 +4597,7 @@ window.clearTodayPatrolData = (e) => {
         window.demoFillCurrentPatrolSlot = () => {
             const choices = ['A', 'A', 'A', '1', '0'];
             const stalls = window.getFilteredPatrolStalls();
+            const nowTs = Date.now();
             if (!patrolHistoryStore[currentPatrolDate]) {
                 patrolHistoryStore[currentPatrolDate] = {};
             }
@@ -4529,14 +4606,17 @@ window.clearTodayPatrolData = (e) => {
                 if (!patrolHistoryStore[currentPatrolDate][k]) patrolHistoryStore[currentPatrolDate][k] = {};
                 if (!patrolHistoryStore[currentPatrolDate][k][patrolSlot]) {
                     patrolHistoryStore[currentPatrolDate][k][patrolSlot] = choices[Math.floor(Math.random() * choices.length)];
+                    patrolHistoryStore[currentPatrolDate][k][`${patrolSlot}_locked`] = true;
+                    patrolHistoryStore[currentPatrolDate][k][`${patrolSlot}_reason`] = '';
+                    patrolHistoryStore[currentPatrolDate][k][`${patrolSlot}_ts`] = nowTs;
+                    window.enqueuePatrolSync(currentPatrolDate, k, patrolSlot);
                 }
             });
             patrolState = patrolHistoryStore[currentPatrolDate];
             safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
             safeSetLocal('work_cache_patrol_records', patrolState);
-            syncConfig('patrol_history', { history: patrolHistoryStore }, true);
-            syncConfig('patrol_records_' + currentPatrolDate, { records: patrolState });
             window.renderPatrol();
+            window.resumePatrolUploadQueue(false);
             window.showToast(`已模擬快填【${currentPatrolDate} ${patrolSlot}】！`);
         };
 
@@ -4769,13 +4849,15 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
             }
 
-            // 跨日時自動將剔檔頁日期推進至新的一天
+            // 跨日時自動將剔檔頁日期推進至新的一天，並切換雲端即時監聽
             const patrolToday = getTodayDateStr();
             const lastPatrolDate = getLocal('work_last_active_patrol_date', '');
             if (lastPatrolDate && lastPatrolDate !== patrolToday && currentPatrolDate === lastPatrolDate) {
                 currentPatrolDate = patrolToday;
                 patrolState = patrolHistoryStore[currentPatrolDate] || {};
+                if (window.listenPatrolDateDoc) window.listenPatrolDateDoc(currentPatrolDate);
                 window.updatePatrolDateInputUI?.();
+                window.autoSyncClosedStallsToPatrol?.(true, currentPatrolDate);
                 if (!$('patrolPage')?.classList.contains('hidden')) window.renderPatrol?.();
             }
             safeSetLocal('work_last_active_patrol_date', patrolToday);
@@ -7609,59 +7691,101 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 window.applyTabVisibility(); 
             });
 
-           // 🌟 剔檔紀錄獨立文件動態監聽（避免載入全部歷史造成 Firestore 索引超載）
+           // 🌟 剔檔紀錄獨立文件動態監聽（自動回收非活躍日期監聽、支援雙向刪除與嚴格時間戳比對）
             window._patrolDateUnsubs = window._patrolDateUnsubs || {};
             window.listenPatrolDateDoc = (dateKey) => {
                 if (!currentUser || !db || !dateKey) return;
-                if (window._patrolDateUnsubs[dateKey]) return; // 已經在監聽中，避免重複綁定
+
+                // 清理非「今日」且非「當前檢視日期」的舊監聽器，防止長期累積殭屍監聽
+                const todayKey = getTodayDateStr();
+                Object.keys(window._patrolDateUnsubs).forEach(oldKey => {
+                    if (oldKey !== dateKey && oldKey !== todayKey) {
+                        try { window._patrolDateUnsubs[oldKey](); } catch (e) {}
+                        delete window._patrolDateUnsubs[oldKey];
+                    }
+                });
+
+                if (window._patrolDateUnsubs[dateKey]) return;
 
                 const dateRef = cfgDoc(`patrol_history_${dateKey}`);
                 window._patrolDateUnsubs[dateKey] = onSnapshot(dateRef, (snap) => {
+                    // 若本機有尚未上傳的「整日清空」指令，優先保護本機清空狀態
+                    if (window._patrolPendingQueue?.[dateKey]?._CLEAR_ALL_DAY_) return;
+
                     let hasUpdated = false;
                     if (!snap.exists()) {
-                        // 若雲端文件已被刪除，且本機無排隊上傳項目，則清理本機紀錄
                         if (patrolHistoryStore[dateKey] && !window._patrolPendingQueue?.[dateKey]) {
                             delete patrolHistoryStore[dateKey];
                             hasUpdated = true;
                         }
                     } else {
-                        const remoteDay = snap.data()?.[dateKey] || {};
-                        if (!patrolHistoryStore[dateKey]) patrolHistoryStore[dateKey] = {};
-                        const localDay = patrolHistoryStore[dateKey];
+                        const docData = snap.data() || {};
+                        const remoteDay = docData[dateKey] || {};
+                        const clearedAt = docData._clearedAt || 0;
 
-                        Object.keys(remoteDay).forEach(sKey => {
-                            const remoteStall = remoteDay[sKey] || {};
-                            if (!localDay[sKey]) localDay[sKey] = {};
-                            const localStall = localDay[sKey];
+                        // 若雲端剛執行過整日清空且內容為空
+                        if (Object.keys(remoteDay).length === 0 && clearedAt > 0 && !window._patrolPendingQueue?.[dateKey]) {
+                            if (patrolHistoryStore[dateKey] && Object.keys(patrolHistoryStore[dateKey]).length > 0) {
+                                delete patrolHistoryStore[dateKey];
+                                hasUpdated = true;
+                            }
+                        } else {
+                            if (!patrolHistoryStore[dateKey]) patrolHistoryStore[dateKey] = {};
+                            const localDay = patrolHistoryStore[dateKey];
 
-                            PATROL_TIME_SLOTS.forEach(slotName => {
-                                if (window._patrolPendingQueue?.[dateKey]?.[sKey]?.[slotName]) return;
+                            const allStallKeys = new Set([
+                                ...Object.keys(localDay),
+                                ...Object.keys(remoteDay)
+                            ]);
 
-                                const rTs = remoteStall[`${slotName}_ts`] || 0;
-                                const lTs = localStall[`${slotName}_ts`] || 0;
+                            allStallKeys.forEach(sKey => {
+                                const remoteStall = remoteDay[sKey];
+                                const localStall = localDay[sKey] || {};
 
-                                if (rTs >= lTs) {
-                                    const rVal = remoteStall[slotName] || '';
-                                    const rLoc = !!remoteStall[`${slotName}_locked`];
-                                    const rRea = remoteStall[`${slotName}_reason`] || '';
-                                    if (localStall[slotName] !== rVal || !!localStall[`${slotName}_locked`] !== rLoc || (localStall[`${slotName}_reason`] || '') !== rRea) {
-                                        localStall[slotName] = rVal;
-                                        localStall[`${slotName}_locked`] = rLoc;
-                                        localStall[`${slotName}_reason`] = rRea;
-                                        localStall[`${slotName}_ts`] = rTs;
+                                // 若雲端已無此攤位且本機無待傳佇列，且雲端有清空時間戳較新，則移除本機殘留
+                                if (!remoteStall) {
+                                    if (!window._patrolPendingQueue?.[dateKey]?.[sKey] && clearedAt > 0) {
+                                        delete localDay[sKey];
                                         hasUpdated = true;
                                     }
+                                    return;
                                 }
+
+                                if (!localDay[sKey]) localDay[sKey] = {};
+                                const targetLocalStall = localDay[sKey];
+
+                                PATROL_TIME_SLOTS.forEach(slotName => {
+                                    if (window._patrolPendingQueue?.[dateKey]?.[sKey]?.[slotName]) return;
+
+                                    const rTs = remoteStall[`${slotName}_ts`] || 0;
+                                    const lTs = targetLocalStall[`${slotName}_ts`] || 0;
+
+                                    // 🌟 嚴格時間戳判定：雲端時間戳較新，或本機尚無時間戳時才採用雲端資料
+                                    if (rTs > lTs || (lTs === 0 && remoteStall[slotName] !== undefined)) {
+                                        const rVal = remoteStall[slotName] || '';
+                                        const rLoc = !!remoteStall[`${slotName}_locked`];
+                                        const rRea = remoteStall[`${slotName}_reason`] || '';
+                                        if (targetLocalStall[slotName] !== rVal || !!targetLocalStall[`${slotName}_locked`] !== rLoc || (targetLocalStall[`${slotName}_reason`] || '') !== rRea || targetLocalStall[`${slotName}_ts`] !== rTs) {
+                                            targetLocalStall[slotName] = rVal;
+                                            targetLocalStall[`${slotName}_locked`] = rLoc;
+                                            targetLocalStall[`${slotName}_reason`] = rRea;
+                                            targetLocalStall[`${slotName}_ts`] = rTs;
+                                            hasUpdated = true;
+                                        }
+                                    }
+                                });
                             });
-                        });
+                        }
                     }
 
-                    if (hasUpdated && currentPatrolDate === dateKey) {
-                        patrolState = patrolHistoryStore[currentPatrolDate] || {};
+                    if (hasUpdated) {
                         safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
-                        safeSetLocal('work_cache_patrol_records', patrolState);
-                        if (!$('patrolPage')?.classList.contains('hidden')) {
-                            window.renderPatrol();
+                        if (currentPatrolDate === dateKey) {
+                            patrolState = patrolHistoryStore[currentPatrolDate] || {};
+                            safeSetLocal('work_cache_patrol_records', patrolState);
+                            if (!$('patrolPage')?.classList.contains('hidden')) {
+                                window.renderPatrol();
+                            }
                         }
                     }
                 }, console.error);
@@ -7669,25 +7793,53 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
             // 啟動當前日期的監聽
             window.listenPatrolDateDoc(currentPatrolDate);
-            // 🌟 溫度統計表獨立雙向即時同步
-            bindSync('patrol_temp_records', 'work_cache_patrol_temp_records', d => {
-                if (window._lastTempInputTime && (Date.now() - window._lastTempInputTime) < 800) {
-                    return;
-                }
-                if (d && d.records) {
-                    patrolTempRecords = d.records;
+
+            // 🌟 溫度統計表：逐欄時間戳智慧合併，防止覆蓋本機較新的溫度輸入
+            onSnapshot(cfgDoc('patrol_temp_records'), (snap) => {
+                if (!snap.exists()) return;
+                const remoteRecords = snap.data()?.records || {};
+                let tempUpdated = false;
+
+                Object.keys(remoteRecords).forEach(dKey => {
+                    const remoteSlots = remoteRecords[dKey] || {};
+                    if (!patrolTempRecords[dKey]) patrolTempRecords[dKey] = {};
+
+                    Object.keys(remoteSlots).forEach(sName => {
+                        const rSlotObj = remoteSlots[sName] || {};
+                        if (!patrolTempRecords[dKey][sName]) patrolTempRecords[dKey][sName] = {};
+                        const lSlotObj = patrolTempRecords[dKey][sName];
+
+                        const allFields = [...RAW_TEMPERATURE_POINTS.map(p => p.id), 'recorder'];
+                        allFields.forEach(fKey => {
+                            const rTs = rSlotObj[`${fKey}_ts`] || 0;
+                            const lTs = lSlotObj[`${fKey}_ts`] || 0;
+                            if (rTs > lTs || (lTs === 0 && rSlotObj[fKey] !== undefined)) {
+                                const newVal = rSlotObj[fKey] || '';
+                                if ((lSlotObj[fKey] || '') !== newVal) {
+                                    if (newVal === '') delete lSlotObj[fKey];
+                                    else lSlotObj[fKey] = newVal;
+                                    lSlotObj[`${fKey}_ts`] = rTs;
+                                    tempUpdated = true;
+                                }
+                            }
+                        });
+                    });
+                });
+
+                if (tempUpdated) {
                     safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
                     if ($('tempStatsModal') && !$('tempStatsModal').classList.contains('hidden')) {
                         window.renderTempModalList();
                     }
-                    if (window.activeTempKeypadPointId) {
+                    window.updateFloatingTempBadgeUI?.();
+                    if (window.activeTempKeypadPointId && (!window._lastTempInputTime || (Date.now() - window._lastTempInputTime) >= 800)) {
                         const curSlotTemps = (patrolTempRecords[currentPatrolDate] || {})[patrolSlot] || {};
                         const curVal = curSlotTemps[window.activeTempKeypadPointId] || '';
                         const popupDisplay = $('tempKeypadCurrentDisplay');
                         if (popupDisplay) popupDisplay.innerText = curVal || '---';
                     }
                 }
-            });
+            }, console.error);
 
             // 雪房存貨監聽
             bindSync('coldRoom', 'coldRoomRecords', d => {
@@ -10968,12 +11120,24 @@ window.crSaveData = () => {
 
         window.exportData = async () => {
             try {
-                const blob = new Blob([JSON.stringify({ version: "6.0", exportDate: new Date().toISOString(), dailyScheduleData, taskCompletionState, subTaskCompletionState, galleryCategories, galleryItems, tabVisibilityState, crRecords, crItemTypes, stallList: window.stallList }, null, 2)], { type: 'application/json' });
+                const blob = new Blob([JSON.stringify({
+                    version: "6.1",
+                    exportDate: new Date().toISOString(),
+                    dailyScheduleData,
+                    taskCompletionState,
+                    subTaskCompletionState,
+                    galleryCategories,
+                    galleryItems,
+                    tabVisibilityState,
+                    crRecords,
+                    crItemTypes,
+                    patrolHistoryStore,
+                    patrolTempRecords,
+                    stallList: window.stallList
+                }, null, 2)], { type: 'application/json' });
                 const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `工作記錄本_備份_${new Date().toISOString().slice(0,10)}.json`; a.click();
                 
-                // 🌟 記錄導出系統 JSON 備份操作日誌
                 window.writeGalleryLog('導出系統備份', 'JSON 檔案', '完整系統數據備份匯出');
-
                 window.showToast("導出成功！"); $('settingsDropdown')?.classList.add('hidden');
             } catch(e) { window.showToast("導出失敗", true); }
         };
@@ -10987,6 +11151,23 @@ window.crSaveData = () => {
                     subTaskCompletionState = imp.subTaskCompletionState || subTaskCompletionState; galleryCategories = imp.galleryCategories || galleryCategories;
                     galleryItems = imp.galleryItems || galleryItems; tabVisibilityState = imp.tabVisibilityState || tabVisibilityState;
                     crRecords = imp.crRecords || crRecords; crItemTypes = imp.crItemTypes || crItemTypes;
+                    if (imp.patrolHistoryStore && typeof imp.patrolHistoryStore === 'object') {
+                        patrolHistoryStore = imp.patrolHistoryStore;
+                        patrolState = patrolHistoryStore[currentPatrolDate] || {};
+                        safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
+                        safeSetLocal('work_cache_patrol_records', patrolState);
+                        Object.keys(patrolHistoryStore).forEach(dKey => {
+                            Object.keys(patrolHistoryStore[dKey] || {}).forEach(sKey => {
+                                window.enqueuePatrolSync(dKey, sKey);
+                            });
+                        });
+                        window.resumePatrolUploadQueue(false);
+                    }
+                    if (imp.patrolTempRecords && typeof imp.patrolTempRecords === 'object') {
+                        patrolTempRecords = imp.patrolTempRecords;
+                        safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
+                        syncConfig('patrol_temp_records', { records: patrolTempRecords }, true);
+                    }
                     if (imp.stallList && Array.isArray(imp.stallList)) { window.stallList = imp.stallList; saveStallDatabase(); }
                     
                     galleryCategories = (imp.galleryCategories || galleryCategories).filter(c => c !== '未分類' && c !== '任務附件');
