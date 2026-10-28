@@ -3142,7 +3142,137 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             { floor: "一樓", id: "1-024", type: "豬肉類", name: "邱其仁", gender: "男" }
         ];
 
-        // ====== 紅街市溫度統計表 12 測溫點 (純名稱精簡版) ======
+        // ====== 1. 香港時區 (UTC+8) 與巡查日期/時段核心初始化（確保在溫度與剔檔模組前完成定義） ======
+        window.formatDateStrHK = (msOrDate) => {
+            const d = msOrDate ? new Date(msOrDate) : (window.getNow ? window.getNow() : new Date());
+            try {
+                return new Intl.DateTimeFormat('en-CA', {
+                    timeZone: 'Asia/Hong_Kong',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                }).format(d);
+            } catch (e) {
+                const utcMs = d.getTime() + (d.getTimezoneOffset() * 60000);
+                const hkD = new Date(utcMs + (8 * 3600000));
+                return `${hkD.getFullYear()}-${String(hkD.getMonth() + 1).padStart(2, '0')}-${String(hkD.getDate()).padStart(2, '0')}`;
+            }
+        };
+
+        const getTodayDateStr = () => window.formatDateStrHK();
+        let currentPatrolDate = getTodayDateStr();
+        let patrolHistoryStore = getLocal('work_cache_patrol_history', {});
+        localStorage.removeItem('work_cache_patrol_records');
+
+        let patrolState = patrolHistoryStore[currentPatrolDate] || {};
+        const _initPatrolDateParts = currentPatrolDate.split('-').map(Number);
+        let patrolCalViewYear = _initPatrolDateParts[0] || new Date().getFullYear();
+        let patrolCalViewMonth = (_initPatrolDateParts[1] || (new Date().getMonth() + 1)) - 1;
+
+        const PATROL_TIME_SLOTS = ['上午9點', '上午11點', '下午4點', '下午6點'];
+        const PATROL_SLOT_SELECTED_COLORS = [
+            'bg-amber-500 text-white shadow-xs',
+            'bg-blue-600 text-white shadow-xs',
+            'bg-indigo-600 text-white shadow-xs',
+            'bg-purple-600 text-white shadow-xs'
+        ];
+        const PATROL_SLOT_MINUTES = {
+            '上午9點': 9 * 60,
+            '上午11點': 11 * 60,
+            '下午4點': 16 * 60,
+            '下午6點': 18 * 60
+        };
+
+        let lastAutoTriggeredSlot = '';
+        let patrolSlotTimer = null;
+        let focusAutoTimer = null;
+        let patrolFloor = 'ALL';
+        let patrolViewMode = 'card';
+        let patrolFocusIndex = 0;
+
+        window.getAutoPatrolSlot = () => {
+            const now = window.getNow ? window.getNow() : new Date();
+            const mins = now.getHours() * 60 + now.getMinutes();
+            if (mins >= 18 * 60) return '下午6點';   // 18:00 起
+            if (mins >= 16 * 60) return '下午4點';   // 16:00 起
+            if (mins >= 11 * 60) return '上午11點';  // 11:00 起
+            if (mins >= 9 * 60)  return '上午9點';   // 09:00 起
+            return '上午9點';                        // 09:00 前預設
+        };
+
+        // 🌟 在 getAutoPatrolSlot 定義後再初始化 patrolSlot，確保首次載入時段 100% 精準
+        let patrolSlot = window.getAutoPatrolSlot();
+
+        // 🌟 套用自動時段並強制同步時段按鈕外觀，解決 HTML 預設綠框停留在「上午9點」的錯位問題
+        window.applyAutoPatrolSlot = (force = false) => {
+            const autoSlot = window.getAutoPatrolSlot();
+            if (force || autoSlot !== lastAutoTriggeredSlot) {
+                lastAutoTriggeredSlot = autoSlot;
+                window.setPatrolSlot(autoSlot);
+            } else {
+                window.setPatrolSlot(patrolSlot);
+            }
+            window.scheduleNextPatrolSlotSwitch();
+        };
+
+        window.scheduleNextPatrolSlotSwitch = () => {
+            if (patrolSlotTimer) clearTimeout(patrolSlotTimer);
+            const now = window.getNow ? window.getNow() : new Date();
+            const curSecs = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+            const targets = [9 * 3600, 11 * 3600, 16 * 3600, 18 * 3600];
+            let nextSecs = targets.find(t => t > curSecs);
+            let waitMs = nextSecs !== undefined
+                ? (nextSecs - curSecs) * 1000
+                : (24 * 3600 - curSecs + targets[0]) * 1000;
+
+            patrolSlotTimer = setTimeout(() => {
+                window.applyAutoPatrolSlot(false);
+            }, waitMs + 500);
+        };
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                window.applyAutoPatrolSlot(false);
+            }
+        });
+
+        // ===== 卡片縮放控制核心邏輯（使用 sessionStorage 實現視窗物理級隔離） =====
+        const urlParams = new URLSearchParams(window.location.search);
+        const isPopoutWindow = urlParams.get('view') === 'popout' || window.name === 'WorkRecordPopup';
+        const scaleStorageKey = isPopoutWindow ? 'patrol_scale_popout' : 'patrol_scale_main';
+        let patrolCardScale = sessionStorage.getItem(scaleStorageKey) || localStorage.getItem(scaleStorageKey) || '100';
+
+        window.setPatrolCardScale = (scale) => {
+            patrolCardScale = scale;
+            sessionStorage.setItem(scaleStorageKey, scale);
+            localStorage.setItem(scaleStorageKey, scale);
+            window.updatePatrolCardScaleUI();
+            if (patrolViewMode === 'card') window.renderPatrol();
+        };
+
+        window.updatePatrolCardScaleUI = () => {
+            const list = $('patrolCardList');
+            const scaleBox = $('patrolCardScaleControls');
+            if (scaleBox) {
+                scaleBox.classList.toggle('hidden', patrolViewMode !== 'card');
+            }
+            ['100', '125', '150'].forEach(s => {
+                const btn = $(`btnScale${s}`);
+                if (btn) {
+                    btn.className = (patrolCardScale === s)
+                        ? "px-1.5 py-0.5 rounded-md font-black bg-slate-800 text-white shadow-xs transition-all"
+                        : "px-1.5 py-0.5 rounded-md font-bold text-slate-600 hover:text-slate-900 transition-all";
+                }
+            });
+            if (list) {
+                list.style.transform = 'none';
+                list.style.zoom = '1';
+                list.style.width = '100%';
+                list.style.marginBottom = '0';
+            }
+        };
+
+        // ====== 2. 紅街市溫度統計表 12 測溫點與核心控制函式 ======
         const RAW_TEMPERATURE_POINTS = [
             { id: "p1", name: "一樓客服室側" },
             { id: "p2", name: "一樓23號對面" },
@@ -3161,21 +3291,51 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
         let patrolTempRecords = getLocal('work_cache_patrol_temp_records', {});
         window.activeTempKeypadPointId = 'p1';
 
-        // 選取目標測溫卡片並彈出數字盤
-        // 🌟 選取目標測溫卡片並彈出數字盤（根源修復：保留原生點選焦點，防止事件穿透閃退）
+        // 🌟 溫度雲端安全同步與離線補傳機制
+        window.syncTempSlotFieldToCloud = async (dateKey, slotKey, fieldPayload) => {
+            if (!navigator.onLine || !currentUser || !db) {
+                safeSetLocal('work_pending_temp_sync', true);
+                return;
+            }
+            try {
+                const ref = cfgDoc('patrol_temp_records');
+                await setDoc(ref, {
+                    records: {
+                        [dateKey]: {
+                            [slotKey]: fieldPayload
+                        }
+                    }
+                }, { merge: true });
+            } catch (err) {
+                safeSetLocal('work_pending_temp_sync', true);
+                console.warn('溫度雲端寫入暫緩，已排入補傳佇列:', err);
+            }
+        };
+
+        window.flushPendingTempSync = async () => {
+            if (!navigator.onLine || !currentUser || !db) return;
+            if (!getLocal('work_pending_temp_sync', false)) return;
+            try {
+                const ref = cfgDoc('patrol_temp_records');
+                await setDoc(ref, { records: patrolTempRecords }, { merge: true });
+                safeSetLocal('work_pending_temp_sync', false);
+            } catch (e) {}
+        };
+
+        // 🌟 選取目標測溫卡片並彈出數字盤
         window.selectTempPointTarget = (pointId, e) => {
             if (e) {
-                e.stopPropagation(); // 僅阻止冒泡，絕不可呼叫 e.preventDefault()，否則會破壞行動端觸控回饋
+                e.stopPropagation();
             }
             window._keypadOpenedAt = Date.now();
             window.activeTempKeypadPointId = pointId;
 
             document.querySelectorAll('[id^="tempDisplay-"]').forEach(el => {
-                el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/60');
+                el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/60', 'border-blue-500');
             });
             const curEl = $(`tempDisplay-${pointId}`);
             if (curEl) {
-                curEl.classList.add('ring-2', 'ring-blue-500', 'bg-blue-100/60');
+                curEl.classList.add('ring-2', 'ring-blue-500', 'bg-blue-100/60', 'border-blue-500');
             }
 
             const pt = RAW_TEMPERATURE_POINTS.find(p => p.id === pointId);
@@ -3184,8 +3344,10 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                 titleEl.innerText = pt.name;
             }
 
-            const curSlotTemps = (patrolTempRecords[currentPatrolDate] || {})[patrolSlot] || {};
-            const curVal = curSlotTemps[pointId] || '';
+            const date = currentPatrolDate || getTodayDateStr();
+            const slot = patrolSlot || window.getAutoPatrolSlot();
+            const curSlotTemps = (patrolTempRecords[date] || {})[slot] || {};
+            const curVal = curSlotTemps[pointId] !== undefined ? String(curSlotTemps[pointId]).trim() : '';
             const popupDisplay = $('tempKeypadCurrentDisplay');
             if (popupDisplay) {
                 popupDisplay.innerText = curVal || '---';
@@ -3198,34 +3360,61 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             }
         };
 
-        // 🌟 關閉溫度數字盤（嚴格比對遮罩點選目標，防止誤觸關閉）
+        // 🌟 關閉溫度數字盤（自動清理結尾多餘小數點如 "26." -> "26"）
         window.closeTempKeypadModal = (force = false, e = null) => {
             if (e && e.target && e.target.id !== 'tempKeypadModal') {
-                return; // 若點擊的是彈窗內部元素，絕對不關閉
+                return;
             }
-            if (!force && window._keypadOpenedAt && (Date.now() - window._keypadOpenedAt) < 300) {
-                return; // 300ms 物理防連擊防護
+            if (!force && window._keypadOpenedAt && (Date.now() - window._keypadOpenedAt) < 280) {
+                return;
             }
+
+            // 若當前輸入值以小數點結尾（例如 "26."），關閉時自動正規化為 "26"
+            const pointId = window.activeTempKeypadPointId;
+            const date = currentPatrolDate || getTodayDateStr();
+            const slot = patrolSlot || window.getAutoPatrolSlot();
+            if (pointId && patrolTempRecords[date]?.[slot]?.[pointId]) {
+                let curVal = String(patrolTempRecords[date][slot][pointId]).trim();
+                if (curVal.endsWith('.')) {
+                    curVal = curVal.slice(0, -1);
+                    const nowTs = Date.now();
+                    if (curVal === '') {
+                        delete patrolTempRecords[date][slot][pointId];
+                    } else {
+                        patrolTempRecords[date][slot][pointId] = curVal;
+                    }
+                    patrolTempRecords[date][slot][`${pointId}_ts`] = nowTs;
+                    safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
+                    window.syncTempSlotFieldToCloud(date, slot, {
+                        [pointId]: curVal,
+                        [`${pointId}_ts`]: nowTs
+                    });
+                    const displayEl = $(`tempDisplay-${pointId}`);
+                    if (displayEl) {
+                        displayEl.innerHTML = curVal ? `${curVal}<span class="text-[10px] font-bold text-slate-500 ml-0.5">°C</span>` : `---`;
+                    }
+                    window.updateTempProgressUI(date, slot);
+                }
+            }
+
             const modal = $('tempKeypadModal');
             if (modal) {
                 modal.classList.add('hidden');
                 modal.classList.remove('flex');
             }
             document.querySelectorAll('[id^="tempDisplay-"]').forEach(el => {
-                el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/60');
+                el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/60', 'border-blue-500');
             });
         };
 
-        // 溫度專屬虛擬鍵盤點擊處理
-        // 🌟 溫度專屬虛擬鍵盤點擊處理（根源修復：嚴格時區、有效數值校驗與毫秒時間戳）
+        // 🌟 溫度專屬虛擬鍵盤點擊處理
         window.onTempKeypadPress = (key) => {
             const nowTs = Date.now();
-            window._lastTempInputTime = nowTs; // 延長防回音時間
+            window._lastTempInputTime = nowTs;
 
             const pointId = window.activeTempKeypadPointId || 'p1';
-            // 🌟 嚴格對齊香港時區，防止跨日或背景喚醒時日期漂移
-            const date = currentPatrolDate || (window.formatDateStrHK ? window.formatDateStrHK() : getTodayDateStr());
-            const slot = patrolSlot || (window.getAutoPatrolSlot ? window.getAutoPatrolSlot() : '上午9點');
+            const date = currentPatrolDate || getTodayDateStr();
+            const slot = patrolSlot || window.getAutoPatrolSlot();
 
             if (!patrolTempRecords[date]) patrolTempRecords[date] = {};
             if (!patrolTempRecords[date][slot]) patrolTempRecords[date][slot] = {};
@@ -3241,13 +3430,15 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                     val = val.length === 0 ? '0.' : val + '.';
                 }
             } else {
-                // 限制最多 4 位數，避免異常輸入（如 25.5）
-                if (val.replace('.', '').length < 4) {
-                    val += String(key);
+                const digit = String(key);
+                // 防止前導零（例如已輸入 '0' 再按 '2'，自動變成 '2' 而非 '02'）
+                if (val === '0') {
+                    val = digit;
+                } else if (val.replace('.', '').length < 4) {
+                    val += digit;
                 }
             }
 
-            // 更新本機資料結構
             if (val === '') {
                 delete patrolTempRecords[date][slot][pointId];
             } else {
@@ -3257,20 +3448,10 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
 
             safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
 
-            // 寫入雲端（以深層物件結構合併，保留精準時間戳）
-            if (currentUser && db) {
-                const ref = cfgDoc('patrol_temp_records');
-                setDoc(ref, {
-                    records: {
-                        [date]: {
-                            [slot]: {
-                                [pointId]: val,
-                                [`${pointId}_ts`]: nowTs
-                            }
-                        }
-                    }
-                }, { merge: true }).catch(err => console.warn('溫度雲端同步失敗:', err));
-            }
+            window.syncTempSlotFieldToCloud(date, slot, {
+                [pointId]: val,
+                [`${pointId}_ts`]: nowTs
+            });
 
             // 1. 同步數字盤上方當前顯示
             const popupDisplay = $('tempKeypadCurrentDisplay');
@@ -3278,10 +3459,14 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                 popupDisplay.innerText = val || '---';
             }
 
-            // 2. 同步底層清單中該測溫點的卡片數值
+            // 2. 同步底層清單中該測溫點的卡片數值與邊框顏色
             const displayEl = $(`tempDisplay-${pointId}`);
             if (displayEl) {
                 displayEl.innerHTML = val ? `${val}<span class="text-[10px] font-bold text-slate-500 ml-0.5">°C</span>` : `---`;
+                const rowCard = displayEl.parentElement;
+                if (rowCard) {
+                    rowCard.className = `py-1.5 px-2.5 rounded-xl border flex items-center justify-between cursor-pointer select-none transition-all ${val !== '' ? 'bg-slate-50 border-slate-200' : 'bg-white border-amber-300 shadow-2xs'}`;
+                }
             }
 
             // 3. 同步更新彈窗頂部進度條與外層浮動圓形標籤
@@ -3291,8 +3476,8 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
         window.setPointTempRecorder = (val) => {
             const nowTs = Date.now();
             window._lastTempInputTime = nowTs;
-            const date = currentPatrolDate || (window.formatDateStrHK ? window.formatDateStrHK() : getTodayDateStr());
-            const slot = patrolSlot || (window.getAutoPatrolSlot ? window.getAutoPatrolSlot() : '上午9點');
+            const date = currentPatrolDate || getTodayDateStr();
+            const slot = patrolSlot || window.getAutoPatrolSlot();
 
             if (!patrolTempRecords[date]) patrolTempRecords[date] = {};
             if (!patrolTempRecords[date][slot]) patrolTempRecords[date][slot] = {};
@@ -3302,25 +3487,16 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             patrolTempRecords[date][slot]['recorder_ts'] = nowTs;
             safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
 
-            if (currentUser && db) {
-                const ref = cfgDoc('patrol_temp_records');
-                setDoc(ref, {
-                    records: {
-                        [date]: {
-                            [slot]: {
-                                recorder: cleanRecorder,
-                                recorder_ts: nowTs
-                            }
-                        }
-                    }
-                }, { merge: true }).catch(err => console.warn('記錄者雲端同步失敗:', err));
-            }
+            window.syncTempSlotFieldToCloud(date, slot, {
+                recorder: cleanRecorder,
+                recorder_ts: nowTs
+            });
         };
 
-        // 🌟 獨立抽離的進度計算函式（確保計算邏輯 100% 嚴格一致）
+        // 🌟 獨立抽離的進度計算函式
         window.updateTempProgressUI = (dateKey, slotKey) => {
-            const d = dateKey || currentPatrolDate;
-            const s = slotKey || patrolSlot;
+            const d = dateKey || currentPatrolDate || getTodayDateStr();
+            const s = slotKey || patrolSlot || window.getAutoPatrolSlot();
             const curSlotTemps = (patrolTempRecords[d] || {})[s] || {};
             const filledCount = RAW_TEMPERATURE_POINTS.filter(pt => {
                 const v = curSlotTemps[pt.id];
@@ -3336,18 +3512,13 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             }
         };
 
-       // 🌟 開啟溫度統計表彈窗（自動對齊最新時區與時段）
+        // 🌟 開啟溫度統計表彈窗
         window.openTempModal = () => {
             const modal = $('tempStatsModal');
             if (!modal) return;
 
-            // 確保日期與時段為最新狀態
-            if (!currentPatrolDate && window.formatDateStrHK) {
-                currentPatrolDate = window.formatDateStrHK();
-            }
-            if (!patrolSlot && window.getAutoPatrolSlot) {
-                patrolSlot = window.getAutoPatrolSlot();
-            }
+            if (!currentPatrolDate) currentPatrolDate = getTodayDateStr();
+            if (!patrolSlot) patrolSlot = window.getAutoPatrolSlot();
 
             const floatBtn = $('floatingTempBtn');
             if (floatBtn) floatBtn.style.display = 'none';
@@ -3357,14 +3528,27 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             modal.classList.add('flex');
         };
 
+        // 🌟【關鍵補齊】關閉溫度統計表彈窗（連帶關閉小鍵盤並恢復左下角浮窗按鈕）
+        window.closeTempModal = () => {
+            window.closeTempKeypadModal(true);
+            const modal = $('tempStatsModal');
+            if (modal) {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+            const floatBtn = $('floatingTempBtn');
+            if (floatBtn) floatBtn.style.display = '';
+            window.updateFloatingTempBadgeUI?.();
+        };
+
         // 🌟 浮動圓形標籤數值與進度即時計算
         window.updateFloatingTempBadgeUI = () => {
             const badge = $('floatingTempBadge');
             const inner = $('floatingTempInner');
             if (!badge || !inner) return;
 
-            const date = currentPatrolDate || (window.formatDateStrHK ? window.formatDateStrHK() : getTodayDateStr());
-            const slot = patrolSlot || (window.getAutoPatrolSlot ? window.getAutoPatrolSlot() : '上午9點');
+            const date = currentPatrolDate || getTodayDateStr();
+            const slot = patrolSlot || window.getAutoPatrolSlot();
 
             const curSlotTemps = (patrolTempRecords[date] || {})[slot] || {};
             const filledCount = RAW_TEMPERATURE_POINTS.filter(pt => {
@@ -3381,13 +3565,13 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             }
         };
 
-        // 🌟 渲染溫度列表（修正輸入框選取態與空值判斷）
+        // 🌟 渲染溫度列表
         window.renderTempModalList = () => {
             const list = $('tempModalList');
             if (!list) return;
 
-            const date = currentPatrolDate || (window.formatDateStrHK ? window.formatDateStrHK() : getTodayDateStr());
-            const slot = patrolSlot || (window.getAutoPatrolSlot ? window.getAutoPatrolSlot() : '上午9點');
+            const date = currentPatrolDate || getTodayDateStr();
+            const slot = patrolSlot || window.getAutoPatrolSlot();
 
             const curSlotTemps = (patrolTempRecords[date] || {})[slot] || {};
             const filled = RAW_TEMPERATURE_POINTS.filter(pt => {
@@ -3397,165 +3581,28 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
 
             if ($('tempModalSlotLabel')) $('tempModalSlotLabel').innerText = slot;
             if ($('tempModalProgress')) $('tempModalProgress').innerText = `${filled.length}/${RAW_TEMPERATURE_POINTS.length}`;
-            if ($('tempModalRecorder')) $('tempModalRecorder').value = curSlotTemps['recorder'] || '';
+            if ($('tempModalRecorder') && document.activeElement !== $('tempModalRecorder')) {
+                $('tempModalRecorder').value = curSlotTemps['recorder'] || '';
+            }
+
+            const isKeypadOpen = !$('tempKeypadModal')?.classList.contains('hidden');
 
             list.innerHTML = RAW_TEMPERATURE_POINTS.map(pt => {
                 const tempVal = curSlotTemps[pt.id] !== undefined ? String(curSlotTemps[pt.id]).trim() : '';
                 const hasVal = tempVal !== '';
-                const isCurrentActive = window.activeTempKeypadPointId === pt.id;
+                const isCurrentActive = isKeypadOpen && window.activeTempKeypadPointId === pt.id;
 
                 return `
                 <div onclick="window.selectTempPointTarget('${pt.id}', event)"
                      class="py-1.5 px-2.5 rounded-xl border flex items-center justify-between cursor-pointer select-none transition-all ${hasVal ? 'bg-slate-50 border-slate-200' : 'bg-white border-amber-300 shadow-2xs'}">
                     <span class="text-xs font-black text-slate-800 truncate min-w-0 pr-2">${pt.name}</span>
                     <div id="tempDisplay-${pt.id}"
-                         class="shrink-0 w-[4.5rem] h-7 bg-white border ${isCurrentActive ? 'border-blue-500 ring-2 ring-blue-400 bg-blue-50/50' : 'border-slate-300'} rounded-lg flex items-center justify-center font-mono font-black text-sm text-blue-700 select-none shadow-2xs">
+                         class="shrink-0 w-[4.5rem] h-7 bg-white border ${isCurrentActive ? 'border-blue-500 ring-2 ring-blue-500 bg-blue-100/60' : 'border-slate-300'} rounded-lg flex items-center justify-center font-mono font-black text-sm text-blue-700 select-none shadow-2xs">
                         ${hasVal ? `${tempVal}<span class="text-[10px] font-bold text-slate-500 ml-0.5">°C</span>` : `---`}
                     </div>
                 </div>`;
             }).join('');
         };
-
-        let patrolFloor = 'ALL';
-        let patrolSlot = (typeof window.getAutoPatrolSlot === 'function')
-    ? window.getAutoPatrolSlot()
-    : '上午9點';
-        let patrolViewMode = 'card';
-        let patrolFocusIndex = 0;
-
-// ===== 卡片縮放控制核心邏輯（使用 sessionStorage 實現視窗物理級隔離） =====
-        const urlParams = new URLSearchParams(window.location.search);
-        const isPopoutWindow = urlParams.get('view') === 'popout' || window.name === 'WorkRecordPopup';
-        const scaleStorageKey = isPopoutWindow ? 'patrol_scale_popout' : 'patrol_scale_main';
-
-        // 🌟 優先讀取個別視窗的 sessionStorage（完全隔離不互通），若無才讀取上次的 localStorage
-        let patrolCardScale = sessionStorage.getItem(scaleStorageKey) || localStorage.getItem(scaleStorageKey) || '100';
-
-        window.setPatrolCardScale = (scale) => {
-            patrolCardScale = scale;
-            // 寫入當前視窗專屬的 sessionStorage 與分流 localStorage
-            sessionStorage.setItem(scaleStorageKey, scale);
-            localStorage.setItem(scaleStorageKey, scale);
-            window.updatePatrolCardScaleUI();
-            if (patrolViewMode === 'card') window.renderPatrol();
-        };
-
-        window.updatePatrolCardScaleUI = () => {
-            const list = $('patrolCardList');
-            const scaleBox = $('patrolCardScaleControls');
-            
-            if (scaleBox) {
-                scaleBox.classList.toggle('hidden', patrolViewMode !== 'card');
-            }
-
-            ['100', '125', '150'].forEach(s => {
-                const btn = $(`btnScale${s}`);
-                if (btn) {
-                    btn.className = (patrolCardScale === s)
-                        ? "px-1.5 py-0.5 rounded-md font-black bg-slate-800 text-white shadow-xs transition-all"
-                        : "px-1.5 py-0.5 rounded-md font-bold text-slate-600 hover:text-slate-900 transition-all";
-                }
-            });
-
-                                                                        if (list) {
-                list.style.transform = 'none';
-                list.style.zoom = '1';
-                list.style.width = '100%';
-                list.style.marginBottom = '0';
-            }
-        };
-        // =============================
-
-        let focusAutoTimer = null;
-
-        const getTodayDateStr = () => {
-            const now = window.getNow ? window.getNow() : new Date();
-            try {
-                return new Intl.DateTimeFormat('en-CA', {
-                    timeZone: 'Asia/Hong_Kong',
-                    year: 'numeric',
-                    month: '2-digit',
-                    day: '2-digit'
-                }).format(now);
-            } catch (e) {
-                return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-            }
-        };
-        let currentPatrolDate = getTodayDateStr();
-        let patrolHistoryStore = getLocal('work_cache_patrol_history', {});
-
-        // 確保新的一天不會繼承昨天的暫存紀錄
-        localStorage.removeItem('work_cache_patrol_records');
-
-        let patrolState = patrolHistoryStore[currentPatrolDate] || {};
-        let patrolCalViewYear = new Date().getFullYear();
-        let patrolCalViewMonth = new Date().getMonth();
-
-        const PATROL_TIME_SLOTS = ['上午9點', '上午11點', '下午4點', '下午6點'];
-        const PATROL_SLOT_SELECTED_COLORS = [
-            'bg-amber-500 text-white shadow-xs',
-            'bg-blue-600 text-white shadow-xs',
-            'bg-indigo-600 text-white shadow-xs',
-            'bg-purple-600 text-white shadow-xs'
-        ];
-        const PATROL_SLOT_MINUTES = {
-            '上午9點': 9 * 60,
-            '上午11點': 11 * 60,
-            '下午4點': 16 * 60,
-            '下午6點': 18 * 60
-        };
-
-let lastAutoTriggeredSlot = '';
-
-window.getAutoPatrolSlot = () => {
-    const now = window.getNow ? window.getNow() : new Date();
-    const mins = now.getHours() * 60 + now.getMinutes();
-    // 精準到達時間點即時切換 (由晚至早判斷)
-    if (mins >= 18 * 60) return '下午6點';   // 18:00 起
-    if (mins >= 16 * 60) return '下午4點';   // 16:00 起
-    if (mins >= 11 * 60) return '上午11點';  // 11:00 起
-    if (mins >= 9 * 60)  return '上午9點';   // 09:00 起
-    return '上午9點';                        // 09:00 前預設
-};
-
-let patrolSlotTimer = null;
-
-// 套用自動時段並預約下一個整點鬧鐘（平時 0 資源消耗）
-window.applyAutoPatrolSlot = (force = false) => {
-    const autoSlot = window.getAutoPatrolSlot();
-    if (force) {
-        lastAutoTriggeredSlot = autoSlot;
-        window.setPatrolSlot(autoSlot);
-    } else if (autoSlot !== lastAutoTriggeredSlot) {
-        lastAutoTriggeredSlot = autoSlot;
-        if (patrolSlot !== autoSlot) {
-            window.setPatrolSlot(autoSlot);
-        }
-    }
-    window.scheduleNextPatrolSlotSwitch();
-};
-
-window.scheduleNextPatrolSlotSwitch = () => {
-    if (patrolSlotTimer) clearTimeout(patrolSlotTimer);
-    const now = window.getNow ? window.getNow() : new Date();
-    const curSecs = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-    const targets = [9 * 3600, 11 * 3600, 16 * 3600, 18 * 3600]; // 09:00, 11:00, 16:00, 18:00
-    let nextSecs = targets.find(t => t > curSecs);
-    let waitMs = nextSecs !== undefined
-        ? (nextSecs - curSecs) * 1000
-        : (24 * 3600 - curSecs + targets[0]) * 1000; // 跨日到隔天 09:00
-
-    patrolSlotTimer = setTimeout(() => {
-        window.applyAutoPatrolSlot(false);
-    }, waitMs + 500);
-};
-
-// 手機從背景喚醒或解鎖時，自動對齊一次當前時段
-document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-        window.applyAutoPatrolSlot(false);
-    }
-});
         window.getPatrolKey = (stall) => `${stall.floor}-${stall.id}`;
         window.getPatrolStatus = (stall, slot) => {
             const dateRecords = patrolHistoryStore[currentPatrolDate] || {};
@@ -4004,10 +4051,15 @@ window._speechSpeakTimer = setTimeout(applyVoiceAndSpeak, 50);
             patrolState = patrolHistoryStore[currentPatrolDate] || {};
             patrolFocusIndex = 0;
             window.clearFocusAutoTimer();
+            window.closeTempKeypadModal?.(true);
             window.updatePatrolDateInputUI();
             $('patrolCalendarPopover')?.classList.add('hidden');
             window.autoSyncClosedStallsToPatrol(true);
             window.renderPatrol();
+            if ($('tempStatsModal') && !$('tempStatsModal').classList.contains('hidden')) {
+                window.renderTempModalList();
+            }
+            window.updateFloatingTempBadgeUI?.();
             window.showToast(`📅 已載入 ${dateKey} 巡查記錄`);
         };
 
@@ -7848,12 +7900,14 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             // 啟動當前日期的監聽
             window.listenPatrolDateDoc(currentPatrolDate);
 
-           // 🌟 溫度統計表雲端監聽（根源修復：延長輸入保護至 2500ms、嚴格欄位時間戳合併）
+           // 🌟 連線啟動時，自動補傳離線或未登入期間輸入的溫度紀錄
+            window.flushPendingTempSync?.();
+
+            // 🌟 溫度統計表雲端監聽（根源修復：純粹毫秒時間戳比對，絕不吞掉跨欄位更新、絕不閃回舊回音）
             onSnapshot(cfgDoc('patrol_temp_records'), (snap) => {
                 if (!snap.exists()) return;
                 const remoteRecords = snap.data()?.records || {};
                 let tempUpdated = false;
-                const isLocalTyping = window._lastTempInputTime && (Date.now() - window._lastTempInputTime) < 2500;
 
                 Object.keys(remoteRecords).forEach(dKey => {
                     const remoteSlots = remoteRecords[dKey] || {};
@@ -7866,17 +7920,14 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
                         const allFields = [...RAW_TEMPERATURE_POINTS.map(p => p.id), 'recorder'];
                         allFields.forEach(fKey => {
-                            // 🌟 若使用者目前正手動修改此測溫點，保護本機輸入，不被雲端回音覆蓋
-                            if (isLocalTyping && dKey === currentPatrolDate && sName === patrolSlot && fKey === window.activeTempKeypadPointId) {
-                                return;
-                            }
+                            const rTs = Number(rSlotObj[`${fKey}_ts`]) || 0;
+                            const lTs = Number(lSlotObj[`${fKey}_ts`]) || 0;
 
-                            const rTs = rSlotObj[`${fKey}_ts`] || 0;
-                            const lTs = lSlotObj[`${fKey}_ts`] || 0;
-
+                            // 只有當雲端時間戳明確比本機新 (rTs > lTs)，或本機從未有時間戳記錄 (lTs === 0) 時才採納
                             if (rTs > lTs || (lTs === 0 && rSlotObj[fKey] !== undefined)) {
                                 const newVal = String(rSlotObj[fKey] || '').trim();
-                                if ((lSlotObj[fKey] || '') !== newVal) {
+                                const curLocalVal = String(lSlotObj[fKey] || '').trim();
+                                if (curLocalVal !== newVal || lSlotObj[`${fKey}_ts`] !== rTs) {
                                     if (newVal === '') {
                                         delete lSlotObj[fKey];
                                     } else {
@@ -7892,18 +7943,14 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
                 if (tempUpdated) {
                     safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
-
-                    // 僅在非打字狀態下才刷新清單，防止手機端輸入中焦點跳動
-                    if (!isLocalTyping) {
-                        if ($('tempStatsModal') && !$('tempStatsModal').classList.contains('hidden')) {
-                            window.renderTempModalList();
-                        }
-                        if (window.activeTempKeypadPointId) {
-                            const curSlotTemps = (patrolTempRecords[currentPatrolDate] || {})[patrolSlot] || {};
-                            const curVal = curSlotTemps[window.activeTempKeypadPointId] || '';
-                            const popupDisplay = $('tempKeypadCurrentDisplay');
-                            if (popupDisplay) popupDisplay.innerText = curVal || '---';
-                        }
+                    if ($('tempStatsModal') && !$('tempStatsModal').classList.contains('hidden')) {
+                        window.renderTempModalList();
+                    }
+                    if (!$('tempKeypadModal')?.classList.contains('hidden') && window.activeTempKeypadPointId) {
+                        const curSlotTemps = (patrolTempRecords[currentPatrolDate] || {})[patrolSlot] || {};
+                        const curVal = curSlotTemps[window.activeTempKeypadPointId] || '';
+                        const popupDisplay = $('tempKeypadCurrentDisplay');
+                        if (popupDisplay) popupDisplay.innerText = curVal || '---';
                     }
                     window.updateFloatingTempBadgeUI?.();
                 }
@@ -13737,8 +13784,32 @@ window.pushMeetingReportsToAllIframes = (reports) => {
 </div>
         </main>
 
-<!-- 溫度數字盤（附同步輸入顯示框） -->
-<div id="tempKeypadModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-[10050] flex flex-col items-center justify-center p-4" onclick="window.closeTempKeypadModal(false, event)">
+<!-- 🌟 溫度統計表獨立全覆蓋彈窗 -->
+<div id="tempStatsModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[9999] hidden flex-col items-center justify-center p-3 sm:p-4" onclick="if(event.target===this)window.closeTempModal()">
+    <div class="bg-white w-[88%] max-w-[320px] rounded-3xl max-h-[75vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200 animate-pop-in" onclick="event.stopPropagation()">
+        <header class="px-3 py-1.5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
+            <div class="flex items-center space-x-1.5">
+                <h3 class="text-xs font-black text-slate-800">溫度統計表</h3>
+                <span class="text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded leading-none">
+                    <span id="tempModalSlotLabel">—</span>
+                </span>
+            </div>
+            <button type="button" onclick="window.closeTempModal()" class="px-2 py-0.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold active:scale-95 transition-all">關閉</button>
+        </header>
+        <div class="px-3 py-1 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
+            <span class="text-[10.5px] font-bold text-slate-500">進度 <span id="tempModalProgress" class="text-rose-600 font-black">0/12</span></span>
+            <input type="text" id="tempModalRecorder" placeholder="記錄者姓名" oninput="window.setPointTempRecorder(this.value)" onchange="window.setPointTempRecorder(this.value)"
+                   class="bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5 text-xs font-bold text-center w-24 focus:outline-none focus:border-rose-400">
+        </div>
+        <div id="tempModalList" class="flex-1 overflow-y-auto p-2.5 space-y-1 min-h-0 scrollbar-hide"></div>
+        <div class="p-3 border-t border-slate-100 shrink-0 bg-slate-50">
+            <button type="button" onclick="window.closeTempModal()" class="w-full py-2.5 bg-slate-800 text-white rounded-xl text-xs font-bold active:scale-95 shadow-xs">完成</button>
+        </div>
+    </div>
+</div>
+
+<!-- 🌟 溫度數字盤（置於統計表 DOM 之後、移除與 hidden 衝突的 flex、完成鍵傳入 true 強制秒關） -->
+<div id="tempKeypadModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-[10050] flex-col items-center justify-center p-4" onclick="window.closeTempKeypadModal(false, event)">
     <div class="bg-white rounded-3xl border-2 border-slate-200 p-4 shadow-2xl w-full max-w-[320px] space-y-2.5 animate-pop-in" onclick="event.stopPropagation()">
         <!-- 頂部資訊列 -->
         <div class="flex justify-between items-center px-1 pb-1 border-b border-slate-100">
@@ -13748,11 +13819,11 @@ window.pushMeetingReportsToAllIframes = (reports) => {
             </div>
             <div class="flex items-center space-x-3 shrink-0">
                 <button type="button" onclick="window.onTempKeypadPress('CLEAR')" class="text-rose-600 text-xs font-black active:scale-95">清空</button>
-                <button type="button" onclick="window.closeTempKeypadModal()" class="bg-blue-600 text-white px-3 py-1 rounded-xl text-xs font-bold active:scale-95 shadow-xs">完成</button>
+                <button type="button" onclick="window.closeTempKeypadModal(true)" class="bg-blue-600 text-white px-3 py-1 rounded-xl text-xs font-bold active:scale-95 shadow-xs">完成</button>
             </div>
         </div>
 
-        <!-- 🌟 同步即時顯示輸入框 -->
+        <!-- 同步即時顯示輸入框 -->
         <div class="w-full h-11 bg-slate-50 border-2 border-blue-400 rounded-2xl flex items-center justify-center shadow-inner">
             <span id="tempKeypadCurrentDisplay" class="font-mono font-black text-2xl text-blue-700 tracking-wider">---</span>
             <span class="text-xs font-black text-slate-400 ml-1">°C</span>
@@ -13775,7 +13846,6 @@ window.pushMeetingReportsToAllIframes = (reports) => {
         </div>
     </div>
 </div>
-
         <!-- 巡查攤位搜尋彈窗 -->
         <div id="patrolSearchModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[250] flex-col items-center justify-center p-3 sm:p-4" onclick="if(event.target === this) window.closePatrolSearchModal();">
             <div class="bg-white rounded-2xl p-3.5 w-full max-w-[360px] max-h-[82vh] shadow-2xl relative flex flex-col overflow-hidden" onclick="event.stopPropagation()">
