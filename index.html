@@ -7692,11 +7692,12 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             });
 
            // 🌟 剔檔紀錄獨立文件動態監聽（自動回收非活躍日期監聽、支援雙向刪除與嚴格時間戳比對）
+            // 🌟 剔檔紀錄獨立文件動態監聽（根源修復：雲端未建檔時絕不抹除本機舊紀錄）
             window._patrolDateUnsubs = window._patrolDateUnsubs || {};
             window.listenPatrolDateDoc = (dateKey) => {
                 if (!currentUser || !db || !dateKey) return;
 
-                // 清理非「今日」且非「當前檢視日期」的舊監聽器，防止長期累積殭屍監聽
+                // 1. 清理非「今日」且非「當前檢視日期」的舊監聽器，防止多日切換造成記憶體洩漏
                 const todayKey = getTodayDateStr();
                 Object.keys(window._patrolDateUnsubs).forEach(oldKey => {
                     if (oldKey !== dateKey && oldKey !== todayKey) {
@@ -7713,69 +7714,73 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                     if (window._patrolPendingQueue?.[dateKey]?._CLEAR_ALL_DAY_) return;
 
                     let hasUpdated = false;
-                    if (!snap.exists()) {
-                        if (patrolHistoryStore[dateKey] && !window._patrolPendingQueue?.[dateKey]) {
-                            delete patrolHistoryStore[dateKey];
-                            hasUpdated = true;
-                        }
-                    } else {
-                        const docData = snap.data() || {};
-                        const remoteDay = docData[dateKey] || {};
-                        const clearedAt = docData._clearedAt || 0;
 
-                        // 若雲端剛執行過整日清空且內容為空
-                        if (Object.keys(remoteDay).length === 0 && clearedAt > 0 && !window._patrolPendingQueue?.[dateKey]) {
+                    // 🌟【最關鍵修復】：如果雲端尚未建立該日文件，直接 return 保留本機資料，絕對不可 delete！
+                    if (!snap.exists()) {
+                        return;
+                    }
+
+                    const docData = snap.data() || {};
+                    // 相容外層包 dateKey 或直接是攤位列表的資料結構
+                    const remoteDay = docData[dateKey] !== undefined ? docData[dateKey] : (docData.stalls || docData);
+                    const clearedAt = docData._clearedAt || 0;
+
+                    // 🌟 只有在雲端明確帶有「_clearedAt」時間戳且比本機新時，才認定為使用者主動清空
+                    if (Object.keys(remoteDay).length === 0 && clearedAt > 0) {
+                        const localLatestTs = Object.values(patrolHistoryStore[dateKey] || {}).reduce((max, stall) => {
+                            const t = PATROL_TIME_SLOTS.reduce((m, s) => Math.max(m, stall[`${s}_ts`] || 0), 0);
+                            return Math.max(max, t);
+                        }, 0);
+
+                        if (clearedAt > localLatestTs && !window._patrolPendingQueue?.[dateKey]) {
                             if (patrolHistoryStore[dateKey] && Object.keys(patrolHistoryStore[dateKey]).length > 0) {
                                 delete patrolHistoryStore[dateKey];
                                 hasUpdated = true;
                             }
-                        } else {
-                            if (!patrolHistoryStore[dateKey]) patrolHistoryStore[dateKey] = {};
-                            const localDay = patrolHistoryStore[dateKey];
+                        }
+                    } else if (remoteDay && typeof remoteDay === 'object') {
+                        if (!patrolHistoryStore[dateKey]) patrolHistoryStore[dateKey] = {};
+                        const localDay = patrolHistoryStore[dateKey];
 
-                            const allStallKeys = new Set([
-                                ...Object.keys(localDay),
-                                ...Object.keys(remoteDay)
-                            ]);
+                        const allStallKeys = new Set([
+                            ...Object.keys(localDay),
+                            ...Object.keys(remoteDay)
+                        ]);
 
-                            allStallKeys.forEach(sKey => {
-                                const remoteStall = remoteDay[sKey];
-                                const localStall = localDay[sKey] || {};
+                        allStallKeys.forEach(sKey => {
+                            if (sKey === '_clearedAt' || sKey === '_ts') return;
+                            const remoteStall = remoteDay[sKey];
+                            const localStall = localDay[sKey] || {};
 
-                                // 若雲端已無此攤位且本機無待傳佇列，且雲端有清空時間戳較新，則移除本機殘留
-                                if (!remoteStall) {
-                                    if (!window._patrolPendingQueue?.[dateKey]?.[sKey] && clearedAt > 0) {
-                                        delete localDay[sKey];
+                            if (!remoteStall) return;
+
+                            if (!localDay[sKey]) localDay[sKey] = {};
+                            const targetLocalStall = localDay[sKey];
+
+                            PATROL_TIME_SLOTS.forEach(slotName => {
+                                if (window._patrolPendingQueue?.[dateKey]?.[sKey]?.[slotName]) return;
+
+                                const rTs = remoteStall[`${slotName}_ts`] || 0;
+                                const lTs = targetLocalStall[`${slotName}_ts`] || 0;
+
+                                // 只有雲端時間戳較新，或者本機完全沒有時間戳時，才採用雲端
+                                if (rTs > lTs || (lTs === 0 && remoteStall[slotName] !== undefined)) {
+                                    const rVal = remoteStall[slotName] || '';
+                                    const rLoc = !!remoteStall[`${slotName}_locked`];
+                                    const rRea = remoteStall[`${slotName}_reason`] || '';
+                                    if (targetLocalStall[slotName] !== rVal || 
+                                        !!targetLocalStall[`${slotName}_locked`] !== rLoc || 
+                                        (targetLocalStall[`${slotName}_reason`] || '') !== rRea || 
+                                        targetLocalStall[`${slotName}_ts`] !== rTs) {
+                                        targetLocalStall[slotName] = rVal;
+                                        targetLocalStall[`${slotName}_locked`] = rLoc;
+                                        targetLocalStall[`${slotName}_reason`] = rRea;
+                                        targetLocalStall[`${slotName}_ts`] = rTs;
                                         hasUpdated = true;
                                     }
-                                    return;
                                 }
-
-                                if (!localDay[sKey]) localDay[sKey] = {};
-                                const targetLocalStall = localDay[sKey];
-
-                                PATROL_TIME_SLOTS.forEach(slotName => {
-                                    if (window._patrolPendingQueue?.[dateKey]?.[sKey]?.[slotName]) return;
-
-                                    const rTs = remoteStall[`${slotName}_ts`] || 0;
-                                    const lTs = targetLocalStall[`${slotName}_ts`] || 0;
-
-                                    // 🌟 嚴格時間戳判定：雲端時間戳較新，或本機尚無時間戳時才採用雲端資料
-                                    if (rTs > lTs || (lTs === 0 && remoteStall[slotName] !== undefined)) {
-                                        const rVal = remoteStall[slotName] || '';
-                                        const rLoc = !!remoteStall[`${slotName}_locked`];
-                                        const rRea = remoteStall[`${slotName}_reason`] || '';
-                                        if (targetLocalStall[slotName] !== rVal || !!targetLocalStall[`${slotName}_locked`] !== rLoc || (targetLocalStall[`${slotName}_reason`] || '') !== rRea || targetLocalStall[`${slotName}_ts`] !== rTs) {
-                                            targetLocalStall[slotName] = rVal;
-                                            targetLocalStall[`${slotName}_locked`] = rLoc;
-                                            targetLocalStall[`${slotName}_reason`] = rRea;
-                                            targetLocalStall[`${slotName}_ts`] = rTs;
-                                            hasUpdated = true;
-                                        }
-                                    }
-                                });
                             });
-                        }
+                        });
                     }
 
                     if (hasUpdated) {
