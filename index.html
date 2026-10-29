@@ -3322,21 +3322,38 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             } catch (e) {}
         };
 
-        // 🌟 選取目標測溫卡片並彈出數字盤
+        // 🌟 自動清理重複的 tempStatsModal 並將溫度彈窗提升至 document.body 最頂層，脫離 overflow-hidden 限制
+        window.ensureTempModalsMounted = () => {
+            const allStats = document.querySelectorAll('#tempStatsModal');
+            if (allStats.length > 1) {
+                for (let i = 1; i < allStats.length; i++) allStats[i].remove();
+            }
+            const statsModal = document.getElementById('tempStatsModal');
+            const keypadModal = document.getElementById('tempKeypadModal');
+            if (statsModal && statsModal.parentElement !== document.body) {
+                document.body.appendChild(statsModal);
+            }
+            if (keypadModal && keypadModal.parentElement !== document.body) {
+                document.body.appendChild(keypadModal);
+            }
+        };
+
+       // 🌟 選取目標測溫卡片並彈出數字盤
         window.selectTempPointTarget = (pointId, e) => {
             if (e) {
-                e.stopPropagation();
+                e.preventDefault?.();
+                e.stopPropagation?.();
             }
+            window.ensureTempModalsMounted();
             window._keypadOpenedAt = Date.now();
             window.activeTempKeypadPointId = pointId;
 
             document.querySelectorAll('[id^="tempDisplay-"]').forEach(el => {
                 el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/60', 'border-blue-500');
             });
-            const curEl = $(`tempDisplay-${pointId}`);
-            if (curEl) {
+            document.querySelectorAll(`#tempDisplay-${pointId}`).forEach(curEl => {
                 curEl.classList.add('ring-2', 'ring-blue-500', 'bg-blue-100/60', 'border-blue-500');
-            }
+            });
 
             const pt = RAW_TEMPERATURE_POINTS.find(p => p.id === pointId);
             const titleEl = $('tempKeypadTargetTitle');
@@ -3346,7 +3363,10 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
 
             const date = currentPatrolDate || getTodayDateStr();
             const slot = patrolSlot || window.getAutoPatrolSlot();
-            const curSlotTemps = (patrolTempRecords[date] || {})[slot] || {};
+            if (!patrolTempRecords[date]) patrolTempRecords[date] = {};
+            if (!patrolTempRecords[date][slot]) patrolTempRecords[date][slot] = {};
+
+            const curSlotTemps = patrolTempRecords[date][slot];
             const curVal = curSlotTemps[pointId] !== undefined ? String(curSlotTemps[pointId]).trim() : '';
             const popupDisplay = $('tempKeypadCurrentDisplay');
             if (popupDisplay) {
@@ -3362,49 +3382,67 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
 
         // 🌟 關閉溫度數字盤（自動清理結尾多餘小數點如 "26." -> "26"）
         window.closeTempKeypadModal = (force = false, e = null) => {
-    // 移除會導致點擊小鍵盤內部時被誤判關閉的限制，改為嚴格檢查點擊目標
-    if (e && e.target && e.target.id !== 'tempKeypadModal' && !e.target.closest('#tempKeypadModal > div')) {
-        return;
-    }
-
-    const pointId = window.activeTempKeypadPointId;
-    const date = currentPatrolDate || getTodayDateStr();
-    const slot = patrolSlot || window.getAutoPatrolSlot();
-    if (pointId && patrolTempRecords[date]?.[slot]?.[pointId]) {
-        let curVal = String(patrolTempRecords[date][slot][pointId]).trim();
-        if (curVal.endsWith('.')) {
-            curVal = curVal.slice(0, -1);
-            const nowTs = Date.now();
-            if (curVal === '') {
-                delete patrolTempRecords[date][slot][pointId];
-            } else {
-                patrolTempRecords[date][slot][pointId] = curVal;
+            if (e) {
+                e.stopPropagation?.();
+                if (!force && e.target && e.target.id !== 'tempKeypadModal') {
+                    return;
+                }
             }
-            patrolTempRecords[date][slot][`${pointId}_ts`] = nowTs;
-            safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
-            window.syncTempSlotFieldToCloud(date, slot, {
-                [pointId]: curVal,
-                [`${pointId}_ts`]: nowTs
+            if (!force && window._keypadOpenedAt && (Date.now() - window._keypadOpenedAt) < 400) {
+                return;
+            }
+
+            const pointId = window.activeTempKeypadPointId;
+            const date = currentPatrolDate || getTodayDateStr();
+            const slot = patrolSlot || window.getAutoPatrolSlot();
+            if (pointId && patrolTempRecords[date]?.[slot]?.[pointId]) {
+                let curVal = String(patrolTempRecords[date][slot][pointId]).trim();
+                if (curVal.endsWith('.')) {
+                    curVal = curVal.slice(0, -1);
+                    const nowTs = Date.now();
+                    if (curVal === '') {
+                        delete patrolTempRecords[date][slot][pointId];
+                    } else {
+                        patrolTempRecords[date][slot][pointId] = curVal;
+                    }
+                    patrolTempRecords[date][slot][`${pointId}_ts`] = nowTs;
+                    safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
+                    window.syncTempSlotFieldToCloud(date, slot, {
+                        [pointId]: curVal,
+                        [`${pointId}_ts`]: nowTs
+                    });
+                    document.querySelectorAll(`#tempDisplay-${pointId}`).forEach(displayEl => {
+                        displayEl.innerHTML = curVal ? `${curVal}<span class="text-[10px] font-bold text-slate-500 ml-0.5">°C</span>` : `---`;
+                    });
+                    window.updateTempProgressUI(date, slot);
+                }
+            }
+
+            const modal = $('tempKeypadModal');
+            if (modal) {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+            document.querySelectorAll('[id^="tempDisplay-"]').forEach(el => {
+                el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/60', 'border-blue-500');
             });
-            const displayEl = $(`tempDisplay-${pointId}`);
-            if (displayEl) {
-                displayEl.innerHTML = curVal ? `${curVal}<span class="text-[10px] font-bold text-slate-500 ml-0.5">°C</span>` : `---`;
-            }
-            window.updateTempProgressUI(date, slot);
-        }
-    }
+        };
 
-    const modal = $('tempKeypadModal');
-    if (modal) {
-        modal.classList.add('hidden');
-        modal.classList.remove('flex');
-    }
-    document.querySelectorAll('[id^="tempDisplay-"]').forEach(el => {
-        el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/60', 'border-blue-500');
-    });
-};
+        // 🌟 補回缺失的手機觸控按鍵橋接函式（解決點擊沒反應的元兇）
+        window._lastTempKeyTapTs = 0;
+        window.handleTempKeyTap = (key, e) => {
+            if (e) {
+                e.preventDefault?.();
+                e.stopPropagation?.();
+            }
+            const now = Date.now();
+            if (now - window._lastTempKeyTapTs < 80) return;
+            window._lastTempKeyTapTs = now;
+            window.onTempKeypadPress(key);
+        };
 
         // 🌟 溫度專屬虛擬鍵盤點擊處理
+        window._tempCloudSyncTimer = null;
         window.onTempKeypadPress = (key) => {
             const nowTs = Date.now();
             window._lastTempInputTime = nowTs;
@@ -3416,7 +3454,7 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             if (!patrolTempRecords[date]) patrolTempRecords[date] = {};
             if (!patrolTempRecords[date][slot]) patrolTempRecords[date][slot] = {};
 
-            let val = String(patrolTempRecords[date][slot][pointId] || '').trim();
+            let val = String(patrolTempRecords[date][slot][pointId] ?? '').trim();
 
             if (key === 'CLEAR') {
                 val = '';
@@ -3428,7 +3466,6 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                 }
             } else {
                 const digit = String(key);
-                // 防止前導零（例如已輸入 '0' 再按 '2'，自動變成 '2' 而非 '02'）
                 if (val === '0') {
                     val = digit;
                 } else if (val.replace('.', '').length < 4) {
@@ -3445,29 +3482,29 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
 
             safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
 
-            window.syncTempSlotFieldToCloud(date, slot, {
-                [pointId]: val,
-                [`${pointId}_ts`]: nowTs
-            });
-
-            // 1. 同步數字盤上方當前顯示
-            const popupDisplay = $('tempKeypadCurrentDisplay');
+            const popupDisplay = document.getElementById('tempKeypadCurrentDisplay');
             if (popupDisplay) {
-                popupDisplay.innerText = val || '---';
+                popupDisplay.textContent = val || '---';
             }
 
-            // 2. 同步底層清單中該測溫點的卡片數值與邊框顏色
-            const displayEl = $(`tempDisplay-${pointId}`);
-            if (displayEl) {
+            document.querySelectorAll(`#tempDisplay-${pointId}`).forEach(displayEl => {
                 displayEl.innerHTML = val ? `${val}<span class="text-[10px] font-bold text-slate-500 ml-0.5">°C</span>` : `---`;
                 const rowCard = displayEl.parentElement;
                 if (rowCard) {
                     rowCard.className = `py-1.5 px-2.5 rounded-xl border flex items-center justify-between cursor-pointer select-none transition-all ${val !== '' ? 'bg-slate-50 border-slate-200' : 'bg-white border-amber-300 shadow-2xs'}`;
                 }
-            }
+            });
 
-            // 3. 同步更新彈窗頂部進度條與外層浮動圓形標籤
             window.updateTempProgressUI(date, slot);
+
+            if (window._tempCloudSyncTimer) clearTimeout(window._tempCloudSyncTimer);
+            const syncVal = val;
+            window._tempCloudSyncTimer = setTimeout(() => {
+                window.syncTempSlotFieldToCloud(date, slot, {
+                    [pointId]: syncVal,
+                    [`${pointId}_ts`]: nowTs
+                });
+            }, 250);
         };
 
         window.setPointTempRecorder = (val) => {
@@ -13805,9 +13842,9 @@ window.pushMeetingReportsToAllIframes = (reports) => {
     </div>
 </div>
 
-<!-- 🌟 溫度數字盤（置於統計表 DOM 之後、移除與 hidden 衝突的 flex、完成鍵傳入 true 強制秒關） -->
-<div id="tempKeypadModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-[10050] items-center justify-center p-4" onclick="window.closeTempKeypadModal(false, event)">
-    <div class="bg-white rounded-3xl border-2 border-slate-200 p-4 shadow-2xl w-full max-w-[320px] space-y-2.5 animate-pop-in" onclick="event.stopPropagation()">
+<!-- 🌟 溫度數字盤（手機零延遲觸控版） -->
+<div id="tempKeypadModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[10050] flex-col items-center justify-center p-4 select-none" onclick="if(event.target === this) window.closeTempKeypadModal(false, event)">
+    <div class="bg-white rounded-3xl border-2 border-slate-200 p-4 shadow-2xl w-full max-w-[320px] space-y-2.5 animate-pop-in pointer-events-auto" onclick="event.stopPropagation()">
         <!-- 頂部資訊列 -->
         <div class="flex justify-between items-center px-1 pb-1 border-b border-slate-100">
             <div class="flex items-center space-x-1.5 min-w-0">
@@ -13815,8 +13852,8 @@ window.pushMeetingReportsToAllIframes = (reports) => {
                 <span id="tempKeypadTargetTitle" class="text-xs font-black text-slate-800 truncate">測溫點</span>
             </div>
             <div class="flex items-center space-x-3 shrink-0">
-                <button type="button" onclick="window.onTempKeypadPress('CLEAR')" class="text-rose-600 text-xs font-black active:scale-95">清空</button>
-                <button type="button" onclick="window.closeTempKeypadModal(true)" class="bg-blue-600 text-white px-3 py-1 rounded-xl text-xs font-bold active:scale-95 shadow-xs">完成</button>
+                <button type="button" onpointerdown="window.handleTempKeyTap('CLEAR', event)" onclick="window.handleTempKeyTap('CLEAR', event)" class="text-rose-600 text-xs font-black px-2 py-1 rounded-lg active:bg-rose-50 active:scale-95 cursor-pointer">清空</button>
+                <button type="button" onpointerdown="event.stopPropagation(); window.closeTempKeypadModal(true, event)" onclick="event.stopPropagation(); window.closeTempKeypadModal(true, event)" class="bg-blue-600 text-white px-3.5 py-1 rounded-xl text-xs font-bold active:scale-95 shadow-xs cursor-pointer">完成</button>
             </div>
         </div>
 
@@ -13827,19 +13864,19 @@ window.pushMeetingReportsToAllIframes = (reports) => {
         </div>
 
         <!-- 數字按鍵 -->
-        <div class="grid grid-cols-3 gap-[3px] w-full select-none pt-0.5">
-            <button type="button" onclick="window.onTempKeypadPress('1')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">1</button>
-            <button type="button" onclick="window.onTempKeypadPress('2')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">2</button>
-            <button type="button" onclick="window.onTempKeypadPress('3')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">3</button>
-            <button type="button" onclick="window.onTempKeypadPress('4')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">4</button>
-            <button type="button" onclick="window.onTempKeypadPress('5')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">5</button>
-            <button type="button" onclick="window.onTempKeypadPress('6')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">6</button>
-            <button type="button" onclick="window.onTempKeypadPress('7')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">7</button>
-            <button type="button" onclick="window.onTempKeypadPress('8')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">8</button>
-            <button type="button" onclick="window.onTempKeypadPress('9')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">9</button>
-            <button type="button" onclick="window.onTempKeypadPress('.')" class="h-[36px] rounded-xl font-mono border bg-slate-50 text-slate-800 text-[26px] font-black active:scale-95">·</button>
-            <button type="button" onclick="window.onTempKeypadPress('0')" class="h-[36px] rounded-xl font-mono border bg-white text-slate-800 text-[20px] font-black active:scale-95">0</button>
-            <button type="button" onclick="window.onTempKeypadPress('BACK')" class="h-[36px] rounded-xl font-mono border bg-slate-100 text-slate-700 text-base font-black active:scale-95">⌫</button>
+        <div class="grid grid-cols-3 gap-1.5 w-full select-none pt-0.5">
+            <button type="button" onpointerdown="window.handleTempKeyTap('1', event)" onclick="window.handleTempKeyTap('1', event)" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">1</button>
+            <button type="button" onpointerdown="window.handleTempKeyTap('2', event)" onclick="window.handleTempKeyTap('2', event)" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">2</button>
+            <button type="button" onpointerdown="window.handleTempKeyTap('3', event)" onclick="window.handleTempKeyTap('3', event)" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">3</button>
+            <button type="button" onpointerdown="window.handleTempKeyTap('4', event)" onclick="window.handleTempKeyTap('4', event)" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">4</button>
+            <button type="button" onpointerdown="window.handleTempKeyTap('5', event)" onclick="window.handleTempKeyTap('5', event)" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">5</button>
+            <button type="button" onpointerdown="window.handleTempKeyTap('6', event)" onclick="window.handleTempKeyTap('6', event)" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">6</button>
+            <button type="button" onpointerdown="window.handleTempKeyTap('7', event)" onclick="window.handleTempKeyTap('7', event)" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">7</button>
+            <button type="button" onpointerdown="window.handleTempKeyTap('8', event)" onclick="window.handleTempKeyTap('8', event)" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">8</button>
+            <button type="button" onpointerdown="window.handleTempKeyTap('9', event)" onclick="window.handleTempKeyTap('9', event)" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">9</button>
+            <button type="button" onpointerdown="window.handleTempKeyTap('.', event)" onclick="window.handleTempKeyTap('.', event)" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-slate-50 text-slate-800 text-[26px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">·</button>
+            <button type="button" onpointerdown="window.handleTempKeyTap('0', event)" onclick="window.handleTempKeyTap('0', event)" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">0</button>
+            <button type="button" onpointerdown="window.handleTempKeyTap('BACK', event)" onclick="window.handleTempKeyTap('BACK', event)" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-slate-100 text-slate-700 text-base font-black active:bg-blue-100 active:scale-95 cursor-pointer">⌫</button>
         </div>
     </div>
 </div>
@@ -14165,31 +14202,6 @@ window.pushMeetingReportsToAllIframes = (reports) => {
             </div>
         </main>
 
-<!-- ==================== 各類全螢幕與浮動彈窗區 (移至最外層確保點擊有效) ==================== -->
-
-<!-- 🌟 溫度統計表獨立全覆蓋彈窗 -->
-<div id="tempStatsModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[9999] hidden flex-col items-center justify-center p-3 sm:p-4" onclick="if(event.target===this)window.closeTempModal()">
-    <div class="bg-white w-[88%] max-w-[320px] rounded-3xl max-h-[75vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200 animate-pop-in" onclick="event.stopPropagation()">
-        <header class="px-3 py-1.5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
-            <div class="flex items-center space-x-1.5">
-                <h3 class="text-xs font-black text-slate-800">溫度統計表</h3>
-                <span class="text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded leading-none">
-                    <span id="tempModalSlotLabel">—</span>
-                </span>
-            </div>
-            <button type="button" onclick="window.closeTempModal()" class="px-2 py-0.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold active:scale-95 transition-all">關閉</button>
-        </header>
-        <div class="px-3 py-1 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
-            <span class="text-[10.5px] font-bold text-slate-500">進度 <span id="tempModalProgress" class="text-rose-600 font-black">0/12</span></span>
-            <input type="text" id="tempModalRecorder" placeholder="記錄者姓名" onchange="window.setPointTempRecorder(this.value)"
-                   class="bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5 text-xs font-bold text-center w-24 focus:outline-none focus:border-rose-400">
-        </div>
-        <div id="tempModalList" class="flex-1 overflow-y-auto p-2.5 space-y-1 min-h-0 scrollbar-hide"></div>
-        <div class="p-3 border-t border-slate-100 shrink-0 bg-slate-50">
-            <button type="button" onclick="window.closeTempModal()" class="w-full py-2.5 bg-slate-800 text-white rounded-xl text-xs font-bold active:scale-95 shadow-xs">完成</button>
-        </div>
-    </div>
-</div>
 
 <div id="tabVisibilityModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] hidden flex-col items-center justify-center p-4">
     <div class="bg-white rounded-2xl p-4 w-full max-w-[320px] shadow-2xl relative scrollbar-hide flex flex-col" onclick="event.stopPropagation()">
