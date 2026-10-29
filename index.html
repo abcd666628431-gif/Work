@@ -7913,93 +7913,40 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 window.applyTabVisibility(); 
             });
 
-           // 🌟 剔檔紀錄獨立文件動態監聽（自動回收非活躍日期監聽、支援雙向刪除與嚴格時間戳比對）
-            // 🌟 剔檔紀錄獨立文件動態監聽（根源修復：雲端未建檔時絕不抹除本機舊紀錄）
-            window._patrolDateUnsubs = window._patrolDateUnsubs || {};
-            window.listenPatrolDateDoc = (dateKey) => {
-                if (!currentUser || !db || !dateKey) return;
-
-                // 1. 清理非「今日」且非「當前檢視日期」的舊監聽器，防止多日切換造成記憶體洩漏
-                const todayKey = getTodayDateStr();
-                Object.keys(window._patrolDateUnsubs).forEach(oldKey => {
-                    if (oldKey !== dateKey && oldKey !== todayKey) {
-                        try { window._patrolDateUnsubs[oldKey](); } catch (e) {}
-                        delete window._patrolDateUnsubs[oldKey];
-                    }
-                });
-
-                if (window._patrolDateUnsubs[dateKey]) return;
-
-                const dateRef = cfgDoc(`patrol_history_${dateKey}`);
+           const dateRef = cfgDoc(`patrol_history_${dateKey}`);
                 window._patrolDateUnsubs[dateKey] = onSnapshot(dateRef, (snap) => {
-                    // 若本機有尚未上傳的「整日清空」指令，優先保護本機清空狀態
                     if (window._patrolPendingQueue?.[dateKey]?._CLEAR_ALL_DAY_) return;
 
                     let hasUpdated = false;
 
-                    // 🌟【最關鍵修復】：如果雲端尚未建立該日文件，直接 return 保留本機資料，絕對不可 delete！
                     if (!snap.exists()) {
+                        // 若雲端無此日紀錄，自動把本機快取強制推送到雲端建檔保存
+                        if (patrolHistoryStore[dateKey] && Object.keys(patrolHistoryStore[dateKey]).length > 0) {
+                            setDoc(dateRef, { [dateKey]: patrolHistoryStore[dateKey] }, { merge: true }).catch(() => {});
+                        }
                         return;
                     }
 
                     const docData = snap.data() || {};
-                    // 相容外層包 dateKey 或直接是攤位列表的資料結構
                     const remoteDay = docData[dateKey] !== undefined ? docData[dateKey] : (docData.stalls || docData);
                     const clearedAt = docData._clearedAt || 0;
 
-                    // 🌟 只有在雲端明確帶有「_clearedAt」時間戳且比本機新時，才認定為使用者主動清空
-                    if (Object.keys(remoteDay).length === 0 && clearedAt > 0) {
-                        const localLatestTs = Object.values(patrolHistoryStore[dateKey] || {}).reduce((max, stall) => {
-                            const t = PATROL_TIME_SLOTS.reduce((m, s) => Math.max(m, stall[`${s}_ts`] || 0), 0);
-                            return Math.max(max, t);
-                        }, 0);
-
-                        if (clearedAt > localLatestTs && !window._patrolPendingQueue?.[dateKey]) {
-                            if (patrolHistoryStore[dateKey] && Object.keys(patrolHistoryStore[dateKey]).length > 0) {
-                                delete patrolHistoryStore[dateKey];
-                                hasUpdated = true;
-                            }
-                        }
-                    } else if (remoteDay && typeof remoteDay === 'object') {
+                    if (remoteDay && typeof remoteDay === 'object' && Object.keys(remoteDay).length > 0) {
                         if (!patrolHistoryStore[dateKey]) patrolHistoryStore[dateKey] = {};
                         const localDay = patrolHistoryStore[dateKey];
 
-                        const allStallKeys = new Set([
-                            ...Object.keys(localDay),
-                            ...Object.keys(remoteDay)
-                        ]);
-
-                        allStallKeys.forEach(sKey => {
-                            if (sKey === '_clearedAt' || sKey === '_ts') return;
-                            const remoteStall = remoteDay[sKey];
-                            const localStall = localDay[sKey] || {};
-
-                            if (!remoteStall) return;
-
+                        Object.keys(remoteDay).forEach(sKey => {
                             if (!localDay[sKey]) localDay[sKey] = {};
+                            const remoteStall = remoteDay[sKey];
                             const targetLocalStall = localDay[sKey];
 
                             PATROL_TIME_SLOTS.forEach(slotName => {
-                                if (window._patrolPendingQueue?.[dateKey]?.[sKey]?.[slotName]) return;
-
-                                const rTs = remoteStall[`${slotName}_ts`] || 0;
-                                const lTs = targetLocalStall[`${slotName}_ts`] || 0;
-
-                                // 只有雲端時間戳較新，或者本機完全沒有時間戳時，才採用雲端
-                                if (rTs > lTs || (lTs === 0 && remoteStall[slotName] !== undefined)) {
-                                    const rVal = remoteStall[slotName] || '';
-                                    const rLoc = !!remoteStall[`${slotName}_locked`];
-                                    const rRea = remoteStall[`${slotName}_reason`] || '';
-                                    if (targetLocalStall[slotName] !== rVal || 
-                                        !!targetLocalStall[`${slotName}_locked`] !== rLoc || 
-                                        (targetLocalStall[`${slotName}_reason`] || '') !== rRea || 
-                                        targetLocalStall[`${slotName}_ts`] !== rTs) {
-                                        targetLocalStall[slotName] = rVal;
-                                        targetLocalStall[`${slotName}_locked`] = rLoc;
-                                        targetLocalStall[`${slotName}_reason`] = rRea;
-                                        targetLocalStall[`${slotName}_ts`] = rTs;
-                                        hasUpdated = true;
-                                    }
+                                if (remoteStall[slotName] !== undefined && !targetLocalStall[slotName]) {
+                                    targetLocalStall[slotName] = remoteStall[slotName];
+                                    targetLocalStall[`${slotName}_locked`] = !!remoteStall[`${slotName}_locked`];
+                                    targetLocalStall[`${slotName}_reason`] = remoteStall[`${slotName}_reason`] || '';
+                                    targetLocalStall[`${slotName}_ts`] = remoteStall[`${slotName}_ts`] || Date.now();
+                                    hasUpdated = true;
                                 }
                             });
                         });
@@ -8016,7 +7963,6 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                         }
                     }
                 }, console.error);
-            };
 
             // 啟動當前日期的監聽
             window.listenPatrolDateDoc(currentPatrolDate);
@@ -8166,18 +8112,17 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 const logQuery = query(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs'), orderBy('timestamp', 'desc'), limit(200));
                 onSnapshot(logQuery, (snap) => {
                     let list = [];
-                    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000; // 3 天的毫秒數
-                    const nowTs = Date.now();
+                   const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000; // 改為 90 天
+                const nowTs = Date.now();
 
-                    snap.forEach(d => {
-                        const data = d.data();
-                        // 🌟 嚴格過濾：只保留 3 天內的紀錄，超過 3 天自動從雲端清理
-                        if (data.timestamp && (nowTs - data.timestamp) <= THREE_DAYS_MS) {
-                            list.push({ id: d.id, ...data });
-                        } else if (data.timestamp && (nowTs - data.timestamp) > THREE_DAYS_MS) {
-                            deleteDoc(d.ref).catch(() => {});
-                        }
-                    });
+                snap.forEach(d => {
+                    const data = d.data();
+                    if (data.timestamp && (nowTs - data.timestamp) <= NINETY_DAYS_MS) {
+                        list.push({ id: d.id, ...data });
+                    } else if (data.timestamp && (nowTs - data.timestamp) > NINETY_DAYS_MS) {
+                        deleteDoc(d.ref).catch(() => {});
+                    }
+                });
 
                     galleryLogsStore = list;
                     if ($('galleryLogsModal') && !$('galleryLogsModal').classList.contains('hidden')) {
