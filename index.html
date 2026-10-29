@@ -1517,8 +1517,18 @@ const tabMetadataMap = {
             window.renderMemberRosterListsOnly();
         };
 
-        window.renderMemberRosterListsOnly = () => {
-            const roleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
+       window.renderMemberRosterListsOnly = () => {
+            const isClean = window.currentMapRole === 'clean';
+            const roleKey = isClean ? 'clean' : 'cs';
+            if (isClean && Array.isArray(csMembersStore) && csMembersStore.length > 0) {
+                const filteredClean = cleanMembersStore.filter(m => !csMembersStore.includes(m));
+                if (filteredClean.length !== cleanMembersStore.length) {
+                    cleanMembersStore = filteredClean;
+                    teamMembers = [...cleanMembersStore];
+                    safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                    syncConfig('clean_team_members', { members: cleanMembersStore });
+                }
+            }
             const isFilterOn = window.dutyFilterModeEnabled?.[roleKey] !== false;
             const activeFilterList = window.getCheckedDutyList();
             const q = window._rosterSearchQuery || '';
@@ -2539,37 +2549,33 @@ window.openMemberProfilePopup(name, window._currentPopupLocation);
             safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
             safeSetLocal('work_cache_member_schedules', csSchedulesStore);
 
-            // 6. 雲端同步
-            if (currentUser && db) {
-                try {
-                    syncConfig('team_members', { members: csMembersStore });
-                    syncConfig('clean_team_members', { members: cleanMembersStore });
-                    syncConfig('duty_filter', { filter: window.activeDutyMembersFilter });
-                    syncConfig('cs_weekly_roster', { roster: window.csWeeklyRosterStore, presets: window.csShiftPresets });
-                    syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
-                    syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
-
-                    // 🌟 改名時，順便把檔案庫裡所有「同一個員工編號」的舊分身記憶全部刪掉，並完整覆蓋雲端
-                    const curId = (memberProfilesStore[newName]?.id || '').trim().toUpperCase();
-                    if (curId) {
-                        Object.keys(memberProfilesStore).forEach(k => {
-                            if (k !== newName && (k.toUpperCase() === curId || (memberProfilesStore[k]?.id || '').trim().toUpperCase() === curId)) {
-                                delete memberProfilesStore[k];
-                                window.replaceMemberKeyEverywhere(k, newName);
-                            }
-                        });
-                        safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+           // 6. 先清理同編號舊分身並立即更新畫面（不等待雲端，0延遲關閉視窗）
+            const curId = (memberProfilesStore[newName]?.id || '').trim().toUpperCase();
+            if (curId) {
+                Object.keys(memberProfilesStore).forEach(k => {
+                    if (k !== newName && (k.toUpperCase() === curId || (memberProfilesStore[k]?.id || '').trim().toUpperCase() === curId)) {
+                        delete memberProfilesStore[k];
+                        window.replaceMemberKeyEverywhere(k, newName);
                     }
-                    const profDocRef = cfgDoc('member_profiles');
-                    await setDoc(profDocRef, { profiles: memberProfilesStore }, { merge: false });
-                } catch (e) {
-                    console.error("改名雲端同步失敗:", e);
-                }
+                });
+                safeSetLocal('work_cache_member_profiles', memberProfilesStore);
             }
 
+            // 立即關閉個人修改彈窗，不再重新彈出
+            document.getElementById('memberProfileModal')?.classList.add('hidden');
             window.showToast(`✅ 已將「${oldName}」修改為「${newName}」`);
-            window.openMemberProfilePopup(newName, window._currentPopupLocation || '當前崗位');
             window.updateMapSimulation();
+
+            // 背景靜默同步至雲端
+            if (currentUser && db) {
+                syncConfig('team_members', { members: csMembersStore });
+                syncConfig('clean_team_members', { members: cleanMembersStore });
+                syncConfig('duty_filter', { filter: window.activeDutyMembersFilter });
+                syncConfig('cs_weekly_roster', { roster: window.csWeeklyRosterStore, presets: window.csShiftPresets });
+                syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
+                syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
+                setDoc(cfgDoc('member_profiles'), { profiles: memberProfilesStore }, { merge: false }).catch(e => console.error("改名雲端同步失敗:", e));
+            }
 
             if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
                 window.renderMemberRosterModal();
@@ -6028,8 +6034,16 @@ window.deleteSelectedGalleryItems = () => {
 
             hintBox.classList.remove('hidden');
 
-            // 雞檔固定判定為清潔，不設提早收工
-            if (isChickenStall) {
+           const isFirstFloor = prefix === '一樓' || /^1-?/i.test(titleVal) || (matched && matched.floor.includes('一樓'));
+
+            // 10點前一樓固定為營業相；雞檔固定判定為清潔
+            if (isFirstFloor && targetMins < 600) {
+                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
+                hintBox.innerHTML = `
+                    <div class="flex items-center"><i data-lucide="store" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">營業相</span></div>
+                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 10:00 前一樓相片自動判定為營業相</div>`;
+                window.setModalEditCat('營業相', false);
+            } else if (isChickenStall) {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
                     <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
@@ -6924,6 +6938,13 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 return;
             }
 
+            // 10:00 前點選「一樓」時，自動預選為營業相
+            const [preH, preM] = (timeStr || '12:00').split(':').map(Number);
+            if (currentPrefix === '1-' && (preH * 60 + preM) < 600) {
+                if (isMerged) window.setMergedCategory('營業相', false);
+                else if (tempId) window.setPendingItemCategory(tempId, '營業相', false);
+            }
+
             // 尚未輸入檔號時，維持隱藏佔位
             if (!codeRaw || !window.stallList || !window.stallList.length) {
                 hintBox.className = 'opacity-0 pointer-events-none h-[42px] p-2 rounded-lg text-[10.5px] font-bold border border-transparent transition-all flex items-center bg-transparent';
@@ -6966,8 +6987,17 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             const targetMins = th * 60 + tm;
             const diff = closeMins - targetMins;
 
-            // 自動收工／清潔判定
-            if (isChickenStall) {
+            const isFirstFloor = prefix === '一樓' || /^1-/i.test(codeRaw.trim()) || (matched && matched.floor.includes('一樓'));
+
+            // 自動收工／清潔／10點前一樓營業相判定
+            if (isFirstFloor && targetMins < 600) {
+                hintBox.className = 'opacity-100 h-[42px] p-2 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col justify-center gap-0.5 animate-pop-in';
+                hintBox.innerHTML = `
+                    <div class="flex items-center"><i data-lucide="store" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">營業相</span></div>
+                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 10:00 前一樓相片自動判定為營業相</div>`;
+                if (isMerged) window.setMergedCategory('營業相', false);
+                else if (tempId) window.setPendingItemCategory(tempId, '營業相', false);
+            } else if (isChickenStall) {
                 hintBox.className = 'opacity-100 h-[42px] p-2 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col justify-center gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
                     <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
@@ -10417,7 +10447,10 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     multiStore[targetDateStr] = mergedDay;
 
                     const importedMemberSet = new Set(teamMembers.map(m => window.resolveMemberIdentity ? window.resolveMemberIdentity(m) : m));
-                    importedRawDay.forEach(r => importedMemberSet.add(r.name));
+                    importedRawDay.forEach(r => {
+                        if (isClean && csMembersStore.includes(r.name)) return; // 清潔名單絕不混入客服人員
+                        importedMemberSet.add(r.name);
+                    });
 
                     teamMembers = Array.from(importedMemberSet);
                     const todayStr = getNowInputStrs().date;
