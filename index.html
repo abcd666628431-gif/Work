@@ -772,22 +772,25 @@ const tabMetadataMap = {
             if (!clean) return '';
             const upper = clean.toUpperCase();
 
-            // 🌟 關鍵修正 1：如果傳進來的名字本身已經在現有的正式成員名單中（說明它就是改名後的新名字），直接回傳！絕不再跑編號搜尋轉回舊名！
+            // 1. 若輸入的是工號格式，優先比對正式成員名單中誰綁定了這個工號（避免工號與姓名分身）
+            const allCurrentMembers = Array.from(new Set([...cleanMembersStore, ...csMembersStore]));
+            for (const mName of allCurrentMembers) {
+                if (!window.isStaffIdFormat(mName)) {
+                    const prof = memberProfilesStore[mName];
+                    if (prof && prof.id && prof.id.trim().replace(/^#/, '').toUpperCase() === upper) {
+                        return mName;
+                    }
+                }
+            }
+
+            // 2. 若名字本身已在正式成員名單中，直接回傳
             if (csMembersStore.includes(clean) || cleanMembersStore.includes(clean)) {
                 return clean;
             }
 
-            // 1. 優先比對名單中正式成員的員工編號
-            const allCurrentMembers = Array.from(new Set([...csMembersStore, ...cleanMembersStore]));
+            // 3. 再比對所有正式成員的員工編號（不再從已刪除的舊檔案庫抓人，杜絕幽靈復活）
             for (const mName of allCurrentMembers) {
                 const prof = memberProfilesStore[mName];
-                if (prof && prof.id && prof.id.trim().replace(/^#/, '').toUpperCase() === upper) {
-                    return mName;
-                }
-            }
-
-            // 2. 次要比對檔案庫
-            for (const [mName, prof] of Object.entries(memberProfilesStore || {})) {
                 if (prof && prof.id && prof.id.trim().replace(/^#/, '').toUpperCase() === upper) {
                     return mName;
                 }
@@ -893,12 +896,24 @@ const tabMetadataMap = {
                 });
             });
 
-            // 2. 同步更新當前生效班表陣列
+          // 2. 同步更新當前生效班表陣列（強制深入比對，防止舊名殘留）
             [csSchedulesStore, cleanSchedulesStore, memberSchedules].forEach(store => {
                 if (Array.isArray(store)) {
-                    store.forEach(s => { if (s.name === oldKey) s.name = newKey; });
+                    store.forEach(s => { 
+                        if (s.name === oldKey || s.name.trim() === oldKey.trim()) {
+                            s.name = newKey; 
+                        }
+                    });
                 }
             });
+
+           // 🌟 核心修復：直接清空所有動態浮標再重繪，徹底解決名字含括號 () 時選擇器失效殘留幽靈的問題
+            document.querySelectorAll('.member-dynamic-marker').forEach(el => {
+                el.remove();
+            });
+            if (window.updateMapSimulation) {
+                window.updateMapSimulation();
+            }
 
             // 3. 替換 7 日固定更表 (csWeeklyRosterStore)
             if (window.csWeeklyRosterStore) {
@@ -1192,11 +1207,13 @@ const tabMetadataMap = {
 
         window.addTeamMemberWithGender = (gender = '女') => {
             const isClean = window.currentMapRole === 'clean';
-            const rawInput = prompt(`請輸入新【${gender}性】${isClean ? '清潔' : '客服'}成員姓名（可寫「姓名-編號」，例如：王大明-EH0088）：`);
+            const rawInput = prompt(`請輸入新【${gender}性】${isClean ? '清潔' : '客服'}成員姓名（支援括號，若要附帶工號請寫「姓名-工號」）：`);
             if (!rawInput || !rawInput.trim()) return;
-            const parts = rawInput.trim().split(/[-—_]/);
-            const name = parts[0].trim();
-            const staffId = (parts[1] || '').trim().toUpperCase();
+            const trimmed = rawInput.trim();
+            // 🌟 智慧拆分：只有當最後一段真的是員工編號格式（如 -EH0088）時才拆開，完整保留名字裡的括號與橫線！
+            const idMatch = trimmed.match(/^(.*?)\s*[-—_]\s*([A-Za-z]{1,4}-?\d{2,6}(?:-\d+)?)$/);
+            const name = idMatch ? idMatch[1].trim() : trimmed;
+            const staffId = idMatch ? idMatch[2].trim().toUpperCase() : '';
             if (!name) return;
 
             if (!teamMembers.includes(name)) {
@@ -1703,22 +1720,29 @@ ${isClean ? `
                 const rolePrefix = isClean ? 'clean_' : 'cs_';
                 window._tempGridValues = window._tempGridValues || {};
 
-                // 1. 清空目標日的所有舊排班格子（保留周靜儀已排好的班次）
+              // 1. 徹底清空目標日的舊排班與暫存格（設為空字串 '' 防止自動抓回舊存檔幽靈）
+                const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+                if (isClean) {
+                    multiStore[targetDateStr] = [];
+                    const cleanSlotsInit = window.getCleanScheduleSlots();
+                    Object.keys(mapData.points).forEach(locId => {
+                        cleanSlotsInit.forEach(slot => {
+                            window._tempGridValues[`${targetDateStr}_${locId}_${slot.start}_${slot.end}`] = '';
+                        });
+                    });
+                } else {
+                    multiStore[targetDateStr] = (multiStore[targetDateStr] || []).filter(s => s.name === '周靜儀');
+                }
+
                 Object.keys(window._tempGridValues).forEach(k => {
                     if (k.startsWith(`${targetDateStr}_`)) {
                         const curText = window._tempGridValues[k] || '';
                         const names = curText.split('\n').filter(Boolean);
-                        const hasChow = names.some(n => {
+                        const hasChow = !isClean && names.some(n => {
                             const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n;
                             return canon === '周靜儀';
                         });
-
-                        if (hasChow) {
-                            // 只留下周靜儀，其餘人員清空重排
-                            window._tempGridValues[k] = '周靜儀';
-                        } else {
-                            delete window._tempGridValues[k];
-                        }
+                        window._tempGridValues[k] = hasChow ? '周靜儀' : '';
                     }
                 });
 
@@ -2525,13 +2549,19 @@ window.openMemberProfilePopup(name, window._currentPopupLocation);
                     syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
                     syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
 
+                    // 🌟 改名時，順便把檔案庫裡所有「同一個員工編號」的舊分身記憶全部刪掉，並完整覆蓋雲端
+                    const curId = (memberProfilesStore[newName]?.id || '').trim().toUpperCase();
+                    if (curId) {
+                        Object.keys(memberProfilesStore).forEach(k => {
+                            if (k !== newName && (k.toUpperCase() === curId || (memberProfilesStore[k]?.id || '').trim().toUpperCase() === curId)) {
+                                delete memberProfilesStore[k];
+                                window.replaceMemberKeyEverywhere(k, newName);
+                            }
+                        });
+                        safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+                    }
                     const profDocRef = cfgDoc('member_profiles');
-                    await setDoc(profDocRef, {
-                        profiles: {
-                            [newName]: memberProfilesStore[newName],
-                            [oldName]: deleteField()
-                        }
-                    }, { merge: true });
+                    await setDoc(profDocRef, { profiles: memberProfilesStore }, { merge: false });
                 } catch (e) {
                     console.error("改名雲端同步失敗:", e);
                 }
@@ -3019,9 +3049,9 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             if ($('scheduleBtnText')) $('scheduleBtnText').innerText = isClean ? '清潔排班' : '成員排班';
             mapData.points = JSON.parse(JSON.stringify(isClean ? defaultCleanMapPoints : defaultMapPoints));
             
-            // 🌟 防呆保底：若清潔名單未初始化，賦予預設名單
-            if (isClean && (!cleanMembersStore || cleanMembersStore.length === 0)) {
-                cleanMembersStore = ['清潔員A', '清潔員B', '清潔員C', '清潔員D', '清潔員E', '清潔員F'];
+            // 🌟 防呆保底：保持真實清潔名單，不再塞入清潔員A~F假人
+            if (isClean && !Array.isArray(cleanMembersStore)) {
+                cleanMembersStore = [];
             }
             teamMembers = isClean ? [...cleanMembersStore] : [...csMembersStore];
             
@@ -8132,31 +8162,47 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             const now = window.getNow(), nowTime = now.getTime(), curMins = now.getHours() * 60 + now.getMinutes();
             let activeMembers = {}, incomingMembers = {};
 
-            // 🌟 先確保今日排班中的所有編號/姓名皆對齊最新身分綁定
+            // 🌟 嚴格防呆：若班表內有舊名字，強制對齊當前最新正式成員名單 (teamMembers)
             memberSchedules.forEach(s => {
-                if (s.name && window.resolveMemberIdentity) {
-                    s.name = window.resolveMemberIdentity(s.name);
+                if (s.name) {
+                    // 若舊名有設定過對應的新名字，或工號吻合，強制替換為新名字
+                    const matchedNewName = (teamMembers || []).find(m => {
+                        const prof = window.getMemberProfile ? window.getMemberProfile(m) : null;
+                        return m === s.name || (prof && prof.id && prof.id === s.name);
+                    });
+                    if (matchedNewName) {
+                        s.name = matchedNewName;
+                    } else if (window.resolveMemberIdentity) {
+                        s.name = window.resolveMemberIdentity(s.name);
+                    }
                 }
             });
+
+            const isCleanRole = window.currentMapRole === 'clean';
+            // 🌟 嚴格過濾：只保留目前存在於正式名單 (teamMembers) 內的人員，徹底擋掉幽靈
+            memberSchedules = memberSchedules.filter(s => s && s.name && teamMembers.includes(s.name));
 
             memberSchedules.forEach(sched => {
                 const s = parseTime(sched.start).getTime(), e = parseTime(sched.end).getTime();
                 if (nowTime >= s && nowTime <= e) {
-                    activeMembers[sched.name] = sched.locationId;
+                    // 若同時段有排「休息中(pt_7)」，優先顯示在休息中，避免分身
+                    if (activeMembers[sched.name] !== 'pt_7') {
+                        activeMembers[sched.name] = sched.locationId;
+                    }
                     const [endH, endM] = sched.end.split(':').map(Number);
                     const remainMins = (endH * 60 + endM) - curMins;
 
                     // 當前班次剩餘 10 分鐘內，檢查下一班接替者
                     if (remainMins > 0 && remainMins <= 10) {
                         const nextSched = memberSchedules.find(ns => ns.locationId === sched.locationId && ns.name !== sched.name && ns.start === sched.end);
-                        if (nextSched) { 
+                        if (nextSched && activeMembers[nextSched.name] !== sched.locationId) { 
                             incomingMembers[sched.locationId] = incomingMembers[sched.locationId] || []; 
                             if (!incomingMembers[sched.locationId].includes(nextSched.name)) incomingMembers[sched.locationId].push(nextSched.name); 
                         }
                     }
 
-                    // ====== 若此人當前在其他地方，但下一個時段排定前往「客服室 (pt_1)」，提早 15 分鐘在客服室標示「待:」======
-                    if (sched.locationId !== 'pt_1') {
+                    // ====== 僅限「客服模式」：下一個時段前往「客服室 (pt_1)」才提早 15 分鐘標示「待:」======
+                    if (!isCleanRole && sched.locationId !== 'pt_1') {
                         const nextDuty = memberSchedules.find(ns => ns.name === sched.name && ns.start === sched.end && ns.locationId === 'pt_1');
                         if (nextDuty && remainMins > 0 && remainMins <= 15) {
                             incomingMembers['pt_1'] = incomingMembers['pt_1'] || [];
@@ -8165,11 +8211,11 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     }
                 }
 
-                // 若剛上班或從休息中即將前往客服室 (提早 15 分鐘進待派)
-                if (sched.locationId === 'pt_1') {
+                // 僅限「客服模式」：剛上班或從休息中即將前往客服室
+                if (!isCleanRole && sched.locationId === 'pt_1') {
                     const [sH, sM] = sched.start.split(':').map(Number);
                     const diffToStart = (sH * 60 + sM) - curMins;
-                    if (diffToStart > 0 && diffToStart <= 15) {
+                    if (diffToStart > 0 && diffToStart <= 15 && activeMembers[sched.name] !== 'pt_1') {
                         incomingMembers['pt_1'] = incomingMembers['pt_1'] || [];
                         if (!incomingMembers['pt_1'].includes(sched.name)) incomingMembers['pt_1'].push(sched.name);
                     }
@@ -8178,7 +8224,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 if (sched.locationId === 'pt_7') {
                     const [sH, sM] = sched.start.split(':').map(Number);
                     const diffToRest = (sH * 60 + sM) - curMins;
-                    if (diffToRest > 0 && diffToRest <= 15) { 
+                    if (diffToRest > 0 && diffToRest <= 15 && activeMembers[sched.name] !== 'pt_7') { 
                         incomingMembers['pt_7'] = incomingMembers['pt_7'] || []; 
                         if (!incomingMembers['pt_7'].includes(sched.name)) incomingMembers['pt_7'].push(sched.name); 
                     }
@@ -9037,21 +9083,70 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 window.renderScheduleManager();
             }
         };
-        window.removeTeamMember = (idx) => {
+        window.removeTeamMember = async (idx) => {
             const isClean = window.currentMapRole === 'clean';
+            const removedName = teamMembers[idx];
+            if (!removedName) return;
+            const removedId = (memberProfilesStore[removedName]?.id || '').trim().toUpperCase();
+
             teamMembers.splice(idx, 1);
+
+            // 1. 同步從出勤勾選名單移除
+            const roleKey = isClean ? 'clean' : 'cs';
+            if (window.activeDutyMembersFilter && Array.isArray(window.activeDutyMembersFilter[roleKey])) {
+                window.activeDutyMembersFilter[roleKey] = window.activeDutyMembersFilter[roleKey].filter(m => m !== removedName && m !== removedId);
+                safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
+                syncConfig('duty_filter', { filter: window.activeDutyMembersFilter });
+            }
+
+            // 2. 同步從個人檔案庫刪除（若另一部門無同名人員）
+            const otherStore = isClean ? csMembersStore : cleanMembersStore;
+            if (!otherStore.includes(removedName)) {
+                delete memberProfilesStore[removedName];
+                safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+                if (currentUser && db) {
+                    setDoc(cfgDoc('member_profiles'), { profiles: { [removedName]: deleteField() } }, { merge: true }).catch(() => {});
+                }
+            }
+
+            // 3. 徹底清除該員在 5 日排班表與暫存格中的所有班次
+            const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+            Object.keys(multiStore || {}).forEach(dStr => {
+                multiStore[dStr] = (multiStore[dStr] || []).filter(s => s.name !== removedName && s.name.toUpperCase() !== removedId);
+            });
+            if (window._tempGridValues) {
+                Object.keys(window._tempGridValues).forEach(k => {
+                    const val = window._tempGridValues[k];
+                    if (val) {
+                        window._tempGridValues[k] = val.split('\n').map(n => n.trim()).filter(n => n && n !== removedName && n.toUpperCase() !== removedId).join('\n');
+                    }
+                });
+            }
+
+            const todayStr = getNowInputStrs().date;
+            window.syncActiveTodaySchedule();
+
             if (isClean) {
                 cleanMembersStore = [...teamMembers];
                 safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
+                safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
                 syncConfig('clean_team_members', { members: cleanMembersStore });
+                syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
             } else {
                 csMembersStore = [...teamMembers];
                 safeSetLocal('work_cache_team_members', csMembersStore);
+                safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+                safeSetLocal('work_cache_member_schedules', csSchedulesStore);
                 syncConfig('team_members', { members: csMembersStore });
+                syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
             }
-            window.renderScheduleManager();
-        };
 
+            // 4. 清除地圖上的殘留浮標並刷新
+            document.querySelectorAll('.member-dynamic-marker').forEach(el => el.remove());
+            window.updateMapSimulation();
+            window.renderScheduleManager(true);
+        };
         window.selectGridMember = (name) => {
             activeGridMember = (activeGridMember === name) ? null : name;
             // 更新左側抽屜內單列按鈕的外觀與選中狀態
@@ -9208,12 +9303,12 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             return html;
         };
 
-       window.extractCellText = (containerEl) => {
+      window.extractCellText = (containerEl) => {
             if (!containerEl) return '';
             const items = containerEl.querySelectorAll('.sub-line-item');
             if (items.length > 0) {
                 return Array.from(items)
-                    .map(el => el.textContent.trim()) // 🌟 直接讀取畫面上顯示的新名字！
+                    .map(el => (el.dataset.name || el.textContent || '').trim()) // 🌟 優先讀取真實姓名，避免「顯示編號」模式把編號當新名字
                     .filter(Boolean)
                     .join('\n');
             }
@@ -9935,8 +10030,14 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 if (!date || !text || !start || !end) return;
                 if (!rawByDate[date]) rawByDate[date] = [];
                 window.splitMemberNamesSafe(text).forEach(r => {
-                    let rawClean = r.replace(/\(.*?\)/g, '').replace('頂', '').trim();
-                    if (rawClean && !rawClean.includes('休') && !rawClean.includes('...')) {
+                    // 🌟 只去除系統自動產生的「(08:00-10:00休)、(頂)、(巡邏後...)」標籤，完整保留人名原本的括號！
+                    let rawClean = r
+                        .replace(/\(\d{1,2}:\d{2}-\d{1,2}:\d{2}休\)/g, '')
+                        .replace(/\(頂\)/g, '')
+                        .replace(/\(巡邏後.*?\)/g, '')
+                        .replace(/\(跟.*?大清\)/g, '')
+                        .trim();
+                    if (rawClean && rawClean !== '休' && !rawClean.includes('...')) {
                         let clean = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawClean) : rawClean;
                         const exists = rawByDate[date].some(x => x.name === clean && x.locationId === loc && x.start === start && x.end === end);
                         if (!exists) {
@@ -9990,12 +10091,14 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     });
                 });
                 
-                // 🌟 防呆保護：只有在抓到資料時才覆蓋，若該日為空則維持現有資料
-                if (merged.length > 0) {
-                    multiStore[dStr] = merged;
-                    totalSavedSlots += merged.length;
-                }
+                // 🌟 允許將擦空的班表存檔覆蓋，不再讓舊班表復活
+                multiStore[dStr] = merged;
+                totalSavedSlots += merged.length;
             });
+
+            // 🌟 儲存完成後清除暫存鎖定，避免舊暫存殘留成幽靈
+            window._hasUnsavedGridEdits = false;
+            window._tempGridValues = null;
 
             const todayStr = getNowInputStrs().date;
             safeSetLocal('work_cache_schedule_date', todayStr);
@@ -10013,8 +10116,145 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
             }
 
-            window.showToast(`✅ 5日${isClean ? '清潔' : '客服'}排班已儲存！（共 ${totalSavedSlots} 筆時段）`);
+           window.showToast(`✅ 5日${isClean ? '清潔' : '客服'}排班已儲存！（共 ${totalSavedSlots} 筆時段）`);
             window.closeScheduleManager();
+        };
+
+       window. closeScheduleManager = () => { $('scheduleManageModal')?.classList.replace('flex', 'hidden'); window.updateMapSimulation(); };
+
+        // 🌟 終極版：一鍵徹底掃除「人員按鍵舊記憶」、同編號舊分身與雲端殘留檔案
+        window.purgeGhostData = () => {
+            window.showConfirm('👻 徹底清除按鍵舊記憶與幽靈', '這會執行深度清理：\n1. 重置所有人員按鍵的選取記憶\n2. 清除雲端殘留的舊名字與同工號舊殼\n3. 清除排班表與地圖上的幽靈\n\n確定執行嗎？', async () => {
+                let ghostCount = 0;
+
+                // 1. 立即清空當前選取的人員按鍵記憶與畫面暫存
+                activeGridMember = null;
+                window._tempGridValues = null;
+                window._hasUnsavedGridEdits = false;
+                window._currentPopupLocation = null;
+
+                // 2. 剔除預設假人（清潔員A~F）並整理正式名單
+                cleanMembersStore = (cleanMembersStore || []).map(m => m.trim()).filter(m => m && !/^清潔員[A-F]$/i.test(m));
+                csMembersStore = (csMembersStore || []).map(m => m.trim()).filter(Boolean);
+
+                // 3. 建立「員工編號 -> 最新正式中文名」的唯一權威對照表
+                const idToRealName = {};
+                [...cleanMembersStore, ...csMembersStore].forEach(m => {
+                    if (!window.isStaffIdFormat(m)) {
+                        const pid = (memberProfilesStore[m]?.id || '').trim().toUpperCase();
+                        if (pid) idToRealName[pid] = m;
+                    }
+                });
+
+                // 若名單裡還留著舊工號分身，自動轉為正式中文名並去重
+                cleanMembersStore = Array.from(new Set(cleanMembersStore.map(m => idToRealName[m.toUpperCase()] || m)));
+                csMembersStore = Array.from(new Set(csMembersStore.map(m => idToRealName[m.toUpperCase()] || m)));
+
+                const validCleanSet = new Set(cleanMembersStore);
+                const validCsSet = new Set(csMembersStore);
+                const allValidSet = new Set([...cleanMembersStore, ...csMembersStore]);
+
+                // 4. 重建乾淨的個人檔案庫（只保留正式名單內的人，徹底砍掉舊名字的殘留記憶！）
+                const brandNewProfiles = {};
+                allValidSet.forEach(validName => {
+                    const existingProf = memberProfilesStore[validName] || {};
+                    const cleanId = (existingProf.id || (window.isStaffIdFormat(validName) ? validName : '')).trim().replace(/^#/, '').toUpperCase();
+                    brandNewProfiles[validName] = {
+                        id: cleanId,
+                        avatar: existingProf.avatar || '',
+                        gender: existingProf.gender || '女',
+                        residency: existingProf.residency || '本地',
+                        prefs: Array.isArray(existingProf.prefs) ? existingProf.prefs : [],
+                        idealRestTime: existingProf.idealRestTime || '',
+                        futureSchedules: Array.isArray(existingProf.futureSchedules) ? existingProf.futureSchedules : []
+                    };
+                });
+
+                // 統計清掉了幾個舊記憶檔案，並檢查舊檔案裡有沒有頭像可以救援過來
+                Object.keys(memberProfilesStore || {}).forEach(oldKey => {
+                    if (!allValidSet.has(oldKey)) {
+                        const oldPid = (memberProfilesStore[oldKey]?.id || oldKey).trim().toUpperCase();
+                        const targetRealName = idToRealName[oldPid];
+                        if (targetRealName && brandNewProfiles[targetRealName] && !brandNewProfiles[targetRealName].avatar && memberProfilesStore[oldKey]?.avatar) {
+                            brandNewProfiles[targetRealName].avatar = memberProfilesStore[oldKey].avatar;
+                        }
+                        ghostCount++;
+                    }
+                });
+                memberProfilesStore = brandNewProfiles;
+
+                // 5. 清理【清潔】與【客服】所有日期的排班表
+                const cleanScheduleDict = (multiDict, validSet) => {
+                    Object.keys(multiDict || {}).forEach(dStr => {
+                        const list = multiDict[dStr] || [];
+                        const cleaned = [];
+                        list.forEach(s => {
+                            if (!s || !s.name) return;
+                            const raw = s.name.trim();
+                            const mapped = idToRealName[raw.toUpperCase()] || raw;
+                            if (validSet.has(mapped)) {
+                                s.name = mapped;
+                                if (!cleaned.some(x => x.name === s.name && x.locationId === s.locationId && x.start === s.start && x.end === s.end)) {
+                                    cleaned.push(s);
+                                }
+                            } else {
+                                ghostCount++;
+                            }
+                        });
+                        multiDict[dStr] = cleaned;
+                    });
+                };
+
+                cleanScheduleDict(cleanMultiDaySchedules, validCleanSet);
+                cleanScheduleDict(csMultiDaySchedules, validCsSet);
+
+                // 6. 重新對齊出勤勾選名單（重置為目前正式名單，清掉舊按鍵記憶）
+                window.activeDutyMembersFilter = {
+                    clean: [...cleanMembersStore],
+                    cs: [...csMembersStore]
+                };
+
+                const isClean = window.currentMapRole === 'clean';
+                teamMembers = isClean ? [...cleanMembersStore] : [...csMembersStore];
+                const todayStr = getNowInputStrs().date;
+                window.syncActiveTodaySchedule();
+
+                // 7. 寫入本機快取
+                safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                safeSetLocal('work_cache_team_members', csMembersStore);
+                safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+                safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
+                safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+                safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+                safeSetLocal('work_cache_member_schedules', csSchedulesStore);
+                safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
+
+                // 8. 🌟 關鍵：使用 { merge: false } 完全覆蓋雲端檔案庫，徹底消滅雲端裡的舊名字記憶！
+                if (currentUser && db) {
+                    try {
+                        await setDoc(cfgDoc('member_profiles'), { profiles: memberProfilesStore }, { merge: false });
+                        await setDoc(cfgDoc('clean_team_members'), { members: cleanMembersStore }, { merge: false });
+                        await setDoc(cfgDoc('team_members'), { members: csMembersStore }, { merge: false });
+                        await setDoc(cfgDoc('clean_member_schedules'), { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr }, { merge: false });
+                        await setDoc(cfgDoc('member_schedules'), { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr }, { merge: false });
+                        await setDoc(cfgDoc('duty_filter'), { filter: window.activeDutyMembersFilter }, { merge: false });
+                    } catch (e) {
+                        console.error('清除幽靈雲端同步失敗:', e);
+                    }
+                }
+
+                // 9. 刷新地圖與所有排班介面
+                document.querySelectorAll('.member-dynamic-marker').forEach(el => el.remove());
+                window.updateMapSimulation();
+                if ($('scheduleManageModal')?.classList.contains('flex')) {
+                    window.renderScheduleManager(true);
+                }
+                if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
+                    window.renderMemberRosterModal();
+                }
+
+                window.showToast(`✨ 已徹底洗掉按鍵舊記憶與 ${ghostCount} 筆殘留檔案！`);
+            });
         };
 
         window.clearAllSchedules = () => {
@@ -10104,9 +10344,15 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             const timeCol = (headers[c] || '').replace(/[~～—–]/g, '-');
                             const rawCellVal = cols[c] ? cols[c].replace(/^"+|"+$/g, '').trim() : '';
                             const resolvedArr = rawCellVal
-                                ? rawCellVal.split(/[\n\s,、/]+/).map(token => {
-                                    const stripped = token.replace(/\(.*?\)/g, '').replace('頂', '').trim();
-                                    if (!stripped || stripped.includes('休') || stripped.includes('...')) return '';
+                                ? window.splitMemberNamesSafe(rawCellVal).map(token => {
+                                    // 🌟 匯入時同樣只移除系統業務標籤，完整保留人名本身的括號
+                                    const stripped = token
+                                        .replace(/\(\d{1,2}:\d{2}-\d{1,2}:\d{2}休\)/g, '')
+                                        .replace(/\(頂\)/g, '')
+                                        .replace(/\(巡邏後.*?\)/g, '')
+                                        .replace(/\(跟.*?大清\)/g, '')
+                                        .trim();
+                                    if (!stripped || stripped === '休' || stripped.includes('...')) return '';
                                     return window.resolveMemberIdentity ? window.resolveMemberIdentity(stripped) : stripped;
                                 }).filter(Boolean)
                                 : [];
@@ -10571,6 +10817,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         <button type="button" onclick="window.openMemberRosterModal()" class="text-[11px] font-black transition-colors px-3 py-1.5 rounded-lg border shadow-2xs bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 flex items-center active:scale-95">
                             <i data-lucide="users" class="w-3.5 h-3.5 mr-1 text-amber-600"></i>編輯名單 (${visibleMembers.length}/${teamMembers.length})
                         </button>
+                        <button type="button" onclick="window.purgeGhostData()" class="bg-purple-50 hover:bg-purple-100 text-purple-700 font-black text-[10px] px-2.5 py-1.5 rounded-lg border border-purple-300 transition-colors flex items-center active:scale-95 shadow-2xs" title="一鍵清除不在名單內的幽靈人名與重複分身"><i data-lucide="sparkles" class="w-3 h-3 mr-1 text-purple-600"></i>👻 清幽靈</button>
                         <button onclick="window.clearAllSchedules()" class="bg-red-50 hover:bg-red-100 text-red-600 font-bold text-[10px] px-2.5 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center"><i data-lucide="trash-2" class="w-3 h-3 mr-1"></i>5日全清</button>
                         <button onclick="window.saveGridSchedule()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg shadow-sm transition-colors active:scale-95 flex items-center"><i data-lucide="save" class="w-3.5 h-3.5 mr-1"></i>儲存 5 日排班</button>
                     </div>
