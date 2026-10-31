@@ -3725,24 +3725,23 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
 
        window.autoSyncClosedStallsToPatrol = async (silent = true) => {
     const todayStr = getTodayDateStr();
-    const isHistoricalDate = currentPatrolDate < todayStr;
+
+    if (currentPatrolDate < todayStr) {
+        return 0;
+    }
 
     if (!patrolHistoryStore[currentPatrolDate]) {
         patrolHistoryStore[currentPatrolDate] = {};
     }
 
-    // 1. 抓取目標日期有效（屬於提早收工/清潔）的照片
-    // 🌟 若為歷史日期，即使相片已跨日自動歸檔至還原清單 (isDeleted: true)，只要不是手動誤刪 (isManualDeleted)，依然視為有效紀錄！
+    // 1. 抓取今日有效（未刪除、屬於提早收工/清潔）的照片
     const validClosedPhotos = (galleryItems || []).filter(item => {
-        if (isHistoricalDate) {
-            if (item.isDeleted && item.isManualDeleted === true) return false;
-        } else {
-            if (item.isDeleted) return false;
-        }
+        if (item.isDeleted) return false;
         const cat = item.category || '';
         if (cat !== '提早收工' && cat !== '清潔' && cat !== '收工') return false;
         if (!item.createdAt) return false;
-        const itemDateStr = window.formatDateStrHK ? window.formatDateStrHK(item.createdAt) : '';
+        const itemD = new Date(item.createdAt);
+        const itemDateStr = `${itemD.getFullYear()}-${String(itemD.getMonth() + 1).padStart(2, '0')}-${String(itemD.getDate()).padStart(2, '0')}`;
         return itemDateStr === currentPatrolDate;
     });
 
@@ -3795,32 +3794,29 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
     const affectedStallSlots = [];
     const syncTs = Date.now();
 
-   // 3. 檢查現有記錄：
-    // 🌟 關鍵防護：只有「當日 (!isHistoricalDate)」且「雲端圖庫已完整載入 (window._galleryCloudLoaded)」時，才允許因刪除照片而撤銷 0！
-    // 歷史日期的剔檔紀錄永遠封存保護，絕不因跨日歸檔或載入時間差而抹除！
-    if (!isHistoricalDate && window._galleryCloudLoaded) {
-        Object.keys(dayRecords).forEach(stallKey => {
-            PATROL_TIME_SLOTS.forEach(slotKey => {
-                const reasonKey = `${slotKey}_reason`;
-                const lockedKey = `${slotKey}_locked`;
-                const tsKey = `${slotKey}_ts`;
-                const hasAutoReason = !!dayRecords[stallKey]?.[reasonKey];
-                const isUserLocked = !!dayRecords[stallKey]?.[lockedKey];
+    // 3. 檢查現有記錄：若照片被刪除，且該格是「自動填的 0」且沒有被手動鎖定，才允許清除
+    Object.keys(dayRecords).forEach(stallKey => {
+        PATROL_TIME_SLOTS.forEach(slotKey => {
+            const reasonKey = `${slotKey}_reason`;
+            const lockedKey = `${slotKey}_locked`;
+            const tsKey = `${slotKey}_ts`;
+            const hasAutoReason = !!dayRecords[stallKey]?.[reasonKey];
+            const isUserLocked = !!dayRecords[stallKey]?.[lockedKey];
 
-                const isStillValid = currentExpectedMap.has(stallKey) && currentExpectedMap.get(stallKey).has(slotKey);
-                
-                if (!isStillValid && hasAutoReason && !isUserLocked) {
-                    if (dayRecords[stallKey][slotKey] === '0') {
-                        dayRecords[stallKey][slotKey] = '';
-                    }
-                    dayRecords[stallKey][reasonKey] = '';
-                    dayRecords[stallKey][tsKey] = syncTs;
-                    changed = true;
-                    affectedStallSlots.push({ stallKey, slotKey });
+            const isStillValid = currentExpectedMap.has(stallKey) && currentExpectedMap.get(stallKey).has(slotKey);
+            
+            // 🌟 只有在非手動鎖定的情況下，照片刪除才連帶清除自動 0，並打上最新時間戳通知所有裝置清除
+            if (!isStillValid && hasAutoReason && !isUserLocked) {
+                if (dayRecords[stallKey][slotKey] === '0') {
+                    dayRecords[stallKey][slotKey] = '';
                 }
-            });
+                dayRecords[stallKey][reasonKey] = '';
+                dayRecords[stallKey][tsKey] = syncTs;
+                changed = true;
+                affectedStallSlots.push({ stallKey, slotKey });
+            }
         });
-    }
+    });
 
     // 4. 自動填入 0：前提是該格沒有值，且沒有被使用者手動操作或手動取消過 (`isUserLocked` 為 false)
     currentExpectedMap.forEach((slots, stallKey) => {
@@ -5009,7 +5005,6 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             const cleanupTime = Date.now();
             yesterdayItems.forEach(i => {
                 i.isDeleted = true;
-                i.isManualDeleted = false; // 🌟 標記為系統跨日自動歸檔，非人工誤刪
                 i.deletedAt = cleanupTime;
             });
 
@@ -5021,7 +5016,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     const batch = writeBatch(db);
                     yesterdayItems.forEach(i => {
                         const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(i.id));
-                        batch.set(ref, { isDeleted: true, isManualDeleted: false, deletedAt: cleanupTime }, { merge: true });
+                        batch.set(ref, { isDeleted: true, deletedAt: cleanupTime }, { merge: true });
                     });
                     await batch.commit();
                 } catch(e) {
@@ -5586,7 +5581,6 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             if (!item) return;
 
             item.isDeleted = true;
-            item.isManualDeleted = true;
             item.deletedAt = Date.now();
             await saveGalleryItemsSafe(galleryItems);
 
@@ -5594,7 +5588,6 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 try {
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), {
                         isDeleted: true,
-                        isManualDeleted: true,
                         deletedAt: item.deletedAt
                     }, { merge: true });
                 } catch (err) {
@@ -5620,11 +5613,10 @@ window.deleteSelectedGalleryItems = () => {
         const now = Date.now();
         const idsToDelete = Array.from(window.selectedGalleryIds).map(String);
 
-        // 1. 本地資料標記 isDeleted 與手動刪除
+        // 1. 本地資料只標記 isDeleted，絕不能用 filter 刪除
         galleryItems.forEach(i => {
             if (idsToDelete.includes(String(i.id))) {
                 i.isDeleted = true;
-                i.isManualDeleted = true;
                 i.deletedAt = now;
             }
         });
@@ -5638,7 +5630,6 @@ window.deleteSelectedGalleryItems = () => {
                     const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id);
                     batch.set(ref, {
                         isDeleted: true,
-                        isManualDeleted: true,
                         deletedAt: now
                     }, { merge: true });
                 });
@@ -8156,7 +8147,6 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
                 await saveGalleryItemsSafe(galleryItems);
                 
-                window._galleryCloudLoaded = true; // 🌟 確認雲端圖庫已完整載入，防止開機時間差誤刪剔檔 0
                 window._lastRenderFingerprint = '';
                 if (!$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
                 window.autoSyncClosedStallsToPatrol(true);
@@ -8171,9 +8161,9 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 }
             }, console.error);
 
-// 即時同步日誌（保留最近 3 天內的記錄，日內無限筆，超過 3 天自動過濾）
+// 即時同步日誌（僅保留最近 3 天內的記錄，超過 3 天自動過濾）
             try {
-                const logQuery = query(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs'), orderBy('timestamp', 'desc'));
+                const logQuery = query(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs'), orderBy('timestamp', 'desc'), limit(200));
                 onSnapshot(logQuery, (snap) => {
                     let list = [];
                     const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000; // 3 天的毫秒數
