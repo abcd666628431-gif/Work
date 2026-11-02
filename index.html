@@ -116,7 +116,7 @@
     <script type="module">
         import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, updateDoc, getDocs, deleteDoc, onSnapshot, writeBatch, addDoc, query, orderBy, limit, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+       import { getFirestore, collection, doc, setDoc, updateDoc, getDocs, deleteDoc, onSnapshot, writeBatch, addDoc, query, where, orderBy, limit, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
       // 🌟【加在這裡】全域安全人名拆分函式：只用換行、逗號、頓號、分號分割，保留「Mary Chan」中間的空格
         window.splitMemberNamesSafe = (text) => {
@@ -198,9 +198,24 @@
         };
         window.closeLogsModal = () => $('galleryLogsModal')?.classList.replace('flex', 'hidden');
 
+       // 🌟 去掉秒數，僅保留「月/日 時:分」
         window.formatLogTime = (ts) => {
             const d = new Date(ts);
-            return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+            return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        };
+
+        window.collapsedLogDates = window.collapsedLogDates || new Set();
+        window.toggleLogDateSection = (dateKey, event) => {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            if (window.collapsedLogDates.has(dateKey)) {
+                window.collapsedLogDates.delete(dateKey);
+            } else {
+                window.collapsedLogDates.add(dateKey);
+            }
+            window.renderGalleryLogs();
         };
 
         window.getLogBadgeStyle = (action) => {
@@ -231,35 +246,30 @@
                 return;
             }
 
-            // 按時間降序（由新到舊）
+            // 1. 按時間降序（由新到舊）
             const sortedLogs = [...galleryLogsStore].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+            const weekNames = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+            const isAdminUser = (sysUserName === '手提電腦' || sysUserName === '雲');
 
-            // 將 20 分鐘（1,200,000 毫秒）內同一個使用者的操作聚合為一組
-            // 🌟 採用穩定唯一的 ID (基於最舊與最新時間戳及用戶名)，重繪時不會變動
+            // 2. 先依「日期（日子 MM/DD）」分組
+            const dayBuckets = new Map();
+            sortedLogs.forEach(log => {
+                const d = new Date(log.timestamp || Date.now());
+                const dateKey = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+                const weekDay = weekNames[d.getDay()];
+                if (!dayBuckets.has(dateKey)) {
+                    dayBuckets.set(dateKey, { dateKey, weekDay, rawLogs: [], groups: [] });
+                }
+                dayBuckets.get(dateKey).rawLogs.push(log);
+            });
+
+            // 3. 在每一天內部，將 20 分鐘內同一使用者的操作聚合為一組（絕不跨日混組）
             const TWENTY_MINS = 20 * 60 * 1000;
-            const groups = [];
-            let currentGroup = null;
-
-            sortedLogs.forEach((log) => {
-                const uName = log.user || '未知';
-                if (!currentGroup) {
-                    currentGroup = {
-                        user: uName,
-                        color: log.color || '#38bdf8',
-                        latestTs: log.timestamp,
-                        oldestTs: log.timestamp,
-                        items: [log]
-                    };
-                } else {
-                    const isSameUser = currentGroup.user === uName;
-                    const within20Mins = Math.abs(currentGroup.oldestTs - log.timestamp) <= TWENTY_MINS;
-
-                    if (isSameUser && within20Mins) {
-                        currentGroup.items.push(log);
-                        currentGroup.oldestTs = log.timestamp;
-                    } else {
-                        currentGroup.id = `grp_${currentGroup.user}_${currentGroup.latestTs}_${currentGroup.oldestTs}`;
-                        groups.push(currentGroup);
+            dayBuckets.forEach(bucket => {
+                let currentGroup = null;
+                bucket.rawLogs.forEach(log => {
+                    const uName = log.user || '未知';
+                    if (!currentGroup) {
                         currentGroup = {
                             user: uName,
                             color: log.color || '#38bdf8',
@@ -267,75 +277,114 @@
                             oldestTs: log.timestamp,
                             items: [log]
                         };
+                    } else {
+                        const isSameUser = currentGroup.user === uName;
+                        const within20Mins = Math.abs(currentGroup.oldestTs - log.timestamp) <= TWENTY_MINS;
+
+                        if (isSameUser && within20Mins) {
+                            currentGroup.items.push(log);
+                            currentGroup.oldestTs = log.timestamp;
+                        } else {
+                            currentGroup.id = `grp_${bucket.dateKey}_${currentGroup.user}_${currentGroup.latestTs}_${currentGroup.oldestTs}`;
+                            bucket.groups.push(currentGroup);
+                            currentGroup = {
+                                user: uName,
+                                color: log.color || '#38bdf8',
+                                latestTs: log.timestamp,
+                                oldestTs: log.timestamp,
+                                items: [log]
+                            };
+                        }
                     }
+                });
+                if (currentGroup) {
+                    currentGroup.id = `grp_${bucket.dateKey}_${currentGroup.user}_${currentGroup.latestTs}_${currentGroup.oldestTs}`;
+                    bucket.groups.push(currentGroup);
                 }
             });
-            if (currentGroup) {
-                currentGroup.id = `grp_${currentGroup.user}_${currentGroup.latestTs}_${currentGroup.oldestTs}`;
-                groups.push(currentGroup);
-            }
 
-            container.innerHTML = groups.map(group => {
-                // 單筆操作：直接橫排顯示，強制 whitespace-nowrap 不換行
-                // 單筆操作：收窄元素間距，大幅提升單行容納字數
-              const isAdminUser = (sysUserName === '手提電腦' || sysUserName === '雲');
+            // 4. 渲染「日子分組」與內部紀錄
+            container.innerHTML = Array.from(dayBuckets.values()).map(bucket => {
+                const isDayCollapsed = window.collapsedLogDates.has(bucket.dateKey);
 
-                // 單筆操作：直接橫排顯示，強制 whitespace-nowrap 不換行
-                if (group.items.length === 1) {
-                    const log = group.items[0];
-                    const actionBadge = window.getLogBadgeStyle(log.action);
-                    const safeU = (log.user || '未知').replace(/'/g, "\\'");
-                    const safeC = log.color || '#38bdf8';
-                    const userClickAttr = isAdminUser ? `onclick="event.stopPropagation(); window.openEditOtherUserModal('${safeU}', '${safeC}')" title="點擊修改此用戶名稱與顏色"` : '';
-                    const userCursorCls = isAdminUser ? 'cursor-pointer underline decoration-dotted hover:opacity-80' : '';
+                const groupsHtml = bucket.groups.map(group => {
+                    // 單筆操作
+                    if (group.items.length === 1) {
+                        const log = group.items[0];
+                        const actionBadge = window.getLogBadgeStyle(log.action);
+                        const safeU = (log.user || '未知').replace(/'/g, "\\'");
+                        const safeC = log.color || '#38bdf8';
+                        const userClickAttr = isAdminUser ? `onclick="event.stopPropagation(); window.openEditOtherUserModal('${safeU}', '${safeC}')" title="點擊修改此用戶名稱與顏色"` : '';
+                        const userCursorCls = isAdminUser ? 'cursor-pointer underline decoration-dotted hover:opacity-80' : '';
+
+                        return `
+                        <div class="py-1 px-2 bg-white rounded-xl border border-slate-200/80 shadow-2xs flex items-center gap-1 whitespace-nowrap overflow-x-auto scrollbar-hide text-[11px]">
+                            <span class="font-mono text-[9.5px] font-bold text-slate-400 shrink-0 tracking-tight">${window.formatLogTime(log.timestamp)}</span>
+                            <span ${userClickAttr} class="font-black shrink-0 tracking-tight ${userCursorCls}" style="color: ${safeC}">${log.user || '未知'}</span>
+                            <span class="font-black text-[9.5px] px-1 py-0.2 rounded border shrink-0 leading-tight ${actionBadge}">${log.action}</span>
+                            <span class="font-black text-slate-800 shrink-0 tracking-tight">[${log.targetName || '無標題'}]</span>
+                            ${log.detail ? `<span class="text-slate-500 font-medium text-[10px] shrink-0">${log.detail}</span>` : ''}
+                        </div>`;
+                    }
+
+                    // 多筆折疊操作
+                    const isExpanded = window.expandedLogGroups.has(group.id);
+                    const startFull = window.formatLogTime(group.oldestTs); // MM/DD HH:mm
+                    const endFull = window.formatLogTime(group.latestTs);   // MM/DD HH:mm
+                    const startTime = startFull.split(' ')[1] || '';
+                    const endTime = endFull.split(' ')[1] || '';
+                    const datePrefix = endFull.split(' ')[0] || '';
+                    const timeRangeStr = (startTime === endTime) ? `${datePrefix} ${startTime}` : `${datePrefix} ${startTime}~${endTime}`;
+
+                    const safeGrpU = (group.user || '未知').replace(/'/g, "\\'");
+                    const safeGrpC = group.color || '#38bdf8';
+                    const grpUserClickAttr = isAdminUser ? `onclick="event.stopPropagation(); window.openEditOtherUserModal('${safeGrpU}', '${safeGrpC}')" title="點擊修改此用戶名稱與顏色"` : '';
+                    const grpUserCursorCls = isAdminUser ? 'cursor-pointer underline decoration-dotted hover:opacity-80' : '';
+
+                    const detailsHtml = group.items.map(log => {
+                        const actionBadge = window.getLogBadgeStyle(log.action);
+                        return `
+                        <div class="py-1 px-1.5 bg-white rounded-lg border border-slate-200/70 flex items-center gap-1 text-[10px] whitespace-nowrap overflow-x-auto scrollbar-hide">
+                            <span class="font-mono text-[9px] text-slate-400 shrink-0 tracking-tight">${window.formatLogTime(log.timestamp)}</span>
+                            <span class="font-bold text-[9px] px-1 py-0.2 rounded border shrink-0 leading-tight ${actionBadge}">${log.action}</span>
+                            <span class="font-black text-slate-800 shrink-0 tracking-tight">[${log.targetName || '無標題'}]</span>
+                            ${log.detail ? `<span class="text-slate-500 font-medium text-[9.5px] shrink-0">${log.detail}</span>` : ''}
+                        </div>`;
+                    }).join('');
 
                     return `
-                    <div class="py-1 px-2 bg-slate-50 rounded-xl border border-slate-200/80 shadow-2xs flex items-center gap-1 whitespace-nowrap overflow-x-auto scrollbar-hide text-[11px]">
-                        <span class="font-mono text-[9.5px] font-bold text-slate-400 shrink-0 tracking-tight">${window.formatLogTime(log.timestamp)}</span>
-                        <span ${userClickAttr} class="font-black shrink-0 tracking-tight ${userCursorCls}" style="color: ${safeC}">${log.user || '未知'}</span>
-                        <span class="font-black text-[9.5px] px-1 py-0.2 rounded border shrink-0 leading-tight ${actionBadge}">${log.action}</span>
-                        <span class="font-black text-slate-800 shrink-0 tracking-tight">[${log.targetName || '無標題'}]</span>
-                        ${log.detail ? `<span class="text-slate-500 font-medium text-[10px] shrink-0">${log.detail}</span>` : ''}
-                    </div>`;
-                }
-
-                // 多筆折疊操作：
-                const isExpanded = window.expandedLogGroups.has(group.id);
-                const startTime = window.formatLogTime(group.oldestTs).split(' ')[1] || '';
-                const endTime = window.formatLogTime(group.latestTs).split(' ')[1] || '';
-                const datePrefix = window.formatLogTime(group.latestTs).split(' ')[0];
-                const safeGrpU = (group.user || '未知').replace(/'/g, "\\'");
-                const safeGrpC = group.color || '#38bdf8';
-                const grpUserClickAttr = isAdminUser ? `onclick="event.stopPropagation(); window.openEditOtherUserModal('${safeGrpU}', '${safeGrpC}')" title="點擊修改此用戶名稱與顏色"` : '';
-                const grpUserCursorCls = isAdminUser ? 'cursor-pointer underline decoration-dotted hover:opacity-80' : '';
-
-                const detailsHtml = group.items.map(log => {
-                    const actionBadge = window.getLogBadgeStyle(log.action);
-                    return `
-                    <div class="py-1 px-1.5 bg-white rounded-lg border border-slate-200/70 flex items-center gap-1 text-[10px] whitespace-nowrap overflow-x-auto scrollbar-hide">
-                        <span class="font-mono text-[9px] text-slate-400 shrink-0 tracking-tight">${window.formatLogTime(log.timestamp).split(' ')[1]}</span>
-                        <span class="font-bold text-[9px] px-1 py-0.2 rounded border shrink-0 leading-tight ${actionBadge}">${log.action}</span>
-                        <span class="font-black text-slate-800 shrink-0 tracking-tight">[${log.targetName || '無標題'}]</span>
-                        ${log.detail ? `<span class="text-slate-500 font-medium text-[9.5px] shrink-0">${log.detail}</span>` : ''}
+                    <div class="bg-white border border-slate-200/90 rounded-xl overflow-hidden shadow-2xs transition-all">
+                        <button type="button" onclick="window.toggleLogGroup('${group.id}', event)" class="w-full p-2 px-2.5 flex items-center justify-between text-left hover:bg-slate-50 active:bg-slate-100 transition-colors select-none">
+                            <div class="flex items-center space-x-1.5 min-w-0 pr-1 overflow-hidden whitespace-nowrap">
+                                <span class="font-mono text-[10px] font-bold text-slate-400 shrink-0 whitespace-nowrap">${timeRangeStr}</span>
+                                <span ${grpUserClickAttr} class="font-black text-[11px] shrink-0 whitespace-nowrap ${grpUserCursorCls}" style="color: ${safeGrpC}">${group.user}</span>
+                                <span class="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black px-1.5 py-0.2 rounded-full shrink-0 whitespace-nowrap">
+                                    ${group.items.length}筆
+                                </span>
+                            </div>
+                            <div class="flex items-center space-x-1 shrink-0 text-blue-600 text-[10.5px] font-bold whitespace-nowrap pointer-events-none">
+                                <span>${isExpanded ? '收合' : '展開'}</span>
+                                <i data-lucide="${isExpanded ? 'chevron-up' : 'chevron-down'}" class="w-3.5 h-3.5"></i>
+                            </div>
+                        </button>
+                        ${isExpanded ? `<div class="p-1.5 pt-0 space-y-1 border-t border-slate-200/60 bg-slate-50">${detailsHtml}</div>` : ''}
                     </div>`;
                 }).join('');
 
                 return `
-                <div class="bg-slate-50 border border-slate-200/90 rounded-xl overflow-hidden shadow-2xs transition-all">
-                    <button type="button" onclick="window.toggleLogGroup('${group.id}', event)" class="w-full p-2 px-2.5 flex items-center justify-between text-left hover:bg-slate-100/80 active:bg-slate-200/70 transition-colors select-none">
-                        <div class="flex items-center space-x-1.5 min-w-0 pr-1 overflow-hidden whitespace-nowrap">
-                            <span class="font-mono text-[10px] font-bold text-slate-400 shrink-0 whitespace-nowrap">${datePrefix} ${startTime}~${endTime}</span>
-                            <span ${grpUserClickAttr} class="font-black text-[11px] shrink-0 whitespace-nowrap ${grpUserCursorCls}" style="color: ${safeGrpC}">${group.user}</span>
-                            <span class="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black px-1.5 py-0.2 rounded-full shrink-0 whitespace-nowrap">
-                                ${group.items.length}筆
-                            </span>
+                <div class="mb-2.5 bg-slate-100/70 p-1.5 rounded-2xl border border-slate-200/80">
+                    <button type="button" onclick="window.toggleLogDateSection('${bucket.dateKey}', event)" class="w-full flex items-center justify-between px-1.5 py-1 text-left select-none hover:bg-slate-200/50 rounded-xl transition-colors">
+                        <div class="text-[11.5px] font-black text-blue-700 flex items-center space-x-1.5">
+                            <i data-lucide="calendar" class="w-3.5 h-3.5 text-blue-600"></i>
+                            <span>${bucket.dateKey} (${bucket.weekDay})</span>
+                            <span class="text-[10px] font-bold text-slate-500 bg-white px-1.5 py-0.2 rounded-full border border-slate-200/80">${bucket.rawLogs.length} 筆</span>
                         </div>
-                        <div class="flex items-center space-x-1 shrink-0 text-blue-600 text-[10.5px] font-bold whitespace-nowrap pointer-events-none">
-                            <span>${isExpanded ? '收合' : '展開'}</span>
-                            <i data-lucide="${isExpanded ? 'chevron-up' : 'chevron-down'}" class="w-3.5 h-3.5"></i>
+                        <div class="flex items-center space-x-1 text-[10px] font-bold text-slate-500">
+                            <span>${isDayCollapsed ? '展開此日' : '收合'}</span>
+                            <i data-lucide="${isDayCollapsed ? 'chevron-down' : 'chevron-up'}" class="w-3.5 h-3.5"></i>
                         </div>
                     </button>
-                    ${isExpanded ? `<div class="p-1.5 pt-0 space-y-1 border-t border-slate-200/60 bg-slate-100/50">${detailsHtml}</div>` : ''}
+                    ${!isDayCollapsed ? `<div class="space-y-1.5 pt-1.5 mt-1 border-t border-slate-200/60">${groupsHtml}</div>` : ''}
                 </div>`;
             }).join('');
 
@@ -3725,23 +3774,24 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
 
        window.autoSyncClosedStallsToPatrol = async (silent = true) => {
     const todayStr = getTodayDateStr();
-
-    if (currentPatrolDate < todayStr) {
-        return 0;
-    }
+    const isHistoricalDate = currentPatrolDate < todayStr;
 
     if (!patrolHistoryStore[currentPatrolDate]) {
         patrolHistoryStore[currentPatrolDate] = {};
     }
 
-    // 1. 抓取今日有效（未刪除、屬於提早收工/清潔）的照片
+    // 1. 抓取目標日期有效（屬於提早收工/清潔）的照片
+    // 🌟 若為歷史日期，即使相片已跨日自動歸檔至還原清單 (isDeleted: true)，只要不是手動誤刪 (isManualDeleted)，依然視為有效紀錄！
     const validClosedPhotos = (galleryItems || []).filter(item => {
-        if (item.isDeleted) return false;
+        if (isHistoricalDate) {
+            if (item.isDeleted && item.isManualDeleted === true) return false;
+        } else {
+            if (item.isDeleted) return false;
+        }
         const cat = item.category || '';
         if (cat !== '提早收工' && cat !== '清潔' && cat !== '收工') return false;
         if (!item.createdAt) return false;
-        const itemD = new Date(item.createdAt);
-        const itemDateStr = `${itemD.getFullYear()}-${String(itemD.getMonth() + 1).padStart(2, '0')}-${String(itemD.getDate()).padStart(2, '0')}`;
+        const itemDateStr = window.formatDateStrHK ? window.formatDateStrHK(item.createdAt) : '';
         return itemDateStr === currentPatrolDate;
     });
 
@@ -3794,29 +3844,32 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
     const affectedStallSlots = [];
     const syncTs = Date.now();
 
-    // 3. 檢查現有記錄：若照片被刪除，且該格是「自動填的 0」且沒有被手動鎖定，才允許清除
-    Object.keys(dayRecords).forEach(stallKey => {
-        PATROL_TIME_SLOTS.forEach(slotKey => {
-            const reasonKey = `${slotKey}_reason`;
-            const lockedKey = `${slotKey}_locked`;
-            const tsKey = `${slotKey}_ts`;
-            const hasAutoReason = !!dayRecords[stallKey]?.[reasonKey];
-            const isUserLocked = !!dayRecords[stallKey]?.[lockedKey];
+   // 3. 檢查現有記錄：
+    // 🌟 關鍵防護：只有「當日 (!isHistoricalDate)」且「雲端圖庫已完整載入 (window._galleryCloudLoaded)」時，才允許因刪除照片而撤銷 0！
+    // 歷史日期的剔檔紀錄永遠封存保護，絕不因跨日歸檔或載入時間差而抹除！
+    if (!isHistoricalDate && window._galleryCloudLoaded) {
+        Object.keys(dayRecords).forEach(stallKey => {
+            PATROL_TIME_SLOTS.forEach(slotKey => {
+                const reasonKey = `${slotKey}_reason`;
+                const lockedKey = `${slotKey}_locked`;
+                const tsKey = `${slotKey}_ts`;
+                const hasAutoReason = !!dayRecords[stallKey]?.[reasonKey];
+                const isUserLocked = !!dayRecords[stallKey]?.[lockedKey];
 
-            const isStillValid = currentExpectedMap.has(stallKey) && currentExpectedMap.get(stallKey).has(slotKey);
-            
-            // 🌟 只有在非手動鎖定的情況下，照片刪除才連帶清除自動 0，並打上最新時間戳通知所有裝置清除
-            if (!isStillValid && hasAutoReason && !isUserLocked) {
-                if (dayRecords[stallKey][slotKey] === '0') {
-                    dayRecords[stallKey][slotKey] = '';
+                const isStillValid = currentExpectedMap.has(stallKey) && currentExpectedMap.get(stallKey).has(slotKey);
+                
+                if (!isStillValid && hasAutoReason && !isUserLocked) {
+                    if (dayRecords[stallKey][slotKey] === '0') {
+                        dayRecords[stallKey][slotKey] = '';
+                    }
+                    dayRecords[stallKey][reasonKey] = '';
+                    dayRecords[stallKey][tsKey] = syncTs;
+                    changed = true;
+                    affectedStallSlots.push({ stallKey, slotKey });
                 }
-                dayRecords[stallKey][reasonKey] = '';
-                dayRecords[stallKey][tsKey] = syncTs;
-                changed = true;
-                affectedStallSlots.push({ stallKey, slotKey });
-            }
+            });
         });
-    });
+    }
 
     // 4. 自動填入 0：前提是該格沒有值，且沒有被使用者手動操作或手動取消過 (`isUserLocked` 為 false)
     currentExpectedMap.forEach((slots, stallKey) => {
@@ -3832,7 +3885,7 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             if (!curVal && !isUserLocked) {
                 dayRecords[stallKey][slotKey] = '0';
                 dayRecords[stallKey][reasonKey] = reasonStr;
-                dayRecords[stallKey][tsKey] = syncTs;
+                dayRecords[stallKey][tsKey] = window._patrolCloudLoadedDates.has(currentPatrolDate) ? Date.now() : (dayRecords[stallKey][tsKey] || photoTs);
                 autoFilledCount++;
                 changed = true;
                 affectedStallSlots.push({ stallKey, slotKey });
@@ -4385,10 +4438,12 @@ window.clearTodayPatrolData = (e) => {
                 }
             });
 
-            if (window.lucide) lucide.createIcons();
+            if (window.lucide && $('patrolPage')) lucide.createIcons({ root: $('patrolPage') });
             window.autoSyncClosedStallsToPatrol(true);
-            window.renderPatrol();
-// 🌟 若溫度彈窗開著，切換時段時同步刷新該時段的溫度紀錄
+            if (!$('patrolPage')?.classList.contains('hidden')) {
+                window.renderPatrol();
+            }
+            // 🌟 若溫度彈窗開著，切換時段時同步刷新該時段的溫度紀錄
             if ($('tempStatsModal') && !$('tempStatsModal').classList.contains('hidden')) {
                 window.renderTempModalList();
             }
@@ -5005,6 +5060,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             const cleanupTime = Date.now();
             yesterdayItems.forEach(i => {
                 i.isDeleted = true;
+                i.isManualDeleted = false; // 🌟 標記為系統跨日自動歸檔，非人工誤刪
                 i.deletedAt = cleanupTime;
             });
 
@@ -5016,7 +5072,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     const batch = writeBatch(db);
                     yesterdayItems.forEach(i => {
                         const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(i.id));
-                        batch.set(ref, { isDeleted: true, deletedAt: cleanupTime }, { merge: true });
+                        batch.set(ref, { isDeleted: true, isManualDeleted: false, deletedAt: cleanupTime }, { merge: true });
                     });
                     await batch.commit();
                 } catch(e) {
@@ -5581,6 +5637,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             if (!item) return;
 
             item.isDeleted = true;
+            item.isManualDeleted = true;
             item.deletedAt = Date.now();
             await saveGalleryItemsSafe(galleryItems);
 
@@ -5588,6 +5645,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 try {
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), {
                         isDeleted: true,
+                        isManualDeleted: true,
                         deletedAt: item.deletedAt
                     }, { merge: true });
                 } catch (err) {
@@ -5613,10 +5671,11 @@ window.deleteSelectedGalleryItems = () => {
         const now = Date.now();
         const idsToDelete = Array.from(window.selectedGalleryIds).map(String);
 
-        // 1. 本地資料只標記 isDeleted，絕不能用 filter 刪除
+        // 1. 本地資料標記 isDeleted 與手動刪除
         galleryItems.forEach(i => {
             if (idsToDelete.includes(String(i.id))) {
                 i.isDeleted = true;
+                i.isManualDeleted = true;
                 i.deletedAt = now;
             }
         });
@@ -5630,6 +5689,7 @@ window.deleteSelectedGalleryItems = () => {
                     const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id);
                     batch.set(ref, {
                         isDeleted: true,
+                        isManualDeleted: true,
                         deletedAt: now
                     }, { merge: true });
                 });
@@ -8147,6 +8207,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
                 await saveGalleryItemsSafe(galleryItems);
                 
+                window._galleryCloudLoaded = true; // 🌟 確認雲端圖庫已完整載入，防止開機時間差誤刪剔檔 0
                 window._lastRenderFingerprint = '';
                 if (!$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
                 window.autoSyncClosedStallsToPatrol(true);
@@ -8161,21 +8222,21 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 }
             }, console.error);
 
-// 即時同步日誌（僅保留最近 3 天內的記錄，超過 3 天自動過濾）
+// 即時同步日誌（僅向雲端查詢最近 3 天內的記錄，日內無限筆，徹底防止全量下載與刪除卡死）
             try {
-                const logQuery = query(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs'), orderBy('timestamp', 'desc'), limit(200));
+                const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+                const cutoffTs = Date.now() - THREE_DAYS_MS;
+                const logColRef = collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs');
+                const logQuery = query(logColRef, where('timestamp', '>=', cutoffTs), orderBy('timestamp', 'desc'));
+
                 onSnapshot(logQuery, (snap) => {
                     let list = [];
-                    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000; // 3 天的毫秒數
                     const nowTs = Date.now();
 
                     snap.forEach(d => {
                         const data = d.data();
-                        // 🌟 嚴格過濾：只保留 3 天內的紀錄，超過 3 天自動從雲端清理
                         if (data.timestamp && (nowTs - data.timestamp) <= THREE_DAYS_MS) {
                             list.push({ id: d.id, ...data });
-                        } else if (data.timestamp && (nowTs - data.timestamp) > THREE_DAYS_MS) {
-                            deleteDoc(d.ref).catch(() => {});
                         }
                     });
 
@@ -8183,7 +8244,20 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                     if ($('galleryLogsModal') && !$('galleryLogsModal').classList.contains('hidden')) {
                         window.renderGalleryLogs();
                     }
-                }, () => {});
+                }, console.error);
+
+                // 背景單次安全清理：開機 10 秒閒置後，每次最多批次清理 100 筆過期舊日誌，完全不卡畫面
+                setTimeout(async () => {
+                    try {
+                        const oldQuery = query(logColRef, where('timestamp', '<', Date.now() - THREE_DAYS_MS), limit(100));
+                        const oldSnap = await getDocs(oldQuery);
+                        if (!oldSnap.empty) {
+                            const batch = writeBatch(db);
+                            oldSnap.forEach(d => batch.delete(d.ref));
+                            await batch.commit();
+                        }
+                    } catch (e) {}
+                }, 10000);
             } catch(e) {}
 
 }
@@ -12458,14 +12532,6 @@ setInterval(() => {
             banner.classList.remove('hidden');
             try { lucide.createIcons({ root: banner }); } catch (e) {}
         };
-
-// 👇 加入這兩行：網頁打開時，背景就先把開會記錄框架準備好，隨時待命接收遠端同步
-setTimeout(() => {
-    const iframe = document.getElementById('meetingReportIframe');
-    if (iframe && !iframe.srcdoc) {
-        iframe.srcdoc = window.MEETING_REPORT_HTML_SRC;
-    }
-}, 1000);
 
         if (getLocal('work_cache_dark_mode', false)) {
             document.body.classList.add('dark-mode');
