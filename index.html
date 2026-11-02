@@ -204,16 +204,17 @@
             return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
         };
 
-        window.collapsedLogDates = window.collapsedLogDates || new Set();
+       // 🌟 改為記錄「已展開的日期」，預設為空集合＝所有日期預設收合
+        window.expandedLogDates = window.expandedLogDates || new Set();
         window.toggleLogDateSection = (dateKey, event) => {
             if (event) {
                 event.preventDefault();
                 event.stopPropagation();
             }
-            if (window.collapsedLogDates.has(dateKey)) {
-                window.collapsedLogDates.delete(dateKey);
+            if (window.expandedLogDates.has(dateKey)) {
+                window.expandedLogDates.delete(dateKey);
             } else {
-                window.collapsedLogDates.add(dateKey);
+                window.expandedLogDates.add(dateKey);
             }
             window.renderGalleryLogs();
         };
@@ -303,9 +304,9 @@
                 }
             });
 
-            // 4. 渲染「日子分組」與內部紀錄
+            // 4. 渲染「日子分組」與內部紀錄（預設全部收合，點擊後展開）
             container.innerHTML = Array.from(dayBuckets.values()).map(bucket => {
-                const isDayCollapsed = window.collapsedLogDates.has(bucket.dateKey);
+                const isDayCollapsed = !window.expandedLogDates.has(bucket.dateKey);
 
                 const groupsHtml = bucket.groups.map(group => {
                     // 單筆操作
@@ -418,13 +419,17 @@
             document.getElementById('userNameModal')?.classList.replace('flex', 'hidden');
         };
 
-       window.saveUserName = async () => {
+      window.saveUserName = async () => {
             const name = document.getElementById('newUserNameInput')?.value.trim();
             const color = document.getElementById('newUserColorInput')?.value || '#38bdf8';
             if (!name) return window.showToast("請輸入姓名/暱稱", true);
 
-            // 👇 拿掉身分限制：只要有指定目標用戶或正在改自己的名，舊紀錄全部跟著更新
+            // 🌟 判斷是否為管理員（「手提電腦」或「雲」）正在修改「其他用戶」的名稱
+            const isEditingOtherUser = Boolean(
+                window._editingTargetLogUser && window._editingTargetLogUser !== sysUserName
+            );
             const targetUserToUpdate = window._editingTargetLogUser || sysUserName;
+
             if (targetUserToUpdate) {
                 const oldName = targetUserToUpdate;
                 const logsToUpdate = galleryLogsStore.filter(l => l.user === oldName);
@@ -452,14 +457,22 @@
                     }
                 }
 
-                sysUserName = name;
-                sysUserColor = color;
-                localStorage.setItem('gallery_user_name', sysUserName);
-                localStorage.setItem('gallery_user_color', sysUserColor);
+                // 🌟 關鍵保護：只有當修改「自己本身」的身分時，才更新本機 sysUserName
+                // 若是「手提電腦」或「雲」幫別人改名，絕對保留自己的身分不變！
+                if (!isEditingOtherUser) {
+                    sysUserName = name;
+                    sysUserColor = color;
+                    localStorage.setItem('gallery_user_name', sysUserName);
+                    localStorage.setItem('gallery_user_color', sysUserColor);
+                }
 
                 window.closeUserNameModal();
                 window.renderGalleryLogs();
-                window.showToast(`✅ 已將「${oldName}」修改為「${name}」並同步更新所有歷史日誌！`);
+                window.showToast(
+                    isEditingOtherUser
+                        ? `✅ 已將用戶「${oldName}」改為「${name}」（您的身分維持「${sysUserName}」不變）`
+                        : `✅ 已將您的身分改為「${name}」並同步更新歷史日誌！`
+                );
                 return;
             }
 
@@ -6379,20 +6392,27 @@ window.deleteSelectedGalleryItems = () => {
                 return window.showToast('目前沒有任何「提早收工」的圖片資料可導出', true);
             }
 
-            // 2. 按照時間從早到晚排序
-            targetItems.sort((a, b) => (a.time || '12:00').localeCompare(b.time || '12:00'));
+            // 2. 按照日期與時間從早到晚排序
+            targetItems.sort((a, b) => {
+                const dA = window.formatDateStrHK ? window.formatDateStrHK(a.createdAt) : '';
+                const dB = window.formatDateStrHK ? window.formatDateStrHK(b.createdAt) : '';
+                if (dA !== dB) return dA.localeCompare(dB);
+                return (a.time || '12:00').localeCompare(b.time || '12:00');
+            });
 
-            // 標題列：右側新增「檔主」欄位
+            // 標題列：包含拍照存檔、其他、通知賣清、上下午親身經營判定
             const csvRows = [
-                ['日期', '樓層', '檔號', '收工時間', '檔主']
+                ['日期', '樓層', '檔號', '收工時間', '檔主', '是否拍照存檔', '其他', '檔主 通知賣清 (Y/N)', '上午檔主 親身經營 (Y/N)', '下午檔主 親身經營 (Y/N)']
             ];
 
             let lastDateStr = '';
             const seenStalls = new Set();
+            const floorNameMap = { '1': '一樓', 'R': '地下', 'J': '花園仔' };
 
             targetItems.forEach((item) => {
                 const d = item.createdAt ? new Date(item.createdAt) : window.getNow();
                 const currentDateStr = `${d.getMonth() + 1}/${d.getDate()}`;
+                const patrolDateKey = window.formatDateStrHK ? window.formatDateStrHK(item.createdAt) : getTodayDateStr();
 
                 let rawTitle = (item.title || '').trim();
                 let floor = '';
@@ -6434,7 +6454,41 @@ window.deleteSelectedGalleryItems = () => {
                 // 比對檔主姓名
                 const ownerName = STALL_OWNERS[`${floor}_${code}`] || '';
 
-                csvRows.push([displayDate, floor, code, timeStr, ownerName]);
+                // 🌟 自動查閱當日剔檔記錄，判定上下午檔主是否親身經營 (A)
+                const fullFloor = floorNameMap[floor] || '';
+                const paddedCode = String(code).padStart(3, '0');
+                const patrolKey = `${fullFloor}-${floor}-${paddedCode}`;
+                const stallPatrol = (patrolHistoryStore[patrolDateKey] || {})[patrolKey] || {};
+
+                // 上午：9:00 (上午9點) 或 11:00 (上午11點) 其一為 A 即算 Y，否則 N
+                const s9 = stallPatrol['上午9點'] || '';
+                const s11 = stallPatrol['上午11點'] || '';
+                const amSelfRun = (s9 === 'A' || s11 === 'A') ? 'Y' : 'N';
+
+                // 下午：若該檔於上午已收工 (<= 12:00) 則打後為 --；否則看 16:00 (下午4點) 或 19:00 (下午6點) 其一為 A 即算 Y，否則 N
+                const [ch, cm] = timeStr.split(':').map(Number);
+                const closeMins = (isNaN(ch) ? 12 : ch) * 60 + (isNaN(cm) ? 0 : cm);
+                let pmSelfRun = 'N';
+                if (closeMins <= 12 * 60) {
+                    pmSelfRun = '--';
+                } else {
+                    const s16 = stallPatrol['下午4點'] || '';
+                    const s18 = stallPatrol['下午6點'] || '';
+                    pmSelfRun = (s16 === 'A' || s18 === 'A') ? 'Y' : 'N';
+                }
+
+                csvRows.push([
+                    displayDate,
+                    floor,
+                    code,
+                    timeStr,
+                    ownerName,
+                    'Y',        // 是否拍照存檔（固定為 Y）
+                    '',         // 其他（空白）
+                    'Y',        // 檔主 通知賣清 (Y/N)（固定為 Y）
+                    amSelfRun,  // 上午檔主 親身經營 (Y/N)
+                    pmSelfRun   // 下午檔主 親身經營 (Y/N)
+                ]);
             });
 
             // 加入 UTF-8 BOM 避免 Excel 亂碼
@@ -11152,6 +11206,17 @@ window.crSaveData = () => {
             window.checkColdRoomOverdueAlerts();
         };
 
+        // 🌟 輔助函式：統一填充雪房「取出貨物」的經手客服下拉選單
+        window.crPopulateWithdrawStaffSelect = () => {
+            const staffSel = $('crInputWithdrawStaff');
+            if (!staffSel) return;
+            const csList = (typeof csMembersStore !== 'undefined' && csMembersStore.length > 0)
+                ? csMembersStore.filter(m => m !== '周靜儀')
+                : ['蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲'];
+            staffSel.innerHTML = '<option value="">請選擇經手客服人員...</option>' + csList.map(m => `<option value="${m}">${m}</option>`).join('');
+            staffSel.value = '';
+        };
+
         window.crOpenWithdrawModal = (id) => {
             const r = crRecords.find(x => x.id === id); if (!r) return;
             $('crCurrentActionId').value = id;
@@ -11160,6 +11225,7 @@ window.crSaveData = () => {
             $('crInputWithdrawQty').value = r.remainingQuantity;
             const { date, time } = getNowInputStrs();
             $('crInputWithdrawDate').value = date; $('crInputWithdrawTime').value = time;
+            window.crPopulateWithdrawStaffSelect();
             $('crWithdrawModal')?.classList.replace('hidden', 'flex');
         };
         window.crCloseWithdrawModal = () => $('crWithdrawModal')?.classList.replace('flex', 'hidden');
@@ -11194,7 +11260,7 @@ window.crSaveData = () => {
             window.crRenderList();
         };
 
-        // 合併包裝冰專用取出視窗
+      // 合併包裝冰專用取出視窗
         window.crOpenMergedIceWithdrawModal = (stallId, e) => {
             if (e) e.stopPropagation();
             const iceBatches = crRecords.filter(r => r.status === 'active' && r.type === '包裝冰' && (r.tenant || '').toUpperCase().includes(stallId.toUpperCase()));
@@ -11208,14 +11274,19 @@ window.crSaveData = () => {
             const { date, time } = getNowInputStrs();
             $('crInputWithdrawDate').value = date;
             $('crInputWithdrawTime').value = time;
+            window.crPopulateWithdrawStaffSelect();
             $('crWithdrawModal')?.classList.replace('hidden', 'flex');
         };
 
         window.crSubmitWithdraw = () => {
             const id = $('crCurrentActionId').value;
             const qty = parseInt($('crInputWithdrawQty').value, 10);
-            const dStr = $('crInputWithdrawDate')?.value, tStr =$('crInputWithdrawTime')?.value;
+            const withdrawStaff = ($('crInputWithdrawStaff')?.value || '').trim();
+            const dStr = $('crInputWithdrawDate')?.value, tStr = $('crInputWithdrawTime')?.value;
             const withdrawTime = (dStr && tStr) ? new Date(`${dStr}T${tStr}`).getTime() : window.getNow().getTime();
+
+            // 🌟 強制必選經手客服人員
+            if (!withdrawStaff) return window.showToast('⚠️ 請選擇取出貨物的經手客服人員！', true);
 
             // 處理「合併包裝冰」批次扣減（自動從最久遠的那批開始扣）
             if (id && id.startsWith('MERGED_ICE_')) {
@@ -11234,13 +11305,14 @@ window.crSaveData = () => {
                     batch.remainingQuantity -= deduct;
                     remainToDeduct -= deduct;
                     batch.withdrawHistory = batch.withdrawHistory || [];
-                    batch.withdrawHistory.push({ time: withdrawTime, qty: deduct });
+                    batch.withdrawHistory.push({ time: withdrawTime, qty: deduct, staff: withdrawStaff });
+                    batch.lastWithdrawStaff = withdrawStaff;
                     if (batch.remainingQuantity === 0) batch.status = 'history';
                 }
                 window.crSaveData();
                 window.crCloseWithdrawModal();
                 window.crRenderList();
-                window.showToast(`✅ 已從 ${stallId} 取出 ${qty} 箱包裝冰`);
+                window.showToast(`✅ 已從 ${stallId} 取出 ${qty} 箱包裝冰 (經手: ${withdrawStaff})`);
                 return;
             }
 
@@ -11248,11 +11320,14 @@ window.crSaveData = () => {
             const r = crRecords.find(x => x.id === id);
             if (!r || !qty || qty <= 0 || qty > r.remainingQuantity) return window.showToast('數量錯誤', true);
             r.remainingQuantity -= qty;
-            r.withdrawHistory.push({ time: withdrawTime, qty });
+            r.withdrawHistory = r.withdrawHistory || [];
+            r.withdrawHistory.push({ time: withdrawTime, qty, staff: withdrawStaff });
+            r.lastWithdrawStaff = withdrawStaff;
             if (r.remainingQuantity === 0) r.status = 'history';
             window.crSaveData();
             window.crCloseWithdrawModal();
             window.crRenderList();
+            window.showToast(`✅ 已取出 ${qty} 箱 (經手: ${withdrawStaff})`);
         };
 
         window.crDeleteRecord = (id, e) => {
@@ -11388,15 +11463,17 @@ window.crSaveData = () => {
                         ${isOpen && totalBatches > 0 ? `
                         <div class="p-2 space-y-1.5 border-t border-slate-200 bg-white animate-pop-in">
                             ${list.map(r => {
-                                const lastW = r.withdrawHistory?.length > 0 ? r.withdrawHistory[r.withdrawHistory.length - 1].time : r.depositTime;
+                                const lastWObj = r.withdrawHistory?.length > 0 ? r.withdrawHistory[r.withdrawHistory.length - 1] : null;
+                                const lastW = lastWObj ? lastWObj.time : r.depositTime;
+                                const wStaff = lastWObj?.staff || r.lastWithdrawStaff || '未指定';
                                 const durationHours = ((lastW - r.depositTime) / 3600000).toFixed(1);
                                 return `
                                 <div class="p-2 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
                                     <div class="min-w-0 flex-1 pr-2">
-                                        <div class="flex items-center space-x-1.5 mb-1">
+                                        <div class="flex items-center flex-wrap gap-1 mb-1">
                                             <span class="px-1.5 py-0.2 bg-white text-slate-700 border border-slate-300 rounded text-[10px] font-black">${r.type || '未指定'}</span>
                                             <span class="font-bold text-slate-700">清空 <span class="text-emerald-600 font-black">${r.depositQuantity}</span> 箱</span>
-                                            <span class="text-[10px] text-slate-400">· 耗時 ${durationHours}h · 經手:${r.staff || '無'}</span>
+                                            <span class="text-[10px] text-slate-400">· 耗時 ${durationHours}h · 存:${r.staff || '無'} / 取:${wStaff}</span>
                                         </div>
                                         <div class="text-[10.5px] font-mono text-slate-400">存入 ${window.crFormatTime(r.depositTime)} → 清空 ${window.crFormatTime(lastW)}</div>
                                     </div>
@@ -14765,6 +14842,7 @@ window.pushMeetingReportsToAllIframes = (reports) => {
                 <div class="flex-1"><label class="text-[10px] font-bold text-slate-500 block mb-1">提取日期</label><input type="date" id="crInputWithdrawDate" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs text-center"></div>
                 <div class="flex-1"><label class="text-[10px] font-bold text-slate-500 block mb-1">時間</label><input type="time" id="crInputWithdrawTime" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs text-center"></div>
             </div>
+            <div><label class="text-[10px] font-bold text-slate-500 block mb-1">經手客服人員</label><select id="crInputWithdrawStaff" class="w-full border border-slate-300 rounded-lg p-2 text-xs font-bold text-slate-700 bg-slate-50 text-center focus:border-amber-500 focus:outline-none"></select></div>
             <div><label class="text-[10px] font-bold text-slate-500 block mb-1">本次取出數量</label><input type="number" id="crInputWithdrawQty" min="1" class="w-full border border-slate-300 rounded-lg p-2 text-lg font-bold text-slate-700 text-center bg-white shadow-inner"></div>
         </div>
         <input type="hidden" id="crCurrentActionId">
