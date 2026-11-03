@@ -158,17 +158,8 @@
         let currentUser = null;
 
 // ====== 操作日誌核心邏輯 (含剔檔、圖庫與 20 分鐘同用戶聚合折疊) ======
-        // 🌟 第一次打開沒有名字時，抽一個「成員_XXX」並立刻存入本機固定下來，重開網頁不再亂變！
-        let sysUserName = localStorage.getItem('gallery_user_name');
-        if (!sysUserName) {
-            sysUserName = '成員_' + Math.floor(Math.random() * 900 + 100);
-            localStorage.setItem('gallery_user_name', sysUserName);
-        }
-        let sysUserColor = localStorage.getItem('gallery_user_color');
-        if (!sysUserColor) {
-            sysUserColor = '#38bdf8';
-            localStorage.setItem('gallery_user_color', sysUserColor);
-        }
+        let sysUserName = localStorage.getItem('gallery_user_name') || '成員_' + Math.floor(Math.random() * 900 + 100);
+        let sysUserColor = localStorage.getItem('gallery_user_color') || '#38bdf8';
         let galleryLogsStore = [];
         window.expandedLogGroups = new Set(); // 記錄使用者展開的群組 ID
 
@@ -184,6 +175,7 @@
             }
             window.renderGalleryLogs();
         };
+
       // 👇 擴充支援傳入 customUser、customColor 與設備獨立識別碼 deviceId
         window.writeGalleryLog = async (action, targetName, detail = '', customUser = null, customColor = null) => {
             if (!currentUser || !db) return;
@@ -318,14 +310,13 @@
                 const isDayCollapsed = !window.expandedLogDates.has(bucket.dateKey);
 
                 const groupsHtml = bucket.groups.map(group => {
-                 // 單筆操作
+                   // 單筆操作
                     if (group.items.length === 1) {
                         const log = group.items[0];
                         const actionBadge = window.getLogBadgeStyle(log.action);
                         const safeU = (log.user || '未知').replace(/'/g, "\\'");
                         const safeC = log.color || '#38bdf8';
-                        const safeDevId = (log.deviceId || '').replace(/'/g, "\\'");
-                        const userClickAttr = isAdminUser ? `onclick="event.stopPropagation(); window.openEditOtherUserModal('${safeU}', '${safeC}', '${group.id}', '${safeDevId}')" title="點擊修改或清除此用戶名稱"` : '';
+                        const userClickAttr = isAdminUser ? `onclick="event.stopPropagation(); window.openEditOtherUserModal('${safeU}', '${safeC}', '${group.id}')" title="點擊修改或清除此用戶名稱"` : '';
                         const userCursorCls = isAdminUser ? 'cursor-pointer underline decoration-dotted hover:opacity-80' : '';
 
                         return `
@@ -349,8 +340,7 @@
 
                    const safeGrpU = (group.user || '未知').replace(/'/g, "\\'");
                     const safeGrpC = group.color || '#38bdf8';
-                    const grpDevId = ((group.items.find(x => x.deviceId)?.deviceId) || '').replace(/'/g, "\\'");
-                    const grpUserClickAttr = isAdminUser ? `onclick="event.stopPropagation(); window.openEditOtherUserModal('${safeGrpU}', '${safeGrpC}', '${group.id}', '${grpDevId}')" title="點擊修改或清除此用戶名稱"` : '';
+                    const grpUserClickAttr = isAdminUser ? `onclick="event.stopPropagation(); window.openEditOtherUserModal('${safeGrpU}', '${safeGrpC}', '${group.id}')" title="點擊修改或清除此用戶名稱"` : '';
                     const grpUserCursorCls = isAdminUser ? 'cursor-pointer underline decoration-dotted hover:opacity-80' : '';
 
                     const detailsHtml = group.items.map(log => {
@@ -405,12 +395,10 @@
 
         window._editingTargetLogUser = null;
         window._editingTargetGroupId = null;
-        window._editingTargetDeviceId = null;
 
         window.openUserNameModal = () => {
             window._editingTargetLogUser = null;
             window._editingTargetGroupId = null;
-            window._editingTargetDeviceId = null;
             const nameInput = document.getElementById('newUserNameInput');
             const colorInput = document.getElementById('newUserColorInput');
             if (nameInput) nameInput.value = sysUserName;
@@ -419,11 +407,10 @@
         };
 
         // 🌟 專屬管理員（「手提電腦」、「雲」）點擊日誌內用戶名時彈出修改
-        window.openEditOtherUserModal = (targetUser, targetColor, groupId = null, targetDeviceId = null) => {
+        window.openEditOtherUserModal = (targetUser, targetColor, groupId = null) => {
             if (sysUserName !== '手提電腦' && sysUserName !== '雲') return;
             window._editingTargetLogUser = targetUser;
             window._editingTargetGroupId = groupId;
-            window._editingTargetDeviceId = targetDeviceId || null;
             const nameInput = document.getElementById('newUserNameInput');
             const colorInput = document.getElementById('newUserColorInput');
             if (nameInput) nameInput.value = targetUser;
@@ -434,12 +421,12 @@
         window.closeUserNameModal = () => {
             window._editingTargetLogUser = null;
             window._editingTargetGroupId = null;
-            window._editingTargetDeviceId = null;
             document.getElementById('userNameModal')?.classList.replace('flex', 'hidden');
         };
 
-        // 🌟 輔助：篩選出真正屬於目標對象的日誌
+        // 🌟 輔助：篩選出真正屬於目標對象的日誌（防止同名舊資料把管理員自己也綁進去）
         window.getTargetLogsForUserEdit = (oldName, isEditingOtherUser, targetGroupId) => {
+            // 若點擊的對象跟管理員自己同名（連住了），只分離所點擊的那一組/那一設備的日誌
             if (isEditingOtherUser && oldName === sysUserName && targetGroupId) {
                 const parts = targetGroupId.split('_');
                 const oldestTs = Number(parts[parts.length - 1]);
@@ -455,30 +442,12 @@
                 if (isEditingOtherUser) {
                     return !l.deviceId || l.deviceId !== clientSessionId;
                 } else {
-                    return !l.deviceId || l.deviceId === clientSessionId;
+                    return l.deviceId === clientSessionId;
                 }
             });
         };
 
-        // 🌟 遠端推送改名指令：讓對方手機打開或連線時，自動把他的本機身分改成你設定的名字！
-        window.pushRemoteUserIdentity = async (oldName, newName, newColor, targetDevId) => {
-            if (!currentUser || !db) return;
-            try {
-                const nowTs = Date.now();
-                const payload = {};
-                if (targetDevId && targetDevId !== 'system' && targetDevId !== clientSessionId) {
-                    payload[targetDevId] = { name: newName, color: newColor, ts: nowTs };
-                }
-                if (oldName && oldName !== '手提電腦' && oldName !== '雲') {
-                    payload[`byName_${oldName}`] = { name: newName, color: newColor, ts: nowTs };
-                }
-                if (Object.keys(payload).length > 0) {
-                    await setDoc(cfgDoc('log_device_profiles'), payload, { merge: true });
-                }
-            } catch (e) {}
-        };
-
-        // 🌟 點擊「🗑️ 清除」：把該用戶名清除，變成固定一個隨機「成員_XXX」並同步到對方手機
+        // 🌟 點擊「🗑️ 清除」：把該用戶名清除，變成隨機「成員_XXX」並自動分離
         window.clearUserNameToRandom = async () => {
             const randomName = '成員_' + Math.floor(Math.random() * 900 + 100);
             const randomColors = ['#38bdf8', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
@@ -486,12 +455,13 @@
 
             const isEditingOtherUser = Boolean(window._editingTargetLogUser !== null);
             const oldName = isEditingOtherUser ? window._editingTargetLogUser : sysUserName;
-            const targetDevId = window._editingTargetDeviceId || galleryLogsStore.find(l => l.user === oldName && l.deviceId && l.deviceId !== clientSessionId)?.deviceId || null;
             const logsToUpdate = window.getTargetLogsForUserEdit(oldName, isEditingOtherUser, window._editingTargetGroupId);
+            const detachedDeviceId = 'detached_' + Date.now();
 
             logsToUpdate.forEach(l => {
                 l.user = randomName;
                 l.color = randomColor;
+                if (isEditingOtherUser) l.deviceId = detachedDeviceId;
             });
 
             if (currentUser && db && logsToUpdate.length > 0) {
@@ -502,7 +472,9 @@
                         chunk.forEach(l => {
                             if (l.id) {
                                 const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_logs', l.id);
-                                batch.update(ref, { user: randomName, color: randomColor });
+                                const payload = { user: randomName, color: randomColor };
+                                if (isEditingOtherUser) payload.deviceId = detachedDeviceId;
+                                batch.update(ref, payload);
                             }
                         });
                         await batch.commit();
@@ -512,23 +484,20 @@
                 }
             }
 
-            if (isEditingOtherUser) {
-                await window.pushRemoteUserIdentity(oldName, randomName, randomColor, targetDevId);
-            } else {
+            // 若是點右上角「身分」清除自己，才將本機變為隨機名稱；若是管理員清除別人，自己維持原名
+            if (!isEditingOtherUser) {
                 sysUserName = randomName;
                 sysUserColor = randomColor;
                 localStorage.setItem('gallery_user_name', sysUserName);
                 localStorage.setItem('gallery_user_color', sysUserColor);
-                localStorage.setItem('gallery_user_updated_at', String(Date.now()));
-                await window.pushRemoteUserIdentity(null, randomName, randomColor, clientSessionId);
             }
 
             window.closeUserNameModal();
             window.renderGalleryLogs();
             window.showToast(
                 isEditingOtherUser
-                    ? `🎲 已將「${oldName}」重置為固定「${randomName}」並同步至對方設備！`
-                    : `🎲 已將您的名稱重置為「${randomName}」！`
+                    ? `🎲 已將「${oldName}」清除並重置為隨機「${randomName}」！`
+                    : `🎲 已將您的名稱清除並重置為隨機「${randomName}」！`
             );
         };
 
@@ -539,7 +508,6 @@
 
             const isEditingOtherUser = Boolean(window._editingTargetLogUser !== null);
             const oldName = isEditingOtherUser ? window._editingTargetLogUser : sysUserName;
-            const targetDevId = window._editingTargetDeviceId || galleryLogsStore.find(l => l.user === oldName && l.deviceId && l.deviceId !== clientSessionId)?.deviceId || null;
             const logsToUpdate = window.getTargetLogsForUserEdit(oldName, isEditingOtherUser, window._editingTargetGroupId);
 
             logsToUpdate.forEach(l => {
@@ -565,26 +533,28 @@
                 }
             }
 
-            if (isEditingOtherUser) {
-                // 🌟 遠端同步修改對方手機的本機名稱
-                await window.pushRemoteUserIdentity(oldName, name, color, targetDevId);
-            } else {
+            if (!isEditingOtherUser) {
                 sysUserName = name;
                 sysUserColor = color;
                 localStorage.setItem('gallery_user_name', sysUserName);
                 localStorage.setItem('gallery_user_color', sysUserColor);
-                localStorage.setItem('gallery_user_updated_at', String(Date.now()));
-                await window.pushRemoteUserIdentity(null, name, color, clientSessionId);
             }
 
             window.closeUserNameModal();
             window.renderGalleryLogs();
             window.showToast(
                 isEditingOtherUser
-                    ? `✅ 已將「${oldName}」改為「${name}」並遠端同步至對方手機！`
+                    ? `✅ 已將「${oldName}」改為「${name}」（您的身分維持「${sysUserName}」不變）`
                     : `✅ 已將您的身分儲存為「${name}」！`
             );
         };
+
+        // 確保每台裝置/瀏覽器擁有一個永久固定的唯一識別碼
+        let clientSessionId = localStorage.getItem('work_client_device_id');
+        if (!clientSessionId) {
+            clientSessionId = 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+            localStorage.setItem('work_client_device_id', clientSessionId);
+        }
 
         const $ = id => document.getElementById(id);
         const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
@@ -8388,39 +8358,11 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                         }
                     });
 
-                   galleryLogsStore = list;
+                    galleryLogsStore = list;
                     if ($('galleryLogsModal') && !$('galleryLogsModal').classList.contains('hidden')) {
                         window.renderGalleryLogs();
                     }
                 }, console.error);
-
-                // 🌟 監聽管理員（「手提電腦」、「雲」）發出的遠端改名指令，自動更新本機身分
-                onSnapshot(cfgDoc('log_device_profiles'), (snap) => {
-                    if (!snap.exists()) return;
-                    if (sysUserName === '手提電腦' || sysUserName === '雲') return; // 保護管理員自身不被覆蓋
-
-                    const data = snap.data() || {};
-                    const myLocalTs = Number(localStorage.getItem('gallery_user_updated_at') || 0);
-                    const matchByDev = data[clientSessionId];
-                    const matchByName = data[`byName_${sysUserName}`];
-                    const remoteCmd = (matchByDev && (!matchByName || matchByDev.ts >= matchByName.ts)) ? matchByDev : matchByName;
-
-                    if (remoteCmd && remoteCmd.name && remoteCmd.ts > myLocalTs) {
-                        sysUserName = remoteCmd.name;
-                        sysUserColor = remoteCmd.color || sysUserColor;
-                        localStorage.setItem('gallery_user_name', sysUserName);
-                        localStorage.setItem('gallery_user_color', sysUserColor);
-                        localStorage.setItem('gallery_user_updated_at', String(remoteCmd.ts));
-                        // 順便將此裝置正式綁定到新名稱
-                        setDoc(cfgDoc('log_device_profiles'), {
-                            [clientSessionId]: { name: sysUserName, color: sysUserColor, ts: remoteCmd.ts }
-                        }, { merge: true }).catch(() => {});
-
-                        if ($('galleryLogsModal') && !$('galleryLogsModal').classList.contains('hidden')) {
-                            window.renderGalleryLogs();
-                        }
-                    }
-                }, () => {});
 
                 // 背景單次安全清理：開機 10 秒閒置後，每次最多批次清理 100 筆過期舊日誌，完全不卡畫面
                 setTimeout(async () => {
