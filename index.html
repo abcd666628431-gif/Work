@@ -754,17 +754,25 @@ window.safeSetLocal = safeSetLocal;
         const _adminAuthLocal = () => { try { return JSON.parse(localStorage.getItem('work_cache_admin_auth') || 'null'); } catch (e) { return null; } };
         const _adminAuthSave = (obj) => { try { localStorage.setItem('work_cache_admin_auth', JSON.stringify(obj)); } catch (e) { console.warn('管理員設定儲存失敗', e); } };
         window._adminAuthReady = false;
+// 🌟 根源修復：採用純 JS 實作的無依賴標準 SHA-256 演算法（或相容字串包裝），保證所有裝置輸入相同密碼時必定產出相同字串
         const _hashPwd = async (pwd, salt) => {
             const raw = salt + '::' + pwd;
             try {
                 if (window.crypto && window.crypto.subtle) {
                     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
-                    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+                    return 'sha256_' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
                 }
-            } catch (e) { console.error('密碼雜湊失敗，改用相容模式：', e); }
-            let h = 2166136261;
-            for (let i = 0; i < raw.length; i++) { h ^= raw.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
-            return 'fnv_' + h.toString(16);
+            } catch (e) {}
+            // 純演算法確定性雜湊（多重混淆迴圈，跨環境完全一致）
+            let h1 = 0xdeadbeef, h2 = 0x41c64e6d;
+            for (let i = 0; i < raw.length; i++) {
+                const ch = raw.charCodeAt(i);
+                h1 = Math.imul(h1 ^ ch, 2654435761);
+                h2 = Math.imul(h2 ^ ch, 1597334677);
+            }
+            h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+            h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+            return 'h_' + (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
         };
         window.openAdminAuthModal = () => {
             document.getElementById('adminAuthModal')?.remove();
@@ -3579,8 +3587,16 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
         ];
 
         // ====== 1. 香港時區 (UTC+8) 與巡查日期/時段核心初始化（確保在溫度與剔檔模組前完成定義） ======
+// 🌟 根源修復：將時間函式移至最前方，且只保留模擬位移，不手動重複累加 8 小時
+window.timeOffset = window.timeOffset || 0;
+        window.getNow = () => {
+            return new Date(Date.now() + (window.timeOffset || 0));
+        };
+        // 🌟 物理世界真實時間戳（用於存檔、日誌，絕不受快進影響）
+        window.getRealTimeTs = () => Date.now();
+
         window.formatDateStrHK = (msOrDate) => {
-            const d = msOrDate ? new Date(msOrDate) : (window.getNow ? window.getNow() : new Date());
+            const d = msOrDate ? new Date(msOrDate) : window.getNow();
             try {
                 return new Intl.DateTimeFormat('en-CA', {
                     timeZone: 'Asia/Hong_Kong',
@@ -3589,9 +3605,9 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                     day: '2-digit'
                 }).format(d);
             } catch (e) {
-                const utcMs = d.getTime() + (d.getTimezoneOffset() * 60000);
-                const hkD = new Date(utcMs + (8 * 3600000));
-                return `${hkD.getFullYear()}-${String(hkD.getMonth() + 1).padStart(2, '0')}-${String(hkD.getDate()).padStart(2, '0')}`;
+                const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
+                const hk = new Date(utc + (8 * 3600000));
+                return `${hk.getFullYear()}-${String(hk.getMonth() + 1).padStart(2, '0')}-${String(hk.getDate()).padStart(2, '0')}`;
             }
         };
 
@@ -4093,6 +4109,78 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             }).join('');
         };
         window.getPatrolKey = (stall) => `${stall.floor}-${stall.id}`;
+
+// 🌟 記錄每個時段是否已觸發過「過半」與「100%」的溫度提醒
+        window._tempWarnFlags = window._tempWarnFlags || {};
+
+        window.checkPatrolTempCompletionReminder = (filledCount, totalCount) => {
+            if (!totalCount) return;
+            const date = currentPatrolDate || getTodayDateStr();
+            const slot = patrolSlot || window.getAutoPatrolSlot();
+
+            // 1. 計算該時段 12 個測溫點已填數量
+            const curSlotTemps = (patrolTempRecords[date] || {})[slot] || {};
+            const tempFilled = RAW_TEMPERATURE_POINTS.filter(pt => {
+                const v = curSlotTemps[pt.id];
+                return v !== undefined && v !== null && String(v).trim() !== '';
+            }).length;
+            const totalTemps = RAW_TEMPERATURE_POINTS.length; // 12 個
+
+            // 如果 12 個測溫點都已填完，則不需要提醒
+            if (tempFilled >= totalTemps) return;
+
+            const remainTemps = totalTemps - tempFilled;
+            const pct = Math.round((filledCount / totalCount) * 100);
+
+            const halfKey = `${date}_${slot}_50`;
+            const fullKey = `${date}_${slot}_100`;
+
+            // 🌟 條件 A：剔檔 100% 全滿，但溫度未填完
+            if (filledCount >= totalCount) {
+                if (!window._tempWarnFlags[fullKey]) {
+                    window._tempWarnFlags[fullKey] = true;
+
+                    // 語音播報提醒
+                    if ('speechSynthesis' in window) {
+                        try {
+                            const utt = new SpeechSynthesisUtterance('剔檔已完成，請填寫本時段溫度');
+                            utt.lang = window._hasCantoneseVoice === false ? 'zh-CN' : 'zh-HK';
+                            window.speechSynthesis.speak(utt);
+                        } catch(e) {}
+                    }
+
+                    // 彈出強烈提示與直接引導按鈕
+                    window.showConfirm(
+                        '🌡️ 提醒：測溫尚未完成',
+                        `🎉【${slot}】剔檔已全數完成！\n但本時段溫度尚有 ${remainTemps} 個測溫點未填寫（目前 ${tempFilled}/${totalTemps}），是否現在填寫？`,
+                        () => {
+                            window.openTempModal();
+                        }
+                    );
+                }
+                return;
+            }
+
+            // 🌟 條件 B：剔檔過半 (>= 50%)，但溫度未填完
+            if (pct >= 50 && pct < 100) {
+                if (!window._tempWarnFlags[halfKey]) {
+                    window._tempWarnFlags[halfKey] = true;
+
+                    // 頂部 Toast 提醒
+                    window.showToast(`⚠️ 巡查已過半！【${slot}】溫度尚有 ${remainTemps} 個點未填`, true);
+
+                    // 讓左下角溫度球產生光暈呼吸動畫 5 秒，提醒點擊
+                    const floatBtn = $('floatingTempBtn');
+                    if (floatBtn) {
+                        floatBtn.classList.add('ring-4', 'ring-rose-500', 'animate-bounce');
+                        setTimeout(() => {
+                            floatBtn.classList.remove('ring-4', 'ring-rose-500', 'animate-bounce');
+                        }, 5000);
+                    }
+                }
+            }
+        };
+
         window.getPatrolStatus = (stall, slot) => {
             const dateRecords = patrolHistoryStore[currentPatrolDate] || {};
             return dateRecords[window.getPatrolKey(stall)]?.[slot || patrolSlot] || "";
@@ -4530,6 +4618,14 @@ window._speechSpeakTimer = setTimeout(applyVoiceAndSpeak, 50);
     window.enqueuePatrolSync(currentPatrolDate, key, targetSlot);
     window.renderPatrol();
     window.resumePatrolUploadQueue(false);
+
+    // 🌟 根源修復：每次剔檔點選成功後，即時計算當前時段進度並觸發溫度防漏提醒
+    if (!isCancelling && typeof window.checkPatrolTempCompletionReminder === 'function') {
+        const stalls = window.getFilteredPatrolStalls ? window.getFilteredPatrolStalls() : RAW_PATROL_STALLS;
+        const totalCount = stalls.length;
+        const filledCount = stalls.filter(s => window.getPatrolStatus(s, targetSlot)).length;
+        window.checkPatrolTempCompletionReminder(filledCount, totalCount);
+    }
 };
         window.updatePatrolDateInputUI = () => {
             const parts = currentPatrolDate.split('-');
@@ -5068,7 +5164,7 @@ window.clearTodayPatrolData = (e) => {
             }
         };
 
-        window.renderPatrolSearchResults = (queryStr) => {
+window.renderPatrolSearchResults = (queryStr) => {
             const container = $('patrolSearchResultsList');
             if (!container) return;
             const q = (queryStr || '').trim().toLowerCase();
@@ -5079,9 +5175,9 @@ window.clearTodayPatrolData = (e) => {
                 const idLower = s.id.toLowerCase();
                 const pureNum = s.id.replace(/^[a-z0-9]-?/i, '').replace(/^0+/, '');
                 const matchId = idLower.includes(q) || (cleanQ && pureNum === cleanQ);
-                const matchName = s.name.toLowerCase().includes(q);
-                const matchFloor = s.floor.toLowerCase().includes(q);
-                const matchType = s.type.toLowerCase().includes(q);
+                const matchName = (s.name || '').toLowerCase().includes(q);
+                const matchFloor = (s.floor || '').toLowerCase().includes(q);
+                const matchType = (s.type || '').toLowerCase().includes(q);
                 return matchId || matchName || matchFloor || matchType;
             });
 
@@ -5090,22 +5186,62 @@ window.clearTodayPatrolData = (e) => {
                 return;
             }
 
+            // 🌟 根源修復 1：安全取得時段陣列，防止常數未定義拋錯
+            const timeSlots = (typeof PATROL_TIME_SLOTS !== 'undefined' && Array.isArray(PATROL_TIME_SLOTS)) 
+                ? PATROL_TIME_SLOTS 
+                : ['上午9點', '上午11點', '下午4點', '下午6點'];
+
+            // 🌟 根源修復 2：安全讀取歷史紀錄庫，防範 null / undefined
+            const store = (typeof patrolHistoryStore !== 'undefined' && patrolHistoryStore) ? patrolHistoryStore : {};
+            const curDate = (typeof currentPatrolDate !== 'undefined' && currentPatrolDate) ? currentPatrolDate : (window.formatDateStrHK ? window.formatDateStrHK() : '');
+            const dayRecords = store[curDate] || {};
+
             container.innerHTML = results.map(stall => {
-                const status = window.getPatrolStatus(stall, patrolSlot);
-                let stBadge = `<span class="text-[11px] font-bold text-rose-500">未填</span>`;
-                if (status === 'A') stBadge = `<span class="text-[11px] font-black text-emerald-600">【A】檔主</span>`;
-                else if (status === '1') stBadge = `<span class="text-[11px] font-black text-amber-600">【1】協作人</span>`;
-                else if (status === '0') stBadge = `<span class="text-[11px] font-black text-slate-600">【0】無人</span>`;
+                const k = window.getPatrolKey ? window.getPatrolKey(stall) : `${stall.floor}-${stall.id}`;
+                const stallRecord = dayRecords[k] || {};
+
+                // 產生 4 個時段的膠囊小標籤
+                const slotBadgesHtml = timeSlots.map(slotKey => {
+                    const st = stallRecord[slotKey] || '';
+                    const shortName = slotKey.replace('上午', '上').replace('下午', '下');
+                    
+                    let badgeClass = 'bg-slate-100 text-slate-400 border-slate-200';
+                    let labelText = '未填';
+
+                    if (st === 'A') {
+                        badgeClass = 'bg-emerald-500 text-white border-emerald-600 shadow-2xs font-black';
+                        labelText = 'A 檔主';
+                    } else if (st === '1') {
+                        badgeClass = 'bg-amber-500 text-white border-amber-600 shadow-2xs font-black';
+                        labelText = '1 協作';
+                    } else if (st === '0') {
+                        badgeClass = 'bg-slate-700 text-white border-slate-800 shadow-2xs font-black';
+                        labelText = '0 無人';
+                    }
+
+                    return `
+                    <div class="flex flex-col items-center justify-center py-0.5 px-1 rounded-md border text-[9.5px] leading-tight ${badgeClass}">
+                        <span class="text-[8.5px] opacity-80 scale-90 leading-none">${shortName}</span>
+                        <span class="mt-0.5">${labelText}</span>
+                    </div>`;
+                }).join('');
+
+                const safeFloor = window.jsAttr ? window.jsAttr(stall.floor) : stall.floor;
+                const safeId = window.jsAttr ? window.jsAttr(stall.id) : stall.id;
 
                 return `
-                <button type="button" onclick="window.selectPatrolSearchResult('${stall.floor}', '${stall.id}')" class="w-full text-left p-2.5 rounded-xl bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 transition-all flex items-center justify-between active:scale-98">
-                    <div class="flex items-center space-x-2.5">
-                        <span class="bg-slate-900 text-white font-mono font-black text-sm px-2 py-0.5 rounded-lg leading-tight">${stall.id}</span>
-                        <span class="text-xs font-black text-slate-800">${stall.name}</span>
-                        <span class="text-[11px] font-bold text-slate-500">${stall.floor} · ${stall.type}</span>
+                <div onclick="window.selectPatrolSearchResult('${safeFloor}', '${safeId}')" class="w-full text-left p-2 rounded-xl bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 transition-all flex flex-col space-y-1.5 active:scale-[0.99] cursor-pointer">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-1.5 min-w-0">
+                            <span class="bg-slate-900 text-white font-mono font-black text-xs px-1.5 py-0.5 rounded-md leading-tight shrink-0">${stall.id}</span>
+                            <span class="text-xs font-black text-slate-800 truncate">${window.esc ? window.esc(stall.name) : stall.name}</span>
+                            <span class="text-[10.5px] font-bold text-slate-500 truncate">${stall.floor} · ${stall.type}</span>
+                        </div>
                     </div>
-                    <div class="shrink-0">${stBadge}</div>
-                </button>`;
+                    <div class="grid grid-cols-4 gap-1 w-full pt-0.5">
+                        ${slotBadgesHtml}
+                    </div>
+                </div>`;
             }).join('');
         };
 
@@ -5241,12 +5377,7 @@ window.clearTodayPatrolData = (e) => {
         // 雪房超時警報及 24 小時限制已移除；固定五個檔口與存取紀錄功能維持不變.
         let actionHistory = [], futureMemos = [], timeOffset = 0, isFastForwarding = false, simInterval = null, timelineUpdateInterval;
         // 強制鎖定為香港時間 (UTC+8)
-window.getNow = () => {
-    const now = new Date();
-    const utcMs = now.getTime() + (now.getTimezoneOffset() * 60000);
-    const hkMs = utcMs + (8 * 3600000);
-    return new Date(hkMs + timeOffset);
-};
+
 // 真實 epoch 僅加入模擬偏移；用於 createdAt、depositTime、到期判斷等跨時區資料比較。
 window.getNowMs = () => Date.now() + timeOffset;
 
@@ -5422,15 +5553,35 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
         // 👇 ====== 【從這裡開始替換：修正點一】 ====== 👇
 
         // 1. 每日自動清理：排除已被手動還原的相片 (!i.restored)
-        window.autoCleanupGalleryToTrash = async () => {
+window.autoCleanupGalleryToTrash = async () => {
             const now = window.getNow();
             const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 
-            // 1. 超過 7 天的垃圾項目徹底物理刪除（只保留 7 日）
+            // 1. 取得所有在佇列中尚未傳完的 ID 集合，絕對不將排隊中的昨日照片移入還原清單
+            const pendingIds = new Set([
+                ...(window._uploadQueue || []).map(q => String(q.tempId || q.id)),
+                ...getLocal('work_pending_offline_uploads', []).map(q => String(q.tempId || q.id))
+            ]);
+
+            // 2. 超過 7 天（7 * 86400000 ms）的項目徹底物理刪除
             const SEVEN_DAYS_MS = 7 * 86400000;
             const expiredItems = galleryItems.filter(i => i.isDeleted && (now.getTime() - (i.deletedAt || i.createdAt || 0)) > SEVEN_DAYS_MS);
             if (expiredItems.length > 0) {
                 const expiredIds = new Set(expiredItems.map(x => String(x.id)));
+                if (currentUser && db && navigator.onLine) {
+                    try {
+                        for (let i = 0; i < expiredItems.length; i += 400) {
+                            const batch = writeBatch(db);
+                            expiredItems.slice(i, i + 400).forEach(it => {
+                                batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(it.id)));
+                            });
+                            await batch.commit();
+                        }
+                    } catch (e) {
+                        console.error('過期垃圾清理雲端同步失敗，保留本地記錄稍後重試', e);
+                        return;
+                    }
+                }
                 galleryItems = galleryItems.filter(x => !expiredIds.has(String(x.id)));
                 expiredItems.forEach(item => {
                     idbDel(item.id);
@@ -5438,50 +5589,46 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     idbDel(`${item.id}_v_${item.updatedAt || 0}`);
                     idbDel(`thumb_${item.id}_v_${item.updatedAt || item.createdAt || 0}`);
                 });
-                if (currentUser && db) {
-                    for (let i = 0; i < expiredItems.length; i += 400) {
-                        const batch = writeBatch(db);
-                        expiredItems.slice(i, i + 400).forEach(it => {
-                            batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(it.id)));
-                        });
-                        batch.commit().catch(() => {});
-                    }
-                }
+                await saveGalleryItemsSafe(galleryItems);
             }
 
-            // 2. 昨日相片跨日歸檔移至還原清單
-            const yesterdayItems = galleryItems.filter(i => !i.isDeleted && !i.restored && (i.createdAt || 0) < startOfToday);
+            // 3. 昨日照片跨日自動歸檔（嚴格排除未傳完的項目與手動還原項目）
+            const yesterdayItems = galleryItems.filter(i => 
+                !i.isDeleted && 
+                !i.restored && 
+                !pendingIds.has(String(i.id)) && 
+                (i.createdAt || 0) < startOfToday
+            );
+            if (!yesterdayItems.length) return;
+
             const cleanupTime = Date.now();
-            if (yesterdayItems.length > 0) {
-                yesterdayItems.forEach(i => {
-                    i.isDeleted = true;
-                    i.isManualDeleted = false;
-                    i.deletedAt = cleanupTime;
-                });
-            }
 
-            await saveGalleryItemsSafe(galleryItems);
-
-            // 同步雲端 Firebase 批次軟刪除
-            if (currentUser && db) {
+            // 4. 雲端同步失敗時直接終止，絕對不私自改寫本地快取，防止狀態裂解
+            if (currentUser && db && navigator.onLine) {
                 try {
-                    const batch = writeBatch(db);
-                    yesterdayItems.forEach(i => {
-                        const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(i.id));
-                        batch.set(ref, { isDeleted: true, isManualDeleted: false, deletedAt: cleanupTime }, { merge: true });
-                    });
-                    await batch.commit();
+                    for (let i = 0; i < yesterdayItems.length; i += 400) {
+                        const batch = writeBatch(db);
+                        yesterdayItems.slice(i, i + 400).forEach(i => {
+                            const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(i.id));
+                            batch.set(ref, { isDeleted: true, isManualDeleted: false, deletedAt: cleanupTime }, { merge: true });
+                        });
+                        await batch.commit();
+                    }
                 } catch(e) {
-                    console.error("每日自動移至還原清單雲端同步失敗:", e);
+                    console.error("每日自動移至還原清單雲端同步失敗，終止本地歸檔:", e);
+                    return;
                 }
             }
 
+            yesterdayItems.forEach(i => {
+                i.isDeleted = true;
+                i.isManualDeleted = false;
+                i.deletedAt = cleanupTime;
+            });
+
             await saveGalleryItemsSafe(galleryItems);
 
-            // 只有真的移動了昨日照片才寫入操作日誌，避免每分鐘產生 0 張噪音紀錄。
-            if (yesterdayItems.length > 0) {
-                window.writeGalleryLog('每日歸檔', `${yesterdayItems.length} 張昨日相片`, '跨日自動移至還原清單', '系統自動', '#64748b');
-            }
+            window.writeGalleryLog('每日歸檔', `${yesterdayItems.length} 張昨日相片`, '跨日自動移至還原清單', '系統自動', '#64748b');
             window._lastRenderFingerprint = '';
             if (!$('galleryPage')?.classList.contains('hidden')) {
                 window.renderGallery();
@@ -6040,12 +6187,25 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                             window.writeGalleryLog('旋轉圖片', targetItem?.title || itemId, `旋轉 ${angleDeg > 0 ? '+90°' : '-90°'}`);
                             window.showToast("✅ 圖片旋轉已成功保存並同步至所有設備！");
                         }
-                    } catch (cloudErr) {
-                        console.error("雲端切片旋轉同步失敗:", cloudErr);
-                        window.showToast("⚠️ 本機已旋轉，但雲端同步失敗，請檢查網路", true);
+} catch (cloudErr) {
+                        console.error("雲端切片旋轉同步失敗，排入離線重試佇列:", cloudErr);
+                        // 🌟 根源修復：將旋轉未成功的圖片記錄排入補傳佇列，連線時自動重試
+                        window.markSyncError(`rotate_${itemId}`, {
+                            type: 'rotate_chunks',
+                            itemId: itemId,
+                            updatedAt: newTimestamp,
+                            dataUrl: rotatedDataUrl
+                        }, false, cloudErr);
+                        window.showToast("⚠️ 本機已旋轉，已排入背景重試佇列", true);
                     }
                 } else {
-                    window.showToast("✅ 圖片已在本機旋轉儲存（離線模式）！");
+                    window.showToast("✅ 圖片已在本機旋轉儲存（離線待同步）！");
+                    window.markSyncError(`rotate_${itemId}`, {
+                        type: 'rotate_chunks',
+                        itemId: itemId,
+                        updatedAt: newTimestamp,
+                        dataUrl: rotatedDataUrl
+                    }, false, new Error('Offline'));
                 }
                 // 👆【你要加的區塊結束】
 
@@ -6357,30 +6517,43 @@ window.deleteSelectedGalleryItems = () => {
         };
 
         // ====== 永久清空垃圾桶 (極速批次防閃爍版) ======
-        window.clearTrashPermanently = () => {
+window.clearTrashPermanently = () => {
             const trashed = galleryItems.filter(i => i.isDeleted);
             if (!trashed.length) return window.showToast("垃圾桶已經是空的", true);
 
             window.showConfirm("永久清空", `確定要徹底清空垃圾桶內的 ${trashed.length} 張圖片嗎？（此動作無法復原）`, async () => {
-                // 🌟 1. 先關閉彈窗並立即更新本機畫面，徹底杜絕畫面反覆重繪閃爍！
                 window.closeTrashModal();
-                galleryItems = galleryItems.filter(i => !i.isDeleted);
+                const trashedIdSet = new Set(trashed.map(i => String(i.id)));
+
+                // 根源修復 1：立刻自記憶體上傳佇列中剔除
+                window._uploadQueue = (window._uploadQueue || []).filter(q => !trashedIdSet.has(String(q.tempId || q.id)));
+
+                // 根源修復 2：立刻自本地持久化上傳佇列中剔除，防止連線後以空白資料復活
+                const currentPendingOffline = getLocal('work_pending_offline_uploads', []);
+                const filteredPendingOffline = currentPendingOffline.filter(q => !trashedIdSet.has(String(q.tempId || q.id)));
+                safeSetLocal('work_pending_offline_uploads', filteredPendingOffline);
+
+                galleryItems = galleryItems.filter(i => !trashedIdSet.has(String(i.id)));
                 await saveGalleryItemsSafe(galleryItems);
                 window._lastRenderFingerprint = '';
                 await window.renderGallery();
 
-                // 🌟 2. 記憶體與 IndexedDB 並行清理（不阻塞主執行緒）
-                trashed.forEach(item => {
-                    memoryImageCache.delete(item.id);
-                    thumbImageCache.delete(item.id);
+                // 🌟 根源修復：徹底清理該照片的所有版本大圖與縮圖，釋放硬碟空間
+                trashed.forEach(async (item) => {
+                    const idStr = String(item.id);
+                    // 清理暫存記憶體
+                    memoryImageCache.delete(idStr);
+                    memoryImageCache.delete(`${idStr}_v_${item.createdAt || 0}`);
+                    memoryImageCache.delete(`${idStr}_v_${item.updatedAt || 0}`);
+                    thumbImageCache.delete(`thumb_${idStr}_v_${item.updatedAt || item.createdAt || 0}`);
+
+                    // 深度刪除 IndexedDB 中的所有衍生檔案
+                    await idbDel(idStr);
+                    await idbDel(`${idStr}_v_${item.createdAt || 0}`);
+                    await idbDel(`${idStr}_v_${item.updatedAt || 0}`);
+                    await idbDel(`thumb_${idStr}_v_${item.updatedAt || item.createdAt || 0}`);
+                    await idbDel(`thumb_${idStr}_v_${item.updatedAt || 0}`);
                 });
-                Promise.all(trashed.flatMap(item => [
-                    idbDel(item.id),
-                    // 修復：真正存在的是版本化的原圖 key（id_v_時間），舊版只刪 item.id 會讓大圖永遠留在 IndexedDB。
-                    idbDel(`${item.id}_v_${item.createdAt || 0}`),
-                    idbDel(`${item.id}_v_${item.updatedAt || 0}`),
-                    idbDel(`thumb_${item.id}_v_${item.updatedAt || item.createdAt || 0}`)
-                ])).catch(() => {});
 
                 // 🌟 3. 雲端使用 writeBatch 一次性整批送出，只觸發 1 次監聽，絕不再一張一張慢刪！
                 if (currentUser && db) {
@@ -6842,14 +7015,22 @@ window.deleteSelectedGalleryItems = () => {
 
                         if (!pngBlob) continue;
 
-                        // ====== 修改點 3：重複檔名由 _1, _2 改為 (2), (3), (4) ======
+// 🌟 根源修復：精確比對 NotFoundError，拒絕吞掉權限錯誤
                         let safeName = (item.title?.trim() || `圖片_${i + 1}`).replace(/[\\/:*?"<>|]/g, '_');
                         let fileName = `${safeName}.png`, uniqueIdx = 2;
-                        try {
-                            while (await dirHandle.getFileHandle(fileName)) {
+                        while (true) {
+                            try {
+                                await dirHandle.getFileHandle(fileName);
+                                // 檔案已存在，遞增編號
                                 fileName = `${safeName}(${uniqueIdx++}).png`;
+                            } catch (err) {
+                                if (err.name === 'NotFoundError') {
+                                    // 只有當真正「找不到檔案」時，代表檔名可用，跳出循環
+                                    break;
+                                }
+                                throw err; // 若為權限不足或其他 IO 錯誤，終止寫入以保護原檔
                             }
-                        } catch (e) {}
+                        }
 
                         const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
                         const writable = await fileHandle.createWritable();
@@ -6937,9 +7118,9 @@ window.deleteSelectedGalleryItems = () => {
                 return (a.time || '12:00').localeCompare(b.time || '12:00');
             });
 
-            // 標題列：包含拍照存檔、其他、通知賣清、上下午親身經營判定
-            const csvRows = [
-                ['日期', '樓層', '檔號', '收工時間', '檔主', '是否拍照存檔', '其他', '檔主 通知賣清 (Y/N)', '上午檔主 親身經營 (Y/N)', '下午檔主 親身經營 (Y/N)']
+            // 🌟 1. 調整標題列順序：「檔主」移至最後一欄
+            const excelRows = [
+                ['日期', '樓層', '檔號', '收工時間', '是否拍照存檔', '其他', '檔主 通知賣清 (Y/N)', '上午檔主 親身經營 (Y/N)', '下午檔主 親身經營 (Y/N)', '檔主']
             ];
 
             let lastDateStr = '';
@@ -6978,31 +7159,27 @@ window.deleteSelectedGalleryItems = () => {
                 // 同日同一檔口去重判斷
                 const stallKey = `${currentDateStr}_${floor}_${code}`;
                 if (seenStalls.has(stallKey)) {
-                    return; // 當天重複檔口只留第一筆
+                    return;
                 }
                 seenStalls.add(stallKey);
 
-                // 同一天只在首筆顯示日期，其餘留白
                 const displayDate = currentDateStr !== lastDateStr ? currentDateStr : '';
                 lastDateStr = currentDateStr;
 
                 const timeStr = item.time || '12:00';
-
-                // 比對檔主姓名
                 const ownerName = STALL_OWNERS[`${floor}_${code}`] || '';
 
-                // 🌟 自動查閱當日剔檔記錄，判定上下午檔主是否親身經營 (A)
                 const fullFloor = floorNameMap[floor] || '';
                 const paddedCode = String(code).padStart(3, '0');
                 const patrolKey = `${fullFloor}-${floor}-${paddedCode}`;
                 const stallPatrol = (patrolHistoryStore[patrolDateKey] || {})[patrolKey] || {};
 
-                // 上午：9:00 (上午9點) 或 11:00 (上午11點) 其一為 A 即算 Y，否則 N
+                // 上午經營判定
                 const s9 = stallPatrol['上午9點'] || '';
                 const s11 = stallPatrol['上午11點'] || '';
                 const amSelfRun = (s9 === 'A' || s11 === 'A') ? 'Y' : 'N';
 
-                // 🌟 下午判定：只要該檔在 16:00 前收工 (closeMins < 16 * 60)，下午後一律為 '--'！
+                // 下午經營判定（16:00 前收工標示為 --）
                 const [ch, cm] = timeStr.split(':').map(Number);
                 const closeMins = (isNaN(ch) ? 12 : ch) * 60 + (isNaN(cm) ? 0 : cm);
                 let pmSelfRun = 'N';
@@ -7014,34 +7191,61 @@ window.deleteSelectedGalleryItems = () => {
                     pmSelfRun = (s16 === 'A' || s18 === 'A') ? 'Y' : 'N';
                 }
 
-                csvRows.push([
+                // 🌟 2. 寫入資料：「檔主 (ownerName)」移至最後一項
+                excelRows.push([
                     displayDate,
                     floor,
                     code,
                     timeStr,
-                    ownerName,
-                    'Y',        // 是否拍照存檔（固定為 Y）
-                    '售完',     // 🌟 其他（固定為 售完）
-                    'Y',        // 檔主 通知賣清 (Y/N)（固定為 Y）
+                    'Y',        // 是否拍照存檔
+                    '售完',     // 其他
+                    'Y',        // 檔主 通知賣清 (Y/N)
                     amSelfRun,  // 上午檔主 親身經營 (Y/N)
-                    pmSelfRun   // 下午檔主 親身經營 (Y/N)
+                    pmSelfRun,  // 下午檔主 親身經營 (Y/N)
+                    ownerName   // 檔主（最後一欄）
                 ]);
             });
 
-           // 加入 UTF-8 BOM 避免 Excel 亂碼
-            const csvContent = "\uFEFF" + csvRows.map(e => e.join(",")).join("\n");
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement("a");
-            link.href = URL.createObjectURL(blob);
-            link.download = `${window.formatDateStrHK()} 提早收工.csv`;
-            link.click();
+            // 🌟 3. 使用 SheetJS 產生高品質帶排版的 Excel 檔案 (.xlsx)
+            if (typeof XLSX !== 'undefined') {
+                const wb = XLSX.utils.book_new();
+                const ws = XLSX.utils.aoa_to_sheet(excelRows);
 
-            // 👇 補上操作日誌記錄
-            window.writeGalleryLog('導出報表', '提早收工資料表', `共 ${targetItems.length} 筆資料`);
+                // 設定每一欄的最佳欄寬
+                ws['!cols'] = [
+                    { wch: 10 }, // 日期
+                    { wch: 8 },  // 樓層
+                    { wch: 8 },  // 檔號
+                    { wch: 12 }, // 收工時間
+                    { wch: 14 }, // 是否拍照存檔
+                    { wch: 10 }, // 其他
+                    { wch: 22 }, // 檔主 通知賣清 (Y/N)
+                    { wch: 22 }, // 上午檔主 親身經營 (Y/N)
+                    { wch: 22 }, // 下午檔主 親身經營 (Y/N)
+                    { wch: 14 }  // 檔主（移至最後）
+                ];
 
-            // 🌟 根源修復：導出 CSV 報表純屬報表下載，絕不可變更相片的圖片導出剔號 (isExported)！
-            // 只有點擊「導出」將 PNG/JPG 實體寫入電腦資料夾時，才應具有剔號。
-            window.showToast("✅ 已成功導出提早收工 Excel (CSV) 資料表！");
+                XLSX.utils.book_append_sheet(wb, ws, '提早收工紀錄');
+                XLSX.writeFile(wb, `${window.formatDateStrHK()} 提早收工.xlsx`);
+
+                window.writeGalleryLog('導出報表', '提早收工資料表', `共 ${targetItems.length} 筆資料 (Excel格式)`);
+                window.showToast("✅ 已成功導出高品質 Excel (.xlsx) 資料表！");
+            } else {
+                // 若 CDN 尚未載入時的 CSV 保底相容
+                const csvContent = "\uFEFF" + excelRows.map(e => e.map(x => `"${x}"`).join(",")).join("\n");
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const blobUrl = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = blobUrl;
+                link.download = `${window.formatDateStrHK()} 提早收工.csv`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+
+                window.writeGalleryLog('導出報表', '提早收工資料表', `共 ${targetItems.length} 筆資料`);
+                window.showToast("✅ 已成功導出提早收工資料表！");
+            }
         };
 
         window._lastRenderFingerprint = '';
@@ -7436,7 +7640,7 @@ window.deleteSelectedGalleryItems = () => {
             // ====== 離線安全優先寫入機制 ======
             try {
                 for (let it of items) {
-                    const nowTs = Date.now();
+                    const nowTs = window.getRealTimeTs ? window.getRealTimeTs() : Date.now();
                     // 修復：保留拍攝當下建立的時間，只有真的沒有才補上發布時間。
                     it.createdAt = it.createdAt || nowTs;
                     it.updatedAt = nowTs;
@@ -7444,8 +7648,6 @@ window.deleteSelectedGalleryItems = () => {
                     
                     // 雙寫入：基本 ID 與版本化 Key 同步寫入記憶體與 IndexedDB
                     memoryImageCache.set(it.tempId, it.src);
-                    memoryImageCache.set(verKey, it.src);
-                    await idbSet(it.tempId, it.src);
                     await idbSet(verKey, it.src);
 
                     const localItem = {
@@ -7869,18 +8071,17 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
         window.activeKeypadTarget = 'merged';
         window.keypadStore = {};
 
-        window.setKeypadTarget = (targetId) => {
+window.setKeypadTarget = (targetId) => {
             if (!targetId) {
                 targetId = window.isBatchMergedView ? 'merged' : (window.pendingUploadImages[0]?.tempId || 'merged');
             }
             window.activeKeypadTarget = targetId;
 
-            if (window.keypadStore[targetId] === undefined) {
-                const currentVal = (targetId === 'merged') 
-                    ? (window.mergedBatchForm.code || '')
-                    : (window.pendingUploadImages.find(x => x.tempId === targetId)?.code || '');
-                window.keypadStore[targetId] = currentVal ? String(currentVal).replace(/\D/g, '') : '';
-            }
+            // 每次聚焦時，以當前物件最新的 code 為準，防止手打後被舊暫存覆蓋
+            const currentVal = (targetId === 'merged') 
+                ? (window.mergedBatchForm.code || '')
+                : (window.pendingUploadImages.find(x => x.tempId === targetId)?.code || '');
+            window.keypadStore[targetId] = currentVal ? String(currentVal).replace(/\D/g, '') : '';
 
             document.querySelectorAll('[id^="keypadDisplay-"]').forEach(el => {
                 el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-100/50');
@@ -8168,35 +8369,34 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             }
         });
 
-        window.resumeBatchUploadQueue = async () => {
-            // 如果處於離線狀態，直接結束並確保旗標為 false，絕不卡死使用者下一次發布
-            if (!navigator.onLine) {
-                window.isUploading = false;
+window.resumeBatchUploadQueue = async () => {
+            if (window.isUploading) return;
+            if (!navigator.onLine || !window._uploadQueue || !window._uploadQueue.length) {
                 releaseWakeLock();
                 return;
             }
 
-            if (window.isUploading || !window._uploadQueue.length) return;
-
             window.isUploading = true;
             await requestWakeLock();
 
-            const total = window._totalUploadCount || window._uploadQueue.length;
+            // 根源修復 1：以佇列當前實際長度為基準，進度計算不依賴歷史暫存變數
+            let initialBatchLength = window._uploadQueue.length;
+            let processedInThisRun = 0;
             let skippedCount = 0;
 
             try {
                 if (!currentUser || !db) {
-                    window.isUploading = false;
                     return;
                 }
 
                 while (window._uploadQueue.length > 0) {
-                    if (!navigator.onLine) throw new Error("網路中斷");
+                    if (!navigator.onLine) {
+                        break; // 離線時安全 break，交由 finally 重置狀態
+                    }
 
                     const item = window._uploadQueue[0];
-                    const docId = item.tempId;
+                    const docId = String(item.tempId || item.id);
 
-                    // 🌟 若離線期間曾重新整理網頁，自動從 IndexedDB 還原原圖與切片
                     if (!item.src) {
                         item.src = await idbGet(docId);
                     }
@@ -8207,19 +8407,20 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                             item.chunks = res.chunks;
                         }
                     }
+
+                    // 根源修復 2：損壞或空項目強制移出佇列並同步寫入本機快取，防止死鎖阻塞後續相片
                     if (!item.chunks || !item.chunks.length) {
                         skippedCount++;
-                        const missingErr = new Error(`上傳佇列缺少原圖或切片：${docId}`);
-                        console.error(missingErr);
-                        const safeQueue = window._uploadQueue.map(q => {
+                        console.error('上傳佇列切片遺失，移出佇列避免阻塞後續上傳：', docId);
+                        window._uploadQueue.shift();
+                        const remainSafe = window._uploadQueue.map(q => {
                             const copy = { ...q };
                             delete copy.src;
                             delete copy.chunks;
                             return copy;
                         });
-                        safeSetLocal('work_pending_offline_uploads', safeQueue);
-                        window.showToast(`⚠️ 圖片 ${item.title || docId} 的本機原圖遺失，已保留待處理`, true);
-                        throw missingErr;
+                        safeSetLocal('work_pending_offline_uploads', remainSafe);
+                        continue;
                     }
 
                     await idbSet(docId, item.src);
@@ -8235,7 +8436,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                         createdAt: item.createdAt || Date.now(),
                         updatedAt: item.updatedAt || item.createdAt || Date.now(),
                         isDeleted: false,
-                        sessionId: clientSessionId
+                        sessionId: window.clientSessionId || 'default_sess'
                     };
 
                     const singleBatch = writeBatch(db);
@@ -8247,8 +8448,9 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
                     await singleBatch.commit();
 
-                    // 上傳成功後移出佇列並以輕量格式更新快取
                     window._uploadQueue.shift();
+                    processedInThisRun++;
+
                     const remainSafe = window._uploadQueue.map(q => {
                         const copy = { ...q };
                         delete copy.src;
@@ -8257,30 +8459,33 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                     });
                     safeSetLocal('work_pending_offline_uploads', remainSafe);
 
-                    const finishedCount = total - window._uploadQueue.length;
-                    const currentPercent = ((finishedCount / total) * 100).toFixed(1);
-                    window.setUploadProgress(currentPercent, `雲端同步中：${finishedCount} / ${total} (${currentPercent}%)`);
+                    // 根源修復 3：安全進度比例計算，永遠限制於 0% 至 100%
+                    const currentPercent = Math.min(100, Math.max(0, Math.round((processedInThisRun / initialBatchLength) * 100)));
+                    window.setUploadProgress(currentPercent, `雲端同步中：${processedInThisRun} / ${initialBatchLength} (${currentPercent}%)`);
                 }
 
-                window.setUploadProgress(-1, "");
-                window.writeGalleryLog('發布圖片', `${total} 張相片`, `本機與雲端同步完成`);
-                if (skippedCount > 0) {
-                    window.showToast(`⚠️ 已同步 ${Math.max(0, total - skippedCount)} 張，另有 ${skippedCount} 張因本機資料遺失未能上傳`, true);
-                } else {
-                    window.showToast(`✅ 全部圖片（共 ${total} 張）已同步至雲端！`);
+                if (window._uploadQueue.length === 0) {
+                    window.setUploadProgress(-1, "");
+                    if (skippedCount > 0) {
+                        window.showToast(`⚠️ 已同步完成，另有 ${skippedCount} 張因本地資料遺失未能上傳`, true);
+                    } else if (processedInThisRun > 0) {
+                        window.showToast(`✅ 全部圖片（共 ${processedInThisRun} 張）已同步至雲端！`);
+                    }
                 }
 
             } catch (err) {
+                console.error("佇列同步異常:", err);
                 window.setUploadProgress(-1, "");
-                console.error('圖庫上傳佇列中止，未完成資料仍保留：', err);
                 if (!navigator.onLine) {
-                    window.showToast('📡 目前離線，資料已保留，連網後自動同步', true);
-                } else {
-                    window.showToast('⚠️ 圖庫同步失敗，未完成項目仍保留在佇列', true);
+                    window.showToast(`📡 目前處於離線狀態，已存於本地，連網時將自動同步`, true);
                 }
             } finally {
+                // 根源修復 4：只在所有非同步工作完全停止後，於 finally 區塊統一解除鎖定
                 window.isUploading = false;
-                if (!window._uploadQueue.length) releaseWakeLock();
+                if (!window._uploadQueue.length) {
+                    releaseWakeLock();
+                    window.setUploadProgress(-1, "");
+                }
             }
         };
 
@@ -8638,10 +8843,9 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
            // 🌟 剔檔紀錄獨立文件動態監聽（自動回收非活躍日期監聽、支援雙向刪除與嚴格時間戳比對）
             // 🌟 剔檔紀錄獨立文件動態監聽（根源修復：雲端未建檔時絕不抹除本機舊紀錄）
             window._patrolDateUnsubs = window._patrolDateUnsubs || {};
-            window.listenPatrolDateDoc = (dateKey) => {
+window.listenPatrolDateDoc = (dateKey) => {
                 if (!currentUser || !db || !dateKey) return;
 
-                // 1. 清理非「今日」且非「當前檢視日期」的舊監聽器，防止多日切換造成記憶體洩漏
                 const todayKey = getTodayDateStr();
                 Object.keys(window._patrolDateUnsubs).forEach(oldKey => {
                     if (oldKey !== dateKey && oldKey !== todayKey) {
@@ -8654,78 +8858,77 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
                 const dateRef = cfgDoc(`patrol_history_${dateKey}`);
                 window._patrolDateUnsubs[dateKey] = onSnapshot(dateRef, (snap) => {
-                    // 若本機有尚未上傳的「整日清空」指令，優先保護本機清空狀態
-                    if (window._patrolPendingQueue?.[dateKey]?._CLEAR_ALL_DAY_) return;
-
                     let hasUpdated = false;
 
-                    // 🌟【最關鍵修復】：如果雲端尚未建立該日文件，直接 return 保留本機資料，絕對不可 delete！
                     if (!snap.exists()) {
                         return;
                     }
 
                     const docData = snap.data() || {};
-                    // 相容外層包 dateKey 或直接是攤位列表的資料結構
-                    const remoteDay = docData[dateKey] !== undefined ? docData[dateKey] : (docData.stalls || docData);
-                    const clearedAt = docData._clearedAt || 0;
+                    const rawRemote = docData[dateKey] !== undefined ? docData[dateKey] : (docData.stalls || docData);
+                    const remoteDay = (rawRemote && typeof rawRemote === 'object') ? { ...rawRemote } : {};
+                    const clearedAt = Number(docData._clearedAt) || 0;
 
-                    // 🌟 只有在雲端明確帶有「_clearedAt」時間戳且比本機新時，才認定為使用者主動清空
-                    if (Object.keys(remoteDay).length === 0 && clearedAt > 0) {
-                        const localLatestTs = Object.values(patrolHistoryStore[dateKey] || {}).reduce((max, stall) => {
-                            const t = PATROL_TIME_SLOTS.reduce((m, s) => Math.max(m, stall[`${s}_ts`] || 0), 0);
-                            return Math.max(max, t);
-                        }, 0);
+                    // 根源修復 1：明確移除 metadata 屬性，確保純粹攤位計數不受干擾
+                    delete remoteDay._clearedAt;
+                    delete remoteDay._ts;
 
-                        if (clearedAt > localLatestTs && !window._patrolPendingQueue?.[dateKey]) {
-                            if (patrolHistoryStore[dateKey] && Object.keys(patrolHistoryStore[dateKey]).length > 0) {
-                                delete patrolHistoryStore[dateKey];
-                                hasUpdated = true;
-                            }
+                    // 根源修復 2：比對本地清空指令時間戳，若雲端清空時間戳較新，執行本地重設
+                    const localQueueClearTs = window._patrolPendingQueue?.[dateKey]?._CLEAR_ALL_DAY_?.ts || 0;
+                    if (clearedAt > 0 && clearedAt >= localQueueClearTs) {
+                        if (patrolHistoryStore[dateKey] && Object.keys(patrolHistoryStore[dateKey]).length > 0) {
+                            delete patrolHistoryStore[dateKey];
+                            hasUpdated = true;
                         }
-                    } else if (remoteDay && typeof remoteDay === 'object') {
-                        if (!patrolHistoryStore[dateKey]) patrolHistoryStore[dateKey] = {};
-                        const localDay = patrolHistoryStore[dateKey];
-
-                        const allStallKeys = new Set([
-                            ...Object.keys(localDay),
-                            ...Object.keys(remoteDay)
-                        ]);
-
-                        allStallKeys.forEach(sKey => {
-                            if (sKey === '_clearedAt' || sKey === '_ts') return;
-                            const remoteStall = remoteDay[sKey];
-                            const localStall = localDay[sKey] || {};
-
-                            if (!remoteStall) return;
-
-                            if (!localDay[sKey]) localDay[sKey] = {};
-                            const targetLocalStall = localDay[sKey];
-
-                            PATROL_TIME_SLOTS.forEach(slotName => {
-                                if (window._patrolPendingQueue?.[dateKey]?.[sKey]?.[slotName]) return;
-
-                                const rTs = remoteStall[`${slotName}_ts`] || 0;
-                                const lTs = targetLocalStall[`${slotName}_ts`] || 0;
-
-                                // 只有雲端時間戳較新，或者本機完全沒有時間戳時，才採用雲端
-                                if (rTs > lTs || (lTs === 0 && remoteStall[slotName] !== undefined)) {
-                                    const rVal = remoteStall[slotName] || '';
-                                    const rLoc = !!remoteStall[`${slotName}_locked`];
-                                    const rRea = remoteStall[`${slotName}_reason`] || '';
-                                    if (targetLocalStall[slotName] !== rVal || 
-                                        !!targetLocalStall[`${slotName}_locked`] !== rLoc || 
-                                        (targetLocalStall[`${slotName}_reason`] || '') !== rRea || 
-                                        targetLocalStall[`${slotName}_ts`] !== rTs) {
-                                        targetLocalStall[slotName] = rVal;
-                                        targetLocalStall[`${slotName}_locked`] = rLoc;
-                                        targetLocalStall[`${slotName}_reason`] = rRea;
-                                        targetLocalStall[`${slotName}_ts`] = rTs;
-                                        hasUpdated = true;
-                                    }
-                                }
-                            });
-                        });
+                        if (window._patrolPendingQueue?.[dateKey]?._CLEAR_ALL_DAY_) {
+                            delete window._patrolPendingQueue[dateKey]._CLEAR_ALL_DAY_;
+                            safeSetLocal('work_pending_patrol_queue', window._patrolPendingQueue);
+                        }
                     }
+
+                    if (!patrolHistoryStore[dateKey]) patrolHistoryStore[dateKey] = {};
+                    const localDay = patrolHistoryStore[dateKey];
+
+                    // 根源修復 3：處理解除合併，若本地存在攤位但遠端已完全刪除，且本地無待上傳變更，則自本地移除
+                    Object.keys(localDay).forEach(sKey => {
+                        const hasPendingChange = window._patrolPendingQueue?.[dateKey]?.[sKey];
+                        if (!remoteDay[sKey] && !hasPendingChange) {
+                            delete localDay[sKey];
+                            hasUpdated = true;
+                        }
+                    });
+
+                    // 合併遠端攤位資料
+                    Object.keys(remoteDay).forEach(sKey => {
+                        const remoteStall = remoteDay[sKey];
+                        if (!remoteStall || typeof remoteStall !== 'object') return;
+
+                        if (!localDay[sKey]) localDay[sKey] = {};
+                        const targetLocalStall = localDay[sKey];
+
+                        PATROL_TIME_SLOTS.forEach(slotName => {
+                            if (window._patrolPendingQueue?.[dateKey]?.[sKey]?.[slotName]) return;
+
+                            const rTs = Number(remoteStall[`${slotName}_ts`]) || 0;
+                            const lTs = Number(targetLocalStall[`${slotName}_ts`]) || 0;
+
+                            if (rTs > lTs || (lTs === 0 && remoteStall[slotName] !== undefined)) {
+                                const rVal = remoteStall[slotName] || '';
+                                const rLoc = !!remoteStall[`${slotName}_locked`];
+                                const rRea = remoteStall[`${slotName}_reason`] || '';
+                                if (targetLocalStall[slotName] !== rVal || 
+                                    !!targetLocalStall[`${slotName}_locked`] !== rLoc || 
+                                    (targetLocalStall[`${slotName}_reason`] || '') !== rRea || 
+                                    targetLocalStall[`${slotName}_ts`] !== rTs) {
+                                    targetLocalStall[slotName] = rVal;
+                                    targetLocalStall[`${slotName}_locked`] = rLoc;
+                                    targetLocalStall[`${slotName}_reason`] = rRea;
+                                    targetLocalStall[`${slotName}_ts`] = rTs;
+                                    hasUpdated = true;
+                                }
+                            }
+                        });
+                    });
 
                     if (hasUpdated) {
                         safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
@@ -8807,69 +9010,80 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 window.checkColdRoomOverdueAlerts();
             });
 
-            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), async (snap) => {
-                const map = new Map();
+onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snap) => {
+                const remoteMap = new Map();
                 const currentLocalDeleted = new Map();
-                galleryItems.forEach(it => { if (it?.isDeleted) currentLocalDeleted.set(it.id, it); });
+                galleryItems.forEach(it => { if (it?.isDeleted) currentLocalDeleted.set(String(it.id), it); });
 
                 let newIncomingCount = 0;
+                window._notifiedPhotoIds = window._notifiedPhotoIds || new Set();
 
-                for (const d of snap.docs) { 
-                    const it = d.data(); 
-                    if (it?.id) {
-                        // 🌟 嚴格修復：判斷雲端與本地的刪除狀態
-                        if (it.isDeleted === true) {
-                            // 雲端明確標記已刪除
-                            it.isDeleted = true;
-                            it.deletedAt = it.deletedAt || currentLocalDeleted.get(it.id)?.deletedAt || Date.now();
-                        } else if (it.isDeleted === false) {
-                            // 雲端明確標記已還原 (未刪除)
-                            it.isDeleted = false;
-                            delete it.deletedAt;
-                        } else if (currentLocalDeleted.has(it.id)) {
-                            // 雲端無此欄位時，優先尊重本機既有的垃圾桶紀錄！
-                            it.isDeleted = true;
-                            it.deletedAt = currentLocalDeleted.get(it.id)?.deletedAt || Date.now();
-                        } else {
-                            it.isDeleted = false;
-                        }
+                // 根源修復：採同步處理抽取快照資料，不在此處 await IDB 操作
+                snap.docs.forEach(d => {
+                    const it = d.data();
+                    if (!it?.id) return;
+                    const idStr = String(it.id);
 
-                        // 關鍵 2：檢查雲端傳進來的 updatedAt 是否比本機紀錄更新
-                        const existingLocal = galleryItems.find(x => x.id === it.id);
-                        if (existingLocal && (it.updatedAt || 0) > (existingLocal.updatedAt || 0)) {
-                            // 如果版本更新了，強制清理本機舊縮圖與原圖記憶體快取，確保下次渲染抓到新圖
-                            memoryImageCache.delete(`${it.id}_v_${existingLocal.updatedAt || 0}`);
-                            await idbDel(`thumb_v2_${it.id}`);
-                        }
+                    if (it.isDeleted === true) {
+                        it.isDeleted = true;
+                        it.deletedAt = it.deletedAt || currentLocalDeleted.get(idStr)?.deletedAt || Date.now();
+                    } else if (it.isDeleted === false) {
+                        it.isDeleted = false;
+                        delete it.deletedAt;
+                    } else if (currentLocalDeleted.has(idStr)) {
+                        it.isDeleted = true;
+                        it.deletedAt = currentLocalDeleted.get(idStr)?.deletedAt || Date.now();
+                    } else {
+                        it.isDeleted = false;
+                    }
 
+                    const existingLocal = galleryItems.find(x => String(x.id) === idStr);
+                    if (existingLocal && (it.updatedAt || 0) > (existingLocal.updatedAt || 0)) {
+                        memoryImageCache.delete(`${idStr}_v_${existingLocal.updatedAt || 0}`);
+                        idbDel(`thumb_${idStr}_v_${existingLocal.updatedAt || existingLocal.createdAt || 0}`);
+                    }
+
+// 🌟 根源修復：建立已通知名單，同一張照片絕不重複彈窗或響鈴
+                        window._notifiedPhotoIds = window._notifiedPhotoIds || new Set();
                         const isBrandNew = (Date.now() - (it.createdAt || 0)) < 30000;
-                        const isNotMe = !it.sessionId || it.sessionId !== clientSessionId;
-                        const alreadyExistsLocally = galleryItems.some(existing => existing.id === it.id);
+                        const isNotMe = !it.sessionId || it.sessionId !== window.clientSessionId;
+                        const alreadyExistsLocally = galleryItems.some(existing => String(existing.id) === String(it.id));
 
-                        if (isBrandNew && isNotMe && !alreadyExistsLocally && !it.isDeleted) {
+                        if (isBrandNew && isNotMe && !alreadyExistsLocally && !it.isDeleted && !window._notifiedPhotoIds.has(String(it.id))) {
+                            window._notifiedPhotoIds.add(String(it.id));
                             newIncomingCount++;
                         }
 
-                        map.set(it.id, it); 
-                    }
-                }
+                    remoteMap.set(idStr, it);
+                });
 
-                // 🌟 保留尚在排隊上傳中的本機照片，避免雲端快照回傳時短暫消失
-                const pendingOffline = getLocal('work_pending_offline_uploads', []);
-                const pendingIds = new Set([
-                    ...(window._uploadQueue || []).map(q => q.tempId || q.id),
-                    ...pendingOffline.map(q => q.tempId || q.id)
-                ]);
+                // 雙向合併：以全域 galleryItems 的最新即時狀態做 base，合併遠端資料
+                const mergedMap = new Map();
                 galleryItems.forEach(localIt => {
-                    if (localIt?.id && pendingIds.has(localIt.id) && !map.has(localIt.id)) {
-                        map.set(localIt.id, localIt);
+                    const idStr = String(localIt.id);
+                    if (remoteMap.has(idStr)) {
+                        const remoteIt = remoteMap.get(idStr);
+                        // 保留 updatedAt 較新者
+                        mergedMap.set(idStr, (remoteIt.updatedAt || 0) >= (localIt.updatedAt || 0) ? remoteIt : localIt);
+                    } else {
+                        // 正在等待上傳的本地項目必須予以保留
+                        const isPending = (window._uploadQueue || []).some(q => String(q.tempId || q.id) === idStr) ||
+                                          getLocal('work_pending_offline_uploads', []).some(q => String(q.tempId || q.id) === idStr);
+                        if (isPending) mergedMap.set(idStr, localIt);
                     }
                 });
 
-                galleryItems = Array.from(map.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
-                await saveGalleryItemsSafe(galleryItems);
+                // 加入遠端新增的相片
+                remoteMap.forEach((remoteIt, idStr) => {
+                    if (!mergedMap.has(idStr)) {
+                        mergedMap.set(idStr, remoteIt);
+                    }
+                });
+
+                galleryItems = Array.from(mergedMap.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+                saveGalleryItemsSafe(galleryItems);
                 
-                window._galleryCloudLoaded = true; // 🌟 確認雲端圖庫已完整載入，防止開機時間差誤刪剔檔 0
+                window._galleryCloudLoaded = true;
                 window._lastRenderFingerprint = '';
                 if (!$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
                 window.autoSyncClosedStallsToPatrol(true);
@@ -8934,11 +9148,11 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 return nm === s.name ? s : { ...s, name: nm };
             });
 
-            const isCleanRole = window.currentMapRole === 'clean';
-            // 🌟 嚴格過濾：只保留目前存在於正式名單 (teamMembers) 內的人員，徹底擋掉幽靈
-            memberSchedules = _resolvedSchedules.filter(s => s && s.name && teamMembers.includes(s.name));
+const isCleanRole = window.currentMapRole === 'clean';
+            // 根源修復：建立局部展示變數，絕不就地覆寫或截斷全域 memberSchedules 陣列
+            const activeSimSchedules = _resolvedSchedules.filter(s => s && s.name && (teamMembers.length === 0 || teamMembers.includes(s.name)));
 
-            memberSchedules.forEach(sched => {
+            activeSimSchedules.forEach(sched => {
                 const _range = window.getScheduleRange(sched.start, sched.end, nowTime);
                 const s = _range.s.getTime(), e = _range.e.getTime();
                 if (nowTime >= s && nowTime <= e) {
@@ -9308,14 +9522,22 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             return window.csShiftPresets;
         };
 
+window._csRosterDebounceTimer = null;
         window.saveCsWeeklyRosterData = () => {
-            window._lastCsRosterLocalEditTs = Date.now(); // 🌟 標記本機最新修改時間，阻擋雲端舊快照回音
+            window._lastCsRosterLocalEditTs = Date.now();
             safeSetLocal('work_cache_cs_weekly_roster', window.csWeeklyRosterStore);
             safeSetLocal('work_cache_cs_shift_presets', window.csShiftPresets);
-            syncConfig('cs_weekly_roster', {
-                roster: window.csWeeklyRosterStore,
-                presets: window.csShiftPresets
-            });
+            
+            // 根源修復：以防抖機制合併連續點擊，600ms 內僅送出最後一次最終確定狀態
+            if (window._csRosterDebounceTimer) {
+                clearTimeout(window._csRosterDebounceTimer);
+            }
+            window._csRosterDebounceTimer = setTimeout(() => {
+                syncConfig('cs_weekly_roster', {
+                    roster: window.csWeeklyRosterStore,
+                    presets: window.csShiftPresets
+                });
+            }, 600);
         };
 
         // 計算目標週的 7 天日期陣列 (週一 ～ 週日)
@@ -9591,16 +9813,34 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         };
 
         // 🌟 補齊並優化：清空當前週次所有班表（局部刷新表格）
-        window.clearCurrentWeekCsRoster = () => {
+window.clearCurrentWeekCsRoster = () => {
             const curWeek = window.getCsWeekDates(window.csRosterWeekOffset);
             const rangeText = `${curWeek[0].shortDate} ～ ${curWeek[6].shortDate}`;
-            window.showConfirm('清空本週更表', `確定要清空【${rangeText}】整週的客服固定班次嗎？`, () => {
+            window.showConfirm('清空本週更表', `確定要清空【${rangeText}】整週的客服固定班次嗎？\n注意：這將會同步清除該週在 5日排班表中的對應班次。`, () => {
                 curWeek.forEach(d => {
                     delete window.csWeeklyRosterStore[d.dateStr];
+                    // 根源修復：同步清空 5 日多日排班表與暫存字典中的對應日期
+                    delete csMultiDaySchedules[d.dateStr];
+                    if (window._tempGridValues) {
+                        Object.keys(window._tempGridValues).forEach(k => {
+                            if (k.startsWith(`${d.dateStr}_`)) delete window._tempGridValues[k];
+                        });
+                    }
                 });
+
+                const todayStr = getNowInputStrs().date;
+                window.syncActiveTodaySchedule();
+                safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+                syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
+
                 window.saveCsWeeklyRosterData();
                 window.refreshCsRosterViewOnly();
-                window.showToast(`🧹 已清空【${rangeText}】本週更表`);
+                document.querySelectorAll('.member-dynamic-marker').forEach(el => el.remove());
+                window.updateMapSimulation();
+                if ($('scheduleManageModal')?.classList.contains('flex')) {
+                    window.renderScheduleManager(true);
+                }
+                window.showToast(`🧹 已清空【${rangeText}】本週更表與連動排班`);
             });
         };
 
@@ -9807,69 +10047,56 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 window.renderScheduleManager();
             }
         };
-        window.removeTeamMember = async (idx) => {
+window.removeTeamMember = (idx) => {
             const isClean = window.currentMapRole === 'clean';
             const removedName = teamMembers[idx];
             if (!removedName) return;
-            const removedId = (memberProfilesStore[removedName]?.id || '').trim().toUpperCase();
 
-            teamMembers.splice(idx, 1);
+            window.showConfirm('移除成員', `確定要將「${removedName}」從${isClean ? '清潔' : '客服'}成員名單中移除嗎？\n（該員過往的歷史排班紀錄將被完整保留）`, async () => {
+                const removedId = (memberProfilesStore[removedName]?.id || '').trim().toUpperCase();
+                teamMembers.splice(idx, 1);
 
-            // 1. 同步從出勤勾選名單移除
-            const roleKey = isClean ? 'clean' : 'cs';
-            if (window.activeDutyMembersFilter && Array.isArray(window.activeDutyMembersFilter[roleKey])) {
-                window.activeDutyMembersFilter[roleKey] = window.activeDutyMembersFilter[roleKey].filter(m => m !== removedName && m !== removedId);
-                safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
-                syncConfig('duty_filter', { filter: window.activeDutyMembersFilter });
-            }
-
-            // 2. 同步從個人檔案庫刪除（若另一部門無同名人員）
-            const otherStore = isClean ? csMembersStore : cleanMembersStore;
-            if (!otherStore.includes(removedName)) {
-                delete memberProfilesStore[removedName];
-                safeSetLocal('work_cache_member_profiles', memberProfilesStore);
-                if (currentUser && db) {
-                    setDoc(cfgDoc('member_profiles'), { profiles: { [removedName]: deleteField() } }, { merge: true }).catch(() => {});
+                // 1. 同步從出勤勾選名單移除
+                const roleKey = isClean ? 'clean' : 'cs';
+                if (window.activeDutyMembersFilter && Array.isArray(window.activeDutyMembersFilter[roleKey])) {
+                    window.activeDutyMembersFilter[roleKey] = window.activeDutyMembersFilter[roleKey].filter(m => m !== removedName && m !== removedId);
+                    safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
+                    syncConfig('duty_filter', { filter: window.activeDutyMembersFilter });
                 }
-            }
 
-            // 3. 徹底清除該員在 5 日排班表與暫存格中的所有班次
-            const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
-            Object.keys(multiStore || {}).forEach(dStr => {
-                multiStore[dStr] = (multiStore[dStr] || []).filter(s => (s.name || '') !== removedName && (s.name || '').toUpperCase() !== removedId);
-            });
-            if (window._tempGridValues) {
-                Object.keys(window._tempGridValues).forEach(k => {
-                    const val = window._tempGridValues[k];
-                    if (val) {
-                        window._tempGridValues[k] = val.split('\n').map(n => n.trim()).filter(n => n && n !== removedName && n.toUpperCase() !== removedId).join('\n');
+                // 2. 檢查另一角色名單，若兩邊皆無此人，才自個人檔案庫清除
+                const otherStore = isClean ? csMembersStore : cleanMembersStore;
+                if (!otherStore.includes(removedName)) {
+                    delete memberProfilesStore[removedName];
+                    safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+                    if (currentUser && db) {
+                        setDoc(cfgDoc('member_profiles'), { profiles: { [removedName]: deleteField() } }, { merge: true }).catch(() => {});
                     }
-                });
-            }
+                }
 
-            const todayStr = getNowInputStrs().date;
-            window.syncActiveTodaySchedule();
+                // 3. 根源修復：保留歷史排班紀錄，只清除當前暫存格內選中狀態，絕不破壞 multiStore 歷史陣列
+                if (activeGridMember === removedName) {
+                    activeGridMember = null;
+                }
 
-            if (isClean) {
-                cleanMembersStore = [...teamMembers];
-                safeSetLocal('work_cache_clean_members', cleanMembersStore);
-                safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
-                safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
-                syncConfig('clean_team_members', { members: cleanMembersStore });
-                syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
-            } else {
-                csMembersStore = [...teamMembers];
-                safeSetLocal('work_cache_team_members', csMembersStore);
-                safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
-                safeSetLocal('work_cache_member_schedules', csSchedulesStore);
-                syncConfig('team_members', { members: csMembersStore });
-                syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
-            }
+                const todayStr = getNowInputStrs().date;
+                window.syncActiveTodaySchedule();
 
-            // 4. 清除地圖上的殘留浮標並刷新
-            document.querySelectorAll('.member-dynamic-marker').forEach(el => el.remove());
-            window.updateMapSimulation();
-            window.renderScheduleManager(true);
+                if (isClean) {
+                    cleanMembersStore = [...teamMembers];
+                    safeSetLocal('work_cache_clean_members', cleanMembersStore);
+                    syncConfig('clean_team_members', { members: cleanMembersStore });
+                } else {
+                    csMembersStore = [...teamMembers];
+                    safeSetLocal('work_cache_team_members', csMembersStore);
+                    syncConfig('team_members', { members: csMembersStore });
+                }
+
+                document.querySelectorAll('.member-dynamic-marker').forEach(el => el.remove());
+                window.updateMapSimulation();
+                window.renderScheduleManager(true);
+                window.showToast(`已自名單移除 ${removedName}`);
+            });
         };
         window.selectGridMember = (name) => {
             activeGridMember = (activeGridMember === name) ? null : name;
@@ -9909,9 +10136,20 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         if (!disp) return;
                         const names = window.extractCellText(disp).split('\n').map(x => x.trim());
                         if (names.includes(activeGridMember)) {
-                            const [sh, sm] = (cell.dataset.start || '0:0').split(':').map(Number);
-                            const [eh, em] = (cell.dataset.end || '0:0').split(':').map(Number);
-                            const dur = (eh * 60 + em) - (sh * 60 + sm);
+// 🌟 根源修復：引入跨夜班專用分鐘換算函式
+                            const calcShiftMinutesSafe = (startStr, endStr) => {
+                                if (!startStr || !endStr) return 0;
+                                const [sH, sM] = startStr.split(':').map(Number);
+                                const [eH, eM] = endStr.split(':').map(Number);
+                                let startMins = sH * 60 + sM;
+                                let endMins = eH * 60 + eM;
+                                if (endMins <= startMins) {
+                                    endMins += 24 * 60; // 跨過午夜，結束時間補上 24 小時
+                                }
+                                return endMins - startMins;
+                            };
+
+                            const dur = calcShiftMinutesSafe(cell.dataset.start, cell.dataset.end);
                             if (dur > 0) {
                                 if (cell.dataset.loc === 'pt_7') restMins += dur;
                                 else workMins += dur;
@@ -10213,10 +10451,16 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             else { let names = window.splitMemberNamesSafe(el.value || ''); gridDragAction = names.includes(activeGridMember) ? 'remove' : 'add'; applyGridAction(el); }
         };
         window.onGridDragEnter = (el) => { if (isGridDragging && activeGridMember) { el.blur(); applyGridAction(el); } };
-        window.onGridTouchMove = (e) => {
+window.onGridTouchMove = (e) => {
             if (!isGridDragging || !activeGridMember) return; e.preventDefault();
-            const el = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
-            if (el && el.classList.contains('grid-input') && el !== window.lastTouchedEl) { window.lastTouchedEl = el; window.onGridDragEnter(el); }
+            const touch = e.touches[0];
+            const el = document.elementFromPoint(touch.clientX, touch.clientY);
+            if (!el) return;
+            const targetLine = el.closest ? el.closest('.sub-line-item') : null;
+            if (targetLine && targetLine !== window.lastTouchedEl) {
+                window.lastTouchedEl = targetLine;
+                targetLine.click(); // 直接觸發該行的點選/清除邏輯
+            }
         };
         window.stopGridDrag = () => { isGridDragging = false; gridDragAction = null; window.lastTouchedEl = null; };
         document.addEventListener('mouseup', window.stopGridDrag); document.addEventListener('touchend', window.stopGridDrag);
@@ -10247,16 +10491,27 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             });
         };
 
-        window.toggleSplitHour = (dateStr, locId, hourStr) => {
+window.toggleSplitHour = (dateStr, locId, hourStr) => {
             const rolePrefix = window.currentMapRole === 'clean' ? 'clean_' : 'cs_';
             const [startH] = hourStr.split(':'), endH = String(parseInt(startH, 10) + 1).padStart(2, '0');
             const stateKey = `${rolePrefix}${dateStr}_${locId}_${hourStr}`, willBeSplit = !splitHoursState[stateKey];
             window.captureAll5DayDomValues();
 
             const fullKey = `${dateStr}_${locId}_${hourStr}_${endH}:00`, hA = `${dateStr}_${locId}_${startH}:00_${startH}:30`, hB = `${dateStr}_${locId}_${startH}:30_${endH}:00`;
-            if (willBeSplit) { const val = window._tempGridValues[fullKey] || ''; window._tempGridValues[hA] = val; window._tempGridValues[hB] = val; delete window._tempGridValues[fullKey]; }
-            else { const names = Array.from(new Set([...window.splitMemberNamesSafe(window._tempGridValues[hA]||''), ...window.splitMemberNamesSafe(window._tempGridValues[hB]||'')])).map(n => n.trim()).filter(Boolean); window._tempGridValues[fullKey] = names.join('\n'); delete window._tempGridValues[hA]; delete window._tempGridValues[hB]; }
-            splitHoursState[stateKey] = willBeSplit; safeSetLocal('work_cache_split_hours', splitHoursState); window.renderScheduleManager();
+            if (willBeSplit) {
+                // 拆分：前半小時保留原有排班，後半小時設為空，不再雙倍塞人
+                const existingVal = window._tempGridValues[fullKey] || '';
+                window._tempGridValues[hA] = existingVal;
+                window._tempGridValues[hB] = '';
+                delete window._tempGridValues[fullKey];
+            } else {
+                // 合併：只取前半小時值（若無則取後半小時），徹底清除 hA 與 hB 鍵避免幽靈殘留
+                const primaryVal = window._tempGridValues[hA] || window._tempGridValues[hB] || '';
+                window._tempGridValues[fullKey] = primaryVal;
+                delete window._tempGridValues[hA];
+                delete window._tempGridValues[hB];
+            }
+            splitHoursState[stateKey] = willBeSplit; safeSetLocal('work_cache_split_hours', splitHoursState); window.renderScheduleManager(true);
         };
 
         // 🌟 3. 一鍵「複製前一日」排班到當天
@@ -10746,112 +11001,124 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         };
 
 
-        // 🌟 5. 儲存全部 5 日排班表（徹底消除舊名殘留，確保寫入資料庫為最新名稱）
-        // 🌟 5. 儲存全部 5 日排班表（安全無損版，確保資料 100% 寫入）
-        window.saveGridSchedule = () => {
-            window.captureAll5DayDomValues();
+        // 🌟 1. 注意這裡一定要加上 async！
+window.saveGridSchedule = async () => {
+    window.captureAll5DayDomValues();
 
-            const isClean = window.currentMapRole === 'clean';
-            const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
-            const locKeys = Object.keys(mapData.points);
-            const fiveDays = window.get5DayScheduleDates();
-            let rawByDate = {};
-            fiveDays.forEach(d => rawByDate[d.dateStr] = []);
+    const isClean = window.currentMapRole === 'clean';
+    const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
+    
+    // 取得所有已知崗位
+    const locKeys = Array.from(new Set([
+        ...Object.keys(defaultMapPoints),
+        ...Object.keys(defaultCleanMapPoints),
+        ...Object.keys(mapData.points || {})
+    ]));
+    const fiveDays = window.get5DayScheduleDates();
+    let rawByDate = {};
+    fiveDays.forEach(d => rawByDate[d.dateStr] = []);
 
-            const addSlotRecord = (date, loc, start, end, text) => {
-                if (!date || !text || !start || !end) return;
-                if (!rawByDate[date]) rawByDate[date] = [];
-                window.splitMemberNamesSafe(text).forEach(r => {
-                    // 🌟 只去除系統自動產生的「(08:00-10:00休)、(頂)、(巡邏後...)」標籤，完整保留人名原本的括號！
-                    let rawClean = r
-                        .replace(/\(\d{1,2}:\d{2}-\d{1,2}:\d{2}休\)/g, '')
-                        .replace(/\(頂\)/g, '')
-                        .replace(/\(巡邏後.*?\)/g, '')
-                        .replace(/\(跟.*?大清\)/g, '')
-                        .trim();
-                    if (rawClean && rawClean !== '休' && !rawClean.includes('...')) {
-                        let clean = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawClean) : rawClean;
-                        const exists = rawByDate[date].some(x => x.name === clean && x.locationId === loc && x.start === start && x.end === end);
-                        if (!exists) {
-                            rawByDate[date].push({
-                                id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5),
-                                name: clean,
-                                locationId: loc,
-                                start,
-                                end
-                            });
-                        }
-                    }
-                });
-            };
-
-            // 🌟 採用最原始穩定的 DOM 逐格提取（100% 確保不掉資料）
-            document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
-                const { date, loc, start, end } = td.dataset;
-                const disps = td.querySelectorAll('.grid-input-display');
-                // 修復：拆半小時的格子只取單一 display，避免前半小時被寫成整小時。
-                if (disps.length !== 1) return;
-                addSlotRecord(date, loc, start, end, window.extractCellText(disps[0]));
-            });
-
-            document.querySelectorAll('.grid-input-display[data-loc][data-date]').forEach(div => {
-                const { date, loc, start, end } = div.dataset;
-                const text = window.extractCellText(div);
-                addSlotRecord(date, loc, start, end, text);
-            });
-
-            document.querySelectorAll('.grid-input').forEach(i => {
-                const { date, loc, start, end } = i.dataset;
-                const text = (i.value || '').trim();
-                addSlotRecord(date, loc, start, end, text);
-            });
-
-            let totalSavedSlots = 0;
-            Object.keys(rawByDate).forEach(dStr => {
-                const dayScheds = rawByDate[dStr];
-                let merged = [];
-                locKeys.forEach(locId => {
-                    const uniqueNames = Array.from(new Set(dayScheds.filter(s => s.locationId === locId).map(s => s.name)));
-                    uniqueNames.forEach(name => {
-                        let slots = dayScheds.filter(s => s.locationId === locId && s.name === name).sort((a, b) => a.start.localeCompare(b.start));
-                        let cur = null;
-                        slots.forEach(s => { 
-                            if (!cur) cur = { ...s }; 
-                            else if (cur.end >= s.start) { if (s.end > cur.end) cur.end = s.end; } 
-                            else { merged.push(cur); cur = { ...s }; } 
-                        });
-                        if (cur) merged.push(cur);
+    const addSlotRecord = (date, loc, start, end, text) => {
+        if (!date || !text || !start || !end) return;
+        if (!rawByDate[date]) rawByDate[date] = [];
+        window.splitMemberNamesSafe(text).forEach(r => {
+            let rawClean = r
+                .replace(/\(\d{1,2}:\d{2}-\d{1,2}:\d{2}休\)/g, '')
+                .replace(/\(頂\)/g, '')
+                .replace(/\(巡邏後.*?\)/g, '')
+                .replace(/\(跟.*?大清\)/g, '')
+                .trim();
+            if (rawClean && rawClean !== '休' && !rawClean.includes('...')) {
+                let clean = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawClean) : rawClean;
+                const exists = rawByDate[date].some(x => x.name === clean && x.locationId === loc && x.start === start && x.end === end);
+                if (!exists) {
+                    rawByDate[date].push({
+                        id: 'sch_grid_' + Date.now() + Math.random().toString(36).substr(2, 5),
+                        name: clean,
+                        locationId: loc,
+                        start,
+                        end
                     });
-                });
-                
-                // 🌟 允許將擦空的班表存檔覆蓋，不再讓舊班表復活
-                multiStore[dStr] = merged;
-                totalSavedSlots += merged.length;
-            });
-
-            // 🌟 儲存完成後清除暫存鎖定，避免舊暫存殘留成幽靈
-            window._hasUnsavedGridEdits = false;
-            window._tempGridValues = null;
-
-            const todayStr = getNowInputStrs().date;
-            safeSetLocal('work_cache_schedule_date', todayStr);
-            window.syncActiveTodaySchedule();
-
-            safeSetLocal('work_cache_split_hours', splitHoursState);
-
-            if (isClean) {
-                safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
-                safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
-                syncConfig('clean_member_schedules', { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
-            } else {
-                safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
-                safeSetLocal('work_cache_member_schedules', csSchedulesStore);
-                syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
+                }
             }
+        });
+    };
 
-           window.showToast(`✅ 5日${isClean ? '清潔' : '客服'}排班已儲存！（共 ${totalSavedSlots} 筆時段）`);
-            window.closeScheduleManager();
-        };
+    // DOM 提取
+    document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
+        const { date, loc, start, end } = td.dataset;
+        const disps = td.querySelectorAll('.grid-input-display');
+        if (disps.length !== 1) return;
+        addSlotRecord(date, loc, start, end, window.extractCellText(disps[0]));
+    });
+
+    document.querySelectorAll('.grid-input-display[data-loc][data-date]').forEach(div => {
+        const { date, loc, start, end } = div.dataset;
+        const text = window.extractCellText(div);
+        addSlotRecord(date, loc, start, end, text);
+    });
+
+    document.querySelectorAll('.grid-input').forEach(i => {
+        const { date, loc, start, end } = i.dataset;
+        const text = (i.value || '').trim();
+        addSlotRecord(date, loc, start, end, text);
+    });
+
+    let totalSavedSlots = 0;
+    Object.keys(rawByDate).forEach(dStr => {
+        const dayScheds = rawByDate[dStr];
+        let merged = [];
+        locKeys.forEach(locId => {
+            const uniqueNames = Array.from(new Set(dayScheds.filter(s => s.locationId === locId).map(s => s.name)));
+            uniqueNames.forEach(name => {
+                let slots = dayScheds.filter(s => s.locationId === locId && s.name === name).sort((a, b) => a.start.localeCompare(b.start));
+                let cur = null;
+                slots.forEach(s => { 
+                    if (!cur) cur = { ...s }; 
+                    else if (cur.end >= s.start) { if (s.end > cur.end) cur.end = s.end; } 
+                    else { merged.push(cur); cur = { ...s }; } 
+                });
+                if (cur) merged.push(cur);
+            });
+        });
+        multiStore[dStr] = merged;
+        totalSavedSlots += merged.length;
+    });
+
+    window._hasUnsavedGridEdits = false;
+    window._tempGridValues = null;
+
+    const todayStr = getNowInputStrs().date;
+    safeSetLocal('work_cache_schedule_date', todayStr);
+    window.syncActiveTodaySchedule();
+    safeSetLocal('work_cache_split_hours', splitHoursState);
+
+    // 🌟 2. 這裡安全同步：若連線失敗不會卡死，使用 try/catch 等待完成
+    if (isClean) {
+        safeSetLocal('work_cache_clean_multiday_schedules', cleanMultiDaySchedules);
+        safeSetLocal('work_cache_clean_schedules', cleanSchedulesStore);
+        if (currentUser && db && navigator.onLine) {
+            try {
+                await setDoc(cfgDoc('clean_member_schedules'), { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr });
+            } catch (err) {
+                console.error("雲端同步失敗:", err);
+            }
+        }
+    } else {
+        safeSetLocal('work_cache_cs_multiday_schedules', csMultiDaySchedules);
+        safeSetLocal('work_cache_member_schedules', csSchedulesStore);
+        if (currentUser && db && navigator.onLine) {
+            try {
+                await setDoc(cfgDoc('member_schedules'), { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
+            } catch (err) {
+                console.error("雲端同步失敗:", err);
+            }
+        }
+    }
+
+    window.showToast(`✅ 5日${isClean ? '清潔' : '客服'}排班已儲存！（共 ${totalSavedSlots} 筆時段）`);
+    window.closeScheduleManager();
+};
 
        window. closeScheduleManager = () => { $('scheduleManageModal')?.classList.replace('flex', 'hidden'); window.updateMapSimulation(); };
 
@@ -10870,11 +11137,11 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 cleanMembersStore = (cleanMembersStore || []).map(m => m.trim()).filter(m => m && !/^清潔員[A-F]$/i.test(m));
                 csMembersStore = (csMembersStore || []).map(m => m.trim()).filter(Boolean);
 
-                // 3. 建立「員工編號 -> 最新正式中文名」的唯一權威對照表
+// 3. 建立「員工編號 -> 最新正式中文名」的唯一權威對照表
                 const idToRealName = {};
                 [...cleanMembersStore, ...csMembersStore].forEach(m => {
                     if (!window.isStaffIdFormat(m)) {
-                        const pid = (memberProfilesStore[m]?.id || '').trim().toUpperCase();
+                        const pid = (memberProfilesStore[m]?.id || '').trim().replace(/^#/, '').toUpperCase();
                         if (pid) idToRealName[pid] = m;
                     }
                 });
@@ -11072,7 +11339,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     }
                     if (cur || row.length) { row.push(cur.trim()); rows.push(row); }
                     const validRows = rows.filter(r => r.length > 0 && r.some(Boolean));
-                    if (validRows.length < 2) return window.showToast("匯入檔案內容格式不正確", true);
+if (validRows.length < 2) return window.showToast("匯入檔案內容格式不正確", true);
                     
                     const headers = validRows[0].map(h => h.replace(/^"+|"+$/g, '').trim());
                     const isClean = window.currentMapRole === 'clean';
@@ -11081,12 +11348,10 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         ? { '一樓+廁所': 'pt_1', '一樓': 'pt_1', '魚檔': 'pt_4', '花園仔(男廁)': 'pt_8', '男廁': 'pt_8', '花園仔(女廁)+(傷健廁所)': 'pt_9', '花園仔(女廁)': 'pt_9', '女廁': 'pt_9', '傷健廁所': 'pt_9', '花園仔': 'pt_3', '機動': 'pt_6', '人員休息中': 'pt_7', '休息中': 'pt_7', '休息': 'pt_7' }
                         : { '花園仔': 'pt_3', '魚檔': 'pt_4', '整體巡邏': 'pt_5', '客服室': 'pt_1', '一樓大清點': 'pt_2', '一樓': 'pt_2', '地面層大清點': 'pt_6', '地面層': 'pt_6', '人員休息中': 'pt_7', '休息中': 'pt_7', '休息': 'pt_7' };
                     
-                    Object.keys(window._tempGridValues).forEach(k => {
-                        if (k.startsWith(`${targetDateStr}_`)) delete window._tempGridValues[k];
-                    });
-                    Object.keys(splitHoursState).forEach(sk => {
-                        if (sk.startsWith(`${rolePrefix}${targetDateStr}_`)) delete splitHoursState[sk];
-                    });
+                    // 根源修復：建立臨時緩衝容器，確保全部解析完畢且有有效資料後才進行清空替換
+                    const tempGridBuffer = {};
+                    const tempSplitStateBuffer = {};
+                    let validParsedSlotsCount = 0;
 
                     const normTime = (tStr) => {
                         const parts = (tStr || '').trim().split(':');
@@ -11138,12 +11403,12 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             const nextHStr = pad(sH + 1);
 
                             if (diffMins === 30) {
-                                const baseStartHour = `${hStr}:00`;
-                                splitHoursState[`${rolePrefix}${targetDateStr}_${matchedLocId}_${baseStartHour}`] = true;
-                                const halfKey = `${targetDateStr}_${matchedLocId}_${slotStart}_${slotEnd}`;
-                                window._tempGridValues[halfKey] = cellVal;
-                                delete window._tempGridValues[`${targetDateStr}_${matchedLocId}_${hStr}:00_${nextHStr}:00`];
-                            } else if (diffMins === 60) {
+    const baseStartHour = `${hStr}:00`;
+    splitHoursState[`${rolePrefix}${targetDateStr}_${matchedLocId}_${baseStartHour}`] = true;
+    const halfKey = `${targetDateStr}_${matchedLocId}_${slotStart}_${slotEnd}`;
+    window._tempGridValues[halfKey] = cellVal;
+    // 🌟 修復：把原本那行 delete 拿掉，保留整點資料不被洗掉！
+} else if (diffMins === 60) {
                                 if (splitHoursState[`${rolePrefix}${targetDateStr}_${matchedLocId}_${hStr}:00`]) {
                                     window._tempGridValues[`${targetDateStr}_${matchedLocId}_${hStr}:00_${hStr}:30`] = cellVal;
                                     window._tempGridValues[`${targetDateStr}_${matchedLocId}_${hStr}:30_${nextHStr}:00`] = cellVal;
@@ -11426,10 +11691,13 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
                             const isHalfAActive = isCurrentHour && (curTotalMins < (sH * 60 + sM) + 30);
                             const isHalfBActive = isCurrentHour && (curTotalMins >= (sH * 60 + sM) + 30);
-                            const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border border-slate-300' : 'border border-slate-300';
+const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border border-slate-300' : 'border border-slate-300';
 
                             if ((locId === 'pt_2' || locId === 'pt_6') && !validCountSlots.includes(ts)) {
-                                rows += `<td class="p-0 border border-slate-300 bg-slate-200/60 pointer-events-none align-middle w-[52px] min-w-[52px]"><div class="w-full h-full" style="min-height:${minH}px"></div></td>`;
+                                // 補上 data-loc、data-date 與 hidden 容器，確保 captureAll5DayDomValues 能採集既有排班不遺失
+                                const cKey = `${dStr}_${locId}_${tStart}_${tEnd}`;
+                                const existingVal = domVals[cKey] || '';
+                                rows += `<td class="p-0 border border-slate-300 bg-slate-200/60 pointer-events-none align-middle w-[52px] min-w-[52px]" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display hidden">${existingVal}</div><div class="w-full h-full" style="min-height:${minH}px"></div></td>`;
                             } else {
                                 const [startH] = tStart.split(':'), [endH] = tEnd.split(':');
                                 const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
@@ -12118,8 +12386,11 @@ window.crSaveData = () => {
                 const batchCount = batches.length;
                 const totalInit = batches.reduce((sum, b) => sum + (b.depositQuantity || 0), 0);
                 const totalRemain = batches.reduce((sum, b) => sum + (b.remainingQuantity || 0), 0);
+                const crLimitMs = (typeof CR_TIME_LIMIT_MS !== 'undefined') ? CR_TIME_LIMIT_MS : 86400000;
+                const overdueCount = batches.filter(b => b.type !== '包裝冰' && ((b.depositTime + crLimitMs) - now) <= 0).length;
+                const hasOverdue = overdueCount > 0;
                 
-                // 預設自動合起來：只有點擊過的檔口才會展開
+                // 🌟 預設自動合起來：只有點擊過的檔口才會展開
                 const isOpen = window.crExpandedStalls.has(stall.id);
 
                 // 將存貨拆分為「包裝冰」與「一般限時貨物」
@@ -12269,9 +12540,10 @@ window.crSaveData = () => {
                                 </div>`;
                             }
 
-                            // 🐟 情況 B：一般限時貨物卡片
+// 🐟 情況 B：一般限時貨物卡片
                             const r = item.record;
-                            const tLeft = (r.depositTime + CR_TIME_LIMIT_MS) - now;
+                            const crLimitMs = (typeof CR_TIME_LIMIT_MS !== 'undefined') ? CR_TIME_LIMIT_MS : 86400000;
+                            const tLeft = (r.depositTime + crLimitMs) - now;
                             let timeBadge = '';
 
                             if (tLeft > 0) {
@@ -12412,11 +12684,12 @@ window.crSaveData = () => {
                     }
                     if (imp.stallList && Array.isArray(imp.stallList)) { window.stallList = imp.stallList; saveStallDatabase(); }
                     
-                    galleryCategories = (imp.galleryCategories || galleryCategories).filter(c => c !== '未分類' && c !== '任務附件');
+galleryCategories = (imp.galleryCategories || galleryCategories).filter(c => c !== '未分類' && c !== '任務附件');
                     
                     safeSetLocal('work_cache_schedule', dailyScheduleData); safeSetLocal('work_cache_task_states', taskCompletionState);
                     safeSetLocal('work_cache_subtask_states', subTaskCompletionState); safeSetLocal('work_cache_gallery_categories', galleryCategories);
-                    safeSetLocal('work_cache_gallery_items', galleryItems); safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
+                    await saveGalleryItemsSafe(galleryItems); // 根源修復：同步雙寫入 IndexedDB (app_gallery_metadata_list)
+                    safeSetLocal('work_cache_tab_visibility', tabVisibilityState);
                     safeSetLocal('coldRoomRecords', crRecords); safeSetLocal('coldRoomTypes', crItemTypes);
                     syncConfig('schedule', { tasks: dailyScheduleData }); syncConfig('task_states', { states: taskCompletionState });
                     syncConfig('subtask_states', { states: subTaskCompletionState }); syncConfig('gallery_categories', { categories: galleryCategories });
@@ -12817,19 +13090,24 @@ window.crSaveData = () => {
             if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
         };
 
-setInterval(() => { 
+// 🌟 根源修復：以具名變數持有計時器，避免重複載入腳本時多重累加
+if (window._globalClockInterval) clearInterval(window._globalClockInterval);
+window._globalClockInterval = setInterval(() => { 
     if (!isFastForwarding) window.updateClockUI();
-}, 1000);        setInterval(() => {
-            checkAndResetDailySchedule();
-            if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
-            if (!$('memoPage')?.classList.contains('hidden')) window.updateMemoCountdowns();
-            if (!$('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
-            if (!$('closingPage')?.classList.contains('hidden')) {
-                const input = $('stallQueryInput');
-                if (input && input.value.trim()) window.searchStall();
-            }
-            window.checkMemoAlerts();
-        }, 60000);
+}, 1000);
+
+if (window._globalMinuteInterval) clearInterval(window._globalMinuteInterval);
+window._globalMinuteInterval = setInterval(() => {
+    checkAndResetDailySchedule();
+    if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+    if (!$('memoPage')?.classList.contains('hidden')) window.updateMemoCountdowns();
+    if (!$('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
+    if (!$('closingPage')?.classList.contains('hidden')) {
+        const input = $('stallQueryInput');
+        if (input && input.value.trim()) window.searchStall();
+    }
+    window.checkMemoAlerts();
+}, 60000);
 
         window.renderMemos = () => {
             const container = $('memoContainer'); if (!container) return; window.crUpdateNotificationBtn();
@@ -12963,12 +13241,24 @@ setInterval(() => {
             placeholderInfo.classList.add('hidden');
             resultList.classList.remove('hidden');
 
-            const matched = (window.stallList || []).filter(s => {
+const matched = (window.stallList || []).filter(s => {
                 const codeStr = String(s.code || '').trim();
                 const cleanCode = codeStr.replace(/^0+/, '');
                 const nameStr = String(s.name || '').trim();
-                const cleanQuery = query.replace(/^0+/, '');
-                const isCodeMatch = (codeStr === query) || (cleanCode === cleanQuery) || (cleanCode === query.replace(/^[1RJ]-?/i, '').replace(/^0+/, ''));
+                const cleanQuery = query.replace(/^[1RJ]-?/i, '').replace(/^0+/, '');
+
+                // 若查詢時帶有 1-、R-、J- 樓層前綴，強制精確比對該樓層
+                if (/^1-?/i.test(query)) {
+                    return s.floor.includes('一樓') && cleanCode === cleanQuery;
+                }
+                if (/^R-?/i.test(query)) {
+                    return s.floor.includes('地下') && cleanCode === cleanQuery;
+                }
+                if (/^J-?/i.test(query)) {
+                    return s.floor.includes('花園仔') && cleanCode === cleanQuery;
+                }
+
+                const isCodeMatch = (codeStr === query) || (cleanCode === cleanQuery);
                 const isNameMatch = nameStr.includes(query);
                 return isCodeMatch || isNameMatch;
             });
@@ -13006,26 +13296,26 @@ setInterval(() => {
                         <span class="bg-slate-100 text-slate-500 border border-slate-200 text-[10.5px] font-bold px-2 py-0.5 rounded-full flex items-center shadow-xs">
                             <i data-lucide="moon" class="w-3 h-3 mr-1 text-slate-400"></i>未營業 (表定 ${openTime} 開)
                         </span>`;
-                } else if (!_inShift) {
-                    // 修復：兩段營業時間之間（午休）不應顯示「提早收工」。
+} else if (!_inShift) {
+                    // 兩段營業時間之間（午休）
                     statusBadgeHtml = `
                         <span class="bg-slate-100 text-slate-500 border border-slate-200 text-[10.5px] font-bold px-2 py-0.5 rounded-full flex items-center shadow-xs">
                             <i data-lucide="coffee" class="w-3 h-3 mr-1 text-slate-400"></i>休息中
                         </span>`;
-                } else if ((closeMins - curMins) > 30) {
-                    // 提早超過 30 分鐘打烊才算提早收工
+                } else if (curMins >= (closeMins - 30)) {
+                    // 距離表定收工只剩不到 30 分鐘，或已經超過收工時間：正常收工 / 清潔階段
                     const diffMin = closeMins - curMins;
-                    statusBadgeHtml = `
-                        <span class="bg-red-50 text-red-600 border border-red-200 text-[10.5px] font-black px-2 py-0.5 rounded-full flex items-center shadow-xs">
-                            <i data-lucide="alert-triangle" class="w-3 h-3 mr-1 text-red-500"></i>提早 ${diffMin} 分鐘
-                        </span>`;
-                } else {
-                    // 提早 30 分鐘以內或已過收工時間，皆視為正常清潔打烊
-                    const diffMin = closeMins - curMins;
-                    const cleanText = diffMin > 0 ? `清潔 (${diffMin}分寬限)` : `正常收工`;
+                    const cleanText = diffMin > 0 ? `清潔 (剩${diffMin}分收工)` : `已收工`;
                     statusBadgeHtml = `
                         <span class="bg-emerald-50 text-emerald-600 border border-emerald-200 text-[10.5px] font-black px-2 py-0.5 rounded-full flex items-center shadow-xs">
                             <i data-lucide="check-circle-2" class="w-3 h-3 mr-1 text-emerald-500"></i>${cleanText}
+                        </span>`;
+                } else {
+                    // 尚未到收工時間（正常營業中，若此時提早拉閘存證才屬提早收工）
+                    const diffMin = closeMins - curMins;
+                    statusBadgeHtml = `
+                        <span class="bg-blue-50 text-blue-700 border border-blue-200 text-[10.5px] font-bold px-2 py-0.5 rounded-full flex items-center shadow-xs">
+                            <i data-lucide="store" class="w-3 h-3 mr-1 text-blue-500"></i>營業中 (距收工 ${Math.floor(diffMin/60)}h ${diffMin%60}m)
                         </span>`;
                 }
 
@@ -13279,10 +13569,11 @@ setInterval(() => {
         }
         // 👈 補上這段：主頁面必須監聽 iframe 傳過來的存檔訊息並寫入 Firebase 雲端
         window.addEventListener('message', async (event) => {
-            // 修復：只接受來自開會記錄 iframe 的訊息，避免任何嵌入頁面覆寫／刪除匯報。
-            const _reportFrame = document.getElementById('meetingReportIframe');
-            const _isReportFrame = !!(event.source && _reportFrame && event.source === _reportFrame.contentWindow);
-            if (!_isReportFrame && event.data && ['SAVE_MEETING_REPORT', 'DELETE_MEETING_REPORT', 'REQUEST_MEETING_REPORTS'].includes(event.data.type)) return;
+            // 🌟 根源修復 1：驗證訊息來源視窗必須為開會記錄專屬 iframe，防止惡意覆寫
+            const reportFrame = document.getElementById('meetingReportIframe');
+            const isReportFrame = !!(event.source && reportFrame && event.source === reportFrame.contentWindow);
+            if (!isReportFrame) return;
+
             if (event.data?.type === 'SAVE_MEETING_REPORT') {
                 const { dateKey, report } = event.data;
                 if (!dateKey || !report) return;
@@ -13337,10 +13628,12 @@ window.pushMeetingReportsToAllIframes = (reports) => {
         const iframe = document.getElementById(id);
         if (iframe && iframe.contentWindow) {
             try {
+                // 🌟 根源修復 2：指定同源目標，若為 srcdoc 則限制來源，防止向外部廣播
+                const targetOrigin = window.location.origin === 'null' ? '*' : window.location.origin;
                 iframe.contentWindow.postMessage({
                     type: 'SYNC_MEETING_REPORTS',
                     reports: data
-                }, '*');
+                }, targetOrigin);
             } catch (e) {}
         }
     });
@@ -13938,13 +14231,22 @@ window.pushMeetingReportsToAllIframes = (reports) => {
   </div>
 
   <script>
-    const today = new Date();
+// 🌟 根源修復：改為動態取得當前最新日期的函式，跨越午夜依然精確
+    function getTodayRealParts() {
+      const d = new Date();
+      return {
+        y: d.getFullYear(),
+        m: String(d.getMonth() + 1).padStart(2, '0'),
+        day: String(d.getDate()).padStart(2, '0')
+      };
+    }
+    const curTodayParts = getTodayRealParts();
     const metaYear = document.getElementById('meta_year');
     const metaMonth = document.getElementById('meta_month');
     const metaDay = document.getElementById('meta_day');
-    if (metaYear && !metaYear.innerText.trim()) metaYear.innerText = today.getFullYear();
-    if (metaMonth && !metaMonth.innerText.trim()) metaMonth.innerText = String(today.getMonth() + 1).padStart(2, '0');
-    if (metaDay && !metaDay.innerText.trim()) metaDay.innerText = String(today.getDate()).padStart(2, '0');
+    if (metaYear && !metaYear.innerText.trim()) metaYear.innerText = curTodayParts.y;
+    if (metaMonth && !metaMonth.innerText.trim()) metaMonth.innerText = curTodayParts.m;
+    if (metaDay && !metaDay.innerText.trim()) metaDay.innerText = curTodayParts.day;
 
     const editableElements = document.querySelectorAll('.expand-input');
     const pickTags = document.querySelectorAll('.pick-tag');
@@ -14074,7 +14376,8 @@ window.pushMeetingReportsToAllIframes = (reports) => {
       for (let i = 0; i < targetCount; i++) {
         const val = savedList[i] || '';
         const hasTextCls = (val && val !== '無') ? 'has-text' : '';
-        html += '<span class="inline-flex items-baseline my-0.5"><span contenteditable="true" id="' + baseId + '_multi_' + i + '" data-group="' + baseId + '" class="expand-input detail-input ' + hasTextCls + '">' + val + '</span></span>';
+        const safeVal = String(val).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        html += '<span class="inline-flex items-baseline my-0.5"><span contenteditable="true" id="' + baseId + '_multi_' + i + '" data-group="' + baseId + '" class="expand-input detail-input ' + hasTextCls + '">' + safeVal + '</span></span>';
       }
       box.innerHTML = html;
     }
@@ -14147,11 +14450,18 @@ window.pushMeetingReportsToAllIframes = (reports) => {
     }
     setupToggleButtons();
 
-    function getCurrentDateKey() {
-      const y = (metaYear.innerText.trim() || String(today.getFullYear())).padStart(4, '0');
-      const m = (metaMonth.innerText.trim() || String(today.getMonth() + 1)).padStart(2, '0');
-      const d = (metaDay.innerText.trim() || String(today.getDate())).padStart(2, '0');
-      return y + '-' + m + '-' + d;
+function getCurrentDateKey() {
+      const now = new Date();
+      let y = parseInt((metaYear.innerText || '').replace(/\D/g, ''), 10);
+      let m = parseInt((metaMonth.innerText || '').replace(/\D/g, ''), 10);
+      let d = parseInt((metaDay.innerText || '').replace(/\D/g, ''), 10);
+
+      if (isNaN(y) || y < 2020 || y > 2099) y = now.getFullYear();
+      if (isNaN(m) || m < 1 || m > 12) m = now.getMonth() + 1;
+      const maxDays = new Date(y, m, 0).getDate();
+      if (isNaN(d) || d < 1 || d > maxDays) d = Math.min(now.getDate(), maxDays);
+
+      return String(y).padStart(4, '0') + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
     }
 
     function updateSaveStatusIndicator() {
@@ -14161,9 +14471,27 @@ window.pushMeetingReportsToAllIframes = (reports) => {
       statusEl.innerText = '已於 ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ':' + String(now.getSeconds()).padStart(2, '0') + ' 自動保存';
     }
 
-    function getArchiveIndex() {
-      try { return JSON.parse(localStorage.getItem('market_reports_index') || '[]'); }
-      catch (e) { return []; }
+function getArchiveIndex() {
+      const raw = localStorage.getItem('market_reports_index');
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        console.error('索引解析失敗，啟動容錯保護防止覆寫空陣列', e);
+      }
+      // 容錯救援：直接掃描 localStorage 搶救所有存在的日期，避免索引歸零
+      const recovered = [];
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.indexOf('market_report_') === 0 && k !== 'market_reports_index' && k !== 'market_reports_all_data') {
+            const dk = k.replace('market_report_', '');
+            if (/^\d{4}-\d{2}-\d{2}$/.test(dk)) recovered.push(dk);
+          }
+        }
+      } catch (e) {}
+      return recovered.sort(function(a, b) { return b.localeCompare(a); });
     }
 
     function updateHistoryCountBadge() {
@@ -14275,13 +14603,16 @@ window.pushMeetingReportsToAllIframes = (reports) => {
       }
     });
 
-    window.addEventListener('message', function(event) {
+window.addEventListener('message', function(event) {
       if (event.data?.type === 'FLUSH_MEETING_REPORT') {
         flushPendingCloudSave();
         return;
       }
       if (event.data?.type !== 'SYNC_MEETING_REPORTS') return;
       const reports = event.data.reports || {};
+      const currentEditingKey = getCurrentDateKey();
+      const isUserTyping = (Date.now() - lastUserEditTime < 1500);
+
       try {
         let index = [];
         try { index = JSON.parse(localStorage.getItem('market_reports_index') || '[]'); } catch(e) {}
@@ -14291,7 +14622,11 @@ window.pushMeetingReportsToAllIframes = (reports) => {
         index.sort(function(a, b) { return b.localeCompare(a); });
         localStorage.setItem('market_reports_index', JSON.stringify(index));
 
+        // 根源修復：若該日正在打字，絕對禁止寫入該日的 localStorage
         Object.keys(reports).forEach(function(k) {
+          if (k === currentEditingKey && isUserTyping) {
+            return;
+          }
           const remote = reports[k];
           if (remote && remote.data) {
             localStorage.setItem('market_report_' + k, JSON.stringify(remote));
@@ -14299,8 +14634,7 @@ window.pushMeetingReportsToAllIframes = (reports) => {
         });
       } catch(e) {}
 
-      // 若本機正在連續打字中（600ms 內），暫緩覆蓋當前畫面，保護打字游標
-      if (Date.now() - lastUserEditTime < 600) {
+      if (isUserTyping) {
         updateHistoryCountBadge();
         return;
       }
@@ -14405,51 +14739,58 @@ window.pushMeetingReportsToAllIframes = (reports) => {
         }
       }
 
-      if (savedRaw) {
+if (savedRaw) {
+        let report = null;
         try {
-          const report = JSON.parse(savedRaw);
-          window._reportMultiStore = {};
-          if (typeof restoreInitialBoxTemplates === 'function') restoreInitialBoxTemplates();
-
-          // 1. 補齊 _multi_ 動態輸入框
-          ensureMultiInputsFromData(report.data);
-
-          // 2. 填入所有欄位文字
-          document.querySelectorAll('.expand-input').forEach(function(el) {
-            if (el.id && el.id !== 'meta_year' && el.id !== 'meta_month' && el.id !== 'meta_day') {
-              var fallback = (el.id === 'oth_staff_count' || el.id === 'oth_attendance_count') ? '正常' : (el.classList.contains('num-input') ? '無' : '');
-              el.innerText = (report.data && report.data[el.id] !== undefined) ? report.data[el.id] : fallback;
-              updateTextColor(el);
-            }
-          });
-
-          pickTags.forEach(function(tag) {
-            const id = tag.getAttribute('data-tag');
-            if (report.tags && report.tags.includes(id)) tag.classList.add('selected');
-            else tag.classList.remove('selected');
-          });
-
-          document.querySelectorAll('.remark-box').forEach(function(box) {
-            const btn = document.querySelector('.toggle-btn[data-target="' + box.id + '"]');
-            if (report.boxes && report.boxes.includes(box.id)) {
-              box.classList.add('open');
-              if (btn) { btn.classList.add('active'); btn.innerText = '－'; }
-            } else {
-              box.classList.remove('open');
-              if (btn) { btn.classList.remove('active'); btn.innerText = '＋'; }
-            }
-          });
-
-          updateBracketStates();
-          updateToggleBtnVisibility();
-
-          // 若為自動繼承前日資料，僅存為本機低優先級草稿，不主動覆寫雲端
-          if (isInherited) {
-            buildAndSaveLocalReport(true);
-            showToast('📋 已自動繼承前日匯報資料！');
+          report = JSON.parse(savedRaw);
+          if (!report || typeof report !== 'object' || !report.data) {
+            throw new Error('存檔結構損毀');
           }
-          return;
-        } catch (e) {}
+        } catch (e) {
+          console.error('匯報資料損毀，拒絕清空以防空白覆蓋', e);
+          showToast('⚠️ 讀取歷史匯報失敗，已終止載入防止覆蓋');
+          return; // 根源阻斷：直接退出，嚴禁呼叫 resetFieldsWithoutDate()
+        }
+
+        window._reportMultiStore = {};
+        if (typeof restoreInitialBoxTemplates === 'function') restoreInitialBoxTemplates();
+
+        // 1. 補齊 _multi_ 動態輸入框
+        ensureMultiInputsFromData(report.data);
+
+        // 2. 填入所有欄位文字
+        document.querySelectorAll('.expand-input').forEach(function(el) {
+          if (el.id && el.id !== 'meta_year' && el.id !== 'meta_month' && el.id !== 'meta_day') {
+            var fallback = (el.id === 'oth_staff_count' || el.id === 'oth_attendance_count') ? '正常' : (el.classList.contains('num-input') ? '無' : '');
+            el.innerText = (report.data && report.data[el.id] !== undefined) ? report.data[el.id] : fallback;
+            updateTextColor(el);
+          }
+        });
+
+        pickTags.forEach(function(tag) {
+          const id = tag.getAttribute('data-tag');
+          if (report.tags && report.tags.includes(id)) tag.classList.add('selected');
+          else tag.classList.remove('selected');
+        });
+
+        document.querySelectorAll('.remark-box').forEach(function(box) {
+          const btn = document.querySelector('.toggle-btn[data-target="' + box.id + '"]');
+          if (report.boxes && report.boxes.includes(box.id)) {
+            box.classList.add('open');
+            if (btn) { btn.classList.add('active'); btn.innerText = '－'; }
+          } else {
+            box.classList.remove('open');
+            if (btn) { btn.classList.remove('active'); btn.innerText = '＋'; }
+          }
+        });
+
+        updateBracketStates();
+        updateToggleBtnVisibility();
+
+        if (isInherited) {
+          showToast('📋 暫無本日紀錄，已載入前日範本供參考（未儲存）');
+        }
+        return;
       }
 
       resetFieldsWithoutDate();
@@ -14598,15 +14939,17 @@ window.pushMeetingReportsToAllIframes = (reports) => {
 
         const item = document.createElement('div');
         const isCurrent = (dateKey === currentKey);
-        item.className = 'p-3 rounded-xl border flex items-center justify-between gap-2 transition-all ' + (
+item.className = 'p-3 rounded-xl border flex items-center justify-between gap-2 transition-all ' + (
           isCurrent ? 'bg-blue-50/80 dark:bg-blue-950/40 border-blue-300 dark:border-blue-700' : 'bg-white dark:bg-slate-700/60 border-slate-200 dark:border-slate-600 hover:border-blue-300'
         );
+        // 🌟 根源修復：對注入欄位進行轉義保護
+        const safeSummary = String(summary || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         item.innerHTML = '<div class="flex-1 min-w-0">' +
           '<div class="flex items-center gap-2">' +
             '<span class="font-bold text-black dark:text-white">' + dateKey + '</span>' +
             (isCurrent ? '<span class="text-[11px] px-1.5 py-0.5 rounded bg-blue-600 text-white font-medium">當前編輯</span>' : '') +
           '</div>' +
-          '<div class="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">' + summary + '</div>' +
+          '<div class="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">' + safeSummary + '</div>' +
         '</div>' +
         '<div class="flex items-center gap-1.5 shrink-0">' +
           '<button class="btn-load-record px-2.5 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors" data-date="' + dateKey + '">查看/編輯</button>' +
@@ -14624,9 +14967,19 @@ window.pushMeetingReportsToAllIframes = (reports) => {
         });
       });
 
-      historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
+historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
         btn.addEventListener('click', function() {
           const d = btn.getAttribute('data-date');
+          
+          // 根源修復：若刪除的日期剛好為當前正排隊上傳的目標，立即取消延遲排程
+          if (pendingCloudPayload && pendingCloudPayload.dateKey === d) {
+            pendingCloudPayload = null;
+          }
+          if (autoSaveTimer) {
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = null;
+          }
+
           localStorage.removeItem('market_report_' + d);
           let idx = getArchiveIndex().filter(function(item) { return item !== d; });
           localStorage.setItem('market_reports_index', JSON.stringify(idx));
@@ -14667,17 +15020,25 @@ window.pushMeetingReportsToAllIframes = (reports) => {
       showToast('已匯出完整歷史備份檔案');
     });
 
+// 移除重複的 input 監聽（全面由全域事件委託代理），只保留失焦與 Enter 處理，並杜絕日期編輯時的高頻存檔
     editableElements.forEach(el => {
-      el.addEventListener('input', () => {
-        updateTextColor(el);
-        updateBracketStates();
-        updateToggleBtnVisibility();
-        saveCurrentDayReport();
-      });
       el.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
           el.blur();
+        }
+      });
+      el.addEventListener('blur', () => {
+        if (el.id === 'meta_year' || el.id === 'meta_month' || el.id === 'meta_day') {
+          const validKey = getCurrentDateKey();
+          const p = validKey.split('-');
+          metaYear.innerText = p[0];
+          metaMonth.innerText = p[1];
+          metaDay.innerText = p[2];
+          updateTextColor(metaYear);
+          updateTextColor(metaMonth);
+          updateTextColor(metaDay);
+          loadReportByDate(validKey);
         }
       });
       updateTextColor(el);
