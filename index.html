@@ -9090,8 +9090,7 @@ tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility)
             
 checkAndResetDailySchedule(); 
             window.applyTabVisibility();
-            const savedTab = localStorage.getItem('activeTab') || 'gallery';
-            window.switchTab(tabVisibilityState[savedTab] === false ? 'gallery' : savedTab);
+            window.switchTab('gallery');   // 確保載入本地快取時也直接切換為圖庫
         }
 
         function setupPureRealtimeSync() {
@@ -13930,7 +13929,7 @@ const matched = (window.stallList || []).filter(s => {
             }
         });
 
-        async function bootstrapApp() {
+async function bootstrapApp() {
             try {
                 await loadLocalFastCache();
                 window.applyTabVisibility();
@@ -13938,9 +13937,11 @@ const matched = (window.stallList || []).filter(s => {
                 if (typeof window.applyAutoPatrolSlot === 'function') {
                     window.applyAutoPatrolSlot(true);
                 }
-                const savedTab = localStorage.getItem('activeTab') || 'gallery';
-                const firstVisible = tabOrderList.find(k => tabVisibilityState[k] !== false) || 'gallery';
-                window.switchTab(tabVisibilityState[savedTab] === false ? firstVisible : savedTab);
+                // 🌟 預設永遠打開「圖庫」分頁（若圖庫被手動隱藏則安全退回第一個可見分頁）
+                const defaultTab = tabVisibilityState['gallery'] !== false 
+                    ? 'gallery' 
+                    : (tabOrderList.find(k => tabVisibilityState[k] !== false) || 'gallery');
+                window.switchTab(defaultTab);
                 if (window.lucide) lucide.createIcons();
                 await initAuth();
             } catch (e) {
