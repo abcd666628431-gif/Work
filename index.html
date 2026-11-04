@@ -158,8 +158,24 @@
         let currentUser = null;
 
 // ====== 操作日誌核心邏輯 (含剔檔、圖庫與 20 分鐘同用戶聚合折疊) ======
-        let sysUserName = localStorage.getItem('gallery_user_name') || '成員_' + Math.floor(Math.random() * 900 + 100);
-        let sysUserColor = localStorage.getItem('gallery_user_color') || '#38bdf8';
+        // 🌟 1. 使用 window 屬性讀取或初始化，保證絕不拋出重複宣告錯誤！
+        if (!localStorage.getItem('work_client_device_id')) {
+            localStorage.setItem('work_client_device_id', 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6));
+        }
+        // 🌟 修復：定義每次分頁開啟時的唯一 Session ID（掛在 window 確保全域可用）
+        const clientSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+        window.clientSessionId = clientSessionId;
+
+        // 🌟 2. 隨機成員名稱產生後立刻鎖入本機，以後重開都固定為同一號碼！
+        let sysUserName = localStorage.getItem('gallery_user_name');        if (!sysUserName) {
+            sysUserName = '成員_' + Math.floor(Math.random() * 900 + 100);
+            localStorage.setItem('gallery_user_name', sysUserName);
+        }
+        let sysUserColor = localStorage.getItem('gallery_user_color');
+        if (!sysUserColor) {
+            sysUserColor = '#38bdf8';
+            localStorage.setItem('gallery_user_color', sysUserColor);
+        }
         let galleryLogsStore = [];
         window.expandedLogGroups = new Set(); // 記錄使用者展開的群組 ID
 
@@ -177,19 +193,50 @@
         };
 
       // 👇 擴充支援傳入 customUser、customColor 與設備獨立識別碼 deviceId
-        window.writeGalleryLog = async (action, targetName, detail = '', customUser = null, customColor = null) => {
+        window._pendingGalleryLogs = [];
+        const _logQueue = () => {
+            if (!window._pendingGalleryLogs.length) {
+                try { window._pendingGalleryLogs = JSON.parse(localStorage.getItem('work_pending_gallery_logs') || '[]'); } catch (e) { window._pendingGalleryLogs = []; }
+            }
+            return window._pendingGalleryLogs;
+        };
+        const _saveLogQueue = () => {
+            if (window._pendingGalleryLogs.length > 300) window._pendingGalleryLogs = window._pendingGalleryLogs.slice(-300);
+            try { localStorage.setItem('work_pending_gallery_logs', JSON.stringify(window._pendingGalleryLogs)); } catch (e) { console.warn('日誌佇列寫入失敗', e); }
+        };
+        window.flushPendingGalleryLogs = async () => {
             if (!currentUser || !db) return;
+            const q = _logQueue();
+            while (q.length) {
+                try {
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs'), q[0]);
+                    q.shift();
+                    _saveLogQueue();
+                } catch (e) {
+                    console.error('日誌補傳失敗，保留佇列：', e);
+                    break;
+                }
+            }
+        };
+        window.writeGalleryLog = async (action, targetName, detail = '', customUser = null, customColor = null) => {
+            const entry = {
+                timestamp: Date.now(),
+                user: customUser || sysUserName,
+                color: customColor || sysUserColor,
+                deviceId: customUser ? 'system' : clientSessionId, // 🌟 綁定設備碼，防止不同人同名連住
+                action: action,
+                targetName: targetName || '無標題',
+                detail: detail || ''
+            };
+            // 修復：離線／未登入不再直接丟棄；寫入失敗也不再吞掉，改為落地佇列並在連線後補傳。
+            if (!currentUser || !db) { _logQueue().push(entry); _saveLogQueue(); return; }
             try {
-                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs'), {
-                    timestamp: Date.now(),
-                    user: customUser || sysUserName,
-                    color: customColor || sysUserColor,
-                    deviceId: customUser ? 'system' : clientSessionId, // 🌟 綁定設備碼，防止不同人同名連住
-                    action: action,
-                    targetName: targetName || '無標題',
-                    detail: detail || ''
-                });
-            } catch(e) {}
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs'), entry);
+            } catch (e) {
+                console.error('日誌寫入失敗，已排入補傳佇列：', e);
+                _logQueue().push(entry);
+                _saveLogQueue();
+            }
         };
 
         window.openLogsModal = () => {
@@ -201,8 +248,17 @@
 
        // 🌟 去掉秒數，僅保留「月/日 時:分」
         window.formatLogTime = (ts) => {
-            const d = new Date(ts);
-            return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+            try {
+                const parts = new Intl.DateTimeFormat('en-GB', {
+                    timeZone: 'Asia/Hong_Kong', month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit', hour12: false
+                }).formatToParts(new Date(ts));
+                const get = (t) => (parts.find(p => p.type === t) || {}).value || '';
+                return `${get('month')}/${get('day')} ${get('hour')}:${get('minute')}`;
+            } catch (e) {
+                const d = new Date(ts);
+                return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+            }
         };
 
        // 🌟 改為記錄「已展開的日期」，預設為空集合＝所有日期預設收合
@@ -251,13 +307,13 @@
             // 1. 按時間降序（由新到舊）
             const sortedLogs = [...galleryLogsStore].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
             const weekNames = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
-            const isAdminUser = (sysUserName === '手提電腦' || sysUserName === '雲');
+            const isAdminUser = window.isAdminUnlocked ? window.isAdminUnlocked() : false;
 
             // 2. 先依「日期（日子 MM/DD）」分組
             const dayBuckets = new Map();
             sortedLogs.forEach(log => {
                 const d = new Date(log.timestamp || Date.now());
-                const dateKey = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+                const dateKey = window.formatDateStrHK(log.timestamp || Date.now());
                 const weekDay = weekNames[d.getDay()];
                 if (!dayBuckets.has(dateKey)) {
                     dayBuckets.set(dateKey, { dateKey, weekDay, rawLogs: [], groups: [] });
@@ -314,7 +370,7 @@
                     if (group.items.length === 1) {
                         const log = group.items[0];
                         const actionBadge = window.getLogBadgeStyle(log.action);
-                        const safeU = (log.user || '未知').replace(/'/g, "\\'");
+                        const safeU = window.jsAttr(log.user || '未知');
                         const safeC = log.color || '#38bdf8';
                         const userClickAttr = isAdminUser ? `onclick="event.stopPropagation(); window.openEditOtherUserModal('${safeU}', '${safeC}', '${group.id}')" title="點擊修改或清除此用戶名稱"` : '';
                         const userCursorCls = isAdminUser ? 'cursor-pointer underline decoration-dotted hover:opacity-80' : '';
@@ -322,10 +378,10 @@
                         return `
                         <div class="py-1 px-2 bg-white rounded-xl border border-slate-200/80 shadow-2xs flex items-center gap-1 whitespace-nowrap overflow-x-auto scrollbar-hide text-[11px]">
                             <span class="font-mono text-[9.5px] font-bold text-slate-400 shrink-0 tracking-tight">${window.formatLogTime(log.timestamp)}</span>
-                            <span ${userClickAttr} class="font-black shrink-0 tracking-tight ${userCursorCls}" style="color: ${safeC}">${log.user || '未知'}</span>
+                            <span ${userClickAttr} class="font-black shrink-0 tracking-tight ${userCursorCls}" style="color: ${safeC}">${window.esc(log.user || '未知')}</span>
                             <span class="font-black text-[9.5px] px-1 py-0.2 rounded border shrink-0 leading-tight ${actionBadge}">${log.action}</span>
-                            <span class="font-black text-slate-800 shrink-0 tracking-tight">[${log.targetName || '無標題'}]</span>
-                            ${log.detail ? `<span class="text-slate-500 font-medium text-[10px] shrink-0">${log.detail}</span>` : ''}
+                            <span class="font-black text-slate-800 shrink-0 tracking-tight">[${window.esc(log.targetName || '無標題')}]</span>
+                            ${log.detail ? `<span class="text-slate-500 font-medium text-[10px] shrink-0">${window.esc(log.detail)}</span>` : ''}
                         </div>`;
                     }
 
@@ -338,7 +394,7 @@
                     const datePrefix = endFull.split(' ')[0] || '';
                     const timeRangeStr = (startTime === endTime) ? `${datePrefix} ${startTime}` : `${datePrefix} ${startTime}~${endTime}`;
 
-                   const safeGrpU = (group.user || '未知').replace(/'/g, "\\'");
+                   const safeGrpU = window.jsAttr(group.user || '未知');
                     const safeGrpC = group.color || '#38bdf8';
                     const grpUserClickAttr = isAdminUser ? `onclick="event.stopPropagation(); window.openEditOtherUserModal('${safeGrpU}', '${safeGrpC}', '${group.id}')" title="點擊修改或清除此用戶名稱"` : '';
                     const grpUserCursorCls = isAdminUser ? 'cursor-pointer underline decoration-dotted hover:opacity-80' : '';
@@ -349,8 +405,8 @@
                         <div class="py-1 px-1.5 bg-white rounded-lg border border-slate-200/70 flex items-center gap-1 text-[10px] whitespace-nowrap overflow-x-auto scrollbar-hide">
                             <span class="font-mono text-[9px] text-slate-400 shrink-0 tracking-tight">${window.formatLogTime(log.timestamp)}</span>
                             <span class="font-bold text-[9px] px-1 py-0.2 rounded border shrink-0 leading-tight ${actionBadge}">${log.action}</span>
-                            <span class="font-black text-slate-800 shrink-0 tracking-tight">[${log.targetName || '無標題'}]</span>
-                            ${log.detail ? `<span class="text-slate-500 font-medium text-[9.5px] shrink-0">${log.detail}</span>` : ''}
+                            <span class="font-black text-slate-800 shrink-0 tracking-tight">[${window.esc(log.targetName || '無標題')}]</span>
+                            ${log.detail ? `<span class="text-slate-500 font-medium text-[9.5px] shrink-0">${window.esc(log.detail)}</span>` : ''}
                         </div>`;
                     }).join('');
 
@@ -408,7 +464,11 @@
 
         // 🌟 專屬管理員（「手提電腦」、「雲」）點擊日誌內用戶名時彈出修改
         window.openEditOtherUserModal = (targetUser, targetColor, groupId = null) => {
-            if (sysUserName !== '手提電腦' && sysUserName !== '雲') return;
+            if (!window.isAdminUnlocked()) {
+                window.showToast('需要管理員解鎖才能修改別人的日誌', true);
+                window.openAdminAuthModal();
+                return;
+            }
             window._editingTargetLogUser = targetUser;
             window._editingTargetGroupId = groupId;
             const nameInput = document.getElementById('newUserNameInput');
@@ -428,9 +488,10 @@
         window.getTargetLogsForUserEdit = (oldName, isEditingOtherUser, targetGroupId) => {
             // 若點擊的對象跟管理員自己同名（連住了），只分離所點擊的那一組/那一設備的日誌
             if (isEditingOtherUser && oldName === sysUserName && targetGroupId) {
-                const parts = targetGroupId.split('_');
-                const oldestTs = Number(parts[parts.length - 1]);
-                const latestTs = Number(parts[parts.length - 2]);
+                const m = String(targetGroupId).match(/_(\d+)_(\d+)$/);
+                if (!m) return [];
+                const latestTs = Number(m[1]);
+                const oldestTs = Number(m[2]);
                 return galleryLogsStore.filter(l =>
                     l.user === oldName &&
                     l.timestamp >= oldestTs &&
@@ -502,7 +563,7 @@
         };
 
         window.saveUserName = async () => {
-            const name = document.getElementById('newUserNameInput')?.value.trim();
+            const name = document.getElementById('newUserNameInput')?.value.trim().replace(/[<>]/g, '');
             const color = document.getElementById('newUserColorInput')?.value || '#38bdf8';
             if (!name) return window.showToast("請輸入姓名/暱稱", true);
 
@@ -549,13 +610,6 @@
             );
         };
 
-        // 確保每台裝置/瀏覽器擁有一個永久固定的唯一識別碼
-        let clientSessionId = localStorage.getItem('work_client_device_id');
-        if (!clientSessionId) {
-            clientSessionId = 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
-            localStorage.setItem('work_client_device_id', clientSessionId);
-        }
-
         const $ = id => document.getElementById(id);
         const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
         const safeSetLocal = (k, d) => { 
@@ -577,13 +631,131 @@
             safeSetLocal('work_cache_gallery_items', cleanList);
             try {
                 await idbSet('app_gallery_metadata_list', cleanList);
-            } catch (e) {}
+            } catch (e) {
+                console.error('圖庫清單寫入 IndexedDB 失敗：', e);
+                if (!window._idbWarned) {
+                    window._idbWarned = true;
+                    window.showToast('⚠️ 本機圖庫索引寫入失敗，請檢查瀏覽器儲存空間', true);
+                }
+            }
         };
 
         const cfgDoc = (key) => doc(db, 'artifacts', appId, 'public', 'data', 'config', key);
-        const syncConfig = (key, data, merge = false) => { if (currentUser) setDoc(cfgDoc(key), data, { merge }); };
+        window._syncQueue = [];
+        window.reportCloudError = (msg, err) => {
+            console.error(msg, err);
+            if (Date.now() - (window._lastCloudErrToast || 0) < 5000) return;
+            window._lastCloudErrToast = Date.now();
+            window.showToast('⚠️ 雲端同步失敗：' + msg, true);
+        };
+        window._flushSyncQueue = async () => {
+            if (!currentUser || !db || !window._syncQueue.length) return;
+            const items = window._syncQueue.slice();
+            for (let i = 0; i < items.length; i++) {
+                try {
+                    await setDoc(cfgDoc(items[i].key), items[i].data, { merge: items[i].merge });
+                    window._syncQueue.shift();
+                } catch (e) {
+                    console.error('同步重試失敗，保留佇列：', items[i].key, e);
+                    break;
+                }
+            }
+        };
+        window.markSyncError = (key, data, merge, err) => {
+            console.error(`雲端同步失敗 (${key}):`, err);
+            const _idx = window._syncQueue.findIndex(x => x.key === key);
+            if (_idx >= 0) window._syncQueue[_idx] = { key, data, merge };
+            else window._syncQueue.push({ key, data, merge });
+            const st = document.getElementById('connectionStatus');
+            const dot = document.getElementById('connectionDot');
+            if (st) st.textContent = '同步失敗，已排隊重試…';
+            if (dot) { dot.classList.remove('bg-green-500'); dot.classList.add('bg-amber-500'); }
+            clearTimeout(window._syncRetryTimer);
+            window._syncRetryTimer = setTimeout(() => window._flushSyncQueue(), 5000);
+        };
+        const syncConfig = (key, data, merge = false) => {
+            if (!currentUser) return;
+            setDoc(cfgDoc(key), data, { merge }).then(() => {
+                if (!window._syncQueue.length) {
+                    const st = document.getElementById('connectionStatus');
+                    const dot = document.getElementById('connectionDot');
+                    if (st) st.textContent = '系統已連線並同步';
+                    if (dot && !dot.classList.contains('bg-green-500')) { dot.classList.remove('bg-amber-500'); dot.classList.add('bg-green-500'); }
+                }
+            }).catch(err => window.markSyncError(key, data, merge, err));
+        };
 window.syncConfig = syncConfig; // 👈 必備：開放給 iframe 雲端同步使用
 window.safeSetLocal = safeSetLocal;
+
+        // ====== 管理員驗證：不靠「自稱名字」，改用密碼 + 30 分鐘解鎖 ======
+        window._adminUnlockedUntil = 0;
+        window.isAdminUnlocked = () => Date.now() < (window._adminUnlockedUntil || 0);
+        const _adminAuthLocal = () => { try { return JSON.parse(localStorage.getItem('work_cache_admin_auth') || 'null'); } catch (e) { return null; } };
+        const _adminAuthSave = (obj) => { try { localStorage.setItem('work_cache_admin_auth', JSON.stringify(obj)); } catch (e) { console.warn('管理員設定儲存失敗', e); } };
+        const _hashPwd = async (pwd, salt) => {
+            const raw = salt + '::' + pwd;
+            try {
+                if (window.crypto && window.crypto.subtle) {
+                    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
+                    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+                }
+            } catch (e) { console.error('密碼雜湊失敗，改用相容模式：', e); }
+            let h = 2166136261;
+            for (let i = 0; i < raw.length; i++) { h ^= raw.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+            return 'fnv_' + h.toString(16);
+        };
+        window.openAdminAuthModal = () => {
+            document.getElementById('adminAuthModal')?.remove();
+            const cfg = _adminAuthLocal();
+            const body = window.isAdminUnlocked()
+                ? `<p class="text-xs text-emerald-700 font-bold text-center mb-3">✅ 管理員模式已解鎖（剩餘 ${Math.ceil((window._adminUnlockedUntil - Date.now()) / 60000)} 分鐘）</p>
+                   <button type="button" onclick="window.lockAdminMode()" class="w-full py-2 bg-slate-800 text-white rounded-xl text-xs font-black">立即鎖定</button>`
+                : cfg
+                ? `<div class="space-y-2">
+                     <input type="password" id="adminPwdInput" placeholder="管理員密碼" class="w-full border border-slate-300 rounded-lg p-2 text-sm text-center">
+                     <button type="button" onclick="window._adminLogin()" class="w-full py-2 bg-indigo-600 text-white rounded-xl text-xs font-black">解鎖</button>
+                   </div>`
+                : `<div class="space-y-2">
+                     <p class="text-[11px] text-slate-500 text-center">第一次使用：設定管理員密碼（至少 6 位）</p>
+                     <input type="password" id="adminPwd1" placeholder="設定密碼" class="w-full border border-slate-300 rounded-lg p-2 text-sm text-center">
+                     <input type="password" id="adminPwd2" placeholder="再輸入一次" class="w-full border border-slate-300 rounded-lg p-2 text-sm text-center">
+                     <button type="button" onclick="window._adminSetup()" class="w-full py-2 bg-indigo-600 text-white rounded-xl text-xs font-black">設定並啟用</button>
+                   </div>`;
+            const html = `<div id="adminAuthModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10060] flex items-center justify-center p-4" onclick="if(event.target===this) this.remove()"><div class="bg-white rounded-2xl p-4 w-full max-w-[320px] shadow-2xl" onclick="event.stopPropagation()"><div class="flex items-center justify-between pb-2 mb-3 border-b border-slate-100"><h3 class="font-black text-sm text-slate-800">🔑 管理員</h3><button onclick="document.getElementById('adminAuthModal').remove()" class="text-slate-400 p-1">✕</button></div>${body}<p class="text-[10px] text-slate-400 mt-3 leading-relaxed">這個密碼只在本機比對，用來防止同事改名冒充管理員；它不能取代伺服器端權限控管。</p></div></div>`;
+            document.body.insertAdjacentHTML('beforeend', html);
+        };
+        window._adminSetup = async () => {
+            const p1 = document.getElementById('adminPwd1')?.value || '';
+            const p2 = document.getElementById('adminPwd2')?.value || '';
+            if (p1.length < 6) return window.showToast('密碼至少 6 位', true);
+            if (p1 !== p2) return window.showToast('兩次輸入不一致', true);
+            const salt = Math.random().toString(36).slice(2) + Date.now().toString(36);
+            const hash = await _hashPwd(p1, salt);
+            const cfg = { salt, hash, updatedAt: Date.now() };
+            _adminAuthSave(cfg);
+            syncConfig('admin_auth', cfg);
+            window._adminUnlockedUntil = Date.now() + 30 * 60 * 1000;
+            document.getElementById('adminAuthModal')?.remove();
+            window.showToast('✅ 管理員密碼已設定並解鎖 30 分鐘');
+            if (typeof window.renderGalleryLogs === 'function') window.renderGalleryLogs();
+        };
+        window._adminLogin = async () => {
+            const cfg = _adminAuthLocal();
+            const pwd = document.getElementById('adminPwdInput')?.value || '';
+            if (!cfg) return;
+            const hash = await _hashPwd(pwd, cfg.salt);
+            if (hash !== cfg.hash) return window.showToast('密碼不正確', true);
+            window._adminUnlockedUntil = Date.now() + 30 * 60 * 1000;
+            document.getElementById('adminAuthModal')?.remove();
+            window.showToast('✅ 已解鎖管理員模式（30 分鐘）');
+            if (typeof window.renderGalleryLogs === 'function') window.renderGalleryLogs();
+        };
+        window.lockAdminMode = () => {
+            window._adminUnlockedUntil = 0;
+            document.getElementById('adminAuthModal')?.remove();
+            window.showToast('🔒 已鎖定管理員模式');
+            if (typeof window.renderGalleryLogs === 'function') window.renderGalleryLogs();
+        };
 window.getLocal = getLocal;
         const pad = (n) => String(n).padStart(2, '0');
 
@@ -682,13 +854,19 @@ window.getLocal = getLocal;
         };
         const formatStallCode = window.formatStallCode;
 
-        // 預設分類改為：全部、未導出、提早收工、清潔、營業相、開工-雞相
-        let galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '未導出', '提早收工', '清潔', '營業相', '開工-雞相']);
-        if (!galleryCategories.includes('未導出')) {
-            const allIdx = galleryCategories.indexOf('全部');
-            galleryCategories.splice(allIdx !== -1 ? allIdx + 1 : 1, 0, '未導出');
-            safeSetLocal('work_cache_gallery_categories', galleryCategories);
-        }
+        // 🌟 預設分類與徹底過濾函式
+        const DEFAULT_GALLERY_CATS = ['全部', '未導出', '提早收工', '清潔', '營業相', '測溫相'];
+        window.sanitizeGalleryCategories = (cats) => {
+            if (!Array.isArray(cats)) return [...DEFAULT_GALLERY_CATS];
+            const cleaned = cats
+                .map(c => (c === '收工' ? '提早收工' : (c === '開工-雞相' ? '營業相' : c)))
+                .filter(c => c && c !== '未分類' && c !== '開工-雞相');
+            DEFAULT_GALLERY_CATS.forEach(c => { if (!cleaned.includes(c)) cleaned.push(c); });
+            return Array.from(new Set(cleaned));
+        };
+
+        let galleryCategories = window.sanitizeGalleryCategories(getLocal('work_cache_gallery_categories', DEFAULT_GALLERY_CATS));
+        safeSetLocal('work_cache_gallery_categories', galleryCategories);
         let galleryItems = getLocal('work_cache_gallery_items', []);
         let memoryImageCache = new Map();
         let currentGalleryCategory = '全部';
@@ -882,7 +1060,7 @@ const tabMetadataMap = {
         // 🌟 判斷是否為人員編號格式 (如 EH0047、CL-01)
         window.isStaffIdFormat = (str) => {
             if (!str) return false;
-            return /^[A-Za-z]{1,4}-?\d{2,6}$/.test(str.trim());
+            return /^[A-Za-z]{1,4}-?\d{2,6}(?:-\d+)?$/.test(str.trim());
         };
 
        // 🌟 出勤勾選名單與「僅顯示出勤 / 顯示全部」模式開關
@@ -933,8 +1111,7 @@ const tabMetadataMap = {
 
             // 3. 若為全新匯入的編號格式 (如 EH0047)
             if (window.isStaffIdFormat(clean)) {
-                memberProfilesStore[upper] = Object.assign({ id: upper, avatar: '', prefs: [] }, memberProfilesStore[upper] || {}, { id: upper });
-                safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+                // 修復：解析函式不再寫入／持久化 profiles（純函式不應有副作用）。
                 return upper;
             }
 
@@ -1026,7 +1203,7 @@ const tabMetadataMap = {
             [csSchedulesStore, cleanSchedulesStore, memberSchedules].forEach(store => {
                 if (Array.isArray(store)) {
                     store.forEach(s => { 
-                        if (s.name === oldKey || s.name.trim() === oldKey.trim()) {
+                        if (s.name === oldKey || (s.name || '').trim() === oldKey.trim()) {
                             s.name = newKey; 
                         }
                     });
@@ -1080,26 +1257,17 @@ const tabMetadataMap = {
        window.getMemberProfile = (name) => {
             if (!name) return { id: '', avatar: '', gender: '女', residency: '本地', prefs: [] };
             const canonical = window.resolveMemberIdentity ? window.resolveMemberIdentity(name) : name;
-            if (!memberProfilesStore[canonical]) {
-                const autoId = window.isStaffIdFormat(canonical) ? canonical.toUpperCase() : '';
-                const defaultMales = ['林浩霆', '黃永超', '譚建安', '甘永寧'];
-                const defGender = defaultMales.includes(canonical) ? '男' : '女';
-                memberProfilesStore[canonical] = { id: autoId, avatar: '', gender: defGender, residency: '本地', prefs: [] };
+            const defaultMales = ['林浩霆', '黃永超', '譚建安', '甘永寧'];
+            const prof = memberProfilesStore[canonical];
+            if (!prof) {
+                // 修復：查詢不再寫入 store，避免每次查名字都產生幽靈檔案；要保存時由 saveMemberProfile 負責。
+                return { id: window.isStaffIdFormat(canonical) ? canonical.toUpperCase() : '', avatar: '', gender: defaultMales.includes(canonical) ? '男' : '女', residency: '本地', prefs: [] };
             }
-            if (memberProfilesStore[canonical].id) {
-                memberProfilesStore[canonical].id = memberProfilesStore[canonical].id.replace(/^#/, '');
-            }
-            if (!memberProfilesStore[canonical].gender) {
-                const defaultMales = ['林浩霆', '黃永超', '譚建安', '甘永寧'];
-                memberProfilesStore[canonical].gender = defaultMales.includes(canonical) ? '男' : '女';
-            }
-            if (!memberProfilesStore[canonical].residency) {
-                memberProfilesStore[canonical].residency = '本地';
-            }
-            if (!Array.isArray(memberProfilesStore[canonical].prefs)) {
-                memberProfilesStore[canonical].prefs = [];
-            }
-            return memberProfilesStore[canonical];
+            if (prof.id) prof.id = prof.id.replace(/^#/, '');
+            if (!prof.gender) prof.gender = defaultMales.includes(canonical) ? '男' : '女';
+            if (!prof.residency) prof.residency = '本地';
+            if (!Array.isArray(prof.prefs)) prof.prefs = [];
+            return prof;
         };
 
         window.saveMemberProfile = (name, profileData) => {
@@ -1128,6 +1296,9 @@ const tabMetadataMap = {
 
                 if (dupKeys.size > 0) {
                     dupKeys.forEach(dupKey => {
+                        // 修復：同名/同工號的人若在另一邊名單（客服/清潔），不可當分身刪除。
+                        const otherList = isClean ? csMembersStore : cleanMembersStore;
+                        if (otherList.includes(dupKey)) return;
                         if (!profileData.avatar && !memberProfilesStore[name]?.avatar && memberProfilesStore[dupKey]?.avatar) {
                             profileData.avatar = memberProfilesStore[dupKey].avatar;
                         }
@@ -1338,7 +1509,7 @@ const tabMetadataMap = {
             const trimmed = rawInput.trim();
             // 🌟 智慧拆分：只有當最後一段真的是員工編號格式（如 -EH0088）時才拆開，完整保留名字裡的括號與橫線！
             const idMatch = trimmed.match(/^(.*?)\s*[-—_]\s*([A-Za-z]{1,4}-?\d{2,6}(?:-\d+)?)$/);
-            const name = idMatch ? idMatch[1].trim() : trimmed;
+            const name = (idMatch ? idMatch[1].trim() : trimmed).replace(/[<>]/g, '');
             const staffId = idMatch ? idMatch[2].trim().toUpperCase() : '';
             if (!name) return;
 
@@ -1646,15 +1817,8 @@ const tabMetadataMap = {
        window.renderMemberRosterListsOnly = () => {
             const isClean = window.currentMapRole === 'clean';
             const roleKey = isClean ? 'clean' : 'cs';
-            if (isClean && Array.isArray(csMembersStore) && csMembersStore.length > 0) {
-                const filteredClean = cleanMembersStore.filter(m => !csMembersStore.includes(m));
-                if (filteredClean.length !== cleanMembersStore.length) {
-                    cleanMembersStore = filteredClean;
-                    teamMembers = [...cleanMembersStore];
-                    safeSetLocal('work_cache_clean_members', cleanMembersStore);
-                    syncConfig('clean_team_members', { members: cleanMembersStore });
-                }
-            }
+            // 修復：原本在「渲染名單」時把同時存在於客服名單的人從清潔名單剔除並同步上雲，
+            // 等於開一次名單就永久刪人。名單異動只留給明確的編輯動作處理。
             const isFilterOn = window.dutyFilterModeEnabled?.[roleKey] !== false;
             const activeFilterList = window.getCheckedDutyList();
             const q = window._rosterSearchQuery || '';
@@ -1673,12 +1837,12 @@ const tabMetadataMap = {
             const renderMemberCard = (name) => {
                 const prof = window.getMemberProfile(name);
                 const col = window.getMemberColorClass(name);
-                const safeName = name.replace(/'/g, "\\'");
+                const safeName = window.jsAttr(name);
                 const isChecked = activeFilterList.includes(name);
                 const staffIdStr = (prof.id || '').trim();
                 const displayTitle = staffIdStr && staffIdStr.toUpperCase() !== name.toUpperCase()
-                    ? `${name} - <span class="font-mono text-[11px] text-slate-600">${staffIdStr}</span>`
-                    : `${name}`;
+                    ? `${window.esc(name)} - <span class="font-mono text-[11px] text-slate-600">${window.esc(staffIdStr)}</span>`
+                    : `${window.esc(name)}`;
 
                 const avatarHtml = prof.avatar
                     ? `<img src="${prof.avatar}" class="w-8 h-8 rounded-full object-cover border border-slate-300 shrink-0 shadow-2xs bg-[#fdfbf7]">`
@@ -2595,7 +2759,7 @@ window.openMemberProfilePopup(name, window._currentPopupLocation);
         window.confirmRenameMember = async (oldName) => {
             const input = $('popupMemberNameInput');
             if (!input) return;
-            const newName = input.value.trim().replace(/^#/, '');
+            const newName = input.value.trim().replace(/^#/, '').replace(/[<>]/g, '');
 
             if (!newName) {
                 window.showToast("⚠️ 姓名不能為空", true);
@@ -2745,7 +2909,7 @@ window.openMemberProfilePopup(name, window._currentPopupLocation);
                 modal.className = 'fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[10020] flex items-center justify-center p-3 sm:p-4';
             }
 
-            const safeName = canonical.replace(/'/g, "\\'");
+            const safeName = window.jsAttr(canonical);
             const todayStr = (typeof getTodayDateStr === 'function') ? getTodayDateStr() : new Date().toISOString().slice(0, 10);
 
             modal.innerHTML = `
@@ -2950,7 +3114,7 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                 document.body.appendChild(popup);
             }
 
-            const safeNameAttr = canonicalName.replace(/'/g, "\\'");
+            const safeNameAttr = window.jsAttr(canonicalName);
             const prefs = profile.prefs || ['', '', ''];
             const curGender = profile.gender || '女';
             const order = ['pt_8', 'pt_9', 'pt_3', 'pt_4', 'pt_1', 'pt_5', 'pt_2', 'pt_6'];
@@ -3022,7 +3186,7 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                         <div class="flex items-center justify-between">
                             <span class="text-[11px] font-bold text-slate-500">員工編號：</span>
                             <input type="text" id="popupMemberIdInput" value="${(profile.id || '').replace(/^#/, '')}" placeholder="例如: EH0047" 
-                                onchange="window.saveMemberProfile('${safeNameAttr}', { id: this.value.trim() }); window.showToast('✅ 已更新編號'); window.openMemberProfilePopup('${safeNameAttr}', window._currentPopupLocation); window.updateMapSimulation(); if($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal(); if($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();"
+                                onchange="window.saveMemberProfile('${safeNameAttr}', { id: this.value.trim() }); window.showToast('✅ 已更新編號'); window.openMemberProfilePopup('${safeNameAttr}', window._currentPopupLocation); window.updateMapSimulation(); if(document.getElementById('memberRosterModal') && !document.getElementById('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal(); if(document.getElementById('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();"
                                 class="bg-white border border-slate-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center w-28 focus:outline-none focus:border-blue-500">
                         </div>
                     </div>
@@ -3150,7 +3314,15 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
         };
 
        window.toggleMapRoleMode = (forceMode) => {
-            window.currentMapRole = forceMode || (window.currentMapRole === 'cs' ? 'clean' : 'cs');
+            const _nextRole = forceMode || (window.currentMapRole === 'cs' ? 'clean' : 'cs');
+            if (_nextRole !== window.currentMapRole && window._hasUnsavedGridEdits) {
+                if (!confirm('你有尚未儲存的排班修改，切換角色會丟失，確定要繼續嗎？')) return;
+                window._hasUnsavedGridEdits = false;
+            }
+            const _prevRoleKey = window.currentMapRole === 'clean' ? 'clean' : 'cs';
+            window._mapPointsByRole = window._mapPointsByRole || {};
+            window._mapPointsByRole[_prevRoleKey] = JSON.parse(JSON.stringify(mapData.points || {}));
+            window.currentMapRole = _nextRole;
             const isClean = window.currentMapRole === 'clean';
 
             // 🌟 修正：同時支援地圖右上角按鈕與頂部排班按鈕的 ID 尋找，防止找不到物件而中斷
@@ -3181,7 +3353,10 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             }
 
             if ($('scheduleBtnText')) $('scheduleBtnText').innerText = isClean ? '清潔排班' : '成員排班';
-            mapData.points = JSON.parse(JSON.stringify(isClean ? defaultCleanMapPoints : defaultMapPoints));
+            const _rolePts = (window._mapPointsByRole || {})[isClean ? 'clean' : 'cs'];
+            mapData.points = (_rolePts && Object.keys(_rolePts).length)
+                ? JSON.parse(JSON.stringify(_rolePts))
+                : JSON.parse(JSON.stringify(isClean ? defaultCleanMapPoints : defaultMapPoints));
             
             // 🌟 防呆保底：保持真實清潔名單，不再塞入清潔員A~F假人
             if (isClean && !Array.isArray(cleanMembersStore)) {
@@ -3454,7 +3629,7 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             });
             if (list) {
                 list.style.transform = 'none';
-                list.style.zoom = '1';
+            list.style.zoom = String((parseInt(patrolCardScale, 10) || 100) / 100);
                 list.style.width = '100%';
                 list.style.marginBottom = '0';
             }
@@ -3633,19 +3808,17 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
 
             let val = String(patrolTempRecords[date][slot][pointId] ?? '').trim();
 
+            // 🌟 溫度統計表固定為整數，無小數點
+            val = val.replace(/\..*$/, '').replace(/\D/g, '');
             if (key === 'CLEAR') {
                 val = '';
             } else if (key === 'BACK') {
                 val = val.slice(0, -1);
-            } else if (key === '.') {
-                if (!val.includes('.')) {
-                    val = val.length === 0 ? '0.' : val + '.';
-                }
-            } else {
+            } else if (/^\d+$/.test(String(key))) {
                 const digit = String(key);
                 if (val === '0') {
                     val = digit;
-                } else if (val.replace('.', '').length < 4) {
+                } else if (val.length < 2) {
                     val += digit;
                 }
             }
@@ -3698,10 +3871,13 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             patrolTempRecords[date][slot]['recorder_ts'] = nowTs;
             safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
 
-            window.syncTempSlotFieldToCloud(date, slot, {
-                recorder: cleanRecorder,
-                recorder_ts: nowTs
-            });
+            if (window._recorderSyncTimer) clearTimeout(window._recorderSyncTimer);
+            window._recorderSyncTimer = setTimeout(() => {
+                window.syncTempSlotFieldToCloud(date, slot, {
+                    recorder: cleanRecorder,
+                    recorder_ts: nowTs
+                });
+            }, 400);
         };
 
         // 🌟 獨立抽離的進度計算函式
@@ -3962,7 +4138,7 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             if (!curVal && !isUserLocked) {
                 dayRecords[stallKey][slotKey] = '0';
                 dayRecords[stallKey][reasonKey] = reasonStr;
-                dayRecords[stallKey][tsKey] = window._patrolCloudLoadedDates.has(currentPatrolDate) ? Date.now() : (dayRecords[stallKey][tsKey] || photoTs);
+                dayRecords[stallKey][tsKey] = syncTs;
                 autoFilledCount++;
                 changed = true;
                 affectedStallSlots.push({ stallKey, slotKey });
@@ -4281,6 +4457,12 @@ window._speechSpeakTimer = setTimeout(applyVoiceAndSpeak, 50);
             window.closeTempKeypadModal?.(true);
             window.updatePatrolDateInputUI();
             $('patrolCalendarPopover')?.classList.add('hidden');
+            
+            // 🌟 核心修復：切換日期或跳轉時，自動將剔檔時段切換至當前時間對應的分頁
+            if (typeof window.applyAutoPatrolSlot === 'function') {
+                window.applyAutoPatrolSlot(true);
+            }
+
             window.autoSyncClosedStallsToPatrol(true);
             window.renderPatrol();
             if ($('tempStatsModal') && !$('tempStatsModal').classList.contains('hidden')) {
@@ -4749,9 +4931,13 @@ window.clearTodayPatrolData = (e) => {
 
         window.jumpToNextUnfilledPatrol = () => {
             const stalls = window.getFilteredPatrolStalls();
-            for (let i = 0; i < stalls.length; i++) {
+            // 修復：由目前位置繼續找，不再每次都從第一格開始。
+            const startIdx = (patrolFocusIndex || 0) % Math.max(1, stalls.length);
+            for (let n = 0; n < stalls.length; n++) {
+                const i = (startIdx + n) % stalls.length;
                 if (!window.getPatrolStatus(stalls[i], patrolSlot)) {
                     const el = $(`patrol-card-${stalls[i].floor}-${stalls[i].id}`);
+                    patrolFocusIndex = i + 1;
                     if (el) {
                         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         el.classList.add('ring-4', 'ring-rose-500');
@@ -4761,6 +4947,7 @@ window.clearTodayPatrolData = (e) => {
                     return;
                 }
             }
+            patrolFocusIndex = 0;
             window.showToast("【" + patrolSlot + "】所有攤位已全部填妥！");
         };
 
@@ -4913,7 +5100,7 @@ window.clearTodayPatrolData = (e) => {
 
                 XLSX.utils.book_append_sheet(wb, wsPatrol, '剔檔表');
                 XLSX.utils.book_append_sheet(wb, wsTemp, '溫度');
-                XLSX.writeFile(wb, `匯出報表_${currentPatrolDate}.xlsx`);
+                XLSX.writeFile(wb, `${currentPatrolDate} 剔檔與溫度.xlsx`);
 
                 // 🌟 記錄導出巡查 Excel 報表操作日誌
                 window.writeGalleryLog('導出巡查報表', `日期: ${currentPatrolDate}`, '剔檔與溫度雙分頁 Excel 報表');
@@ -4924,31 +5111,8 @@ window.clearTodayPatrolData = (e) => {
             }
         };
 
-        window.demoFillCurrentPatrolSlot = () => {
-            const choices = ['A', 'A', 'A', '1', '0'];
-            const stalls = window.getFilteredPatrolStalls();
-            const nowTs = Date.now();
-            if (!patrolHistoryStore[currentPatrolDate]) {
-                patrolHistoryStore[currentPatrolDate] = {};
-            }
-            stalls.forEach(s => {
-                const k = window.getPatrolKey(s);
-                if (!patrolHistoryStore[currentPatrolDate][k]) patrolHistoryStore[currentPatrolDate][k] = {};
-                if (!patrolHistoryStore[currentPatrolDate][k][patrolSlot]) {
-                    patrolHistoryStore[currentPatrolDate][k][patrolSlot] = choices[Math.floor(Math.random() * choices.length)];
-                    patrolHistoryStore[currentPatrolDate][k][`${patrolSlot}_locked`] = true;
-                    patrolHistoryStore[currentPatrolDate][k][`${patrolSlot}_reason`] = '';
-                    patrolHistoryStore[currentPatrolDate][k][`${patrolSlot}_ts`] = nowTs;
-                    window.enqueuePatrolSync(currentPatrolDate, k, patrolSlot);
-                }
-            });
-            patrolState = patrolHistoryStore[currentPatrolDate];
-            safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
-            safeSetLocal('work_cache_patrol_records', patrolState);
-            window.renderPatrol();
-            window.resumePatrolUploadQueue(false);
-            window.showToast(`已模擬快填【${currentPatrolDate} ${patrolSlot}】！`);
-        };
+        // 已移除：demoFillCurrentPatrolSlot（測試用的隨機快填）。
+        // 它會把當日剔檔隨機亂填並鎖定，之後照片自動填 0 永遠無法修正，屬於「測試資料蓋過正式資料」的來源。
 
         const memberColorPalettes = [
             { bg: 'bg-rose-100', text: 'text-rose-700', border: 'border-rose-300', activeBg: 'bg-rose-500' },
@@ -4991,6 +5155,35 @@ window.getNow = () => {
     return new Date(hkMs + timeOffset);
 };
 
+        // ====== 共用工具：香港時間字串解析、HTML 轉義、跨午夜班次區間 ======
+        window.hkDateTimeToMs = (dateStr, timeStr) => {
+            const d = String(dateStr || '').trim().split('-').map(Number);
+            if (d.length !== 3 || !d[0]) return NaN;
+            const t = String(timeStr || '00:00').trim().split(':').map(Number);
+            const h = Number.isFinite(t[0]) ? t[0] : 0;
+            const mi = Number.isFinite(t[1]) ? t[1] : 0;
+            return Date.UTC(d[0], d[1] - 1, d[2], h - 8, mi, 0, 0);
+        };
+        window.esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        window.escAttr = (s) => window.esc(s).replace(/\\/g, '&#92;');
+        // JS 字串放進 HTML 屬性時的雙重跳脫：先做 JS 跳脫，再做 HTML 屬性跳脫。
+        window.jsAttr = (s) => window.esc(String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+        window.getScheduleRange = (startStr, endStr, nowMs) => {
+            const base = new Date(nowMs);
+            const mk = (str) => { const p = String(str || '').split(':').map(Number); const d = new Date(base); d.setHours(p[0] || 0, p[1] || 0, 0, 0); return d; };
+            let s = mk(startStr);
+            let e = mk(endStr);
+            if (e <= s) {
+                const e0 = e.getTime();
+                e = new Date(e.getTime() + 86400000);
+                if (nowMs < s.getTime() && nowMs < e0) {
+                    s = new Date(s.getTime() - 86400000);
+                    e = new Date(e.getTime() - 86400000);
+                }
+            }
+            return { s, e };
+        };
+
         function parseTime(tStr) {
             const d = window.getNow();
             if (!tStr || typeof tStr !== 'string' || !tStr.includes(':')) { d.setHours(0, 0, 0, 0); return d; }
@@ -5000,7 +5193,8 @@ window.getNow = () => {
         }
 
         function calculateTaskStatus(startStr, endStr) {
-            const now = window.getNow(), s = parseTime(startStr), e = parseTime(endStr);
+            const now = window.getNow();
+            const { s, e } = window.getScheduleRange(startStr, endStr, now.getTime());
             const fmt = (diff) => `${Math.floor(diff/60) > 0 ? Math.floor(diff/60) + '小時' : ''}${diff % 60}分`;
             if (now < s) return { state: 'waiting', text: `未開始 (約 ${fmt(Math.floor((s - now) / 60000))}後)` };
             if (now >= s && now <= e) return { state: 'active', text: `進行中 (剩餘 ${fmt(Math.floor((e - now) / 60000))})` };
@@ -5015,7 +5209,9 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             try {
                 const AudioCtx = window.AudioContext || window.webkitAudioContext;
                 if (!AudioCtx) return;
-                const ctx = new AudioCtx();
+                // 修復：重用同一個 AudioContext，不再每次播放都新建（舊版永遠關不掉、亦會累積）。
+                if (!crAudioCtx || crAudioCtx.state === 'closed') crAudioCtx = new AudioCtx();
+                const ctx = crAudioCtx;
                 if (ctx.state === 'suspended') { ctx.resume(); }
 
                 const now = ctx.currentTime;
@@ -5037,9 +5233,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
                 osc.start(now);
                 osc.stop(now + 0.4);
-
-                setTimeout(() => { if (ctx.state !== 'closed') ctx.close(); }, 600);
-            } catch (e) {}
+            } catch (e) { console.error('提示音播放失敗：', e); }
         };
 
         window.stopOverdueAlarm = () => {
@@ -5101,7 +5295,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             if (!getLocal('work_cache_cr_notify', false)) return;
             const now = window.getNow().getTime(); let newDueMemos = [];
             futureMemos.forEach(m => {
-                if (now >= new Date(`${m.date}T${m.time || '00:00'}`).getTime() && !window.memoNotifiedSet.has(m.id)) {
+                if (now >= window.hkDateTimeToMs(m.date, m.time || '00:00') && !window.memoNotifiedSet.has(m.id)) {
                     window.memoNotifiedSet.add(m.id);
                     sessionStorage.setItem('work_memo_notified', JSON.stringify([...window.memoNotifiedSet]));
                     newDueMemos.push(m);
@@ -5130,16 +5324,39 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             const now = window.getNow();
             const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 
-            // 🌟 關鍵修復：必須排除 i.restored（手動還原過的相片絕不可被自動清理再度刪除）
-            const yesterdayItems = galleryItems.filter(i => !i.isDeleted && !i.restored && (i.createdAt || 0) < startOfToday);
-            if (!yesterdayItems.length) return;
+            // 1. 超過 7 天的垃圾項目徹底物理刪除（只保留 7 日）
+            const SEVEN_DAYS_MS = 7 * 86400000;
+            const expiredItems = galleryItems.filter(i => i.isDeleted && (now.getTime() - (i.deletedAt || i.createdAt || 0)) > SEVEN_DAYS_MS);
+            if (expiredItems.length > 0) {
+                const expiredIds = new Set(expiredItems.map(x => String(x.id)));
+                galleryItems = galleryItems.filter(x => !expiredIds.has(String(x.id)));
+                expiredItems.forEach(item => {
+                    idbDel(item.id);
+                    idbDel(`${item.id}_v_${item.createdAt || 0}`);
+                    idbDel(`${item.id}_v_${item.updatedAt || 0}`);
+                    idbDel(`thumb_${item.id}_v_${item.updatedAt || item.createdAt || 0}`);
+                });
+                if (currentUser && db) {
+                    for (let i = 0; i < expiredItems.length; i += 400) {
+                        const batch = writeBatch(db);
+                        expiredItems.slice(i, i + 400).forEach(it => {
+                            batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(it.id)));
+                        });
+                        batch.commit().catch(() => {});
+                    }
+                }
+            }
 
-            const cleanupTime = Date.now();
-            yesterdayItems.forEach(i => {
-                i.isDeleted = true;
-                i.isManualDeleted = false; // 🌟 標記為系統跨日自動歸檔，非人工誤刪
-                i.deletedAt = cleanupTime;
-            });
+            // 2. 昨日相片跨日歸檔移至還原清單
+            const yesterdayItems = galleryItems.filter(i => !i.isDeleted && !i.restored && (i.createdAt || 0) < startOfToday);
+            if (yesterdayItems.length > 0) {
+                const cleanupTime = Date.now();
+                yesterdayItems.forEach(i => {
+                    i.isDeleted = true;
+                    i.isManualDeleted = false;
+                    i.deletedAt = cleanupTime;
+                });
+            }
 
             await saveGalleryItemsSafe(galleryItems);
 
@@ -5191,7 +5408,8 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 window.autoSyncClosedStallsToPatrol?.(true, currentPatrolDate);
                 if (!$('patrolPage')?.classList.contains('hidden')) window.renderPatrol?.();
             }
-            safeSetLocal('work_last_active_patrol_date', patrolToday);
+            // 修復：只有當畫面真的停在今天時才更新，否則會把正在看歷史日的使用者隔天踢回今天。
+            if (currentPatrolDate === patrolToday) safeSetLocal('work_last_active_patrol_date', patrolToday);
 
             // 執行圖庫依日期檢查歸檔
             window.autoCleanupGalleryToTrash();
@@ -5214,23 +5432,47 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
         window.showToast = (msg, isErr = false) => {
             const t = document.createElement('div');
-            t.className = `fixed top-16 left-1/2 transform -translate-x-1/2 px-5 py-3 rounded-full shadow-lg text-sm font-bold z-[9999] transition-all duration-300 ${isErr ? 'bg-red-500 text-white' : 'bg-slate-800 text-white'}`;
+            t.className = `fixed top-16 left-1/2 transform -translate-x-1/2 px-5 py-3 rounded-full shadow-lg text-sm font-bold z-[20050] transition-all duration-300 ${isErr ? 'bg-red-500 text-white' : 'bg-slate-800 text-white'}`;
             t.textContent = msg; document.body.appendChild(t);
             setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translate(-50%, -20px)'; setTimeout(() => t.remove(), 300); }, 3000);
         };
 
-        window.showConfirm = (title, message, onConfirm) => {
+        window._confirmQueue = window._confirmQueue || [];
+        window.showConfirm = (title, message, onConfirm, onCancel) => {
             const modal = $('customConfirmModal');
+            if (modal && modal.classList.contains('flex')) {
+                // 修復：上一個確認視窗還開著時排隊，避免覆寫掉它的 callback。
+                window._confirmQueue.push({ title, message, onConfirm, onCancel });
+                return;
+            }
             $('confirmModalTitle').innerHTML = `<i data-lucide="alert-triangle" class="w-5 h-5 mr-2 text-amber-500"></i> ${title}`;
-            $('confirmModalMessage').innerHTML = message;
+            $('confirmModalMessage').textContent = message;
             const cancelBtn = $('confirmBtnCancel'), okBtn = $('confirmBtnOk');
-            cancelBtn.onclick = () => modal.classList.replace('flex', 'hidden');
-            okBtn.onclick = () => {
+            const _closeAndNext = () => {
                 modal.classList.replace('flex', 'hidden');
+                if (window._confirmQueue.length) {
+                    const nx = window._confirmQueue.shift();
+                    setTimeout(() => window.showConfirm(nx.title, nx.message, nx.onConfirm, nx.onCancel), 60);
+                }
+            };
+            cancelBtn.onclick = () => {
+                _closeAndNext();
+                if (typeof onCancel === 'function') onCancel();
+            };
+            okBtn.onclick = () => {
+                if (okBtn.dataset.busy === '1') return;
+                okBtn.dataset.busy = '1';
+                setTimeout(() => { okBtn.dataset.busy = ''; }, 800);
+                _closeAndNext();
                 if (typeof onConfirm === 'function') onConfirm();
             };
             lucide.createIcons(); modal.classList.replace('hidden', 'flex');
         };
+
+        // 修復：Promise 版確認窗，取代會被 PWA／WebView 封鎖的原生 confirm。
+        window.askConfirm = (title, message) => new Promise((resolve) => {
+            window.showConfirm(title, message, () => resolve(true), () => resolve(false));
+        });
 
         window.setUploadProgress = (percent, text) => {
             const c = $('globalProgressContainer');
@@ -5331,7 +5573,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 ctx.drawImage(im, 0, curY);
                 curY += im.naturalHeight;
             });
-            return canvas.toDataURL('image/jpeg', 0.6);
+            return canvas.toDataURL('image/jpeg', 0.82);
         };
 
         const getFullImageUrlAsync = async (item) => {
@@ -5362,13 +5604,24 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                         await idbSet(verKey, mergedUrl);
                         return mergedUrl;
                     }
-                } catch (e) {}
+                } catch (e) {
+                    console.error('讀取雲端圖片切片失敗：', item.id, e);
+                    if (!window._imgLoadWarned) { window._imgLoadWarned = true; window.showToast('⚠️ 部分圖片載入失敗，請檢查網路後重新整理', true); }
+                }
             }
             return item.src || '';
         };
 
         // ====== 輕量高清縮圖 (360px、品質 0.75，視網膜清晰度且不卡頓) ======
         let thumbImageCache = new Map();
+        // 修復：縮圖快取也要有上限，否則長時間使用會一直累積直到 OOM。
+        const _origThumbSet = thumbImageCache.set.bind(thumbImageCache);
+        thumbImageCache.set = (key, val) => {
+            if (thumbImageCache.size >= 120 && !thumbImageCache.has(key)) {
+                thumbImageCache.delete(thumbImageCache.keys().next().value);
+            }
+            return _origThumbSet(key, val);
+        };
 
         // 🌟 自動限制記憶體快取數量最多 40 張，避免長時間使用造成手機 OOM 閃退
         const _origCacheSet = memoryImageCache.set.bind(memoryImageCache);
@@ -5426,11 +5679,17 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
 // ====== 全螢幕預覽控制函式 ======
         window._currentViewerImageId = null;
+        window.openPendingFullscreen = (tempId) => {
+            const it = (window.pendingUploadImages || []).find(x => x.tempId === tempId);
+            if (it && it.src) window.openFullscreenImg(it.src, null);
+        };
         window.openFullscreenImg = (src, itemId = null) => { 
             window._currentViewerImageId = itemId;
             const imgEl = $('imageViewerImg');
             if (imgEl) imgEl.src = src; 
             $('imageViewer')?.classList.replace('hidden', 'flex'); 
+            // 修復：待上傳預覽沒有圖片 ID，旋轉一定失敗；直接隱藏旋轉鍵，避免誤按。
+            document.querySelectorAll('#imageViewer button[onclick*="rotateFullscreenImg"]').forEach(b => { b.style.display = itemId ? '' : 'none'; });
             try { lucide.createIcons({ root: $('imageViewer') }); } catch (err) {}
         };
 
@@ -5474,7 +5733,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             window.pendingUploadImages = window.pendingUploadImages || [];
             
             const { time } = getNowInputStrs();
-            const defaultCat = '未分類';
+            const defaultCat = '';
             const initialCount = window.pendingUploadImages.length;
 
             // 啟動進度提示
@@ -5487,7 +5746,8 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                     
                     window.pendingUploadImages.push({
                         tempId, chunks, src: previewSrc,
-                        prefix: "", code: "", markStatus: "", title: "", time, category: defaultCat
+                        prefix: "", code: "", markStatus: "", title: "", time, category: defaultCat,
+                        createdAt: Date.now()
                     });
                 } catch (e) {
                     console.error("圖片讀取處理失敗:", e);
@@ -5610,7 +5870,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                         ctx.translate(cvs.width / 2, cvs.height / 2);
                         ctx.rotate((angleDeg * Math.PI) / 180);
                         ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
-                        resolve(cvs.toDataURL('image/jpeg', 0.85));
+                        resolve(cvs.toDataURL('image/jpeg', 0.92));
                     };
                     img.onerror = reject;
                     img.src = imgEl.src;
@@ -5726,7 +5986,7 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                         deletedAt: item.deletedAt
                     }, { merge: true });
                 } catch (err) {
-                    console.error("垃圾桶雲端同步失敗", err);
+                    window.reportCloudError('垃圾桶雲端同步失敗', err);
                 }
             }
 
@@ -5761,18 +6021,21 @@ window.deleteSelectedGalleryItems = () => {
         // 2. 雲端批次軟更新（不調用 deleteDoc）
         if (currentUser && db) {
             try {
-                const batch = writeBatch(db);
-                idsToDelete.forEach(id => {
-                    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id);
-                    batch.set(ref, {
-                        isDeleted: true,
-                        isManualDeleted: true,
-                        deletedAt: now
-                    }, { merge: true });
-                });
-                await batch.commit();
+                // 修復：分批提交，避免超過 Firestore 單一批次 500 筆上限。
+                for (let i = 0; i < idsToDelete.length; i += 400) {
+                    const batch = writeBatch(db);
+                    idsToDelete.slice(i, i + 400).forEach(id => {
+                        const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id);
+                        batch.set(ref, {
+                            isDeleted: true,
+                            isManualDeleted: true,
+                            deletedAt: now
+                        }, { merge: true });
+                    });
+                    await batch.commit();
+                }
             } catch (err) {
-                console.error("批次刪除同步失敗:", err);
+                window.reportCloudError('批次刪除同步失敗', err);
             }
         }
 
@@ -5804,6 +6067,7 @@ window.deleteSelectedGalleryItems = () => {
 
             const now = Date.now();
             item.isDeleted = false;
+            item.isManualDeleted = false;
             delete item.deletedAt;
             item.restored = true; // 🌟 打上永久免死金牌，跨日自動清理不再碰它
             item.updatedAt = now;
@@ -5813,12 +6077,13 @@ window.deleteSelectedGalleryItems = () => {
                 try {
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(id)), {
                         isDeleted: false,
+                        isManualDeleted: false,
                         deletedAt: deleteField(),
                         restored: true, // 🌟 雲端同步打上免死標記
                         updatedAt: now
                     }, { merge: true });
                 } catch (err) {
-                    console.error("單張還原雲端同步失敗:", err);
+                    window.reportCloudError('單張還原雲端同步失敗', err);
                 }
             }
 
@@ -5835,9 +6100,7 @@ window.deleteSelectedGalleryItems = () => {
             const trashed = galleryItems.filter(i => {
                 if (!i.isDeleted) return false;
                 // 🌟 核心修正：比對該張照片的拍攝/上傳日期
-                const d = i.createdAt ? new Date(i.createdAt) : window.getNow();
-                const itemDateKey = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
-                return itemDateKey === dateStr;
+                return window.formatDateStrHK(i.createdAt || Date.now()) === dateStr;
             });
 
             if (!trashed.length) return;
@@ -5845,6 +6108,7 @@ window.deleteSelectedGalleryItems = () => {
             const now = Date.now();
             trashed.forEach(item => {
                 item.isDeleted = false;
+                item.isManualDeleted = false;
                 delete item.deletedAt;
                 item.restored = true; // 🌟 賦予免死金牌，跨日清理不抓
                 item.updatedAt = now;
@@ -5854,19 +6118,23 @@ window.deleteSelectedGalleryItems = () => {
 
             if (currentUser && db) {
                 try {
-                    const batch = writeBatch(db);
-                    trashed.forEach(item => {
-                        const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(item.id));
-                        batch.set(ref, {
-                            isDeleted: false,
-                            deletedAt: deleteField(),
-                            restored: true,
-                            updatedAt: now
-                        }, { merge: true });
-                    });
-                    await batch.commit();
+                    // 修復：分批提交，避免超過 Firestore 單一批次 500 筆上限。
+                    for (let i = 0; i < trashed.length; i += 400) {
+                        const batch = writeBatch(db);
+                        trashed.slice(i, i + 400).forEach(item => {
+                            const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(item.id));
+                            batch.set(ref, {
+                                isDeleted: false,
+                                isManualDeleted: false,
+                                deletedAt: deleteField(),
+                                restored: true,
+                                updatedAt: now
+                            }, { merge: true });
+                        });
+                        await batch.commit();
+                    }
                 } catch (err) {
-                    console.error(`還原 ${dateStr} 相片雲端同步失敗:`, err);
+                    window.reportCloudError(`還原 ${dateStr} 相片雲端同步失敗`, err);
                 }
             }
 
@@ -5886,6 +6154,7 @@ window.deleteSelectedGalleryItems = () => {
             const now = Date.now();
             trashed.forEach(item => {
                 item.isDeleted = false;
+                item.isManualDeleted = false;
                 delete item.deletedAt;
                 item.restored = true; // 🌟 打上永久免死金牌
                 item.updatedAt = now;
@@ -5895,19 +6164,23 @@ window.deleteSelectedGalleryItems = () => {
 
             if (currentUser && db) {
                 try {
-                    const batch = writeBatch(db);
-                    trashed.forEach(item => {
-                        const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(item.id));
-                        batch.set(ref, {
-                            isDeleted: false,
-                            deletedAt: deleteField(),
-                            restored: true, // 🌟 雲端同步打上免死標記
-                            updatedAt: now
-                        }, { merge: true });
-                    });
-                    await batch.commit();
+                    // 修復：分批提交，避免超過 Firestore 單一批次 500 筆上限。
+                    for (let i = 0; i < trashed.length; i += 400) {
+                        const batch = writeBatch(db);
+                        trashed.slice(i, i + 400).forEach(item => {
+                            const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(item.id));
+                            batch.set(ref, {
+                                isDeleted: false,
+                                isManualDeleted: false,
+                                deletedAt: deleteField(),
+                                restored: true, // 🌟 雲端同步打上免死標記
+                                updatedAt: now
+                            }, { merge: true });
+                        });
+                        await batch.commit();
+                    }
                 } catch (err) {
-                    console.error("全部還原雲端同步失敗:", err);
+                    window.reportCloudError("全部還原雲端同步失敗", err);
                 }
             }
 
@@ -5939,19 +6212,24 @@ window.deleteSelectedGalleryItems = () => {
                 });
                 Promise.all(trashed.flatMap(item => [
                     idbDel(item.id),
-                    idbDel(`thumb_v2_${item.id}`),
+                    // 修復：真正存在的是版本化的原圖 key（id_v_時間），舊版只刪 item.id 會讓大圖永遠留在 IndexedDB。
+                    idbDel(`${item.id}_v_${item.createdAt || 0}`),
+                    idbDel(`${item.id}_v_${item.updatedAt || 0}`),
                     idbDel(`thumb_${item.id}_v_${item.updatedAt || item.createdAt || 0}`)
                 ])).catch(() => {});
 
                 // 🌟 3. 雲端使用 writeBatch 一次性整批送出，只觸發 1 次監聽，絕不再一張一張慢刪！
                 if (currentUser && db) {
                     try {
-                        const batch = writeBatch(db);
-                        trashed.forEach(item => {
-                            const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(item.id));
-                            batch.delete(ref);
-                        });
-                        await batch.commit();
+                        // 修復：Firestore 單一 writeBatch 上限 500 筆，超過就整批失敗，這裡分批提交。
+                        for (let i = 0; i < trashed.length; i += 400) {
+                            const batch = writeBatch(db);
+                            trashed.slice(i, i + 400).forEach(item => {
+                                const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(item.id));
+                                batch.delete(ref);
+                            });
+                            await batch.commit();
+                        }
 
                         // 背景靜默清理切片
                         trashed.forEach(item => {
@@ -5960,7 +6238,7 @@ window.deleteSelectedGalleryItems = () => {
                                 .catch(() => {});
                         });
                     } catch (err) {
-                        console.error("永久清空雲端同步失敗:", err);
+                        window.reportCloudError("永久清空雲端同步失敗", err);
                     }
                 }
 
@@ -5978,6 +6256,15 @@ window.deleteSelectedGalleryItems = () => {
 
         window.closeTrashModal = () => {
             $('galleryTrashModal')?.classList.replace('flex', 'hidden');
+        };
+
+        // 🌟 記錄還原清單中被收合的日期
+        window.collapsedTrashDates = window.collapsedTrashDates || new Set();
+        window.toggleTrashDateSection = (dateKey, event) => {
+            if (event) { event.preventDefault(); event.stopPropagation(); }
+            if (window.collapsedTrashDates.has(dateKey)) window.collapsedTrashDates.delete(dateKey);
+            else window.collapsedTrashDates.add(dateKey);
+            window.renderTrashList();
         };
 
         window.renderTrashList = async () => {
@@ -5998,29 +6285,26 @@ window.deleteSelectedGalleryItems = () => {
                 return;
             }
 
-            // 1. 依照相片【拍攝/上傳建立時間 (createdAt)】排序（最新拍的排在最前面）
             trashed.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-            // 2. 嚴格依照【拍攝/上傳建立日期 (createdAt)】進行分組 (Group by Upload/Created Date)
             const groups = {};
             for (const item of trashed) {
-                // 🌟 核心修正：一律以上傳拍攝時間 createdAt 判定日期
-                const d = item.createdAt ? new Date(item.createdAt) : window.getNow();
-                const dateKey = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+                const dateKey = window.formatDateStrHK(item.createdAt || Date.now());
                 if (!groups[dateKey]) groups[dateKey] = [];
                 groups[dateKey].push(item);
             }
 
-            // 3. 渲染分組 HTML
-            const groupKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a)); // 日期由新到舊排序
+            const groupKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
             
             const groupedHtml = await Promise.all(groupKeys.map(async dateStr => {
                 const groupItems = groups[dateStr];
+                // 🌟 預設為收合狀態（除非用戶手動加入已展開集合）
+                const isCollapsed = !window.collapsedTrashDates.has(dateStr);
                 
                 const cardsHtml = await Promise.all(groupItems.map(async item => {
                     const thumbSrc = await getLowResThumbUrlAsync(item);
                     return `
-                        <div class="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-xl">
+                        <div class="flex items-center justify-between p-2 bg-white border border-slate-200/80 rounded-xl shadow-2xs">
                             <div class="flex items-center space-x-2.5 min-w-0 flex-1">
                                 <div class="w-12 h-12 rounded-lg bg-slate-200 overflow-hidden shrink-0 border border-slate-300">
                                     <img src="${thumbSrc}" class="w-full h-full object-cover">
@@ -6037,20 +6321,25 @@ window.deleteSelectedGalleryItems = () => {
                 }));
 
                 return `
-                    <div class="space-y-1.5 mb-3 bg-slate-100/60 p-1.5 rounded-2xl border border-slate-200/60">
-                        <div class="flex items-center justify-between px-1 pb-1 border-b border-slate-200/50">
-                            <div class="text-[11px] font-black text-blue-700 flex items-center space-x-1">
-                                <i data-lucide="calendar" class="w-3.5 h-3.5 mr-1 text-blue-600"></i>
-                                <span>${dateStr} <span class="text-slate-400 font-bold">(${groupItems.length} 張)</span></span>
+                    <div class="mb-2.5 bg-slate-100/70 p-1.5 rounded-2xl border border-slate-200/80">
+                        <div class="flex items-center justify-between px-1.5 py-1 bg-white rounded-xl border border-slate-200/80 select-none cursor-pointer" onclick="window.toggleTrashDateSection('${dateStr}', event)">
+                            <div class="text-[11.5px] font-black text-blue-700 flex items-center space-x-1.5">
+                                <i data-lucide="calendar" class="w-3.5 h-3.5 text-blue-600"></i>
+                                <span>${dateStr}</span>
+                                <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded-full border border-slate-200/80">${groupItems.length} 張</span>
                             </div>
-                            <button type="button" onclick="window.restoreDateGroupItems('${dateStr}')" 
-                                    class="bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded-lg text-[10px] font-black flex items-center shadow-2xs active:scale-95 transition-all">
-                                <i data-lucide="rotate-ccw" class="w-2.5 h-2.5 mr-1"></i>還原此日
-                            </button>
+                            <div class="flex items-center space-x-2">
+                                <button type="button" onclick="event.stopPropagation(); window.restoreDateGroupItems('${dateStr}')" 
+                                        class="bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded-lg text-[10px] font-black flex items-center shadow-2xs active:scale-95 transition-all">
+                                    <i data-lucide="rotate-ccw" class="w-2.5 h-2.5 mr-1"></i>還原此日
+                                </button>
+                                <span class="text-[10px] font-bold text-slate-500 flex items-center">
+                                    <span>${isCollapsed ? '展開' : '收合'}</span>
+                                    <i data-lucide="${isCollapsed ? 'chevron-down' : 'chevron-up'}" class="w-3.5 h-3.5 ml-0.5"></i>
+                                </span>
+                            </div>
                         </div>
-                        <div class="space-y-1.5 pt-0.5">
-                            ${cardsHtml.join('')}
-                        </div>
+                        ${!isCollapsed ? `<div class="space-y-1.5 pt-1.5 mt-1 border-t border-slate-200/60">${cardsHtml.join('')}</div>` : ''}
                     </div>`;
             }));
 
@@ -6064,8 +6353,9 @@ window.deleteSelectedGalleryItems = () => {
             const item = galleryItems.find(x => x.id === id);
             if (!item) return;
 
-            const catList = ['提早收工', '營業相', '開工-雞相', '測溫相'];
-            const curCat = (item.category === '收工' ? '提早收工' : item.category) || '提早收工';
+            const catList = ['提早收工', '清潔', '營業相', '測溫相'];
+            const rawCat = item.category === '收工' ? '提早收工' : (item.category === '開工-雞相' ? '營業相' : item.category);
+            const curCat = (rawCat && rawCat !== '未分類') ? rawCat : '';
             const curTime = item.time || '12:00';
 
             window._modalUserOverridden = false;
@@ -6101,7 +6391,7 @@ window.deleteSelectedGalleryItems = () => {
 
                         <div>
                             <label class="text-[11px] font-bold text-slate-500 block mb-1">標題 / 檔號</label>
-                            <input type="text" id="editModalTitleInput" value="${item.title || ''}" placeholder="例如: 1-002 或 R-061" 
+                            <input type="text" id="editModalTitleInput" value="${window.esc(item.title || '')}" placeholder="例如: 1-002 或 R-061" 
                                 oninput="window.runModalAutoDetect(false)"
                                 class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500 text-center shadow-inner">
                         </div>
@@ -6176,7 +6466,7 @@ window.deleteSelectedGalleryItems = () => {
 
            const isFirstFloor = prefix === '一樓' || /^1-?/i.test(titleVal) || (matched && matched.floor.includes('一樓'));
 
-            // 10點前一樓固定為營業相；雞檔固定判定為清潔
+            // 10點前一樓固定為營業相；雞檔 12:00 前判定為開工-雞相（歸入營業相分類），12:00 後判定為清潔
             if (isFirstFloor && targetMins < 600) {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
@@ -6184,11 +6474,19 @@ window.deleteSelectedGalleryItems = () => {
                     <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 10:00 前一樓相片自動判定為營業相</div>`;
                 window.setModalEditCat('營業相', false);
             } else if (isChickenStall) {
-                hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
-                hintBox.innerHTML = `
-                    <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
-                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 雞檔無提早收工，固定判定為清潔</div>`;
-                window.setModalEditCat('清潔', false);
+                if (targetMins < 720) {
+                    hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-purple-200 bg-purple-50 text-purple-800 flex flex-col gap-0.5 animate-pop-in';
+                    hintBox.innerHTML = `
+                        <div class="flex items-center"><i data-lucide="store" class="w-3.5 h-3.5 mr-1 text-purple-600 shrink-0"></i> 判定：<span class="font-black text-purple-800 ml-0.5">開工-雞相 (歸入營業相)</span></div>
+                        <div class="text-[10px] text-purple-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 雞檔 12:00 前自動判定為開工-雞相</div>`;
+                    window.setModalEditCat('營業相', false);
+                } else {
+                    hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col gap-0.5 animate-pop-in';
+                    hintBox.innerHTML = `
+                        <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
+                        <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 雞檔 12:00 後判定為清潔</div>`;
+                    window.setModalEditCat('清潔', false);
+                }
             } else if (diff > 30) {
                 hintBox.className = 'mb-2.5 p-2.5 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
@@ -6246,7 +6544,10 @@ window.deleteSelectedGalleryItems = () => {
                     title: newTitle,
                     category: newCat,
                     time: newTime
-                }, { merge: true });
+                }, { merge: true }).catch(err => {
+                    console.error('圖片修改雲端同步失敗:', err);
+                    window.showToast('⚠️ 本機已更新，但雲端同步失敗', true);
+                });
             }
 
             window.writeGalleryLog('修改圖片', newTitle, `分類: ${newCat} · 時間: ${newTime}`);
@@ -6350,7 +6651,7 @@ window.deleteSelectedGalleryItems = () => {
                 await saveDirHandleToIDB(dirHandle);
 
                 window.showToast(`準備導出共 ${targetItems.length} 張 PNG 圖片...`);
-                let successCount = 0;
+                let successCount = 0, failCount = 0;
 
                 for (let i = 0; i < targetItems.length; i++) {
                     const item = targetItems[i];
@@ -6393,21 +6694,24 @@ window.deleteSelectedGalleryItems = () => {
                         if (currentUser && db) {
                             setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(item.id)), {
                                 isExported: true
-                            }, { merge: true }).catch(() => {});
+                            }, { merge: true }).catch(err => window.reportCloudError('標記已導出失敗', err));
                         }
                         
                         successCount++;
                         await new Promise(r => setTimeout(r, 120));
-                    } catch (singleErr) {}
+                    } catch (singleErr) {
+                        failCount++;
+                        console.error('匯出圖片失敗：', item.title || item.id, singleErr);
+                    }
                 }
 
                 // 🌟 保存至本地快取
                 await saveGalleryItemsSafe(galleryItems);
 
                 // 🌟 記錄導出圖片操作日誌
-                window.writeGalleryLog('導出圖片', `分類: ${currentGalleryCategory}`, `成功導出 ${successCount} / ${targetItems.length} 張圖片`);
+                window.writeGalleryLog('導出圖片', `分類: ${currentGalleryCategory}`, `成功導出 ${successCount} / ${targetItems.length} 張圖片，失敗 ${failCount} 張`);
 
-                window.showToast(`✅ 成功導出 ${successCount} / ${targetItems.length} 張 PNG 圖片！`);
+                window.showToast(failCount > 0 ? `⚠️ 成功 ${successCount} 張，失敗 ${failCount} 張（詳見 Console）` : `✅ 成功導出 ${successCount} / ${targetItems.length} 張 PNG 圖片！`, failCount > 0);
                 
                 // 自動取消選取狀態並關閉選取模式，強制刷新畫面顯示綠色剔號
                 window.isGallerySelectMode = false;
@@ -6474,8 +6778,8 @@ window.deleteSelectedGalleryItems = () => {
             const floorNameMap = { '1': '一樓', 'R': '地下', 'J': '花園仔' };
 
             targetItems.forEach((item) => {
-                const d = item.createdAt ? new Date(item.createdAt) : window.getNow();
-                const currentDateStr = `${d.getMonth() + 1}/${d.getDate()}`;
+                const _hkDate = window.formatDateStrHK(item.createdAt || Date.now()).split('-');
+                const currentDateStr = `${parseInt(_hkDate[1], 10)}/${parseInt(_hkDate[2], 10)}`;
                 const patrolDateKey = window.formatDateStrHK ? window.formatDateStrHK(item.createdAt) : getTodayDateStr();
 
                 let rawTitle = (item.title || '').trim();
@@ -6529,11 +6833,11 @@ window.deleteSelectedGalleryItems = () => {
                 const s11 = stallPatrol['上午11點'] || '';
                 const amSelfRun = (s9 === 'A' || s11 === 'A') ? 'Y' : 'N';
 
-                // 下午：若該檔於上午已收工 (<= 12:00) 則打後為 --；否則看 16:00 (下午4點) 或 19:00 (下午6點) 其一為 A 即算 Y，否則 N
+                // 🌟 下午判定：只要該檔在 16:00 前收工 (closeMins < 16 * 60)，下午後一律為 '--'！
                 const [ch, cm] = timeStr.split(':').map(Number);
                 const closeMins = (isNaN(ch) ? 12 : ch) * 60 + (isNaN(cm) ? 0 : cm);
                 let pmSelfRun = 'N';
-                if (closeMins <= 12 * 60) {
+                if (closeMins < 16 * 60) {
                     pmSelfRun = '--';
                 } else {
                     const s16 = stallPatrol['下午4點'] || '';
@@ -6560,7 +6864,7 @@ window.deleteSelectedGalleryItems = () => {
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a");
             link.href = URL.createObjectURL(blob);
-            link.download = `攤販提早收工資料表_${new Date().toISOString().slice(0, 10)}.csv`;
+            link.download = `${window.formatDateStrHK()} 提早收工.csv`;
             link.click();
 
             // 👇 補上操作日誌記錄
@@ -6653,23 +6957,19 @@ window.deleteSelectedGalleryItems = () => {
                         <span class="text-[12px] font-black text-slate-600">分類</span>
                         <button onclick="window.openCategoryManager()" class="text-slate-400 hover:text-blue-500 p-0.5"><i data-lucide="settings" class="w-3.5 h-3.5"></i></button>
                     </div>
-                    ${galleryCategories.map(cat => `<button onclick="window.setGalleryCategory('${cat}')" class="w-full text-center py-1.5 px-0.5 text-[13px] font-black rounded-md transition-colors truncate ${currentGalleryCategory === cat ? 'bg-blue-500 text-white' : 'text-slate-700 hover:bg-slate-200'}">${cat}</button>`).join('')}`;
+                    ${galleryCategories.map(cat => `<button onclick="window.setGalleryCategory('${window.escAttr(cat)}')" class="w-full text-center py-1.5 px-0.5 text-[13px] font-black rounded-md transition-colors truncate ${currentGalleryCategory === cat ? 'bg-blue-500 text-white' : 'text-slate-700 hover:bg-slate-200'}">${cat}</button>`).join('')}`;
             }
 
             const filtered = galleryItems.filter(item => {
                 if (item.isDeleted) return false;
                 
-                // 🌟 分類過濾判定
+                // 🌟 分類過濾判定（將「開工-雞相」統一歸入「營業相」分類顯示）
+                const normCat = item.category === '收工' ? '提早收工' : (item.category === '開工-雞相' ? '營業相' : item.category);
                 if (currentGalleryCategory === '全部') {
                     // 顯示全部
                 } else if (currentGalleryCategory === '未導出') {
                     if (item.isExported) return false; // 🌟 排除已導出的照片，只看未導出！
-                } else if (item.category !== currentGalleryCategory) {
-                    return false;
-                }
-
-                // 搜尋文字過濾
-                if (query && !item.title?.toLowerCase().includes(query) && !item.time?.toLowerCase().includes(query)) {
+                } else if (normCat !== currentGalleryCategory) {
                     return false;
                 }
                 return true;
@@ -6704,12 +7004,19 @@ window.deleteSelectedGalleryItems = () => {
                     <input type="file" accept="image/*" capture="environment" class="hidden" onchange="window.handleGalleryUpload(this)">
                 </label>`;
 
-            // ====== 卡片字體全面加大 2px + 運用邊框留白 ======
-            const renderedCards = await Promise.all(filtered.map(async (i) => {
-                const thumbSrc = await getLowResThumbUrlAsync(i);
-                const safeTitleEscaped = (i.title || '圖片').replace(/'/g, "\\'");
+            const renderedCards = filtered.map((i) => {
+                const thumbSrc = thumbImageCache.get(`thumb_${i.id}_v_${i.updatedAt || i.createdAt || 0}`) || '';
+                const safeTitleEscaped = window.jsAttr(i.title || '圖片');
                 const isSelected = window.selectedGalleryIds.has(i.id);
-                const displayCat = (i.category === '收工' ? '提早收工' : i.category) || '提早收工';
+                
+                // 判定是否為雞檔上午開工相：若符合，卡片標籤顯示為「開工-雞相」
+                const isMorningChicken = /^J-?/i.test((i.title || '').trim()) && ((i.time || '12:00') < '12:00') && (i.category === '營業相' || i.category === '開工-雞相');
+                let displayCat = isMorningChicken ? '開工-雞相' : ((i.category === '收工' ? '提早收工' : (i.category === '未分類' || !i.category ? '全部' : i.category)));
+                // 若屬於測溫相，依時間 12:00 前後區分為「上午測溫」或「下午測溫」
+                if (i.category === '測溫相' || (i.title && i.title.includes('測溫'))) {
+                    const h = parseInt((i.time || '12:00').split(':')[0], 10);
+                    displayCat = h < 12 ? '上午測溫' : '下午測溫';
+                }
                 const catColorClass = window.getGalleryCategoryBadgeClass(displayCat);
 
                 // 🌟 判斷：當分類為提早收工/清潔，且已經導出過，顯示綠色剔號
@@ -6748,18 +7055,18 @@ window.deleteSelectedGalleryItems = () => {
                                  decoding="async" 
                                  draggable="${!window.isGallerySelectMode}" 
                                  ondragstart="window.handleImageDragStart(event, '${safeTitleEscaped}', '${thumbSrc}')" 
-                                 onerror="setTimeout(async () => { const retrySrc = await window.getLowResThumbUrlAsync({ id: '${i.id}' }); if (retrySrc) this.src = retrySrc; }, 1200);"
+                                 onerror="setTimeout(async () => { const retrySrc = await window.getLowResThumbUrlAsync({ id: '${i.id}', createdAt: ${i.createdAt || 0}, updatedAt: ${i.updatedAt || 0} }); if (retrySrc) this.src = retrySrc; }, 1200);"
                                  class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
-                                 alt="${i.title || '圖片'}">
+                                 alt="${window.esc(i.title || '圖片')}">
                             <span class="absolute bottom-1 left-1 z-10 text-[11px] font-mono font-black text-slate-700 bg-white/95 border border-slate-200/80 px-1 py-0.5 rounded shadow-xs tracking-tighter leading-none pointer-events-none">${i.time || '12:00'}</span>
                         </div>
 
                         <!-- 底部文字欄：名稱獨佔整行顯示 -->
                         <div class="px-1.5 py-1 flex items-center justify-center bg-white border-t border-slate-100 hover:bg-slate-50 transition-colors cursor-pointer" onclick="${!window.isGallerySelectMode ? `window.openEditGalleryModal('${i.id}', event)` : ''}" title="點擊修改內容">
-                            <span class="${((i.title && i.title.includes('測溫')) || i.category === '測溫相') ? 'text-[10px]' : 'text-[12px]'} font-black text-slate-900 truncate w-full text-center hover:text-blue-600 leading-tight pointer-events-none">${i.title || '無標題'}</span>
+                            <span class="${((i.title && i.title.includes('測溫')) || i.category === '測溫相') ? 'text-[10px]' : 'text-[12px]'} font-black text-slate-900 truncate w-full text-center hover:text-blue-600 leading-tight pointer-events-none">${window.esc(i.title || '無標題')}</span>
                         </div>
                     </div>`;
-            }));
+            });
 
             // 包含中央區域的藍色虛線框
             const overlayHtml = `
@@ -6771,6 +7078,14 @@ window.deleteSelectedGalleryItems = () => {
                 </div>`;
 
             grid.innerHTML = `${overlayHtml}<div class="grid grid-cols-3 gap-1.5">${cameraSlotHtml}${renderedCards.join('')}</div>`;
+            // 修復：背景補上縮圖，不阻塞首次渲染。
+            filtered.forEach((i) => {
+                getLowResThumbUrlAsync(i).then((src) => {
+                    if (!src) return;
+                    const img = document.getElementById(`gallery-img-${i.id}`);
+                    if (img) img.src = src;
+                }).catch(err => console.error('縮圖載入失敗：', i.id, err));
+            });
             lucide.createIcons();
 
             const selBtn = $('gallerySelectModeBtn');
@@ -6849,7 +7164,7 @@ window.deleteSelectedGalleryItems = () => {
         };
 
         window.isBatchMergedView = false;
-        window.mergedBatchForm = { prefix: "", code: "", markStatus: "", category: "未分類", time: "" };
+        window.mergedBatchForm = { prefix: "", code: "", markStatus: "", category: "", time: "" };
         window._batchCategoryLocked = false;
 
         window.openUploadBatchModal = () => { 
@@ -6859,7 +7174,7 @@ window.deleteSelectedGalleryItems = () => {
             window.keypadStore = {}; // 👈 加上這行：重置數字鍵盤快取，防止殘留上次的舊檔號
             window.mergedBatchForm = {
                 prefix: "", code: "", markStatus: "",
-                category: "未分類",
+                category: "",
                 time: time
             };
             window.pendingUploadImages.forEach(it => it._categoryLocked = false);
@@ -6946,7 +7261,8 @@ window.deleteSelectedGalleryItems = () => {
             try {
                 for (let it of items) {
                     const nowTs = Date.now();
-                    it.createdAt = nowTs;
+                    // 修復：保留拍攝當下建立的時間，只有真的沒有才補上發布時間。
+                    it.createdAt = it.createdAt || nowTs;
                     it.updatedAt = nowTs;
                     const verKey = `${it.tempId}_v_${nowTs}`;
                     
@@ -6963,7 +7279,7 @@ window.deleteSelectedGalleryItems = () => {
                         markStatus: it.markStatus || '',
                         category: it.category || '未分類',
                         time: it.time || '12:00',
-                        createdAt: nowTs,
+                        createdAt: it.createdAt || nowTs,
                         updatedAt: nowTs,
                         sessionId: clientSessionId,
                         isDeleted: false
@@ -7051,7 +7367,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                         ctx.translate(cvs.width / 2, cvs.height / 2);
                         ctx.rotate((angleDeg * Math.PI) / 180);
                         ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
-                        resolve(cvs.toDataURL('image/jpeg', 0.85));
+                        resolve(cvs.toDataURL('image/jpeg', 0.92));
                     };
                     img.onerror = reject;
                     img.src = item.src;
@@ -7119,9 +7435,10 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 return;
             }
 
-            // 10:00 前點選「一樓」時，自動預選為營業相
+            // 10:00 前點選「一樓」或 12:00 前點選「雞檔 J-」時，自動預選為營業相（雞檔 12:00 前為開工-雞相，歸入營業相分類）
             const [preH, preM] = (timeStr || '12:00').split(':').map(Number);
-            if (currentPrefix === '1-' && (preH * 60 + preM) < 600) {
+            const preMins = preH * 60 + preM;
+            if ((currentPrefix === '1-' && preMins < 600) || (currentPrefix === 'J-' && preMins < 720)) {
                 if (isMerged) window.setMergedCategory('營業相', false);
                 else if (tempId) window.setPendingItemCategory(tempId, '營業相', false);
             }
@@ -7170,7 +7487,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
             const isFirstFloor = prefix === '一樓' || /^1-/i.test(codeRaw.trim()) || (matched && matched.floor.includes('一樓'));
 
-            // 自動收工／清潔／10點前一樓營業相判定
+            // 自動收工／清潔／10點前一樓營業相／12點前雞檔開工-雞相判定
             if (isFirstFloor && targetMins < 600) {
                 hintBox.className = 'opacity-100 h-[42px] p-2 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col justify-center gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
@@ -7179,12 +7496,21 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 if (isMerged) window.setMergedCategory('營業相', false);
                 else if (tempId) window.setPendingItemCategory(tempId, '營業相', false);
             } else if (isChickenStall) {
-                hintBox.className = 'opacity-100 h-[42px] p-2 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col justify-center gap-0.5 animate-pop-in';
-                hintBox.innerHTML = `
-                    <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
-                    <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 雞檔固定判定為清潔</div>`;
-                if (isMerged) window.setMergedCategory('清潔', false);
-                else if (tempId) window.setPendingItemCategory(tempId, '清潔', false);
+                if (targetMins < 720) {
+                    hintBox.className = 'opacity-100 h-[42px] p-2 rounded-xl text-[11px] font-bold border border-purple-200 bg-purple-50 text-purple-800 flex flex-col justify-center gap-0.5 animate-pop-in';
+                    hintBox.innerHTML = `
+                        <div class="flex items-center"><i data-lucide="store" class="w-3.5 h-3.5 mr-1 text-purple-600 shrink-0"></i> 判定：<span class="font-black text-purple-800 ml-0.5">開工-雞相 (歸入營業相)</span></div>
+                        <div class="text-[10px] text-purple-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 雞檔 12:00 前自動判定為開工-雞相</div>`;
+                    if (isMerged) window.setMergedCategory('營業相', false);
+                    else if (tempId) window.setPendingItemCategory(tempId, '營業相', false);
+                } else {
+                    hintBox.className = 'opacity-100 h-[42px] p-2 rounded-xl text-[11px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 flex flex-col justify-center gap-0.5 animate-pop-in';
+                    hintBox.innerHTML = `
+                        <div class="flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0"></i> 判定：<span class="font-black text-emerald-700 ml-0.5">清潔</span></div>
+                        <div class="text-[10px] text-emerald-600 font-medium pl-4.5">[${matched.floor} ${matched.code}] 雞檔 12:00 後判定為清潔</div>`;
+                    if (isMerged) window.setMergedCategory('清潔', false);
+                    else if (tempId) window.setPendingItemCategory(tempId, '清潔', false);
+                }
             } else if (diff > 30) {
                 hintBox.className = 'opacity-100 h-[42px] p-2 rounded-xl text-[11px] font-bold border border-red-200 bg-red-50 text-red-700 flex flex-col justify-center gap-0.5 animate-pop-in';
                 hintBox.innerHTML = `
@@ -7248,7 +7574,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             }
 
             // 直接透過精準 id 立即亮起當前按鈕，其餘恢復白底
-            ['提早收工', '營業相', '開工-雞相', '測溫相'].forEach(c => {
+            ['提早收工', '清潔', '營業相', '開工-雞相', '測溫相'].forEach(c => {
                 const btn = $(`merged-cat-btn-${c}`);
                 if (btn) {
                     const isSelected = (c === cat);
@@ -7280,7 +7606,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             }
 
             // 單張模式下直接更新該卡片內對應的 4 個按鈕
-            ['提早收工', '營業相', '開工-雞相', '測溫相'].forEach(c => {
+            ['提早收工', '清潔', '營業相', '開工-雞相', '測溫相'].forEach(c => {
                 const btn = $(`btn-cat-${tempId}-${c}`);
                 if (btn) {
                     const isSelected = (c === cat);
@@ -7502,14 +7828,14 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                     : `<i data-lucide="layers" class="w-3.5 h-3.5 mr-1"></i>合併疊加`;
             }
 
-            const catList = ['提早收工', '營業相', '開工-雞相', '測溫相'];
+            const catList = ['提早收工', '清潔', '營業相', '測溫相'];
 
             if (window.isBatchMergedView) {
                 window.setKeypadTarget('merged');
                 const curTimeStr = window.mergedBatchForm.time || '12:00';
                 list.innerHTML = `
                 <div class="flex flex-col items-center animate-pop-in pb-0.5">
-                    <div class="photo-deck-container cursor-pointer !h-[75px] !mb-1" onclick="window.openFullscreenImg('${window.pendingUploadImages[0]?.src}')" title="點擊放大預覽">
+                    <div class="photo-deck-container cursor-pointer !h-[75px] !mb-1" onclick="window.openPendingFullscreen('${window.pendingUploadImages[0]?.tempId}')" title="點擊放大預覽">
                         ${window.pendingUploadImages.slice(0, 5).map((img) => `
                             <div class="deck-card !w-[130px] !h-[70px]">
                                 <img src="${img.src}" class="w-full h-full object-contain p-0.5">
@@ -7566,8 +7892,8 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                     const curDigits = window.keypadStore[item.tempId] || '';
                     return `
                     <div class="bg-slate-50 border border-slate-200 rounded-xl p-1.5 flex flex-col h-full flex-1 min-h-0 justify-between gap-1 shadow-xs overflow-hidden">
-                        <div class="relative w-full rounded-lg overflow-hidden cursor-zoom-in group border border-slate-300 shadow-xs bg-slate-100 flex items-center justify-center flex-1 min-h-[60px] max-h-[175px]" onclick="window.openFullscreenImg('${item.src}')">
-                            <img src="${item.src}" class="w-full h-full object-contain block">
+                        <div class="relative w-full rounded-lg overflow-hidden cursor-zoom-in group border border-slate-300 shadow-xs bg-slate-100 flex items-center justify-center flex-1 min-h-[60px] max-h-[175px]" data-temp-id="${item.tempId}" onclick="window.openPendingFullscreen(this.dataset.tempId)">
+                            <img data-temp-id="${item.tempId}" class="w-full h-full object-contain block">
                             
                             <button type="button" onclick="window.rotatePendingUploadItem('${item.tempId}', -90, event)" class="absolute left-12 bottom-2 text-slate-700 hover:text-blue-600 p-1.5 rounded-full bg-white/95 shadow-md active:scale-90 transition-all z-20" title="向左轉 90°">
                                 <i data-lucide="rotate-ccw" class="w-4 h-4 pointer-events-none"></i>
@@ -7633,11 +7959,13 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                     setTimeout(() => window.setKeypadTarget(curId), 50);
                 }
             }
+            // 修復：圖片本體不寫進 HTML，渲染後再用 JS 補上，避免 DOM 被 base64 撐爆。
+            list.querySelectorAll('img[data-temp-id]').forEach(img => {
+                const it = window.pendingUploadImages.find(x => x.tempId === img.dataset.tempId);
+                if (it && it.src) img.src = it.src;
+            });
             lucide.createIcons();
         };
-
-        
-        // ====== 斷點續傳與後台防中斷管理 ======
         window._uploadQueue = [];
         window._uploadWakeLock = null;
 
@@ -7678,6 +8006,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             await requestWakeLock();
 
             const total = window._totalUploadCount || window._uploadQueue.length;
+            let skippedCount = 0;
 
             try {
                 if (!currentUser || !db) {
@@ -7703,6 +8032,9 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                         }
                     }
                     if (!item.chunks || !item.chunks.length) {
+                        // 修復：不再靜默跳過；記錄下來並在最後明確告知哪幾張沒有上傳。
+                        skippedCount++;
+                        console.error('上傳佇列缺少圖片資料，已跳過：', docId);
                         window._uploadQueue.shift();
                         continue;
                     }
@@ -7749,7 +8081,11 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
                 window.setUploadProgress(-1, "");
                 window.writeGalleryLog('發布圖片', `${total} 張相片`, `本機與雲端同步完成`);
-                window.showToast(`✅ 全部圖片（共 ${total} 張）已同步至雲端！`);
+                if (skippedCount > 0) {
+                    window.showToast(`⚠️ 已同步 ${Math.max(0, total - skippedCount)} 張，另有 ${skippedCount} 張因本機資料遺失未能上傳`, true);
+                } else {
+                    window.showToast(`✅ 全部圖片（共 ${total} 張）已同步至雲端！`);
+                }
 
             } catch (err) {
                 window.setUploadProgress(-1, "");
@@ -7781,6 +8117,8 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             if (hasPatrolPending) {
                 window.resumePatrolUploadQueue(true);
             }
+            window.flushPendingGalleryLogs?.();
+            window._flushSyncQueue?.();
         });
 
         // 螢幕喚醒／切換回前景時，若已有網路也自動補傳未完成的剔檔
@@ -7800,7 +8138,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 </div>
                 <div class="space-y-1">${galleryCategories.map((c, idx) => `
                     <div class="flex justify-between items-center p-1.5 bg-white rounded-lg border border-slate-200 text-xs font-bold text-slate-700">
-                        <span>${c}</span>${(c !== '全部' && c !== '未導出') ? `<button onclick="window.removeCategoryAction(${idx})" class="text-slate-400 hover:text-red-500"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>` : '<span class="text-[9px] text-slate-400">預設</span>'}
+                        <span>${window.esc(c)}</span>${(c !== '全部' && c !== '未導出') ? `<button onclick="window.removeCategoryAction(${idx})" class="text-slate-400 hover:text-red-500"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>` : '<span class="text-[9px] text-slate-400">預設</span>'}
                     </div>`).join('')}</div>`;
             $('categoryManageModal')?.classList.replace('hidden', 'flex');
             lucide.createIcons();
@@ -7846,13 +8184,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             dailyScheduleData = getLocal('work_cache_schedule', []);
             taskCompletionState = getLocal('work_cache_task_states', {});
             subTaskCompletionState = getLocal('work_cache_subtask_states', {});
-            galleryCategories = getLocal('work_cache_gallery_categories', ['全部', '未導出', '提早收工', '清潔', '營業相', '開工-雞相']);
-            galleryCategories = galleryCategories.map(c => c === '收工' ? '提早收工' : c);
-            if (!galleryCategories.includes('未導出')) {
-                const allIdx = galleryCategories.indexOf('全部');
-                galleryCategories.splice(allIdx !== -1 ? allIdx + 1 : 1, 0, '未導出');
-            }
-            galleryCategories = Array.from(new Set(galleryCategories));
+            galleryCategories = window.sanitizeGalleryCategories(getLocal('work_cache_gallery_categories', DEFAULT_GALLERY_CATS));
             safeSetLocal('work_cache_gallery_categories', galleryCategories);
 
             // 優先從 IndexedDB 取回清單
@@ -7871,7 +8203,11 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             crItemTypes = getLocal('coldRoomTypes', ['海鮮', '肉類', '蔬果', '包裝冰', '其他']);
             if (!crItemTypes.includes('包裝冰')) crItemTypes.push('包裝冰');
 
-            mapData.points = JSON.parse(JSON.stringify(defaultMapPoints));
+            const _savedPts = (mapData && mapData.points) || {};
+            const _savedIsClean = !!(_savedPts.pt_8 || _savedPts.pt_9);
+            const _wantClean = window.currentMapRole === 'clean';
+            const _basePts = JSON.parse(JSON.stringify(_wantClean ? defaultCleanMapPoints : defaultMapPoints));
+            mapData.points = (_savedIsClean === _wantClean) ? Object.assign(_basePts, _savedPts) : _basePts;
 
             // 🌟 升級：載入 5 日排班快取字典，並自動轉換舊版資料
             const todayInitStr = getNowInputStrs().date;
@@ -7900,11 +8236,19 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
         function setupPureRealtimeSync() {
             if (!currentUser) return;
+            // 修復：onAuthStateChanged 在 Token 刷新／斷線重連時會再觸發，重複綁定會造成重複渲染與重複寫入。
+            if (window._syncBound) return;
+            window._syncBound = true;
+            onSnapshot(cfgDoc('admin_auth'), (snap) => {
+                if (!snap.exists()) return;
+                const d = snap.data() || {};
+                if (d.hash && d.salt) _adminAuthSave({ salt: d.salt, hash: d.hash, updatedAt: d.updatedAt || 0 });
+            }, console.error);
             const bindSync = (key, localKey, onUpdate) => {
                 onSnapshot(cfgDoc(key), (snap) => {
                     if (snap.exists()) {
                         const data = snap.data();
-                        safeSetLocal(localKey, data[Object.keys(data)[0]] !== undefined ? data[Object.keys(data)[0]] : data);
+                        // 修復：不再用「第一個欄位」猜本機要存什麼，改由各監聽自己寫入正確的快取。
                         onUpdate(data);
                     }
                 }, console.error);
@@ -7939,9 +8283,10 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
             bindSync('gallery_categories', 'work_cache_gallery_categories', d => { 
                 if (d.categories && Array.isArray(d.categories)) {
-                    galleryCategories = d.categories;
+                    galleryCategories = window.sanitizeGalleryCategories(d.categories);
                     safeSetLocal('work_cache_gallery_categories', galleryCategories);
                 }
+                window._lastRenderCategory = ''; // 強制刷新側邊欄
                 window.renderGallery(); 
             });
 
@@ -7962,7 +8307,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                     if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
                 }
             });
-            bindSync('future_memos', 'work_cache_future_memos', d => { futureMemos = d.memos || []; if (!$('memoPage')?.classList.contains('hidden')) window.renderMemos(); window.checkMemoAlerts(); });
+            bindSync('future_memos', 'work_cache_future_memos', d => { futureMemos = d.memos || []; safeSetLocal('work_cache_future_memos', futureMemos); if (!$('memoPage')?.classList.contains('hidden')) window.renderMemos(); window.checkMemoAlerts(); });
 
             // 🌟 客服名單與 5 日排班雲端同步（包含多日字典多設備即時同步）
             bindSync('team_members', 'work_cache_team_members', d => {
@@ -8388,38 +8733,37 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             let activeMembers = {}, incomingMembers = {};
 
             // 🌟 嚴格防呆：若班表內有舊名字，強制對齊當前最新正式成員名單 (teamMembers)
-            memberSchedules.forEach(s => {
-                if (s.name) {
-                    // 若舊名有設定過對應的新名字，或工號吻合，強制替換為新名字
-                    const matchedNewName = (teamMembers || []).find(m => {
-                        const prof = window.getMemberProfile ? window.getMemberProfile(m) : null;
-                        return m === s.name || (prof && prof.id && prof.id === s.name);
-                    });
-                    if (matchedNewName) {
-                        s.name = matchedNewName;
-                    } else if (window.resolveMemberIdentity) {
-                        s.name = window.resolveMemberIdentity(s.name);
-                    }
-                }
+            // 修復：不再就地改寫 memberSchedules（那會污染共用的排班資料），改用解析後的新陣列。
+            const _resolvedSchedules = memberSchedules.map(s => {
+                if (!s || !s.name) return s;
+                let nm = s.name;
+                const matchedNewName = (teamMembers || []).find(m => {
+                    const prof = window.getMemberProfile ? window.getMemberProfile(m) : null;
+                    return m === nm || (prof && prof.id && prof.id === nm);
+                });
+                if (matchedNewName) nm = matchedNewName;
+                else if (window.resolveMemberIdentity) nm = window.resolveMemberIdentity(nm);
+                return nm === s.name ? s : { ...s, name: nm };
             });
 
             const isCleanRole = window.currentMapRole === 'clean';
             // 🌟 嚴格過濾：只保留目前存在於正式名單 (teamMembers) 內的人員，徹底擋掉幽靈
-            memberSchedules = memberSchedules.filter(s => s && s.name && teamMembers.includes(s.name));
+            memberSchedules = _resolvedSchedules.filter(s => s && s.name && teamMembers.includes(s.name));
 
             memberSchedules.forEach(sched => {
-                const s = parseTime(sched.start).getTime(), e = parseTime(sched.end).getTime();
+                const _range = window.getScheduleRange(sched.start, sched.end, nowTime);
+                const s = _range.s.getTime(), e = _range.e.getTime();
                 if (nowTime >= s && nowTime <= e) {
                     // 若同時段有排「休息中(pt_7)」，優先顯示在休息中，避免分身
                     if (activeMembers[sched.name] !== 'pt_7') {
                         activeMembers[sched.name] = sched.locationId;
                     }
-                    const [endH, endM] = sched.end.split(':').map(Number);
-                    const remainMins = (endH * 60 + endM) - curMins;
+                    // 修復：用實際區間算剩餘分鐘，跨午夜班次才不會變成負數。
+                    const remainMins = Math.max(0, Math.round((e - nowTime) / 60000));
 
                     // 當前班次剩餘 10 分鐘內，檢查下一班接替者
                     if (remainMins > 0 && remainMins <= 10) {
-                        const nextSched = memberSchedules.find(ns => ns.locationId === sched.locationId && ns.name !== sched.name && ns.start === sched.end);
+                        const nextSched = memberSchedules.find(ns => ns.locationId === sched.locationId && ns.name !== sched.name && parseTime(ns.start).getTime() === parseTime(sched.end).getTime());
                         if (nextSched && activeMembers[nextSched.name] !== sched.locationId) { 
                             incomingMembers[sched.locationId] = incomingMembers[sched.locationId] || []; 
                             if (!incomingMembers[sched.locationId].includes(nextSched.name)) incomingMembers[sched.locationId].push(nextSched.name); 
@@ -8428,7 +8772,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
                     // ====== 僅限「客服模式」：下一個時段前往「客服室 (pt_1)」才提早 15 分鐘標示「待:」======
                     if (!isCleanRole && sched.locationId !== 'pt_1') {
-                        const nextDuty = memberSchedules.find(ns => ns.name === sched.name && ns.start === sched.end && ns.locationId === 'pt_1');
+                        const nextDuty = memberSchedules.find(ns => ns.name === sched.name && parseTime(ns.start).getTime() === parseTime(sched.end).getTime() && ns.locationId === 'pt_1');
                         if (nextDuty && remainMins > 0 && remainMins <= 15) {
                             incomingMembers['pt_1'] = incomingMembers['pt_1'] || [];
                             if (!incomingMembers['pt_1'].includes(sched.name)) incomingMembers['pt_1'].push(sched.name);
@@ -8518,7 +8862,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
             window.dutyCountdownMode = window.dutyCountdownMode || 'shift'; // 'shift' | 'rest'
 
-            window.toggleDutyCountdownMode = () => {
+            if (!window.toggleDutyCountdownMode) window.toggleDutyCountdownMode = () => {
                 window.dutyCountdownMode = window.dutyCountdownMode === 'shift' ? 'rest' : 'shift';
                 
                 const thumb = $('dutySliderThumb');
@@ -8631,7 +8975,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     staffStatusListEl.innerHTML = memberDutyList.map(item => {
                         const prof = window.getMemberProfile(item.name);
                         const hasId = prof.id && prof.id.trim() !== '' && prof.id.trim().toUpperCase() !== item.name.trim().toUpperCase();
-                        const safeNameAttr = item.name.replace(/'/g, "\\'");
+                        const safeNameAttr = window.jsAttr(item.name);
                         return `
                         <div onclick="window.openMemberProfilePopup('${safeNameAttr}', '今日排班人員')" class="bg-white border border-slate-200/80 rounded-lg p-1.5 px-2.5 flex items-center justify-between shadow-xs hover:border-blue-300 cursor-pointer active:scale-[0.99] transition-all">
                             <div class="flex items-center min-w-0 pr-2 gap-1.5">
@@ -8728,11 +9072,11 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
                     if (marker.parentNode !== container) container.appendChild(marker);
                     
-                    // 針對客服室 (pt_1) 定位至右側紅圈位置
+                    // 針對客服室 (pt_1) 定位至右側區域，改為「垂直向下」依序排列
                     if (locId === 'pt_1') {
-                        const offX = idx * 65 + 45; // 往右推到對應的右側區域
-                        marker.style.left = `calc(${loc.x}% + ${offX}px)`;
-                        marker.style.top = `calc(${loc.y}% + 18px)`;
+                        const offY = idx * 34; // 垂直向下延伸，避免橫向重疊擠壓
+                        marker.style.left = `calc(${loc.x}% + 38px)`;
+                        marker.style.top = `calc(${loc.y}% + ${offY}px)`;
                     } else {
                         const off = incoming.length > 1 ? (idx - (incoming.length - 1) / 2) * 55 : 0;
                         marker.style.left = `calc(${loc.x}% + ${off}px - 35px)`;
@@ -8904,7 +9248,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
             const tbodyHtml = csList.map(memberName => {
                 const col = window.getMemberColorClass(memberName);
-                const safeName = memberName.replace(/'/g, "\\'");
+                const safeName = window.jsAttr(memberName);
                 return `
                 <tr class="border-b border-slate-200 hover:bg-slate-50/60">
                     <td class="sticky left-0 z-10 bg-white p-1.5 border-r border-slate-300 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.06)]">
@@ -9005,7 +9349,8 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 }
             }
 
-            window.saveCsWeeklyRosterData();
+            if (window._csPresetSaveTimer) clearTimeout(window._csPresetSaveTimer);
+            window._csPresetSaveTimer = setTimeout(() => window.saveCsWeeklyRosterData(), 400);
 
             // 1. 局部更新設定面板右方的 (上Xh) 標籤
             const workLabel = document.getElementById(`cs-preset-work-label-${idx}`);
@@ -9031,41 +9376,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             });
         };
 
-        // 🌟 補齊並優化：點擊姓名右側「⚡」一鍵填滿該員整週 7 天（局部更新該列，不閃動）
-        window.fillMemberWholeWeekCsRoster = (memberName, e) => {
-            if (e) e.stopPropagation();
-            const brush = window.activeCsShiftBrush;
-            if (!brush) return window.showToast('請先在上方選取要填入的班次畫筆！', true);
-
-            const weekDays = window.getCsWeekDates(window.csRosterWeekOffset);
-            weekDays.forEach(d => {
-                if (!window.csWeeklyRosterStore[d.dateStr]) {
-                    window.csWeeklyRosterStore[d.dateStr] = {};
-                }
-                if (brush === 'CLEAR') {
-                    delete window.csWeeklyRosterStore[d.dateStr][memberName];
-                } else {
-                    window.csWeeklyRosterStore[d.dateStr][memberName] = brush;
-                }
-            });
-
-            window.saveCsWeeklyRosterData();
-
-            const presets = window.getCsShiftPresets();
-            document.querySelectorAll('#csRosterTableBody td[data-date][data-member]').forEach(td => {
-                if (td.dataset.member === memberName) {
-                    const dStr = td.dataset.date;
-                    const sId = window.csWeeklyRosterStore?.[dStr]?.[memberName] || '';
-                    const isToday = td.dataset.isToday === 'true';
-                    const { cellBg, cellContent } = window.getCsRosterCellRenderData(sId, isToday, presets);
-                    td.className = `p-1 border-r border-slate-200 cursor-pointer hover:bg-indigo-50/40 select-none align-middle h-[54px] transition-colors ${cellBg}`;
-                    td.innerHTML = cellContent;
-                }
-            });
-
-            const brushName = brush === 'CLEAR' ? '清除' : (brush === 'OFF' ? '例休' : (presets.find(p => p.id === brush)?.code || '班次'));
-            window.showToast(`⚡ 已將「${memberName}」本週 7 天全部設為【${brushName}】`);
-        };
+       // （已依需求移除 ⚡ 一鍵填滿整週函式）
 
         // 🌟 補齊並優化：一鍵複製上週班表至本週（局部刷新表格）
         window.copyPrevWeekCsRoster = () => {
@@ -9267,7 +9578,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
                     <!-- 底部提示列 -->
                     <footer class="px-4 py-2.5 bg-white border-t border-slate-200 flex flex-wrap justify-between items-center gap-2 shrink-0">
-                        <span class="text-[11px] font-bold text-slate-500">💡 點擊格子即可填入班次；點擊姓名右側「⚡」可一鍵填滿該員整週。排妥後至 5日排班表按「✨ 智慧排班」即自動套用！</span>
+                        <span class="text-[11px] font-bold text-slate-500">💡 點擊格子即可填入班次；排妥後至 5日排班表按「✨ 智慧排班」即自動套用！</span>
                         <button type="button" onclick="window.closeCsWeeklyRosterModal()" class="px-5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black shadow-sm active:scale-95 transition-transform">
                             完成並關閉
                         </button>
@@ -9337,7 +9648,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             // 3. 徹底清除該員在 5 日排班表與暫存格中的所有班次
             const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
             Object.keys(multiStore || {}).forEach(dStr => {
-                multiStore[dStr] = (multiStore[dStr] || []).filter(s => s.name !== removedName && s.name.toUpperCase() !== removedId);
+                multiStore[dStr] = (multiStore[dStr] || []).filter(s => (s.name || '') !== removedName && (s.name || '').toUpperCase() !== removedId);
             });
             if (window._tempGridValues) {
                 Object.keys(window._tempGridValues).forEach(k => {
@@ -9492,7 +9803,8 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 lines = String(rawText).split('\n').map(n => {
                     const clean = n.trim();
                     return clean ? (window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean) : '';
-                }).filter(Boolean);
+                });
+                while (lines.length && !lines[lines.length - 1]) lines.pop();
             }
 
             const totalRows = Math.max(minRows, lines.length, forceRows || 0);
@@ -9532,10 +9844,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             if (!containerEl) return '';
             const items = containerEl.querySelectorAll('.sub-line-item');
             if (items.length > 0) {
-                return Array.from(items)
-                    .map(el => (el.dataset.name || el.textContent || '').trim()) // 🌟 優先讀取真實姓名，避免「顯示編號」模式把編號當新名字
-                    .filter(Boolean)
-                    .join('\n');
+                const arr = Array.from(items).map(el => (el.dataset.name || el.textContent || '').trim());
+                while (arr.length && !arr[arr.length - 1]) arr.pop();
+                return arr.join('\n');
             }
             return (containerEl.textContent || '').trim();
         };
@@ -9626,7 +9937,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             }
 
             const hasAny = currentLines.some(n => !!n);
-            const joinedVal = hasAny ? currentLines.filter(Boolean).join('\n') : ''; // 🌟 加上 filter(Boolean) 確保不存入空字串行
+            const _outLines = [...currentLines];
+            while (_outLines.length && !_outLines[_outLines.length - 1]) _outLines.pop();
+            const joinedVal = hasAny ? _outLines.join('\n') : '';
             window._tempGridValues[cellKey] = joinedVal;
             window._hasUnsavedGridEdits = true; // 🌟 標記目前有未儲存的手動修改，保護不被雲端洗掉
             const needRows = Math.max(minRows, currentLines.filter(Boolean).length);
@@ -9709,7 +10022,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
         window.startGridDrag = (el) => {
             if (!activeGridMember) return; el.blur(); isGridDragging = true;
             if (activeGridMember === 'ERASER') { gridDragAction = 'erase'; applyGridAction(el); }
-            else { let names = (el.value || '').split(/[\n\s]+/).filter(Boolean); gridDragAction = names.includes(activeGridMember) ? 'remove' : 'add'; applyGridAction(el); }
+            else { let names = window.splitMemberNamesSafe(el.value || ''); gridDragAction = names.includes(activeGridMember) ? 'remove' : 'add'; applyGridAction(el); }
         };
         window.onGridDragEnter = (el) => { if (isGridDragging && activeGridMember) { el.blur(); applyGridAction(el); } };
         window.onGridTouchMove = (e) => {
@@ -9736,8 +10049,10 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 if (i.dataset.date) window._tempGridValues[`${i.dataset.date}_${i.dataset.loc}_${i.dataset.start}_${i.dataset.end}`] = normCellText(i.value);
             });
             document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
-                const disp = td.querySelector('.grid-input-display');
-                if (disp) window._tempGridValues[`${td.dataset.date}_${td.dataset.loc}_${td.dataset.start}_${td.dataset.end}`] = normCellText(window.extractCellText(disp));
+                const disps = td.querySelectorAll('.grid-input-display');
+                // 修復：拆半小時的格子內有兩個 display，舊版只抓第一個卻用整點 key 寫入，
+                // 會把前半小時的人記成整小時。這裡只處理「單一 display」的格子。
+                if (disps.length === 1) window._tempGridValues[`${td.dataset.date}_${td.dataset.loc}_${td.dataset.start}_${td.dataset.end}`] = normCellText(window.extractCellText(disps[0]));
             });
             document.querySelectorAll('.grid-input-display[data-loc][data-date]').forEach(div => {
                 window._tempGridValues[`${div.dataset.date}_${div.dataset.loc}_${div.dataset.start}_${div.dataset.end}`] = normCellText(window.extractCellText(div));
@@ -9752,7 +10067,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
 
             const fullKey = `${dateStr}_${locId}_${hourStr}_${endH}:00`, hA = `${dateStr}_${locId}_${startH}:00_${startH}:30`, hB = `${dateStr}_${locId}_${startH}:30_${endH}:00`;
             if (willBeSplit) { const val = window._tempGridValues[fullKey] || ''; window._tempGridValues[hA] = val; window._tempGridValues[hB] = val; delete window._tempGridValues[fullKey]; }
-            else { const names = Array.from(new Set([...(window._tempGridValues[hA]||'').split(/[\n\s]+/), ...(window._tempGridValues[hB]||'').split(/[\n\s]+/)])).map(n => n.trim()).filter(Boolean); window._tempGridValues[fullKey] = names.join('\n'); delete window._tempGridValues[hA]; delete window._tempGridValues[hB]; }
+            else { const names = Array.from(new Set([...window.splitMemberNamesSafe(window._tempGridValues[hA]||''), ...window.splitMemberNamesSafe(window._tempGridValues[hB]||'')])).map(n => n.trim()).filter(Boolean); window._tempGridValues[fullKey] = names.join('\n'); delete window._tempGridValues[hA]; delete window._tempGridValues[hB]; }
             splitHoursState[stateKey] = willBeSplit; safeSetLocal('work_cache_split_hours', splitHoursState); window.renderScheduleManager();
         };
 
@@ -9777,7 +10092,8 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 }
             });
             safeSetLocal('work_cache_split_hours', splitHoursState);
-            window.renderScheduleManager();
+            // 修復：必須 skipDomCapture=true，否則重繪前會把畫面舊資料回抓，覆蓋剛複製的內容。
+            window.renderScheduleManager(true);
             window.showToast(`📋 已將 ${prevDateStr.slice(5)} 的排班複製到 ${targetDateStr.slice(5)}！`);
         };
 
@@ -9800,7 +10116,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     const restPart = k.slice(prefix.length); // 例如 08:00_08:30
                     const [start, end] = restPart.split('_');
                     const text = domVals[k] || '';
-                    text.split(/[\n\s,、/]+/).forEach(rawName => {
+                    window.splitMemberNamesSafe(text).forEach(rawName => {
                         const clean = rawName.trim();
                         if (clean && !clean.includes('休') && !clean.includes('...')) {
                             const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean;
@@ -9960,29 +10276,32 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             ];
 
             // 3. 收集全體人員在當天的所有「休息中 pt_7」時段
+            // 修復：舊版沿用上一個函式的 prefix / foundInDom / rawRestSlots，這裡必定 ReferenceError。
             const restSlotsByMember = new Map();
             const restPrefix = `${targetDateStr}_pt_7_`;
+            let restFoundInDom = false;
             Object.keys(domVals).forEach(k => {
-                if (k.startsWith(prefix)) {
-                    foundInDom = true;
-                    const restPart = k.slice(prefix.length); // 例如 08:00_08:30
+                if (k.startsWith(restPrefix)) {
+                    restFoundInDom = true;
+                    const restPart = k.slice(restPrefix.length);
                     const [start, end] = restPart.split('_');
-                    const text = domVals[k] || '';
-                    window.splitMemberNamesSafe(text).forEach(rawName => {
+                    window.splitMemberNamesSafe(domVals[k] || '').forEach(rawName => {
                         const clean = rawName.trim();
                         if (clean && !clean.includes('休') && !clean.includes('...')) {
                             const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean;
-                            rawRestSlots.push({ name: canon, start, end });
+                            if (!restSlotsByMember.has(canon)) restSlotsByMember.set(canon, []);
+                            restSlotsByMember.get(canon).push({ s: start, e: end });
                         }
                     });
                 }
             });
-            // 補充存檔紀錄中的休息
-            daySchedules.filter(s => s.locationId === 'pt_7').forEach(s => {
-                const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(s.name) : s.name;
-                if (!restSlotsByMember.has(canon)) restSlotsByMember.set(canon, []);
-                restSlotsByMember.get(canon).push({ s: s.start, e: s.end });
-            });
+            if (!restFoundInDom) {
+                daySchedules.filter(s => s.locationId === 'pt_7').forEach(s => {
+                    const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(s.name) : s.name;
+                    if (!restSlotsByMember.has(canon)) restSlotsByMember.set(canon, []);
+                    restSlotsByMember.get(canon).push({ s: s.start, e: s.end });
+                });
+            }
 
             // 合併相鄰休息時段
             const mergedRestByMember = new Map();
@@ -10281,9 +10600,10 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
             // 🌟 採用最原始穩定的 DOM 逐格提取（100% 確保不掉資料）
             document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
                 const { date, loc, start, end } = td.dataset;
-                const display = td.querySelector('.grid-input-display');
-                const text = display ? window.extractCellText(display) : '';
-                addSlotRecord(date, loc, start, end, text);
+                const disps = td.querySelectorAll('.grid-input-display');
+                // 修復：拆半小時的格子只取單一 display，避免前半小時被寫成整小時。
+                if (disps.length !== 1) return;
+                addSlotRecord(date, loc, start, end, window.extractCellText(disps[0]));
             });
 
             document.querySelectorAll('.grid-input-display[data-loc][data-date]').forEach(div => {
@@ -10309,7 +10629,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                         let cur = null;
                         slots.forEach(s => { 
                             if (!cur) cur = { ...s }; 
-                            else if (cur.end === s.start) cur.end = s.end; 
+                            else if (cur.end >= s.start) { if (s.end > cur.end) cur.end = s.end; } 
                             else { merged.push(cur); cur = { ...s }; } 
                         });
                         if (cur) merged.push(cur);
@@ -10408,6 +10728,21 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 });
                 memberProfilesStore = brandNewProfiles;
 
+                // 修復：7 日更表也要同步改名／剔除幽靈，否則會留下舊名字的 key。
+                if (window.csWeeklyRosterStore) {
+                    Object.keys(window.csWeeklyRosterStore).forEach(dStr => {
+                        const day = window.csWeeklyRosterStore[dStr] || {};
+                        const cleaned = {};
+                        Object.keys(day).forEach(nm => {
+                            const mapped = idToRealName[nm.toUpperCase()] || nm;
+                            if (allValidSet.has(mapped)) cleaned[mapped] = day[nm];
+                        });
+                        window.csWeeklyRosterStore[dStr] = cleaned;
+                    });
+                    safeSetLocal('work_cache_cs_weekly_roster', window.csWeeklyRosterStore);
+                    if (currentUser && db) syncConfig('cs_weekly_roster', { roster: window.csWeeklyRosterStore, presets: window.csShiftPresets });
+                }
+
                 // 5. 清理【清潔】與【客服】所有日期的排班表
                 const cleanScheduleDict = (multiDict, validSet) => {
                     Object.keys(multiDict || {}).forEach(dStr => {
@@ -10454,6 +10789,16 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 safeSetLocal('work_cache_member_schedules', csSchedulesStore);
                 safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
 
+                // 修復：覆蓋雲端前先自動下載一份備份，避免本機名單不完整時把雲端清空。
+                try {
+                    const _backup = { exportedAt: new Date().toISOString(), memberProfilesStore, csMembersStore, cleanMembersStore, csMultiDaySchedules, cleanMultiDaySchedules, csWeeklyRosterStore: window.csWeeklyRosterStore };
+                    const _blob = new Blob([JSON.stringify(_backup, null, 2)], { type: 'application/json' });
+                    const _a = document.createElement('a');
+                    _a.href = URL.createObjectURL(_blob);
+                    _a.download = `清幽靈前備份_${window.formatDateStrHK()}.json`;
+                    _a.click();
+                } catch (e) { console.error('清幽靈備份失敗', e); }
+
                 // 8. 🌟 關鍵：使用 { merge: false } 完全覆蓋雲端檔案庫，徹底消滅雲端裡的舊名字記憶！
                 if (currentUser && db) {
                     try {
@@ -10488,6 +10833,14 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 const fiveDays = window.get5DayScheduleDates();
                 const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
                 fiveDays.forEach(d => { multiStore[d.dateStr] = []; });
+                // 修復：同時清掉這 5 日的拆分狀態，否則畫面仍會用舊的半小時格顯示。
+                const rolePrefix = isClean ? 'clean_' : 'cs_';
+                fiveDays.forEach(d => {
+                    Object.keys(splitHoursState).forEach(sk => {
+                        if (sk.startsWith(`${rolePrefix}${d.dateStr}_`)) delete splitHoursState[sk];
+                    });
+                });
+                safeSetLocal('work_cache_split_hours', splitHoursState);
                 window._tempGridValues = {};
                 const todayStr = getNowInputStrs().date;
                 window.syncActiveTodaySchedule();
@@ -10500,7 +10853,8 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                     safeSetLocal('work_cache_member_schedules', []);
                     syncConfig('member_schedules', { schedules: [], multiDay: csMultiDaySchedules, date: todayStr });
                 }
-                window.renderScheduleManager();
+                // 修復：清空後必須跳過 DOM 回抓，否則畫面會顯示舊班表，再按儲存就把舊資料寫回去。
+                window.renderScheduleManager(true);
                 window.showToast(`已清空 5 日${isClean ? '清潔' : '客服'}排班`);
             });
         };
@@ -10633,7 +10987,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             let cur = null;
                             slots.forEach(s => {
                                 if (!cur) cur = { ...s };
-                                else if (cur.end === s.start) cur.end = s.end;
+                                else if (cur.end >= s.start) { if (s.end > cur.end) cur.end = s.end; }
                                 else { mergedDay.push(cur); cur = { ...s }; }
                             });
                             if (cur) mergedDay.push(cur);
@@ -10899,10 +11253,9 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                 const namesHalfA = getNamesForHalf(hA_s, hA_e);
                                 const namesHalfB = getNamesForHalf(hB_s, hB_e);
                                 const stateKey = `${rolePrefix}${dStr}_${locId}_${tStart}`;
-                                if (splitHoursState[stateKey] === undefined && namesHalfA !== namesHalfB) {
-                                    splitHoursState[stateKey] = true;
-                                }
-                                const isSplit = !!(splitHoursState[stateKey] ?? (isToday ? splitHoursState[`${rolePrefix}${locId}_${tStart}`] : false));
+                                // 修復：渲染時不再偷偷寫入持久狀態；沒有記錄時只在畫面上顯示拆分。
+                                const _storedSplit = splitHoursState[stateKey];
+                                const isSplit = _storedSplit !== undefined ? !!_storedSplit : (namesHalfA !== namesHalfB);
 
                                 if (isSplit) {
                                     const kA = `${dStr}_${locId}_${hA_s}_${hA_e}`, kB = `${dStr}_${locId}_${hB_s}_${hB_e}`;
@@ -10924,7 +11277,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                                     if (val === undefined) {
                                         const kA = `${startH}:00_${startH}:30`, kB = `${startH}:30_${endH}:00`;
                                         if (domVals[`${dStr}_${locId}_${kA}`] !== undefined || domVals[`${dStr}_${locId}_${kB}`] !== undefined) {
-                                            val = Array.from(new Set([...(domVals[`${dStr}_${locId}_${kA}`] || '').split(/[\n\s]+/), ...(domVals[`${dStr}_${locId}_${kB}`] || '').split(/[\n\s]+/)])).map(n => n.trim()).filter(Boolean).join('\n');
+                                            val = Array.from(new Set([...window.splitMemberNamesSafe(domVals[`${dStr}_${locId}_${kA}`] || ''), ...window.splitMemberNamesSafe(domVals[`${dStr}_${locId}_${kB}`] || '')])).map(n => n.trim()).filter(Boolean).join('\n');
                                         } else {
                                             let names = []; daySchedules.forEach(s => { if (s.locationId === locId && parseInt(s.start.replace(':',''), 10) <= parseInt(tStart.replace(':',''), 10) && parseInt(s.end.replace(':',''), 10) >= parseInt(tEnd.replace(':',''), 10)) names.push(s.name); });
                                             val = names.join('\n');
@@ -10968,7 +11321,7 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                             <button type="button" onclick="window.clearSingleDaySchedule('${dStr}')" class="bg-white hover:bg-red-50 text-red-500 font-bold text-[10px] px-2 py-1 rounded-lg border border-red-200 transition-colors flex items-center active:scale-95"><i data-lucide="trash-2" class="w-3 h-3 mr-0.5"></i>清空此日</button>
                         </div>
                     </div>
-                    <div class="overflow-x-auto w-full" ontouchmove="window.onGridTouchMove(event)">
+                    <div class="overflow-x-auto w-full">
                         <table class="w-full text-center border-collapse">
                             <thead><tr>${th}</tr></thead>
                             <tbody>${rows}</tbody>
@@ -10992,14 +11345,14 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 const c = window.getMemberColorClass(name), sel = activeGridMember === name;
                 const profile = window.getMemberProfile(name);
                 const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== name.trim().toUpperCase();
-                const safeNameAttr = name.replace(/'/g, "\\'");
+                const safeNameAttr = window.jsAttr(name);
 
                 return `
                 <div class="w-full cursor-pointer member-btn-container" data-name="${name}" onclick="window.selectGridMember('${safeNameAttr}')">
                     <div class="w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-between gap-1 ${sel ? `${c.activeBg} text-white border-transparent shadow-md scale-[1.02]` : `${c.bg} ${c.text}${c.border} hover:opacity-80 shadow-2xs`}">
                         <div class="flex items-center gap-1.5 min-w-0 truncate">
                             ${isCleanRole && profile.avatar ? `<img src="${profile.avatar}" class="w-4 h-4 rounded-full object-cover shrink-0 border border-white/60">` : ''}
-                            <span class="truncate">${name}</span>
+                            <span class="truncate">${window.esc(name)}</span>
                         </div>
                         ${hasUniqueId ? `<span class="text-[9px] font-mono opacity-80 bg-black/10 px-1 py-0.2 rounded shrink-0">${profile.id.trim()}</span>` : ''}
                     </div>
@@ -11256,27 +11609,30 @@ window.crSaveData = () => {
 
         window.crSubmitAddRecord = () => {
             const tenant = $('crInputTenant').value.trim();
-            const qty = parseInt($('crInputQuantity').value, 10);
-            const staff = $('crInputStaff')?.value || '';
+            const qty = Number($('crInputQuantity').value);
+            const staff = ($('crInputStaff')?.value || '').trim();
             const dStr = $('crInputDate').value, tStr = $('crInputTime').value;
-            if (!tenant || !qty || qty <= 0) return window.showToast('請填寫完整資訊與有效數量', true);
+            if (!tenant || !Number.isInteger(qty) || qty <= 0) return window.showToast('請填寫完整資訊與有效數量（必須是整數）', true);
+            if (!staff) return window.showToast('⚠️ 請選擇存入貨物的經手客服人員！', true);
+            const itemType = crCurrentSelectedType || '未指定';
             crRecords.unshift({
-                id: 'cr_' + window.getNow().getTime(), tenant, type: crCurrentSelectedType || '未指定', staff: staff || '未指定',
+                id: 'cr_' + window.getNow().getTime(), tenant, type: itemType, staff: staff,
                 depositQuantity: qty, remainingQuantity: qty,
-                depositTime: (dStr && tStr) ? new Date(`${dStr}T${tStr}`).getTime() : window.getNow().getTime(),
+                depositTime: (dStr && tStr) ? window.hkDateTimeToMs(dStr, tStr) : window.getNow().getTime(),
                 withdrawHistory: [], status: 'active'
             });
-            window.crSaveData(); window.crCloseAddModal(); window.crRenderList(); window.showToast('已成功新增存放紀錄');
+            window.crSaveData(); window.crCloseAddModal(); window.crRenderList(); window.showToast(`✅ 已存入 ${qty} 箱 (經手: ${staff})`);
+            window.writeGalleryLog('雪房存入', tenant, `類型: ${itemType} · 數量: ${qty}箱 · 經手: ${staff}`);
             window.checkColdRoomOverdueAlerts();
         };
 
-        // 🌟 輔助函式：統一填充雪房「取出貨物」的經手客服下拉選單
+        // 🌟 輔助函式：統一填充雪房「取出貨物」的經手客服下拉選單（保留周靜儀）
         window.crPopulateWithdrawStaffSelect = () => {
             const staffSel = $('crInputWithdrawStaff');
             if (!staffSel) return;
             const csList = (typeof csMembersStore !== 'undefined' && csMembersStore.length > 0)
-                ? csMembersStore.filter(m => m !== '周靜儀')
-                : ['蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲'];
+                ? csMembersStore
+                : ['周靜儀', '蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲'];
             staffSel.innerHTML = '<option value="">請選擇經手客服人員...</option>' + csList.map(m => `<option value="${m}">${m}</option>`).join('');
             staffSel.value = '';
         };
@@ -11307,11 +11663,19 @@ window.crSaveData = () => {
 
         // 一鍵全部展開 / 全部合起來
         window.crToggleExpandAll = () => {
-            const allKeys = ['R-013', 'R-067', 'R-006', 'R-014', 'R-073', 'OTHER', 'HIST_R-013', 'HIST_R-067', 'HIST_R-006', 'HIST_R-014', 'HIST_R-073'];
+            // 修復：不再用固定清單，改由實際紀錄推導所有檔口（含新檔口與歷史分組）。
+            const fixed = ['R-013', 'R-067', 'R-006', 'R-014', 'R-073'];
+            const keys = new Set(fixed.flatMap(id => [id, 'HIST_' + id]));
+            keys.add('OTHER');
+            (crRecords || []).forEach(r => {
+                const t = String(r.tenant || '').toUpperCase();
+                const hit = fixed.find(id => t.includes(id));
+                if (hit) { keys.add(hit); keys.add('HIST_' + hit); } else { keys.add('OTHER'); }
+            });
             if (window.crExpandedStalls.size > 0) {
                 window.crExpandedStalls.clear();
             } else {
-                allKeys.forEach(k => window.crExpandedStalls.add(k));
+                keys.forEach(k => window.crExpandedStalls.add(k));
             }
             window.crRenderList();
         };
@@ -11344,10 +11708,10 @@ window.crSaveData = () => {
 
         window.crSubmitWithdraw = () => {
             const id = $('crCurrentActionId').value;
-            const qty = parseInt($('crInputWithdrawQty').value, 10);
+            const qty = Number($('crInputWithdrawQty').value);
             const withdrawStaff = ($('crInputWithdrawStaff')?.value || '').trim();
             const dStr = $('crInputWithdrawDate')?.value, tStr = $('crInputWithdrawTime')?.value;
-            const withdrawTime = (dStr && tStr) ? new Date(`${dStr}T${tStr}`).getTime() : window.getNow().getTime();
+            const withdrawTime = (dStr && tStr) ? window.hkDateTimeToMs(dStr, tStr) : window.getNow().getTime();
 
             // 🌟 強制必選經手客服人員
             if (!withdrawStaff) return window.showToast('⚠️ 請選擇取出貨物的經手客服人員！', true);
@@ -11360,7 +11724,7 @@ window.crSaveData = () => {
                     .sort((a, b) => a.depositTime - b.depositTime);
                 const totalRemain = iceBatches.reduce((sum, r) => sum + (r.remainingQuantity || 0), 0);
 
-                if (!qty || qty <= 0 || qty > totalRemain) return window.showToast('數量錯誤', true);
+            if (!Number.isInteger(qty) || qty <= 0 || qty > totalRemain) return window.showToast('數量錯誤（必須是整數）', true);
 
                 let remainToDeduct = qty;
                 for (const batch of iceBatches) {
@@ -11382,7 +11746,7 @@ window.crSaveData = () => {
 
             // 一般單批取出
             const r = crRecords.find(x => x.id === id);
-            if (!r || !qty || qty <= 0 || qty > r.remainingQuantity) return window.showToast('數量錯誤', true);
+            if (!r || !Number.isInteger(qty) || qty <= 0 || qty > r.remainingQuantity) return window.showToast('數量錯誤（必須是整數）', true);
             r.remainingQuantity -= qty;
             r.withdrawHistory = r.withdrawHistory || [];
             r.withdrawHistory.push({ time: withdrawTime, qty, staff: withdrawStaff });
@@ -11403,7 +11767,7 @@ window.crSaveData = () => {
             const r = crRecords.find(x => x.id === id); if (!r) return;
             const { date, time } = getNowInputStrs(r.depositTime);
             const fixedTenants = ['R-067', 'R-013', 'R-014', 'R-073', 'R-006'];
-            const modalHtml = `<div id="crEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();"><div class="bg-white rounded-2xl p-4 w-full max-w-[300px] shadow-2xl relative scrollbar-hide" onclick="event.stopPropagation()"><h3 class="font-bold text-base mb-3 text-slate-800 flex items-center border-b pb-2"><i data-lucide="edit" class="w-4 h-4 mr-2 text-blue-500"></i> 修改存放內容</h3><div class="space-y-3"><div><label class="text-[10px] font-bold text-slate-500 block mb-1">檔主編號 / 名稱</label><select id="crEditTenant" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">${fixedTenants.map(t => `<option value="${t}" ${r.tenant === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div><div class="flex gap-2"><div class="flex-1"><label class="text-[10px] font-bold text-slate-500 block mb-1">存入日期</label><input type="date" id="crEditDate" value="${date}" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs focus:border-blue-500 focus:outline-none text-center"></div><div class="flex-1"><label class="text-[10px] font-bold text-slate-500 block mb-1">時間</label><input type="time" id="crEditTime" value="${time}" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs focus:border-blue-500 focus:outline-none text-center"></div></div><div><label class="text-[10px] font-bold text-slate-500 block mb-1">經手客服人員</label><select id="crEditStaff" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center"><option value="">未指定</option>${teamMembers.map(m => `<option value="${m}" ${r.staff === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div><div><label class="text-[10px] font-bold text-slate-500 block mb-1">貨物類型</label><select id="crEditType" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">${crItemTypes.map(t => `<option value="${t}" ${r.type === t ? 'selected' : ''}>${t}</option>`).join('')}<option value="未指定" ${!r.type || r.type === '未指定' ? 'selected' : ''}>未指定</option></select></div><div><label class="text-[10px] font-bold text-slate-500 block mb-1">剩餘數量</label><input type="number" id="crEditRemain" value="${r.remainingQuantity}" min="0" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center"></div></div><div class="mt-4 flex justify-between items-center border-t border-slate-100 pt-3"><button onclick="window.crDeleteRecord('${r.id}'); document.getElementById('crEditModal').remove();" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors">刪除紀錄</button><div class="space-x-2 flex"><button onclick="document.getElementById('crEditModal').remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">取消</button><button onclick="window.crSaveEditRecord('${r.id}')" class="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-bold shadow-sm">儲存</button></div></div></div></div>`;
+            const modalHtml = `<div id="crEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();"><div class="bg-white rounded-2xl p-4 w-full max-w-[300px] shadow-2xl relative scrollbar-hide" onclick="event.stopPropagation()"><h3 class="font-bold text-base mb-3 text-slate-800 flex items-center border-b pb-2"><i data-lucide="edit" class="w-4 h-4 mr-2 text-blue-500"></i> 修改存放內容</h3><div class="space-y-3"><div><label class="text-[10px] font-bold text-slate-500 block mb-1">檔主編號 / 名稱</label><select id="crEditTenant" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">${Array.from(new Set([...(r.tenant ? [r.tenant] : []), ...fixedTenants])).map(t => `<option value="${t}" ${r.tenant === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div><div class="flex gap-2"><div class="flex-1"><label class="text-[10px] font-bold text-slate-500 block mb-1">存入日期</label><input type="date" id="crEditDate" value="${date}" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs focus:border-blue-500 focus:outline-none text-center"></div><div class="flex-1"><label class="text-[10px] font-bold text-slate-500 block mb-1">時間</label><input type="time" id="crEditTime" value="${time}" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs focus:border-blue-500 focus:outline-none text-center"></div></div><div><label class="text-[10px] font-bold text-slate-500 block mb-1">經手客服人員</label><select id="crEditStaff" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center"><option value="">未指定</option>${(csMembersStore.length ? csMembersStore : teamMembers).map(m => `<option value="${window.esc(m)}" ${r.staff === m ? 'selected' : ''}>${window.esc(m)}</option>`).join('')}</select></div><div><label class="text-[10px] font-bold text-slate-500 block mb-1">貨物類型</label><select id="crEditType" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">${crItemTypes.map(t => `<option value="${t}" ${r.type === t ? 'selected' : ''}>${t}</option>`).join('')}<option value="未指定" ${!r.type || r.type === '未指定' ? 'selected' : ''}>未指定</option></select></div><div><label class="text-[10px] font-bold text-slate-500 block mb-1">剩餘數量</label><input type="number" id="crEditRemain" value="${r.remainingQuantity}" min="0" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center"></div></div><div class="mt-4 flex justify-between items-center border-t border-slate-100 pt-3"><button onclick="window.crDeleteRecord('${r.id}'); document.getElementById('crEditModal').remove();" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors">刪除紀錄</button><div class="space-x-2 flex"><button onclick="document.getElementById('crEditModal').remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">取消</button><button onclick="window.crSaveEditRecord('${r.id}')" class="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-bold shadow-sm">儲存</button></div></div></div></div>`;
             document.body.insertAdjacentHTML('beforeend', modalHtml); lucide.createIcons();
         };
 
@@ -11414,9 +11778,10 @@ window.crSaveData = () => {
             const staff = $('crEditStaff').value, type =$('crEditType').value;
             const remain = parseInt($('crEditRemain').value, 10);
             if (!tenant || isNaN(remain) || remain < 0) return window.showToast('填寫有誤', true);
-            r.tenant = tenant; if (dStr && tStr) r.depositTime = new Date(`${dStr}T${tStr}`).getTime();
+            r.tenant = tenant; if (dStr && tStr) r.depositTime = window.hkDateTimeToMs(dStr, tStr);
             r.staff = staff || '未指定'; r.type = type; r.remainingQuantity = remain;
-            if (remain === 0) r.status = 'history';
+            // 修復：剩餘數量改回大於 0 時，狀態要回到「存放中」，不能永遠停在歷史。
+            r.status = remain === 0 ? 'history' : 'active';
             window.crSaveData(); $('crEditModal')?.remove(); window.crRenderList(); window.showToast('已更新');
             window.checkColdRoomOverdueAlerts();
         };
@@ -11426,7 +11791,7 @@ window.crSaveData = () => {
             const rows = [['紀錄ID', '狀態', '檔主', '經手客服', '類型', '初始數量', '剩餘數量', '存入時間'], ...crRecords.map(r => [r.id, r.status === 'active' ? '存放中' : '歷史', r.tenant, r.staff || '未指定', r.type || '未指定', r.depositQuantity, r.remainingQuantity, new Date(r.depositTime).toLocaleString('zh-TW', { hour12: false })])];
             const blob = new Blob(["\uFEFF" + rows.map(r => r.map(f => `"${f}"`).join(',')).join('\n')], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a"); link.href = URL.createObjectURL(blob);
-            link.download = `雪房存貨紀錄_${new Date().toISOString().slice(0,10)}.csv`; link.click();
+            link.download = `雪房存貨紀錄_${window.formatDateStrHK()}.csv`; link.click();
             
             // 🌟 記錄導出雪房 CSV 操作日誌
             window.writeGalleryLog('導出雪房表', '雪房存貨紀錄', `共導出 ${crRecords.length} 筆資料`);
@@ -11434,7 +11799,7 @@ window.crSaveData = () => {
             window.showToast('已導出CSV');
         };
 
-        window.crFormatTime = (ms) => { const d = new Date(ms); return `${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+        window.crFormatTime = (ms) => window.formatLogTime(ms);
 
         window.crRenderList = () => {
             const container = $('crRecordsContainer'); 
@@ -11454,13 +11819,17 @@ window.crSaveData = () => {
 
             // 自動將 R-012 或 琴記 歸入 R-013
             let crNeedSave = false;
-            crRecords.forEach(r => {
-                if (r.tenant && (/R-?0?12/i.test(r.tenant) || /琴記/i.test(r.tenant))) {
-                    r.tenant = 'R-013';
-                    crNeedSave = true;
-                }
-            });
-            if (crNeedSave) window.crSaveData();
+            // 修復：資料遷移只做一次，不要每次渲染雪房列表都改資料並寫雲端。
+            if (!window._crMigrated) {
+                crRecords.forEach(r => {
+                    if (r.tenant && (/R-?0?12/i.test(r.tenant) || /琴記/i.test(r.tenant))) {
+                        r.tenant = 'R-013';
+                        crNeedSave = true;
+                    }
+                });
+                window._crMigrated = true;
+                if (crNeedSave) window.crSaveData();
+            }
 
             const stallGroups = {};
             FIXED_STALLS.forEach(s => stallGroups[s.id] = []);
@@ -11815,7 +12184,7 @@ window.crSaveData = () => {
                     patrolTempRecords,
                     stallList: window.stallList
                 }, null, 2)], { type: 'application/json' });
-                const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `工作記錄本_備份_${new Date().toISOString().slice(0,10)}.json`; a.click();
+                const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `工作記錄本_備份_${window.formatDateStrHK()}.json`; a.click();
                 
                 window.writeGalleryLog('導出系統備份', 'JSON 檔案', '完整系統數據備份匯出');
                 window.showToast("導出成功！"); $('settingsDropdown')?.classList.add('hidden');
@@ -11827,6 +12196,9 @@ window.crSaveData = () => {
             reader.onload = async (e) => {
                 try {
                     const imp = JSON.parse(e.target.result);
+                    if (!imp || typeof imp !== 'object' || (!imp.dailyScheduleData && !imp.galleryItems && !imp.patrolHistoryStore && !imp.crRecords && !imp.tabVisibilityState)) {
+                        throw new Error('備份檔格式不正確或不是本系統的備份');
+                    }
                     dailyScheduleData = imp.dailyScheduleData || dailyScheduleData; taskCompletionState = imp.taskCompletionState || taskCompletionState;
                     subTaskCompletionState = imp.subTaskCompletionState || subTaskCompletionState; galleryCategories = imp.galleryCategories || galleryCategories;
                     galleryItems = imp.galleryItems || galleryItems; tabVisibilityState = imp.tabVisibilityState || tabVisibilityState;
@@ -11838,7 +12210,11 @@ window.crSaveData = () => {
                         safeSetLocal('work_cache_patrol_records', patrolState);
                         Object.keys(patrolHistoryStore).forEach(dKey => {
                             Object.keys(patrolHistoryStore[dKey] || {}).forEach(sKey => {
-                                window.enqueuePatrolSync(dKey, sKey);
+                                const rec = patrolHistoryStore[dKey][sKey] || {};
+                                // 修復：只補傳真正有內容的時段，避免用空白把雲端其他裝置的紀錄蓋掉。
+                                PATROL_TIME_SLOTS.forEach(slot => {
+                                    if (rec[slot] || rec[`${slot}_locked`] || rec[`${slot}_reason`]) window.enqueuePatrolSync(dKey, sKey, slot);
+                                });
                             });
                         });
                         window.resumePatrolUploadQueue(false);
@@ -12049,8 +12425,10 @@ window.crSaveData = () => {
             // 🌟 關鍵修正第 2 步：頁面已經移除 hidden 後，才執行對應的渲染函式
             ({
                 patrol: () => {
-                    window.applyAutoPatrolSlot(false); // 🌟 改為 false：保留使用者當前正在查看的時段，絕不擅自跳轉
                     window.autoSyncClosedStallsToPatrol(true);
+                    if (typeof window.applyAutoPatrolSlot === 'function') {
+                        window.applyAutoPatrolSlot(true); // 🌟 強制依照實時時間切換時段按鈕
+                    }
                     window.setPatrolViewMode('card');
                 },
                 gallery: window.renderGallery,
@@ -12110,7 +12488,7 @@ window.crSaveData = () => {
                 // 1. 左側時間欄：維持圖 1 原版 p-2 與 mt-0.5，移除 leading-none，恢復原汁原味的垂直距離與自然分佈，寬度僅適度收整為 52px
                 // 2. 右側剔號容器：pr-2 pl-0，將剔號平移靠右
                 // 3. 中間標題：flex-1 p-3 寬度充裕，長標題不再提早截斷
-                html += `<div id="tl-task-wrapper-${t.id}" class="${wClass}" style="${wStyle}" data-task-id="${t.id}" data-start="${t.start}" data-end="${t.end}">${activeLine}<div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div><div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[42px] mr-[3px] ${cClass} overflow-hidden cursor-pointer group/card hover:shadow-md transition-all duration-300" ondblclick="window.editTimelineTask('${t.id}', event)" title="點擊修改"><div class="flex flex-col items-center justify-center shrink-0 w-[52px] bg-slate-100/50 border-r border-slate-200/60 p-2 text-center select-none" onclick="window.editTimelineTask('${t.id}', event)"><span class="font-black text-[15px] text-slate-700 tracking-tighter ${done ? 'opacity-50 line-through decoration-slate-400' : ''}">${t.start}</span><span class="text-[9px] text-slate-400 font-bold mt-0.5 tracking-tighter">${t.end}</span></div><div class="flex-1 p-3 min-w-0 flex flex-col justify-center select-none" onclick="window.editTimelineTask('${t.id}', event)"><div class="flex items-center"><h3 class="font-bold text-slate-800 text-[14px] truncate flex-1 min-w-0 tracking-tight ${done ? 'opacity-50 line-through decoration-slate-400' : ''}" title="${t.title}">${grpBadge}${t.title}</h3></div>${tText}</div><div class="shrink-0 flex items-center justify-center pr-2 pl-0">${checkBtn}</div></div></div>`;
+                html += `<div id="tl-task-wrapper-${t.id}" class="${wClass}" style="${wStyle}" data-task-id="${t.id}" data-start="${t.start}" data-end="${t.end}">${activeLine}<div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div><div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[42px] mr-[3px] ${cClass} overflow-hidden cursor-pointer group/card hover:shadow-md transition-all duration-300" ondblclick="window.editTimelineTask('${t.id}', event)" title="點擊修改"><div class="flex flex-col items-center justify-center shrink-0 w-[52px] bg-slate-100/50 border-r border-slate-200/60 p-2 text-center select-none" onclick="window.editTimelineTask('${t.id}', event)"><span class="font-black text-[15px] text-slate-700 tracking-tighter ${done ? 'opacity-50 line-through decoration-slate-400' : ''}">${t.start}</span><span class="text-[9px] text-slate-400 font-bold mt-0.5 tracking-tighter">${t.end}</span></div><div class="flex-1 p-3 min-w-0 flex flex-col justify-center select-none" onclick="window.editTimelineTask('${t.id}', event)"><div class="flex items-center"><h3 class="font-bold text-slate-800 text-[14px] truncate flex-1 min-w-0 tracking-tight ${done ? 'opacity-50 line-through decoration-slate-400' : ''}" title="${window.esc(t.title)}">${grpBadge}${window.esc(t.title)}</h3></div>${tText}</div><div class="shrink-0 flex items-center justify-center pr-2 pl-0">${checkBtn}</div></div></div>`;
             });
             html += '</div>'; container.innerHTML = html; lucide.createIcons();
             const page = $('timelinePage');
@@ -12139,8 +12517,11 @@ window.crSaveData = () => {
                     }
                 }, 250);
             }
-            if (timelineUpdateInterval) clearInterval(timelineUpdateInterval); if (window.conveyorInterval) clearInterval(window.conveyorInterval);
-            window.conveyorInterval = setInterval(() => { if (!isFastForwarding) window.updateConveyorBelt(); }, 1000);
+            if (timelineUpdateInterval) clearInterval(timelineUpdateInterval);
+            // 修復：只在還沒有計時器時建立，否則每次重繪都重建一個 interval，造成抖動與重複計時。
+            if (!window.conveyorInterval) {
+                window.conveyorInterval = setInterval(() => { if (!isFastForwarding) window.updateConveyorBelt(); }, 1000);
+            }
             setTimeout(window.updateCurrentTimeIndicator, 100);
         };
 
@@ -12154,7 +12535,9 @@ window.crSaveData = () => {
             if (input) {
                 const [h, m] = input.split(':').map(Number);
                 if (!isNaN(h) && !isNaN(m)) {
-                    const target = new Date(); target.setHours(h, m, 0, 0); timeOffset = target.getTime() - Date.now();
+                    const cur = window.getNow();
+                    const target = new Date(cur); target.setHours(h, m, 0, 0);
+                    timeOffset += (target.getTime() - cur.getTime());
                     $('dynamicTimeModal').remove(); window.showToast(`🕒 時間已跳躍至 ${input}`);
                     window.updateClockUI();
                     if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
@@ -12266,14 +12649,16 @@ setInterval(() => {
             const container = $('memoContainer'); if (!container) return; window.crUpdateNotificationBtn();
             let sorted = [...futureMemos].sort((a, b) => new Date(`${a.date}T${a.time || '00:00'}`) - new Date(`${b.date}T${b.time || '00:00'}`));
             if (!sorted.length) { container.innerHTML = '<div class="flex flex-col items-center justify-center py-20 text-slate-400"><i data-lucide="inbox" class="w-12 h-12 mb-3 opacity-30"></i><span class="text-xs font-bold tracking-widest text-center">目前沒有未來的備忘任務</span></div>'; lucide.createIcons(); return; }
-            container.innerHTML = sorted.map(m => `<div onclick="window.openMemoEditorForEdit('${m.id}')" title="點擊修改" class="memo-card bg-white rounded-xl p-4 border border-slate-200 shadow-sm relative overflow-hidden cursor-pointer hover:border-blue-300 transition-colors" data-datetime="${m.date}T${m.time || '00:00'}"><div class="absolute left-0 top-0 bottom-0 w-1.5 bg-indigo-400 opacity-80"></div><div class="flex justify-between items-start pl-2"><div class="flex-1"><h3 class="text-sm font-bold text-slate-800 mb-1">${m.title}</h3><p class="text-xs text-slate-600 leading-relaxed mb-3 break-words whitespace-pre-wrap">${m.content || ''}</p><div class="inline-flex items-center bg-indigo-50 text-indigo-600 px-2 py-1 rounded text-[10px] font-bold border border-indigo-100"><i data-lucide="calendar" class="w-3 h-3 mr-1"></i> ${m.date} ${m.time || ''}</div></div><div class="flex flex-col items-end shrink-0 ml-3"><button onclick="window.deleteMemo('${m.id}'); event.stopPropagation();" class="text-slate-400 hover:text-red-500 p-1.5 rounded active:scale-95 bg-slate-50 hover:bg-red-50"><i data-lucide="trash-2" class="w-4 h-4"></i></button><div class="memo-countdown text-[11px] font-bold text-amber-600 mt-3 text-right whitespace-nowrap">計算中...</div></div></div></div>`).join('');
+            container.innerHTML = sorted.map(m => `<div onclick="window.openMemoEditorForEdit('${m.id}')" title="點擊修改" class="memo-card bg-white rounded-xl p-4 border border-slate-200 shadow-sm relative overflow-hidden cursor-pointer hover:border-blue-300 transition-colors" data-datetime="${m.date}T${m.time || '00:00'}"><div class="absolute left-0 top-0 bottom-0 w-1.5 bg-indigo-400 opacity-80"></div><div class="flex justify-between items-start pl-2"><div class="flex-1"><h3 class="text-sm font-bold text-slate-800 mb-1">${window.esc(m.title)}</h3><p class="text-xs text-slate-600 leading-relaxed mb-3 break-words whitespace-pre-wrap">${window.esc(m.content || '')}</p><div class="inline-flex items-center bg-indigo-50 text-indigo-600 px-2 py-1 rounded text-[10px] font-bold border border-indigo-100"><i data-lucide="calendar" class="w-3 h-3 mr-1"></i> ${m.date} ${m.time || ''}</div></div><div class="flex flex-col items-end shrink-0 ml-3"><button onclick="window.deleteMemo('${m.id}'); event.stopPropagation();" class="text-slate-400 hover:text-red-500 p-1.5 rounded active:scale-95 bg-slate-50 hover:bg-red-50"><i data-lucide="trash-2" class="w-4 h-4"></i></button><div class="memo-countdown text-[11px] font-bold text-amber-600 mt-3 text-right whitespace-nowrap">計算中...</div></div></div></div>`).join('');
             lucide.createIcons(); window.updateMemoCountdowns();
         };
 
         window.updateMemoCountdowns = () => {
             const now = window.getNow();
             document.querySelectorAll('.memo-card').forEach(card => {
-                const diff = new Date(card.dataset.datetime) - now, cdEl = card.querySelector('.memo-countdown'); if (!cdEl) return;
+                const dtRaw = String(card.dataset.datetime || '');
+                const dtParts = dtRaw.split('T');
+                const diff = window.hkDateTimeToMs(dtParts[0], dtParts[1]) - now, cdEl = card.querySelector('.memo-countdown'); if (!cdEl) return;
                 if (diff <= 0) { cdEl.textContent = '已過期 / 進行中'; cdEl.className = 'memo-countdown text-[11px] font-bold text-red-500 mt-3 text-right animate-pulse whitespace-nowrap'; }
                 else { const d = Math.floor(diff / 86400000), h = Math.floor((diff % 86400000) / 3600000), m = Math.floor((diff % 3600000) / 60000); cdEl.textContent = `⏳ ${d > 0 ? d + '天 ' : ''}${h}小時 ${m}分`; }
             });
@@ -12287,7 +12672,7 @@ setInterval(() => {
 
         window.openMemoEditorForEdit = (id) => {
             const m = futureMemos.find(x => x.id === id); if (!m) return;
-            const modalHtml = `<div id="memoEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();"><div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onclick="event.stopPropagation()"><h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i>修改備忘錄</h3><div class="space-y-3"><div><label class="text-[11px] font-bold text-slate-500 block mb-1">任務標題</label><input type="text" id="memoTitle" value="${m.title}" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none text-center font-bold"></div><div><label class="text-[11px] font-bold text-slate-500 block mb-1">詳細內容 (選填)</label><textarea id="memoContent" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none h-20 resize-none">${m.content || ''}</textarea></div><div class="flex gap-2"><div class="flex-1"><label class="text-[11px] font-bold text-slate-500 block mb-1">日期</label><input type="date" id="memoDate" value="${m.date}" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none text-center"></div><div class="flex-1"><label class="text-[11px] font-bold text-slate-500 block mb-1">時間</label><input type="time" id="memoTime" value="${m.time || '09:00'}" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none text-center"></div></div></div><div class="mt-5 flex justify-between items-center border-t border-slate-100 pt-4"><button onclick="window.deleteMemo('${m.id}'); document.getElementById('memoEditModal').remove();" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-2 rounded-lg text-xs font-bold">刪除</button><div class="space-x-2 flex"><button onclick="document.getElementById('memoEditModal').remove()" class="px-3 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">取消</button><button onclick="window.saveEditMemo('${m.id}')" class="px-4 py-2 bg-blue-500 text-white rounded-lg text-xs font-bold shadow-sm">儲存</button></div></div></div></div>`;
+            const modalHtml = `<div id="memoEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();"><div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onclick="event.stopPropagation()"><h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i>修改備忘錄</h3><div class="space-y-3"><div><label class="text-[11px] font-bold text-slate-500 block mb-1">任務標題</label><input type="text" id="memoTitle" value="${window.esc(m.title)}" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none text-center font-bold"></div><div><label class="text-[11px] font-bold text-slate-500 block mb-1">詳細內容 (選填)</label><textarea id="memoContent" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none h-20 resize-none">${window.esc(m.content || '')}</textarea></div><div class="flex gap-2"><div class="flex-1"><label class="text-[11px] font-bold text-slate-500 block mb-1">日期</label><input type="date" id="memoDate" value="${m.date}" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none text-center"></div><div class="flex-1"><label class="text-[11px] font-bold text-slate-500 block mb-1">時間</label><input type="time" id="memoTime" value="${m.time || '09:00'}" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 focus:outline-none text-center"></div></div></div><div class="mt-5 flex justify-between items-center border-t border-slate-100 pt-4"><button onclick="window.deleteMemo('${m.id}'); document.getElementById('memoEditModal').remove();" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-2 rounded-lg text-xs font-bold">刪除</button><div class="space-x-2 flex"><button onclick="document.getElementById('memoEditModal').remove()" class="px-3 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">取消</button><button onclick="window.saveEditMemo('${m.id}')" class="px-4 py-2 bg-blue-500 text-white rounded-lg text-xs font-bold shadow-sm">儲存</button></div></div></div></div>`;
             document.body.insertAdjacentHTML('beforeend', modalHtml); lucide.createIcons();
         };
 
@@ -12315,7 +12700,7 @@ setInterval(() => {
         const RAW_DATA = [
             {
                 floor: "地下",
-                list: "002/07:00-14:00, 003/13:00-19:00, 004/07:30-12:30、15:30-19:30, 005/08:00-18:00, 006/08:30-18:00, 007/07:00-14:00, 008/07:00-13:00, 009/09:00-18:00, 010/07:00-14:00, 012/08:00-12:30、15:00-18:30, 013/08:30-12:30、15:00-18:30/琴記, 014/08:00-19:30, 017/07:30-13:30, 018/09:00-12:00、15:00-18:00, 019/08:00-18:30, 020/08:00-15:00, 021/08:00-13:00、15:00-19:00, 023/08:00-12:00、15:00-18:00, 024/07:30-14:00, 025/08:00-12:30、15:00-18:30, 026/08:00-12:00、15:00-19:00, 027/08:00-12:00、15:30-19:00, 028/08:00-12:00、15:30-19:00, 029/12:00-19:00/芳記海鮮, 030/08:30-13:00、15:30-19:00/聯仔魚檔, 031/09:00-15:00/旺仔標魚檔, 032/08:30-12:00、15:00-18:30/肥強, 033/08:30-12:00、15:00-18:30, 034/07:30-11:30、15:00-18:00/明記魚檔, 035/08:30-12:30、15:30-19:30/暖暖魚檔, 037/09:00-12:30、16:00-19:00/四哥魚檔, 039/08:00-15:00/華強, 040/08:00-14:00/友記海鮮魚檔, 042/07:00-13:30/亮仔記, 043/07:00-13:00/財源海鮮, 044/08:30-13:00、16:00-18:30/英記海鮮, 045/08:00-12:00、15:30-19:00/榮記生魚檔, 046/12:00-19:00/輝記, 050/07:00-13:00/芳記, 051/08:00-15:00/銘珍海鮮, 053/07:00-14:00/財記魚檔, 054/08:00-12:00、14:00-18:00/強記, 055/09:30-13:30、15:30-18:00, 057/07:00-13:00/小恩恩魚檔, 058/07:00-12:00、14:00-19:00/帶娣魚蝦蟹, 059/08:00-12:00、15:00-18:00/展明, 060/08:00-13:00、15:00-18:00/三十號, 061/08:00-18:00/培仔魚檔, 062/09:00-12:00、16:00-19:00, 063/08:00-13:00、15:00-18:00/三十三號魚檔, 064/07:30-18:30/牛仔魚檔, 065/07:00-11:00、14:30-18:00/克仔魚檔, 066/07:00-13:00, 067/07:00-13:00、15:00-19:30/玉記海鮮, 069/08:00-13:00、16:00-19:00/添記, 070/10:00-13:00、16:00-19:00, 071/07:00-13:00/水記, 072/07:00-13:00, 073/07:00-13:00, 074/09:00-12:00、15:30-18:30/大蝦魚檔, 076/08:00-19:00/輝源, 078/08:00-12:00、15:00-18:00/祥友誠, 079/08:00-12:00、16:00-19:00/海記水產, 080/09:30-12:30、15:00-18:30/海記水產, 081/08:00-15:00/長記魚檔, 082/07:00-13:00/大英海鮮, 085/08:00-12:00、15:00-19:00/玉鳳魚檔, 086/08:00-11:30、15:30-18:30, 087/08:30-12:30、15:00-18:30/明記海鮮檔"
+                list: "002/07:00-14:00, 003/13:00-19:00, 005/08:00-18:00, 006/08:30-18:00, 007/07:00-14:00, 008/07:00-13:00, 009/09:00-18:00, 010/07:00-14:00, 012/08:00-12:30、15:00-18:30, 013/08:30-12:30、15:00-18:30/琴記, 014/08:00-19:30, 017/07:30-13:30, 019/08:00-18:30, 020/08:00-15:00, 021/08:00-13:00、15:00-19:00, 023/08:00-12:00、15:00-18:00, 024/07:30-14:00, 025/08:00-12:30、15:00-18:30, 026/08:00-12:00、15:00-19:00, 027/08:00-12:00、15:30-19:00, 028/08:00-12:00、15:30-19:00, 029/12:00-19:00/芳記海鮮, 030/08:30-13:00、15:30-19:00/聯仔魚檔, 031/09:00-15:00/旺仔標魚檔, 032/08:30-12:00、15:00-18:30/肥強, 033/08:30-12:00、15:00-18:30, 034/07:30-11:30、15:00-18:00/明記魚檔, 035/08:30-12:30、15:30-19:30/暖暖魚檔, 037/09:00-12:30、16:00-19:00/四哥魚檔, 039/08:00-15:00/華強, 040/08:00-14:00/友記海鮮魚檔, 042/07:00-13:30/亮仔記, 043/07:00-13:00/財源海鮮, 044/08:30-13:00、16:00-18:30/英記海鮮, 045/08:00-12:00、15:30-19:00/榮記生魚檔, 046/12:00-19:00/輝記, 050/07:00-13:00/芳記, 051/08:00-15:00/銘珍海鮮, 053/07:00-14:00/財記魚檔, 054/08:00-12:00、14:00-18:00/強記, 055/09:30-13:30、15:30-18:00, 057/07:00-13:00/小恩恩魚檔, 058/07:00-12:00、14:00-19:00/帶娣魚蝦蟹, 059/08:00-12:00、15:00-18:00/展明, 060/08:00-13:00、15:00-18:00/三十號, 061/08:00-18:00/培仔魚檔, 062/09:00-12:00、16:00-19:00, 063/08:00-13:00、15:00-18:00/三十三號魚檔, 064/07:30-18:30/牛仔魚檔, 065/07:00-11:00、14:30-18:00/克仔魚檔, 066/07:00-13:00, 067/07:00-13:00、15:00-19:30/玉記海鮮, 069/08:00-13:00、16:00-19:00/添記, 070/10:00-13:00、16:00-19:00, 071/07:00-13:00/水記, 072/07:00-13:00, 073/07:00-13:00, 074/09:00-12:00、15:30-18:30/大蝦魚檔, 076/08:00-19:00/輝源, 078/08:00-12:00、15:00-18:00/祥友誠, 079/08:00-12:00、16:00-19:00/海記水產, 080/09:30-12:30、15:00-18:30/海記水產, 081/08:00-15:00/長記魚檔, 082/07:00-13:00/大英海鮮, 085/08:00-12:00、15:00-19:00/玉鳳魚檔, 086/08:00-11:30、15:30-18:30, 087/08:30-12:30、15:00-18:30/明記海鮮檔"
             },
             {
                 floor: "花園仔",
@@ -12323,7 +12708,7 @@ setInterval(() => {
             },
             {
                 floor: "一樓",
-                list: "001/07:00-16:00/大成, 002/07:00-13:00/祐華, 003/07:00-18:30/祥合興記, 005/07:00-14:00/大生, 006/07:00-18:00/聯成, 010/07:00-16:00/永記, 013/07:00-18:30/良記, 014/07:30-12:30、14:00-18:00/洪記, 015/07:00-19:00/李記棧, 018/07:00-13:00/開記鮮牛肉, 019/07:30-18:00/公平, 020/07:00-13:00/晃記棧, 021/07:00-13:00、15:00-19:00/黃晃記, 023/07:00-13:00/金益棧, 024/07:00-13:00/福仁棧, 026/07:00-13:00/波記"
+                list: "001/07:00-16:00/大成, 002/07:00-13:00/祐華, 003/07:00-18:30/祥合興記, 005/07:00-14:00/大生, 006/07:00-18:00/聯成, 010/07:00-16:00/永記, 013/07:00-18:30/良記, 014/07:30-12:30、14:00-18:00/洪記, 015/07:00-19:00/李記棧, 018/07:00-13:00/開記鮮牛肉, 019/07:30-18:00/公平, 020/07:00-13:00/晃記棧, 021/07:00-13:00、15:00-19:00/黃晃記, 023/07:00-13:00/金益棧, 024/07:00-13:00/福仁棧"
             }
         ];
 
@@ -12345,7 +12730,8 @@ setInterval(() => {
             });
         }
 
-        const STALL_STORAGE_KEY = 'stall_db_stable_v1';
+        // 🌟 升級版本 Key，自動淘汰含有 1-026、R-004、R-018 的舊本機快取
+        const STALL_STORAGE_KEY = 'stall_db_stable_v2_105';
         window.stallList = getLocal(STALL_STORAGE_KEY, null);
         if (!window.stallList || !window.stallList.length) {
             window.stallList = parseRawData();
@@ -12396,7 +12782,7 @@ setInterval(() => {
                 const cleanCode = codeStr.replace(/^0+/, '');
                 const nameStr = String(s.name || '').trim();
                 const cleanQuery = query.replace(/^0+/, '');
-                const isCodeMatch = (codeStr === query) || (cleanCode === cleanQuery);
+                const isCodeMatch = (codeStr === query) || (cleanCode === cleanQuery) || (cleanCode === query.replace(/^[1RJ]-?/i, '').replace(/^0+/, ''));
                 const isNameMatch = nameStr.includes(query);
                 return isCodeMatch || isNameMatch;
             });
@@ -12425,11 +12811,20 @@ setInterval(() => {
 
                 let statusBadgeHtml = '';
 
+                const _allTimes = (stall.hours.match(/\d{1,2}:\d{2}/g) || []).map(t => { const p = t.split(':').map(Number); return p[0] * 60 + p[1]; });
+                const _inShift = _allTimes.length >= 4 ? (() => { for (let k = 0; k + 1 < _allTimes.length; k += 2) { if (curMins >= _allTimes[k] && curMins <= _allTimes[k + 1]) return true; } return false; })() : true;
+
                 if (curMins < openMins) {
                     // 還沒到營業時間
                     statusBadgeHtml = `
                         <span class="bg-slate-100 text-slate-500 border border-slate-200 text-[10.5px] font-bold px-2 py-0.5 rounded-full flex items-center shadow-xs">
                             <i data-lucide="moon" class="w-3 h-3 mr-1 text-slate-400"></i>未營業 (表定 ${openTime} 開)
+                        </span>`;
+                } else if (!_inShift) {
+                    // 修復：兩段營業時間之間（午休）不應顯示「提早收工」。
+                    statusBadgeHtml = `
+                        <span class="bg-slate-100 text-slate-500 border border-slate-200 text-[10.5px] font-bold px-2 py-0.5 rounded-full flex items-center shadow-xs">
+                            <i data-lucide="coffee" class="w-3 h-3 mr-1 text-slate-400"></i>休息中
                         </span>`;
                 } else if ((closeMins - curMins) > 30) {
                     // 提早超過 30 分鐘打烊才算提早收工
@@ -12490,9 +12885,9 @@ setInterval(() => {
 
             tbody.innerHTML = (window.stallList || []).map((item, index) => `
                 <tr class="border-b border-slate-100 text-[11px] hover:bg-slate-50">
-                    <td class="p-1.5 font-bold text-slate-700">${item.floor}</td>
-                    <td class="p-1.5 font-mono font-bold">${item.code}</td>
-                    <td class="p-1.5 font-bold text-slate-800">${item.name || '<span class="text-slate-300">無</span>'}</td>
+                    <td class="p-1.5 font-bold text-slate-700">${window.esc(item.floor)}</td>
+                    <td class="p-1.5 font-mono font-bold">${window.esc(item.code)}</td>
+                    <td class="p-1.5 font-bold text-slate-800">${item.name ? window.esc(item.name) : '<span class="text-slate-300">無</span>'}</td>
                     <td class="p-1.5 font-mono text-[10px] text-slate-600">${item.hours}</td>
                     <td class="p-1.5 text-right">
                         <button type="button" onclick="window.deleteStall(${index})" class="text-red-400 hover:text-red-600 p-0.5"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
@@ -12533,11 +12928,11 @@ setInterval(() => {
         };
 
         window.resetTo108Stalls = () => {
-            window.showConfirm('還原數據', '確定要還原為初始 108 筆數據嗎？', () => {
+            window.showConfirm('還原數據', '確定要還原為初始 105 筆數據嗎？', () => {
                 window.stallList = parseRawData();
                 saveStallDatabase();
                 renderDatabaseTable();
-                window.showToast('✅ 已成功還原 108 筆原始數據！');
+                window.showToast('✅ 已成功還原 105 筆原始數據！');
             });
         };
 
@@ -12568,6 +12963,8 @@ setInterval(() => {
                 if (st) st.textContent = '系統已連線並同步'; 
                 setupPureRealtimeSync(); 
                 setupPatrolSync();
+                window.flushPendingGalleryLogs?.();
+            window._flushSyncQueue?.();
                 window.autoCleanupGalleryToTrash();
                 window.autoSyncClosedStallsToPatrol(true);
 
@@ -12592,6 +12989,9 @@ setInterval(() => {
         window.addEventListener('DOMContentLoaded', () => {
     window.applyTabVisibility();
     window.updatePatrolDateInputUI();
+    if (typeof window.applyAutoPatrolSlot === 'function') {
+        window.applyAutoPatrolSlot(true); // 🌟 啟動時先算好當前時段，避免點入剔檔時停留在9點
+    }
     window.switchTab('gallery');   // 每次都固定開圖庫
     if (window.lucide) lucide.createIcons();
 });
@@ -12609,9 +13009,8 @@ setInterval(() => {
 
             window._galleryNewCount = (window._galleryNewCount || 0) + count;
             
-            const rawItems = window.pendingUploadImages.length > 0 
-                ? [...window.pendingUploadImages] 
-                : galleryItems.slice(0, count);
+            // 修復：通知要用「實際新進來的圖庫項目」，不能用自己待上傳的清單。
+            const rawItems = galleryItems.filter(i => !i.isDeleted).slice(0, Math.max(1, count));
 
             const newlyAdded = await Promise.all(rawItems.map(async (it) => {
                 let imgUrl = it.src || '';
@@ -12643,7 +13042,7 @@ setInterval(() => {
                     </div>
                     <div class="min-w-0 flex-1 flex items-center space-x-2">
                         <span class="text-xs font-mono font-bold text-blue-600 shrink-0">${item.time || '12:00'}</span>
-                        <span class="text-xs font-black text-slate-800 truncate tracking-wide">${item.title || '無標題'}</span>
+                        <span class="text-xs font-black text-slate-800 truncate tracking-wide">${window.esc(item.title || '無標題')}</span>
                     </div>
                 </div>
             `).join('');
@@ -12680,6 +13079,10 @@ setInterval(() => {
         }
         // 👈 補上這段：主頁面必須監聽 iframe 傳過來的存檔訊息並寫入 Firebase 雲端
         window.addEventListener('message', async (event) => {
+            // 修復：只接受來自開會記錄 iframe 的訊息，避免任何嵌入頁面覆寫／刪除匯報。
+            const _reportFrame = document.getElementById('meetingReportIframe');
+            const _isReportFrame = !!(event.source && _reportFrame && event.source === _reportFrame.contentWindow);
+            if (!_isReportFrame && event.data && ['SAVE_MEETING_REPORT', 'DELETE_MEETING_REPORT', 'REQUEST_MEETING_REPORTS'].includes(event.data.type)) return;
             if (event.data?.type === 'SAVE_MEETING_REPORT') {
                 const { dateKey, report } = event.data;
                 if (!dateKey || !report) return;
@@ -14397,7 +14800,7 @@ window.pushMeetingReportsToAllIframes = (reports) => {
             <button type="button" onclick="window.onTempKeypadPress('7')" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">7</button>
             <button type="button" onclick="window.onTempKeypadPress('8')" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">8</button>
             <button type="button" onclick="window.onTempKeypadPress('9')" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">9</button>
-            <button type="button" onclick="window.onTempKeypadPress('.')" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-slate-50 text-slate-800 text-[26px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">·</button>
+           <button type="button" onclick="window.onTempKeypadPress('CLEAR')" class="h-[42px] rounded-xl font-mono border border-rose-200 bg-rose-50 text-rose-600 text-xs font-black active:bg-rose-100 active:scale-95 cursor-pointer">清空</button>
             <button type="button" onclick="window.onTempKeypadPress('0')" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-white text-slate-800 text-[21px] font-black active:bg-blue-100 active:scale-95 cursor-pointer">0</button>
             <button type="button" onclick="window.onTempKeypadPress('BACK')" class="h-[42px] rounded-xl font-mono border border-slate-200 bg-slate-100 text-slate-700 text-base font-black active:bg-blue-100 active:scale-95 cursor-pointer">⌫</button>
         </div>
@@ -15001,6 +15404,7 @@ window.pushMeetingReportsToAllIframes = (reports) => {
                 <h3 class="font-bold text-sm text-slate-800 tracking-wide">操作日誌</h3>
             </div>
             <div class="flex items-center space-x-2">
+                <button type="button" id="adminLockBtn" onclick="window.openAdminAuthModal()" class="text-[10px] font-bold text-slate-600 hover:bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 transition-all">🔑 管理員</button>
                 <button type="button" onclick="window.openUserNameModal()" class="text-[10px] font-bold text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-lg border border-blue-200 transition-all">
                     身分: <span id="currentLogUserDisplay">---</span>
                 </button>
