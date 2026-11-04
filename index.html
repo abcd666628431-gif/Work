@@ -163,7 +163,9 @@
             localStorage.setItem('work_client_device_id', 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6));
         }
         // 🌟 修復：定義每次分頁開啟時的唯一 Session ID（掛在 window 確保全域可用）
+        const clientDeviceId = localStorage.getItem('work_client_device_id');
         const clientSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+        window.clientDeviceId = clientDeviceId;
         window.clientSessionId = clientSessionId;
 
         // 🌟 2. 隨機成員名稱產生後立刻鎖入本機，以後重開都固定為同一號碼！
@@ -223,7 +225,8 @@
                 timestamp: Date.now(),
                 user: customUser || sysUserName,
                 color: customColor || sysUserColor,
-                deviceId: customUser ? 'system' : clientSessionId, // 🌟 綁定設備碼，防止不同人同名連住
+                deviceId: customUser ? 'system' : clientDeviceId,
+                sessionId: clientSessionId,
                 action: action,
                 targetName: targetName || '無標題',
                 detail: detail || ''
@@ -276,13 +279,50 @@
             window.renderGalleryLogs();
         };
 
+        window.getClearLogAction = (action) => {
+            const map = {
+                '取消剔檔': '取消巡查標記',
+                '剔檔標記': '設定巡查狀態',
+                '清空剔檔': '清空當日巡查紀錄',
+                '導出巡查報表': '匯出巡查與溫度 Excel',
+                '每日歸檔': '系統跨日歸檔照片',
+                '旋轉圖片': '旋轉照片',
+                '移至垃圾桶': '移除照片（可還原）',
+                '批次移至垃圾桶': '批次移除照片（可還原）',
+                '還原圖片': '還原照片',
+                '還原整日': '按日期批次還原照片',
+                '全部還原': '還原全部照片',
+                '永久清空': '永久刪除垃圾桶照片',
+                '修改圖片': '修改照片資料',
+                '導出圖片': '匯出原圖 PNG',
+                '導出報表': '匯出提早收工 CSV',
+                '發布圖片': '發布並同步照片',
+                '雪房存入': '新增雪房存貨紀錄',
+                '導出雪房表': '匯出雪房存貨 CSV',
+                '導出系統備份': '匯出系統 JSON 備份'
+            };
+            return map[action] || action || '其他操作';
+        };
+
         window.getLogBadgeStyle = (action) => {
-            if (action.includes('刪除') || action.includes('清空') || action.includes('取消')) return 'bg-rose-100 text-rose-700 border-rose-200';
-            if (action.includes('還原')) return 'bg-emerald-100 text-emerald-700 border-emerald-200';
-            if (action.includes('發布') || action.includes('上傳')) return 'bg-indigo-100 text-indigo-700 border-indigo-200';
-            if (action.includes('修改')) return 'bg-amber-100 text-amber-700 border-amber-200';
-            if (action.includes('剔檔')) return 'bg-teal-100 text-teal-800 border-teal-300';
-            return 'bg-blue-100 text-blue-700 border-blue-200';
+            const act = String(action || '');
+            // 🔴 刪除類：紅色
+            if (act.includes('刪除') || act.includes('清空') || act.includes('取消') || act.includes('移至垃圾桶')) {
+                return 'bg-red-100 text-red-700 border-red-300 font-black';
+            }
+            // 🟡 導出類：黃色 / 琥珀色
+            if (act.includes('導出') || act.includes('匯出')) {
+                return 'bg-amber-100 text-amber-800 border-amber-300 font-black';
+            }
+            // 🟢 上傳 / 發布類：綠色
+            if (act.includes('上傳') || act.includes('發布')) {
+                return 'bg-emerald-100 text-emerald-700 border-emerald-300 font-black';
+            }
+            // 其餘輔助動作維持清晰辨識
+            if (act.includes('還原')) return 'bg-blue-100 text-blue-700 border-blue-300 font-bold';
+            if (act.includes('修改') || act.includes('旋轉')) return 'bg-purple-100 text-purple-700 border-purple-300 font-bold';
+            if (act.includes('剔檔')) return 'bg-teal-100 text-teal-800 border-teal-300 font-bold';
+            return 'bg-slate-100 text-slate-700 border-slate-300 font-bold';
         };
 
         window.renderGalleryLogs = () => {
@@ -379,7 +419,7 @@
                         <div class="py-1 px-2 bg-white rounded-xl border border-slate-200/80 shadow-2xs flex items-center gap-1 whitespace-nowrap overflow-x-auto scrollbar-hide text-[11px]">
                             <span class="font-mono text-[9.5px] font-bold text-slate-400 shrink-0 tracking-tight">${window.formatLogTime(log.timestamp)}</span>
                             <span ${userClickAttr} class="font-black shrink-0 tracking-tight ${userCursorCls}" style="color: ${safeC}">${window.esc(log.user || '未知')}</span>
-                            <span class="font-black text-[9.5px] px-1 py-0.2 rounded border shrink-0 leading-tight ${actionBadge}">${log.action}</span>
+                            <span class="font-black text-[9.5px] px-1 py-0.2 rounded border shrink-0 leading-tight ${actionBadge}">${window.esc(window.getClearLogAction(log.action))}</span>
                             <span class="font-black text-slate-800 shrink-0 tracking-tight">[${window.esc(log.targetName || '無標題')}]</span>
                             ${log.detail ? `<span class="text-slate-500 font-medium text-[10px] shrink-0">${window.esc(log.detail)}</span>` : ''}
                         </div>`;
@@ -404,7 +444,7 @@
                         return `
                         <div class="py-1 px-1.5 bg-white rounded-lg border border-slate-200/70 flex items-center gap-1 text-[10px] whitespace-nowrap overflow-x-auto scrollbar-hide">
                             <span class="font-mono text-[9px] text-slate-400 shrink-0 tracking-tight">${window.formatLogTime(log.timestamp)}</span>
-                            <span class="font-bold text-[9px] px-1 py-0.2 rounded border shrink-0 leading-tight ${actionBadge}">${log.action}</span>
+                            <span class="font-bold text-[9px] px-1 py-0.2 rounded border shrink-0 leading-tight ${actionBadge}">${window.esc(window.getClearLogAction(log.action))}</span>
                             <span class="font-black text-slate-800 shrink-0 tracking-tight">[${window.esc(log.targetName || '無標題')}]</span>
                             ${log.detail ? `<span class="text-slate-500 font-medium text-[9.5px] shrink-0">${window.esc(log.detail)}</span>` : ''}
                         </div>`;
@@ -415,7 +455,7 @@
                         <button type="button" onclick="window.toggleLogGroup('${group.id}', event)" class="w-full p-2 px-2.5 flex items-center justify-between text-left hover:bg-slate-50 active:bg-slate-100 transition-colors select-none">
                             <div class="flex items-center space-x-1.5 min-w-0 pr-1 overflow-hidden whitespace-nowrap">
                                 <span class="font-mono text-[10px] font-bold text-slate-400 shrink-0 whitespace-nowrap">${timeRangeStr}</span>
-                                <span ${grpUserClickAttr} class="font-black text-[11px] shrink-0 whitespace-nowrap ${grpUserCursorCls}" style="color: ${safeGrpC}">${group.user}</span>
+                                <span ${grpUserClickAttr} class="font-black text-[11px] shrink-0 whitespace-nowrap ${grpUserCursorCls}" style="color: ${safeGrpC}">${window.esc(group.user || '未知')}</span>
                                 <span class="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black px-1.5 py-0.2 rounded-full shrink-0 whitespace-nowrap">
                                     ${group.items.length}筆
                                 </span>
@@ -501,9 +541,9 @@
             return galleryLogsStore.filter(l => {
                 if (l.user !== oldName) return false;
                 if (isEditingOtherUser) {
-                    return !l.deviceId || l.deviceId !== clientSessionId;
+                    return !l.deviceId || l.deviceId !== clientDeviceId;
                 } else {
-                    return l.deviceId === clientSessionId;
+                    return l.deviceId === clientDeviceId;
                 }
             });
         };
@@ -614,9 +654,12 @@
         const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
         const safeSetLocal = (k, d) => { 
             try { 
-                localStorage.setItem(k, JSON.stringify(d)); 
+                localStorage.setItem(k, JSON.stringify(d));
+                return true;
             } catch (e) {
-                console.warn("localStorage 容量已滿，略過本機鍵值:", k);
+                console.error('localStorage 寫入失敗：', k, e);
+                if (typeof window.showToast === 'function') window.showToast(`⚠️ 本機儲存失敗：${k}`, true);
+                return false;
             } 
         };
 
@@ -641,7 +684,8 @@
         };
 
         const cfgDoc = (key) => doc(db, 'artifacts', appId, 'public', 'data', 'config', key);
-        window._syncQueue = [];
+        window._syncQueue = getLocal('work_pending_config_sync', []);
+        const persistSyncQueue = () => safeSetLocal('work_pending_config_sync', window._syncQueue);
         window.reportCloudError = (msg, err) => {
             console.error(msg, err);
             if (Date.now() - (window._lastCloudErrToast || 0) < 5000) return;
@@ -649,23 +693,36 @@
             window.showToast('⚠️ 雲端同步失敗：' + msg, true);
         };
         window._flushSyncQueue = async () => {
-            if (!currentUser || !db || !window._syncQueue.length) return;
-            const items = window._syncQueue.slice();
-            for (let i = 0; i < items.length; i++) {
+            if (!navigator.onLine || !currentUser || !db || !window._syncQueue.length) return;
+            while (window._syncQueue.length) {
+                const item = window._syncQueue[0];
                 try {
-                    await setDoc(cfgDoc(items[i].key), items[i].data, { merge: items[i].merge });
-                    window._syncQueue.shift();
+                    await setDoc(cfgDoc(item.key), item.data, { merge: !!item.merge });
+                    if (window._syncQueue[0] === item) window._syncQueue.shift();
+                    else {
+                        const idx = window._syncQueue.indexOf(item);
+                        if (idx >= 0) window._syncQueue.splice(idx, 1);
+                    }
+                    persistSyncQueue();
                 } catch (e) {
-                    console.error('同步重試失敗，保留佇列：', items[i].key, e);
-                    break;
+                    console.error('同步重試失敗，保留佇列：', item.key, e);
+                    clearTimeout(window._syncRetryTimer);
+                    window._syncRetryTimer = setTimeout(() => window._flushSyncQueue(), 5000);
+                    return;
                 }
             }
+            const st = document.getElementById('connectionStatus');
+            const dot = document.getElementById('connectionDot');
+            if (st) st.textContent = '系統已連線並同步';
+            if (dot) { dot.classList.remove('bg-amber-500', 'bg-red-500'); dot.classList.add('bg-green-500'); }
         };
         window.markSyncError = (key, data, merge, err) => {
             console.error(`雲端同步失敗 (${key}):`, err);
-            const _idx = window._syncQueue.findIndex(x => x.key === key);
-            if (_idx >= 0) window._syncQueue[_idx] = { key, data, merge };
-            else window._syncQueue.push({ key, data, merge });
+            const idx = window._syncQueue.findIndex(x => x.key === key);
+            const queued = { key, data, merge: !!merge, queuedAt: Date.now() };
+            if (idx >= 0) window._syncQueue[idx] = queued;
+            else window._syncQueue.push(queued);
+            persistSyncQueue();
             const st = document.getElementById('connectionStatus');
             const dot = document.getElementById('connectionDot');
             if (st) st.textContent = '同步失敗，已排隊重試…';
@@ -673,16 +730,20 @@
             clearTimeout(window._syncRetryTimer);
             window._syncRetryTimer = setTimeout(() => window._flushSyncQueue(), 5000);
         };
-        const syncConfig = (key, data, merge = false) => {
-            if (!currentUser) return;
-            setDoc(cfgDoc(key), data, { merge }).then(() => {
-                if (!window._syncQueue.length) {
-                    const st = document.getElementById('connectionStatus');
-                    const dot = document.getElementById('connectionDot');
-                    if (st) st.textContent = '系統已連線並同步';
-                    if (dot && !dot.classList.contains('bg-green-500')) { dot.classList.remove('bg-amber-500'); dot.classList.add('bg-green-500'); }
-                }
-            }).catch(err => window.markSyncError(key, data, merge, err));
+        const syncConfig = async (key, data, merge = false) => {
+            if (!navigator.onLine || !currentUser || !db) {
+                window.markSyncError(key, data, merge, new Error('offline-or-not-authenticated'));
+                return false;
+            }
+            try {
+                await setDoc(cfgDoc(key), data, { merge });
+                const idx = window._syncQueue.findIndex(x => x.key === key);
+                if (idx >= 0) { window._syncQueue.splice(idx, 1); persistSyncQueue(); }
+                return true;
+            } catch (err) {
+                window.markSyncError(key, data, merge, err);
+                return false;
+            }
         };
 window.syncConfig = syncConfig; // 👈 必備：開放給 iframe 雲端同步使用
 window.safeSetLocal = safeSetLocal;
@@ -692,6 +753,7 @@ window.safeSetLocal = safeSetLocal;
         window.isAdminUnlocked = () => Date.now() < (window._adminUnlockedUntil || 0);
         const _adminAuthLocal = () => { try { return JSON.parse(localStorage.getItem('work_cache_admin_auth') || 'null'); } catch (e) { return null; } };
         const _adminAuthSave = (obj) => { try { localStorage.setItem('work_cache_admin_auth', JSON.stringify(obj)); } catch (e) { console.warn('管理員設定儲存失敗', e); } };
+        window._adminAuthReady = false;
         const _hashPwd = async (pwd, salt) => {
             const raw = salt + '::' + pwd;
             try {
@@ -706,6 +768,10 @@ window.safeSetLocal = safeSetLocal;
         };
         window.openAdminAuthModal = () => {
             document.getElementById('adminAuthModal')?.remove();
+            if (currentUser && !window._adminAuthReady) {
+                window.showToast('管理員設定同步中，請稍後再試', true);
+                return;
+            }
             const cfg = _adminAuthLocal();
             const body = window.isAdminUnlocked()
                 ? `<p class="text-xs text-emerald-700 font-bold text-center mb-3">✅ 管理員模式已解鎖（剩餘 ${Math.ceil((window._adminUnlockedUntil - Date.now()) / 60000)} 分鐘）</p>
@@ -763,44 +829,51 @@ window.getLocal = getLocal;
         let _idbInstancePromise = null;
         const openIDB = () => {
             if (!_idbInstancePromise) {
-                _idbInstancePromise = new Promise((res, rej) => {
+                _idbInstancePromise = new Promise((resolve, reject) => {
                     const req = indexedDB.open('QuadChunk_Gallery_DB_V2', 1);
-                    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
-                    req.onsuccess = () => res(req.result);
-                    req.onerror = () => {
-                        _idbInstancePromise = null;
-                        rej(req.error);
+                    req.onupgradeneeded = () => {
+                        if (!req.result.objectStoreNames.contains(IDB_STORE)) req.result.createObjectStore(IDB_STORE);
                     };
-                });
+                    req.onblocked = () => reject(new Error('IndexedDB 被其他分頁阻擋'));
+                    req.onsuccess = () => {
+                        const instance = req.result;
+                        instance.onversionchange = () => { instance.close(); _idbInstancePromise = null; };
+                        resolve(instance);
+                    };
+                    req.onerror = () => { _idbInstancePromise = null; reject(req.error || new Error('IndexedDB 開啟失敗')); };
+                }).catch(err => { _idbInstancePromise = null; throw err; });
             }
             return _idbInstancePromise;
         };
 
         const idbSet = async (key, val) => {
             const dbInstance = await openIDB();
-            return new Promise((res, rej) => {
+            return new Promise((resolve, reject) => {
                 const tx = dbInstance.transaction(IDB_STORE, 'readwrite');
                 tx.objectStore(IDB_STORE).put(val, key);
-                tx.oncomplete = () => res();
-                tx.onerror = () => rej(tx.error);
+                tx.oncomplete = () => resolve(true);
+                tx.onerror = () => reject(tx.error || new Error(`IndexedDB 寫入失敗：${key}`));
+                tx.onabort = () => reject(tx.error || new Error(`IndexedDB 寫入中止：${key}`));
             });
         };
         const idbGet = async (key) => {
             const dbInstance = await openIDB();
-            return new Promise((res) => {
+            return new Promise((resolve, reject) => {
                 const tx = dbInstance.transaction(IDB_STORE, 'readonly');
                 const req = tx.objectStore(IDB_STORE).get(key);
-                req.onsuccess = () => res(req.result);
-                req.onerror = () => res(null);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error || new Error(`IndexedDB 讀取失敗：${key}`));
+                tx.onabort = () => reject(tx.error || new Error(`IndexedDB 讀取中止：${key}`));
             });
         };
         const idbDel = async (key) => {
             const dbInstance = await openIDB();
-            return new Promise((res) => {
+            return new Promise((resolve, reject) => {
                 const tx = dbInstance.transaction(IDB_STORE, 'readwrite');
                 tx.objectStore(IDB_STORE).delete(key);
-                tx.oncomplete = () => res();
-                tx.onerror = () => res();
+                tx.oncomplete = () => resolve(true);
+                tx.onerror = () => reject(tx.error || new Error(`IndexedDB 刪除失敗：${key}`));
+                tx.onabort = () => reject(tx.error || new Error(`IndexedDB 刪除中止：${key}`));
             });
         };
 
@@ -1671,9 +1744,9 @@ const tabMetadataMap = {
                 <div class="space-y-0.5">
                     ${parsed.map(p => `
                         <div class="flex justify-between border-b border-amber-200/50 pb-0.5">
-                            <span class="font-mono font-bold text-slate-800">${p.rawId}</span>
-                            <span class="font-mono text-slate-600">${p.shiftTime}</span>
-                            <span class="font-mono font-black text-emerald-700">休 ${p.restHours}</span>
+                            <span class="font-mono font-bold text-slate-800">${window.esc(p.rawId)}</span>
+                            <span class="font-mono text-slate-600">${window.esc(p.shiftTime)}</span>
+                            <span class="font-mono font-black text-emerald-700">休 ${window.esc(p.restHours)}</span>
                         </div>
                     `).join('')}
                 </div>
@@ -3421,10 +3494,10 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             { floor: "地下", id: "R-002", type: "魚類", name: "吳惠芬", gender: "女" },
             { floor: "地下", id: "R-003", type: "魚類", name: "高偉傑", gender: "男" },
             { floor: "地下", id: "R-005", type: "魚類", name: "吳國雄", gender: "男" },
-            { floor: "地下", id: "R-006", type: "魚類", name: "周啟朗", gender: "男" },
+            { floor: "地下", id: "R-006", type: "魚類", name: "周啓朗", gender: "男" },
             { floor: "地下", id: "R-007", type: "魚類", name: "黎鳳好", gender: "女" },
             { floor: "地下", id: "R-008", type: "魚類", name: "黃傑球", gender: "男" },
-            { floor: "地下", id: "R-009", type: "魚類", name: "周嘉華", gender: "男" },
+            { floor: "地下", id: "R-009", type: "魚類", name: "周嘉傑", gender: "男" },
             { floor: "地下", id: "R-010", type: "魚類", name: "陳少萍", gender: "女" },
             { floor: "地下", id: "R-012", type: "魚類", name: "李秀英", gender: "女" },
             { floor: "地下", id: "R-013", type: "魚類", name: "譚沛文", gender: "男" },
@@ -3654,35 +3727,50 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
         let patrolTempRecords = getLocal('work_cache_patrol_temp_records', {});
         window.activeTempKeypadPointId = 'p1';
 
-        // 🌟 溫度雲端安全同步與離線補傳機制
+        // 溫度採用日期＋時段的欄位級持久佇列，禁止以整份舊快取覆蓋雲端。
+        window._pendingTempFields = getLocal('work_pending_temp_fields', {});
+        const savePendingTempFields = () => safeSetLocal('work_pending_temp_fields', window._pendingTempFields);
         window.syncTempSlotFieldToCloud = async (dateKey, slotKey, fieldPayload) => {
-            if (!navigator.onLine || !currentUser || !db) {
-                safeSetLocal('work_pending_temp_sync', true);
-                return;
-            }
+            const queueKey = `${dateKey}||${slotKey}`;
+            window._pendingTempFields[queueKey] = {
+                ...(window._pendingTempFields[queueKey] || {}),
+                ...fieldPayload
+            };
+            savePendingTempFields();
+            if (!navigator.onLine || !currentUser || !db) return false;
+
+            const cloudPayload = { ...fieldPayload };
+            Object.keys(cloudPayload).forEach(k => {
+                if (!k.endsWith('_ts') && cloudPayload[k] === '') cloudPayload[k] = deleteField();
+            });
             try {
-                const ref = cfgDoc('patrol_temp_records');
-                await setDoc(ref, {
-                    records: {
-                        [dateKey]: {
-                            [slotKey]: fieldPayload
-                        }
-                    }
+                await setDoc(cfgDoc('patrol_temp_records'), {
+                    records: { [dateKey]: { [slotKey]: cloudPayload } }
                 }, { merge: true });
+                const pending = window._pendingTempFields[queueKey];
+                Object.keys(fieldPayload).forEach(k => {
+                    if (pending && pending[k] === fieldPayload[k]) delete pending[k];
+                });
+                if (pending && Object.keys(pending).length === 0) delete window._pendingTempFields[queueKey];
+                savePendingTempFields();
+                return true;
             } catch (err) {
-                safeSetLocal('work_pending_temp_sync', true);
-                console.warn('溫度雲端寫入暫緩，已排入補傳佇列:', err);
+                console.error('溫度雲端寫入失敗，保留欄位級佇列：', dateKey, slotKey, err);
+                return false;
             }
         };
 
         window.flushPendingTempSync = async () => {
             if (!navigator.onLine || !currentUser || !db) return;
-            if (!getLocal('work_pending_temp_sync', false)) return;
-            try {
-                const ref = cfgDoc('patrol_temp_records');
-                await setDoc(ref, { records: patrolTempRecords }, { merge: true });
-                safeSetLocal('work_pending_temp_sync', false);
-            } catch (e) {}
+            const snapshot = JSON.parse(JSON.stringify(window._pendingTempFields || {}));
+            for (const [queueKey, payload] of Object.entries(snapshot)) {
+                const sep = queueKey.indexOf('||');
+                if (sep < 0) { console.error('無效溫度佇列鍵：', queueKey); continue; }
+                const dateKey = queueKey.slice(0, sep);
+                const slotKey = queueKey.slice(sep + 2);
+                const ok = await window.syncTempSlotFieldToCloud(dateKey, slotKey, payload);
+                if (!ok) break;
+            }
         };
 
         // 🌟 自動清理重複的 tempStatsModal 並將溫度彈窗提升至 document.body 最頂層，脫離 overflow-hidden 限制
@@ -3794,7 +3882,7 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
         };
 
         // 🌟 溫度專屬虛擬鍵盤點擊處理
-        window._tempCloudSyncTimer = null;
+        window._tempCloudSyncTimers = window._tempCloudSyncTimers || {};
         window.onTempKeypadPress = (key) => {
             const nowTs = Date.now();
             window._lastTempInputTime = nowTs;
@@ -3847,9 +3935,11 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
 
             window.updateTempProgressUI(date, slot);
 
-            if (window._tempCloudSyncTimer) clearTimeout(window._tempCloudSyncTimer);
             const syncVal = val;
-            window._tempCloudSyncTimer = setTimeout(() => {
+            const timerKey = `${date}|${slot}|${pointId}`;
+            clearTimeout(window._tempCloudSyncTimers[timerKey]);
+            window._tempCloudSyncTimers[timerKey] = setTimeout(() => {
+                delete window._tempCloudSyncTimers[timerKey];
                 window.syncTempSlotFieldToCloud(date, slot, {
                     [pointId]: syncVal,
                     [`${pointId}_ts`]: nowTs
@@ -4267,6 +4357,10 @@ window.resumePatrolUploadQueue = async (showOnlineToast = false) => {
                     if (window._patrolPendingQueue?.[dKey]?._CLEAR_ALL_DAY_?.ts <= stalls._CLEAR_ALL_DAY_.ts) {
                         delete window._patrolPendingQueue[dKey]._CLEAR_ALL_DAY_;
                     }
+                    // 本批只提交整日清空；同日稍後新增的攤位資料尚未上傳，必須保留到下一輪。
+                    const remainingKeys = Object.keys(window._patrolPendingQueue[dKey] || {});
+                    if (remainingKeys.length > 0) window._hasMorePatrolToSync = true;
+                    return;
                 }
                 Object.keys(stalls).forEach(sKey => {
                     if (sKey === '_CLEAR_ALL_DAY_') return;
@@ -4992,7 +5086,7 @@ window.clearTodayPatrolData = (e) => {
             });
 
             if (!results.length) {
-                container.innerHTML = `<div class="py-8 text-center text-slate-400 font-bold text-xs">查無符合「${queryStr}」的攤位</div>`;
+                container.innerHTML = `<div class="py-8 text-center text-slate-400 font-bold text-xs">查無符合「${window.esc(queryStr)}」的攤位</div>`;
                 return;
             }
 
@@ -5144,16 +5238,17 @@ window.clearTodayPatrolData = (e) => {
         };
 
         let crRecords = [], crItemTypes = ['海鮮', '肉類', '蔬果', '包裝冰', '其他'], crCurrentSelectedType = '', crCurrentTab = 'active';
-        const CR_TIME_LIMIT_MS = 86400000;
+        // 雪房超時警報及 24 小時限制已移除；固定五個檔口與存取紀錄功能維持不變.
         let actionHistory = [], futureMemos = [], timeOffset = 0, isFastForwarding = false, simInterval = null, timelineUpdateInterval;
         // 強制鎖定為香港時間 (UTC+8)
 window.getNow = () => {
     const now = new Date();
-    // 取得當前本機時區與 UTC 的分鐘差，並強制加上 480 分鐘 (UTC+8 香港時區)
     const utcMs = now.getTime() + (now.getTimezoneOffset() * 60000);
     const hkMs = utcMs + (8 * 3600000);
     return new Date(hkMs + timeOffset);
 };
+// 真實 epoch 僅加入模擬偏移；用於 createdAt、depositTime、到期判斷等跨時區資料比較。
+window.getNowMs = () => Date.now() + timeOffset;
 
         // ====== 共用工具：香港時間字串解析、HTML 轉義、跨午夜班次區間 ======
         window.hkDateTimeToMs = (dateStr, timeStr) => {
@@ -5244,7 +5339,8 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             if (banner) { banner.style.opacity = '0'; setTimeout(() => banner.classList.add('hidden'), 300); }
         };
 
-        window.showOverdueAlertBanner = (itemsText, title = "⚠️ 雪房存貨超時警報！") => {
+        // 此橫幅目前只供備忘任務到期提醒；雪房超時警報功能已移除。
+        window.showOverdueAlertBanner = (itemsText, title = "📌 備忘任務到期提醒！") => {
             let banner = $('crOverdueAlertBanner');
             if (!banner) {
                 banner = document.createElement('div'); banner.id = 'crOverdueAlertBanner';
@@ -5252,7 +5348,9 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
                 banner.className = 'fixed top-4 inset-x-0 mx-auto z-[10000] w-[92%] max-w-[390px] bg-red-600 text-white p-3.5 rounded-2xl shadow-2xl flex items-center justify-between border-2 border-white/90 backdrop-blur-md transition-all duration-300 animate-bounce cursor-pointer';
                 banner.onclick = window.stopOverdueAlarm; document.body.appendChild(banner);
             }
-            banner.innerHTML = `<div class="flex items-center space-x-2.5 min-w-0 flex-1"><div class="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shrink-0 animate-pulse"><i data-lucide="bell-ring" class="w-4 h-4 text-white"></i></div><div class="min-w-0 flex-1"><div class="text-xs font-black tracking-wide flex items-center space-x-1.5"><span>${title}</span><span class="bg-white text-red-600 text-[9px] px-1.5 py-0.2 rounded font-bold">10秒</span></div><div class="text-[11px] text-red-100 font-bold truncate mt-0.5">${itemsText}</div></div></div><button onclick="event.stopPropagation(); window.stopOverdueAlarm();" class="ml-2 bg-white/20 hover:bg-white/30 text-white px-2.5 py-1 rounded-lg text-[10px] font-black shrink-0 border border-white/40 active:scale-95 transition-all">關閉/靜音</button>`;
+            const safeTitle = window.esc(title || '📌 備忘任務到期提醒！');
+            const safeItemsText = window.esc(itemsText || '');
+            banner.innerHTML = `<div class="flex items-center space-x-2.5 min-w-0 flex-1"><div class="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shrink-0 animate-pulse"><i data-lucide="bell-ring" class="w-4 h-4 text-white"></i></div><div class="min-w-0 flex-1"><div class="text-xs font-black tracking-wide flex items-center space-x-1.5"><span>${safeTitle}</span><span class="bg-white text-red-600 text-[9px] px-1.5 py-0.2 rounded font-bold">10秒</span></div><div class="text-[11px] text-red-100 font-bold truncate mt-0.5">${safeItemsText}</div></div></div><button onclick="event.stopPropagation(); window.stopOverdueAlarm();" class="ml-2 bg-white/20 hover:bg-white/30 text-white px-2.5 py-1 rounded-lg text-[10px] font-black shrink-0 border border-white/40 active:scale-95 transition-all">關閉/靜音</button>`;
             banner.style.opacity = '1'; 
             banner.style.transform = 'none'; // 👈 移除 translate(-50%, 0)
             banner.classList.remove('hidden');
@@ -5288,12 +5386,16 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             lucide.createIcons();
         };
 
-        window.checkColdRoomOverdueAlerts = () => {
-        };
+    // ==========================================
+        // 📌 業務規則說明：雪房超時警報功能已正式移除。
+        // 理由：檔主存放貨物及包裝冰屬於常態調度，不再進行 24 小時強制蜂鳴器、音效與橫幅警報。
+        // 保留空函式以相容所有既有呼叫點，避免未捕獲之呼叫拋出異常。
+        // ==========================================
+
 
         window.checkMemoAlerts = () => {
             if (!getLocal('work_cache_cr_notify', false)) return;
-            const now = window.getNow().getTime(); let newDueMemos = [];
+            const now = window.getNowMs(); let newDueMemos = [];
             futureMemos.forEach(m => {
                 if (now >= window.hkDateTimeToMs(m.date, m.time || '00:00') && !window.memoNotifiedSet.has(m.id)) {
                     window.memoNotifiedSet.add(m.id);
@@ -5349,8 +5451,8 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
             // 2. 昨日相片跨日歸檔移至還原清單
             const yesterdayItems = galleryItems.filter(i => !i.isDeleted && !i.restored && (i.createdAt || 0) < startOfToday);
+            const cleanupTime = Date.now();
             if (yesterdayItems.length > 0) {
-                const cleanupTime = Date.now();
                 yesterdayItems.forEach(i => {
                     i.isDeleted = true;
                     i.isManualDeleted = false;
@@ -5376,8 +5478,10 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
             await saveGalleryItemsSafe(galleryItems);
 
-            // 👇 明確指定為「系統自動」，並配上沉穩的灰色系標籤 (#64748b)
-            window.writeGalleryLog('每日歸檔', `${yesterdayItems.length} 張昨日相片`, '跨日自動移至還原清單', '系統自動', '#64748b');
+            // 只有真的移動了昨日照片才寫入操作日誌，避免每分鐘產生 0 張噪音紀錄。
+            if (yesterdayItems.length > 0) {
+                window.writeGalleryLog('每日歸檔', `${yesterdayItems.length} 張昨日相片`, '跨日自動移至還原清單', '系統自動', '#64748b');
+            }
             window._lastRenderFingerprint = '';
             if (!$('galleryPage')?.classList.contains('hidden')) {
                 window.renderGallery();
@@ -5965,6 +6069,33 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             }
         };
 
+        // 圖庫 metadata 補傳佇列：刪除／還原／修改失敗時持久保留，連線後逐筆重試。
+        window.queueGalleryMetadataPatch = (id, patch) => {
+            const queue = getLocal('work_pending_gallery_patches', {});
+            const serializable = { ...(queue[String(id)] || {}), ...patch, queuedAt: Date.now() };
+            queue[String(id)] = serializable;
+            safeSetLocal('work_pending_gallery_patches', queue);
+        };
+        window.flushGalleryMetadataPatches = async () => {
+            if (!navigator.onLine || !currentUser || !db) return;
+            const queue = getLocal('work_pending_gallery_patches', {});
+            for (const [id, queuedPatch] of Object.entries(queue)) {
+                try {
+                    const payload = { ...queuedPatch };
+                    delete payload.queuedAt;
+                    const deleteFields = Array.isArray(payload.__deleteFields) ? payload.__deleteFields : [];
+                    delete payload.__deleteFields;
+                    deleteFields.forEach(key => { payload[key] = deleteField(); });
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), payload, { merge: true });
+                    delete queue[id];
+                    safeSetLocal('work_pending_gallery_patches', queue);
+                } catch (e) {
+                    console.error('圖庫 metadata 補傳失敗：', id, e);
+                    break;
+                }
+            }
+        };
+
         // ====== 移至垃圾桶（軟刪除） ======
         window.deleteGalleryItem = async (id, e) => {
             if (e) e.stopPropagation();
@@ -5976,18 +6107,24 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             item.isDeleted = true;
             item.isManualDeleted = true;
             item.deletedAt = Date.now();
+            item.updatedAt = item.deletedAt;
+            const deletePatch = {
+                isDeleted: true,
+                isManualDeleted: true,
+                deletedAt: item.deletedAt,
+                updatedAt: item.updatedAt
+            };
             await saveGalleryItemsSafe(galleryItems);
 
             if (currentUser && db) {
                 try {
-                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), {
-                        isDeleted: true,
-                        isManualDeleted: true,
-                        deletedAt: item.deletedAt
-                    }, { merge: true });
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), deletePatch, { merge: true });
                 } catch (err) {
-                    window.reportCloudError('垃圾桶雲端同步失敗', err);
+                    window.queueGalleryMetadataPatch(id, deletePatch);
+                    window.reportCloudError('垃圾桶雲端同步失敗，已排隊補傳', err);
                 }
+            } else {
+                window.queueGalleryMetadataPatch(id, deletePatch);
             }
 
             // 👇【第一個地方：寫入「移至垃圾桶」】
@@ -6014,29 +6151,34 @@ window.deleteSelectedGalleryItems = () => {
                 i.isDeleted = true;
                 i.isManualDeleted = true;
                 i.deletedAt = now;
+                i.updatedAt = now;
             }
         });
         await saveGalleryItemsSafe(galleryItems);
 
-        // 2. 雲端批次軟更新（不調用 deleteDoc）
+        const batchDeletePatch = {
+            isDeleted: true,
+            isManualDeleted: true,
+            deletedAt: now,
+            updatedAt: now
+        };
         if (currentUser && db) {
             try {
-                // 修復：分批提交，避免超過 Firestore 單一批次 500 筆上限。
                 for (let i = 0; i < idsToDelete.length; i += 400) {
+                    const chunk = idsToDelete.slice(i, i + 400);
                     const batch = writeBatch(db);
-                    idsToDelete.slice(i, i + 400).forEach(id => {
+                    chunk.forEach(id => {
                         const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id);
-                        batch.set(ref, {
-                            isDeleted: true,
-                            isManualDeleted: true,
-                            deletedAt: now
-                        }, { merge: true });
+                        batch.set(ref, batchDeletePatch, { merge: true });
                     });
                     await batch.commit();
                 }
             } catch (err) {
-                window.reportCloudError('批次刪除同步失敗', err);
+                idsToDelete.forEach(id => window.queueGalleryMetadataPatch(id, batchDeletePatch));
+                window.reportCloudError('批次刪除同步失敗，未確認項目已排隊補傳', err);
             }
+        } else {
+            idsToDelete.forEach(id => window.queueGalleryMetadataPatch(id, batchDeletePatch));
         }
 
         window.writeGalleryLog('批次移至垃圾桶', `${count} 張圖片`, '多選移至還原清單');
@@ -6073,18 +6215,28 @@ window.deleteSelectedGalleryItems = () => {
             item.updatedAt = now;
             await saveGalleryItemsSafe(galleryItems);
 
+            const restorePatch = {
+                isDeleted: false,
+                isManualDeleted: false,
+                restored: true,
+                updatedAt: now,
+                __deleteFields: ['deletedAt']
+            };
             if (currentUser && db) {
                 try {
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(id)), {
                         isDeleted: false,
                         isManualDeleted: false,
                         deletedAt: deleteField(),
-                        restored: true, // 🌟 雲端同步打上免死標記
+                        restored: true,
                         updatedAt: now
                     }, { merge: true });
                 } catch (err) {
-                    window.reportCloudError('單張還原雲端同步失敗', err);
+                    window.queueGalleryMetadataPatch(id, restorePatch);
+                    window.reportCloudError('單張還原雲端同步失敗，已排隊補傳', err);
                 }
+            } else {
+                window.queueGalleryMetadataPatch(id, restorePatch);
             }
 
             window.writeGalleryLog('還原圖片', item.title || item.id, `自垃圾桶還原`);
@@ -6116,26 +6268,32 @@ window.deleteSelectedGalleryItems = () => {
 
             await saveGalleryItemsSafe(galleryItems);
 
+            const dateRestorePatch = {
+                isDeleted: false,
+                isManualDeleted: false,
+                restored: true,
+                updatedAt: now,
+                __deleteFields: ['deletedAt']
+            };
             if (currentUser && db) {
                 try {
-                    // 修復：分批提交，避免超過 Firestore 單一批次 500 筆上限。
                     for (let i = 0; i < trashed.length; i += 400) {
                         const batch = writeBatch(db);
                         trashed.slice(i, i + 400).forEach(item => {
                             const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(item.id));
                             batch.set(ref, {
-                                isDeleted: false,
-                                isManualDeleted: false,
-                                deletedAt: deleteField(),
-                                restored: true,
-                                updatedAt: now
+                                isDeleted: false, isManualDeleted: false, deletedAt: deleteField(),
+                                restored: true, updatedAt: now
                             }, { merge: true });
                         });
                         await batch.commit();
                     }
                 } catch (err) {
-                    window.reportCloudError(`還原 ${dateStr} 相片雲端同步失敗`, err);
+                    trashed.forEach(item => window.queueGalleryMetadataPatch(item.id, dateRestorePatch));
+                    window.reportCloudError(`還原 ${dateStr} 相片同步失敗，未確認項目已排隊補傳`, err);
                 }
+            } else {
+                trashed.forEach(item => window.queueGalleryMetadataPatch(item.id, dateRestorePatch));
             }
 
             window.writeGalleryLog('還原整日', `${dateStr} (${trashed.length} 張)`, '依日期批次還原');
@@ -6162,26 +6320,32 @@ window.deleteSelectedGalleryItems = () => {
 
             await saveGalleryItemsSafe(galleryItems);
 
+            const allRestorePatch = {
+                isDeleted: false,
+                isManualDeleted: false,
+                restored: true,
+                updatedAt: now,
+                __deleteFields: ['deletedAt']
+            };
             if (currentUser && db) {
                 try {
-                    // 修復：分批提交，避免超過 Firestore 單一批次 500 筆上限。
                     for (let i = 0; i < trashed.length; i += 400) {
                         const batch = writeBatch(db);
                         trashed.slice(i, i + 400).forEach(item => {
                             const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(item.id));
                             batch.set(ref, {
-                                isDeleted: false,
-                                isManualDeleted: false,
-                                deletedAt: deleteField(),
-                                restored: true, // 🌟 雲端同步打上免死標記
-                                updatedAt: now
+                                isDeleted: false, isManualDeleted: false, deletedAt: deleteField(),
+                                restored: true, updatedAt: now
                             }, { merge: true });
                         });
                         await batch.commit();
                     }
                 } catch (err) {
-                    window.reportCloudError("全部還原雲端同步失敗", err);
+                    trashed.forEach(item => window.queueGalleryMetadataPatch(item.id, allRestorePatch));
+                    window.reportCloudError('全部還原同步失敗，未確認項目已排隊補傳', err);
                 }
+            } else {
+                trashed.forEach(item => window.queueGalleryMetadataPatch(item.id, allRestorePatch));
             }
 
             window.writeGalleryLog('全部還原', `${trashed.length} 張圖片`, `全部清單還原`);
@@ -6311,7 +6475,7 @@ window.deleteSelectedGalleryItems = () => {
                                 </div>
                                 <div class="min-w-0 flex-1">
                                     <div class="text-[10px] font-mono font-bold text-slate-400">${item.time || '12:00'}</div>
-                                    <div class="text-xs font-black text-slate-800 truncate">${item.title || '無標題'}</div>
+                                    <div class="text-xs font-black text-slate-800 truncate">${window.esc(item.title || '無標題')}</div>
                                 </div>
                             </div>
                             <button type="button" onclick="window.restoreGalleryItem('${item.id}')" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center active:scale-95 transition-all ml-2 shrink-0">
@@ -6534,20 +6698,23 @@ window.deleteSelectedGalleryItems = () => {
             const newCat = $('editModalCatInput')?.value || '提早收工';
             const newTime = $('editModalTimeInput')?.value || '12:00';
 
-           item.title = newTitle;
+            const editTs = Date.now();
+            item.title = newTitle;
             item.category = newCat;
             item.time = newTime;
+            item.updatedAt = editTs;
+            const editPatch = { title: newTitle, category: newCat, time: newTime, updatedAt: editTs };
 
             await saveGalleryItemsSafe(galleryItems);
-            if (currentUser) {
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), {
-                    title: newTitle,
-                    category: newCat,
-                    time: newTime
-                }, { merge: true }).catch(err => {
-                    console.error('圖片修改雲端同步失敗:', err);
-                    window.showToast('⚠️ 本機已更新，但雲端同步失敗', true);
-                });
+            if (currentUser && db) {
+                try {
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), editPatch, { merge: true });
+                } catch (err) {
+                    window.queueGalleryMetadataPatch(id, editPatch);
+                    window.reportCloudError('圖片修改同步失敗，已排隊補傳', err);
+                }
+            } else {
+                window.queueGalleryMetadataPatch(id, editPatch);
             }
 
             window.writeGalleryLog('修改圖片', newTitle, `分類: ${newCat} · 時間: ${newTime}`);
@@ -6687,14 +6854,16 @@ window.deleteSelectedGalleryItems = () => {
                         const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
                         const writable = await fileHandle.createWritable();
                         await writable.write(pngBlob);
-                        await writable.close();
+                        await writable.close(); // 確保磁碟檔案物理寫入完成
                         
-                        // 🌟 標記這張圖片已導出
+                        // 🌟 根源防護：確認實體檔案存在且完成關閉後，才標記該張相片已導出
                         item.isExported = true;
+                        item.exportedAt = Date.now();
                         if (currentUser && db) {
                             setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(item.id)), {
-                                isExported: true
-                            }, { merge: true }).catch(err => window.reportCloudError('標記已導出失敗', err));
+                                isExported: true,
+                                exportedAt: item.exportedAt
+                            }, { merge: true }).catch(() => {});
                         }
                         
                         successCount++;
@@ -6859,7 +7028,7 @@ window.deleteSelectedGalleryItems = () => {
                 ]);
             });
 
-            // 加入 UTF-8 BOM 避免 Excel 亂碼
+           // 加入 UTF-8 BOM 避免 Excel 亂碼
             const csvContent = "\uFEFF" + csvRows.map(e => e.join(",")).join("\n");
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a");
@@ -6870,20 +7039,9 @@ window.deleteSelectedGalleryItems = () => {
             // 👇 補上操作日誌記錄
             window.writeGalleryLog('導出報表', '提早收工資料表', `共 ${targetItems.length} 筆資料`);
 
-           // 🌟 標記已成功導出並同步至雲端與本機
-            targetItems.forEach(item => {
-                item.isExported = true;
-                if (currentUser && db) {
-                    setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(item.id)), {
-                        isExported: true
-                    }, { merge: true }).catch(() => {});
-                }
-            });
-            saveGalleryItemsSafe(galleryItems);
-            window._lastRenderFingerprint = '';
-            window.renderGallery();
-
-            window.showToast("✅ 已成功導出含檔主名之 Excel 資料表！");
+            // 🌟 根源修復：導出 CSV 報表純屬報表下載，絕不可變更相片的圖片導出剔號 (isExported)！
+            // 只有點擊「導出」將 PNG/JPG 實體寫入電腦資料夾時，才應具有剔號。
+            window.showToast("✅ 已成功導出提早收工 Excel (CSV) 資料表！");
         };
 
         window._lastRenderFingerprint = '';
@@ -8032,11 +8190,18 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                         }
                     }
                     if (!item.chunks || !item.chunks.length) {
-                        // 修復：不再靜默跳過；記錄下來並在最後明確告知哪幾張沒有上傳。
                         skippedCount++;
-                        console.error('上傳佇列缺少圖片資料，已跳過：', docId);
-                        window._uploadQueue.shift();
-                        continue;
+                        const missingErr = new Error(`上傳佇列缺少原圖或切片：${docId}`);
+                        console.error(missingErr);
+                        const safeQueue = window._uploadQueue.map(q => {
+                            const copy = { ...q };
+                            delete copy.src;
+                            delete copy.chunks;
+                            return copy;
+                        });
+                        safeSetLocal('work_pending_offline_uploads', safeQueue);
+                        window.showToast(`⚠️ 圖片 ${item.title || docId} 的本機原圖遺失，已保留待處理`, true);
+                        throw missingErr;
                     }
 
                     await idbSet(docId, item.src);
@@ -8089,8 +8254,11 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
             } catch (err) {
                 window.setUploadProgress(-1, "");
+                console.error('圖庫上傳佇列中止，未完成資料仍保留：', err);
                 if (!navigator.onLine) {
-                    window.showToast(`📡 目前處於離線狀態，已存於本機，連網時將自動同步`, true);
+                    window.showToast('📡 目前離線，資料已保留，連網後自動同步', true);
+                } else {
+                    window.showToast('⚠️ 圖庫同步失敗，未完成項目仍保留在佇列', true);
                 }
             } finally {
                 window.isUploading = false;
@@ -8118,6 +8286,8 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 window.resumePatrolUploadQueue(true);
             }
             window.flushPendingGalleryLogs?.();
+            window.flushGalleryMetadataPatches?.();
+            window.flushPendingTempSync?.();
             window._flushSyncQueue?.();
         });
 
@@ -8187,9 +8357,15 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             galleryCategories = window.sanitizeGalleryCategories(getLocal('work_cache_gallery_categories', DEFAULT_GALLERY_CATS));
             safeSetLocal('work_cache_gallery_categories', galleryCategories);
 
-            // 優先從 IndexedDB 取回清單
-            const idbGallery = await idbGet('app_gallery_metadata_list');
-            galleryItems = Array.isArray(idbGallery) && idbGallery.length ? idbGallery : getLocal('work_cache_gallery_items', []);
+            // 優先從 IndexedDB 取回清單；空陣列也是有效的『已清空』狀態
+            let idbGallery;
+            try {
+                idbGallery = await idbGet('app_gallery_metadata_list');
+            } catch (e) {
+                console.error('讀取 IndexedDB 圖庫索引失敗，改讀 localStorage：', e);
+                window.showToast('⚠️ 圖庫本機索引讀取失敗，暫以備用快取載入', true);
+            }
+            galleryItems = Array.isArray(idbGallery) ? idbGallery : getLocal('work_cache_gallery_items', []);
             galleryItems.forEach(i => { delete i.src; delete i.chunks; });
 
             splitHoursState = getLocal('work_cache_split_hours', {});
@@ -8240,10 +8416,15 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
             if (window._syncBound) return;
             window._syncBound = true;
             onSnapshot(cfgDoc('admin_auth'), (snap) => {
-                if (!snap.exists()) return;
-                const d = snap.data() || {};
-                if (d.hash && d.salt) _adminAuthSave({ salt: d.salt, hash: d.hash, updatedAt: d.updatedAt || 0 });
-            }, console.error);
+                if (snap.exists()) {
+                    const d = snap.data() || {};
+                    if (d.hash && d.salt) _adminAuthSave({ salt: d.salt, hash: d.hash, updatedAt: d.updatedAt || 0 });
+                }
+                window._adminAuthReady = true;
+            }, err => {
+                window._adminAuthReady = true;
+                window.reportCloudError('管理員設定監聽中斷', err);
+            });
             const bindSync = (key, localKey, onUpdate) => {
                 onSnapshot(cfgDoc(key), (snap) => {
                     if (snap.exists()) {
@@ -8685,10 +8866,10 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                 }
             }, console.error);
 
-// 即時同步日誌（僅向雲端查詢最近 3 天內的記錄，日內無限筆，徹底防止全量下載與刪除卡死）
+// 即時同步操作日誌：顯示最近 30 天；前端只讀取，不再自行永久刪除雲端日誌。
             try {
-                const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-                const cutoffTs = Date.now() - THREE_DAYS_MS;
+                const LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+                const cutoffTs = Date.now() - LOG_RETENTION_MS;
                 const logColRef = collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs');
                 const logQuery = query(logColRef, where('timestamp', '>=', cutoffTs), orderBy('timestamp', 'desc'));
 
@@ -8698,7 +8879,7 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
                     snap.forEach(d => {
                         const data = d.data();
-                        if (data.timestamp && (nowTs - data.timestamp) <= THREE_DAYS_MS) {
+                        if (data.timestamp && (nowTs - data.timestamp) <= LOG_RETENTION_MS) {
                             list.push({ id: d.id, ...data });
                         }
                     });
@@ -8707,21 +8888,10 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                     if ($('galleryLogsModal') && !$('galleryLogsModal').classList.contains('hidden')) {
                         window.renderGalleryLogs();
                     }
-                }, console.error);
-
-                // 背景單次安全清理：開機 10 秒閒置後，每次最多批次清理 100 筆過期舊日誌，完全不卡畫面
-                setTimeout(async () => {
-                    try {
-                        const oldQuery = query(logColRef, where('timestamp', '<', Date.now() - THREE_DAYS_MS), limit(100));
-                        const oldSnap = await getDocs(oldQuery);
-                        if (!oldSnap.empty) {
-                            const batch = writeBatch(db);
-                            oldSnap.forEach(d => batch.delete(d.ref));
-                            await batch.commit();
-                        }
-                    } catch (e) {}
-                }, 10000);
-            } catch(e) {}
+                }, err => window.reportCloudError('操作日誌監聽中斷', err));
+            } catch(e) {
+                window.reportCloudError('操作日誌初始化失敗', e);
+            }
 
 }
 window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML = ''; window.updateMapSimulation(); };
@@ -11616,9 +11786,9 @@ window.crSaveData = () => {
             if (!staff) return window.showToast('⚠️ 請選擇存入貨物的經手客服人員！', true);
             const itemType = crCurrentSelectedType || '未指定';
             crRecords.unshift({
-                id: 'cr_' + window.getNow().getTime(), tenant, type: itemType, staff: staff,
+                id: 'cr_' + window.getNowMs(), tenant, type: itemType, staff: staff,
                 depositQuantity: qty, remainingQuantity: qty,
-                depositTime: (dStr && tStr) ? window.hkDateTimeToMs(dStr, tStr) : window.getNow().getTime(),
+                depositTime: (dStr && tStr) ? window.hkDateTimeToMs(dStr, tStr) : window.getNowMs(),
                 withdrawHistory: [], status: 'active'
             });
             window.crSaveData(); window.crCloseAddModal(); window.crRenderList(); window.showToast(`✅ 已存入 ${qty} 箱 (經手: ${staff})`);
@@ -11711,7 +11881,7 @@ window.crSaveData = () => {
             const qty = Number($('crInputWithdrawQty').value);
             const withdrawStaff = ($('crInputWithdrawStaff')?.value || '').trim();
             const dStr = $('crInputWithdrawDate')?.value, tStr = $('crInputWithdrawTime')?.value;
-            const withdrawTime = (dStr && tStr) ? window.hkDateTimeToMs(dStr, tStr) : window.getNow().getTime();
+            const withdrawTime = (dStr && tStr) ? window.hkDateTimeToMs(dStr, tStr) : window.getNowMs();
 
             // 🌟 強制必選經手客服人員
             if (!withdrawStaff) return window.showToast('⚠️ 請選擇取出貨物的經手客服人員！', true);
@@ -11846,7 +12016,7 @@ window.crSaveData = () => {
                 else otherRecords.push(r);
             });
 
-            const now = window.getNow().getTime();
+            const now = window.getNowMs();
             const isAnyExpanded = window.crExpandedStalls.size > 0;
 
             // 頂部「全部展開 / 全部收合」按鈕
@@ -11930,10 +12100,8 @@ window.crSaveData = () => {
                 const batchCount = batches.length;
                 const totalInit = batches.reduce((sum, b) => sum + (b.depositQuantity || 0), 0);
                 const totalRemain = batches.reduce((sum, b) => sum + (b.remainingQuantity || 0), 0);
-                const overdueCount = batches.filter(b => b.type !== '包裝冰' && ((b.depositTime + CR_TIME_LIMIT_MS) - now) <= 0).length;
-                const hasOverdue = overdueCount > 0;
                 
-                // 🌟 預設自動合起來：只有點擊過的檔口才會展開
+                // 預設自動合起來：只有點擊過的檔口才會展開
                 const isOpen = window.crExpandedStalls.has(stall.id);
 
                 // 將存貨拆分為「包裝冰」與「一般限時貨物」
@@ -12553,7 +12721,7 @@ window.crSaveData = () => {
         window.editTimelineTask = (taskId, eventOrIsNew) => {
             const isNew = eventOrIsNew === true, task = dailyScheduleData.find(t => t.id === taskId); if (!task) return;
             const cancelAct = isNew ? `window.cancelNewTimelineTask('${taskId}')` : `document.getElementById('dynamicEditModal')?.remove()`;
-            const modalHtml = `<div id="dynamicEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) { ${cancelAct}; }"><div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onclick="event.stopPropagation()"><h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i>${isNew ? '新增動態任務' : '編輯任務'}</h3><div class="space-y-4"><div><label class="text-[11px] font-bold text-slate-500 mb-1 block">任務標題</label><input type="text" id="dyEditTitle" value="${task.title}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 shadow-inner text-center"></div><div class="flex gap-3"><div class="flex-1 relative"><label class="text-[11px] font-bold text-slate-500 mb-1 block">開始時間</label><input type="time" id="dyEditStart" value="${task.start}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner text-center"></div><div class="flex-1 relative"><label class="text-[11px] font-bold text-slate-500 mb-1 block">結束時間</label><input type="time" id="dyEditEnd" value="${task.end}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner text-center"></div></div><div class="mt-3"><label class="text-[11px] font-bold text-slate-500 mb-1 block">任務分組 (選填)</label><div class="flex gap-2">${['', 'A', 'B', 'C'].map(g => `<label class="flex-1 text-center cursor-pointer active:scale-95 transition-transform"><input type="radio" name="dyEditGroup" value="${g}" ${task.group === g || (!task.group && g === '') ? 'checked' : ''} class="sr-only peer"><div class="py-1.5 rounded-lg border border-slate-200 text-slate-500 text-xs font-bold peer-checked:bg-blue-50 peer-checked:text-blue-600 peer-checked:border-blue-300 peer-checked:shadow-sm transition-all">${g ? g + '組' : '無'}</div></label>`).join('')}</div></div></div><div class="mt-6 flex justify-between items-center border-t border-slate-100 pt-4"><button onclick="window.deleteTimelineTask('${taskId}')" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-2.5 rounded-lg text-sm font-bold flex items-center shadow-sm"><i data-lucide="trash-2" class="w-4 h-4 mr-1"></i>刪除</button><div class="space-x-2 flex"><button onclick="${cancelAct}" class="px-3 py-2.5 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold">取消</button><button onclick="window.saveTimelineTask('${taskId}')" class="px-4 py-2.5 bg-blue-500 text-white rounded-lg text-sm font-bold shadow-sm">儲存</button></div></div></div></div>`;
+            const modalHtml = `<div id="dynamicEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) { ${cancelAct}; }"><div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onclick="event.stopPropagation()"><h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i>${isNew ? '新增動態任務' : '編輯任務'}</h3><div class="space-y-4"><div><label class="text-[11px] font-bold text-slate-500 mb-1 block">任務標題</label><input type="text" id="dyEditTitle" value="${window.escAttr(task.title || '')}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 shadow-inner text-center"></div><div class="flex gap-3"><div class="flex-1 relative"><label class="text-[11px] font-bold text-slate-500 mb-1 block">開始時間</label><input type="time" id="dyEditStart" value="${task.start}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner text-center"></div><div class="flex-1 relative"><label class="text-[11px] font-bold text-slate-500 mb-1 block">結束時間</label><input type="time" id="dyEditEnd" value="${task.end}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner text-center"></div></div><div class="mt-3"><label class="text-[11px] font-bold text-slate-500 mb-1 block">任務分組 (選填)</label><div class="flex gap-2">${['', 'A', 'B', 'C'].map(g => `<label class="flex-1 text-center cursor-pointer active:scale-95 transition-transform"><input type="radio" name="dyEditGroup" value="${g}" ${task.group === g || (!task.group && g === '') ? 'checked' : ''} class="sr-only peer"><div class="py-1.5 rounded-lg border border-slate-200 text-slate-500 text-xs font-bold peer-checked:bg-blue-50 peer-checked:text-blue-600 peer-checked:border-blue-300 peer-checked:shadow-sm transition-all">${g ? g + '組' : '無'}</div></label>`).join('')}</div></div></div><div class="mt-6 flex justify-between items-center border-t border-slate-100 pt-4"><button onclick="window.deleteTimelineTask('${taskId}')" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-2.5 rounded-lg text-sm font-bold flex items-center shadow-sm"><i data-lucide="trash-2" class="w-4 h-4 mr-1"></i>刪除</button><div class="space-x-2 flex"><button onclick="${cancelAct}" class="px-3 py-2.5 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold">取消</button><button onclick="window.saveTimelineTask('${taskId}')" class="px-4 py-2.5 bg-blue-500 text-white rounded-lg text-sm font-bold shadow-sm">儲存</button></div></div></div></div>`;
             document.body.insertAdjacentHTML('beforeend', modalHtml); lucide.createIcons();
             if (isNew) { const tInp = $('dyEditTitle'); if (tInp) { tInp.focus(); tInp.select(); } }
         };
@@ -12964,6 +13132,8 @@ setInterval(() => {
                 setupPureRealtimeSync(); 
                 setupPatrolSync();
                 window.flushPendingGalleryLogs?.();
+            window.flushGalleryMetadataPatches?.();
+            window.flushPendingTempSync?.();
             window._flushSyncQueue?.();
                 window.autoCleanupGalleryToTrash();
                 window.autoSyncClosedStallsToPatrol(true);
@@ -12983,18 +13153,30 @@ setInterval(() => {
             }
         });
 
-        loadLocalFastCache(); 
-        initAuth();
+        async function bootstrapApp() {
+            try {
+                await loadLocalFastCache();
+                window.applyTabVisibility();
+                window.updatePatrolDateInputUI();
+                if (typeof window.applyAutoPatrolSlot === 'function') {
+                    window.applyAutoPatrolSlot(true);
+                }
+                const savedTab = localStorage.getItem('activeTab') || 'gallery';
+                const firstVisible = tabOrderList.find(k => tabVisibilityState[k] !== false) || 'gallery';
+                window.switchTab(tabVisibilityState[savedTab] === false ? firstVisible : savedTab);
+                if (window.lucide) lucide.createIcons();
+                await initAuth();
+            } catch (e) {
+                console.error('應用程式初始化失敗：', e);
+                window.showToast('初始化失敗，請重新載入頁面', true);
+            }
+        }
 
-        window.addEventListener('DOMContentLoaded', () => {
-    window.applyTabVisibility();
-    window.updatePatrolDateInputUI();
-    if (typeof window.applyAutoPatrolSlot === 'function') {
-        window.applyAutoPatrolSlot(true); // 🌟 啟動時先算好當前時段，避免點入剔檔時停留在9點
-    }
-    window.switchTab('gallery');   // 每次都固定開圖庫
-    if (window.lucide) lucide.createIcons();
-});
+        if (document.readyState === 'loading') {
+            window.addEventListener('DOMContentLoaded', bootstrapApp, { once: true });
+        } else {
+            bootstrapApp();
+        }
 
         // ====== 頂部累積疊加通知橫幅與音效管理 ======
         window._galleryNewCount = 0;
