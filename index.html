@@ -110,8 +110,73 @@
         .deck-card:nth-child(1) { transform: translate3d(0, 0, 0) rotate(0deg); z-index: 10; }
         .deck-card:nth-child(2) { transform: translate3d(6px, -4px, 0) rotate(3.5deg); z-index: 9; opacity: 0.95; }
         .deck-card:nth-child(3) { transform: translate3d(-6px, -8px, 0) rotate(-4deg); z-index: 8; opacity: 0.9; }
-        .deck-card:nth-child(4) { transform: translate3d(12px, -12px, 0) rotate(6deg); z-index: 7; opacity: 0.85; }
+.deck-card:nth-child(4) { transform: translate3d(12px, -12px, 0) rotate(6deg); z-index: 7; opacity: 0.85; }
         .deck-card:nth-child(n+5) { transform: translate3d(-10px, -14px, 0) rotate(-7deg); z-index: 6; opacity: 0.75; }
+
+        /* ====== 柔色線條插畫卡片風（圖 1 風格） ====== */
+        .soft-card {
+            background: #ffffff;
+            border-radius: 1.25rem;
+            border: 2px solid #cbd5e1;
+            box-shadow: 0 4px 12px -2px rgba(148, 163, 184, 0.12), 0 2px 4px -2px rgba(148, 163, 184, 0.08);
+            transition: all 0.2s ease;
+        }
+        .soft-card:hover {
+            box-shadow: 0 8px 18px -4px rgba(148, 163, 184, 0.18);
+        }
+        .soft-box-blue {
+            background: rgba(239, 246, 255, 0.85);
+            border: 2px solid #60a5fa;
+            border-radius: 0.9rem;
+        }
+        .soft-box-green {
+            background: rgba(240, 253, 244, 0.85);
+            border: 2px solid #4ade80;
+            border-radius: 0.9rem;
+        }
+        .soft-box-cyan {
+            background: rgba(236, 254, 255, 0.85);
+            border: 2px solid #22d3ee;
+            border-radius: 0.9rem;
+        }
+        .soft-box-purple {
+            background: rgba(250, 245, 255, 0.85);
+            border: 2px solid #c084fc;
+            border-radius: 0.9rem;
+        }
+        .soft-box-amber {
+            background: rgba(254, 252, 232, 0.85);
+            border: 2px solid #fcd34d;
+            border-radius: 0.9rem;
+        }
+        .soft-box-slate {
+            background: #f8fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 0.9rem;
+        }
+        .soft-pill-track {
+            background: #e2e8f0;
+            border: 1px solid #cbd5e1;
+            border-radius: 9999px;
+            padding: 2px;
+        }
+        .soft-pill-thumb {
+            background: #ffffff;
+            border-radius: 9999px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        .dark-mode .soft-card {
+            background: #1e293b !important;
+            border-color: #334155 !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+        }
+        .dark-mode .soft-box-blue { background: rgba(30, 58, 138, 0.3) !important; border-color: #3b82f6 !important; }
+        .dark-mode .soft-box-green { background: rgba(6, 78, 59, 0.3) !important; border-color: #10b981 !important; }
+        .dark-mode .soft-box-cyan { background: rgba(22, 78, 99, 0.3) !important; border-color: #06b6d4 !important; }
+        .dark-mode .soft-box-purple { background: rgba(88, 28, 135, 0.3) !important; border-color: #a855f7 !important; }
+        .dark-mode .soft-box-amber { background: rgba(120, 53, 15, 0.3) !important; border-color: #f59e0b !important; }
+        .dark-mode .soft-box-slate { background: #0f172a !important; border-color: #334155 !important; }
+}
     </style>
     <script type="module">
         import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -7324,12 +7389,35 @@ window.clearTrashPermanently = () => {
         // 🌟 4 檔花園仔標準開工雞相核對名冊
         const STANDARD_CHICKEN_STALLS = ['J-018', 'J-020', 'J-021', 'J-022'];
 
+window.refreshDashboardIfVisible = () => {
+            if (!$('dashboardPage')?.classList.contains('hidden')) {
+                window.renderDashboard();
+            }
+        };
+
+// 記錄儀表板內已展開的堆疊日誌群組 ID
+        window.expandedDashLogGroups = window.expandedDashLogGroups || new Set();
+        window.toggleDashLogGroup = (groupId, e) => {
+            if (e) { e.preventDefault(); e.stopPropagation(); }
+            if (window.expandedDashLogGroups.has(groupId)) window.expandedDashLogGroups.delete(groupId);
+            else window.expandedDashLogGroups.add(groupId);
+            window.renderDashboard();
+        };
+
+window.expandedDashLogGroups = window.expandedDashLogGroups || new Set();
+        window.toggleDashLogGroup = (groupId, e) => {
+            if (e) { e.preventDefault(); e.stopPropagation(); }
+            if (window.expandedDashLogGroups.has(groupId)) window.expandedDashLogGroups.delete(groupId);
+            else window.expandedDashLogGroups.add(groupId);
+            window.renderDashboard();
+        };
+
         window.renderDashboard = () => {
             const container = document.getElementById('dashboardContent');
             if (!container) return;
 
             const todayStr = getTodayDateStr();
-            const now = window.getNow();
+            const nowMs = window.getNowMs();
             const curSlot = patrolSlot || window.getAutoPatrolSlot();
 
             // 1. 剔檔統計
@@ -7352,18 +7440,16 @@ window.clearTrashPermanently = () => {
             const activeCrRecords = crRecords.filter(r => r.status === 'active');
             const crRemainBoxes = activeCrRecords.reduce((sum, r) => sum + (r.remainingQuantity || 0), 0);
 
-            // 4. 圖庫業務精確盤點 (只算今日未刪除照片)
+            // 4. 圖庫相片盤點
             const todayPhotos = (galleryItems || []).filter(i => {
                 if (i.isDeleted) return false;
                 const pDate = window.formatDateStrHK(i.createdAt || Date.now());
                 return pDate === todayStr;
             });
 
-            // A. 提早收工與清潔張數
             const earlyCloseCount = todayPhotos.filter(i => i.category === '提早收工' || i.category === '收工').length;
             const cleanPhotoCount = todayPhotos.filter(i => i.category === '清潔').length;
 
-            // B. 營業相（目標 13 張）盤點
             const uploadedFirstFloorCodes = new Set();
             todayPhotos.forEach(i => {
                 if (i.category === '營業相' || (i.time || '12:00') < '10:00') {
@@ -7380,7 +7466,6 @@ window.clearTrashPermanently = () => {
             const missingBusinessStalls = STANDARD_FIRST_FLOOR_STALLS.filter(std => !uploadedFirstFloorCodes.has(std));
             const businessReady = missingBusinessStalls.length === 0;
 
-            // C. 開工-雞相（目標 4 檔）盤點
             const uploadedChickenCodes = new Set();
             todayPhotos.forEach(i => {
                 const isMorning = (i.time || '12:00') < '12:00';
@@ -7399,7 +7484,6 @@ window.clearTrashPermanently = () => {
             const missingChickenStalls = STANDARD_CHICKEN_STALLS.filter(std => !uploadedChickenCodes.has(std));
             const chickenReady = missingChickenStalls.length === 0;
 
-            // D. 測溫相盤點 (上/下午 各最少 6 張)
             const amTempPhotos = todayPhotos.filter(i => {
                 const isTemp = i.category === '測溫相' || (i.title && i.title.includes('測溫'));
                 return isTemp && (i.time || '12:00') < '12:00';
@@ -7410,128 +7494,267 @@ window.clearTrashPermanently = () => {
                 return isTemp && (i.time || '12:00') >= '12:00';
             }).length;
 
-            // 5. 最新 5 筆操作日誌
-            const sortedLogs = [...(galleryLogsStore || [])].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)).slice(0, 5);
+            // 5. 備忘錄列表
+            const sortedMemos = [...(futureMemos || [])].sort((a, b) => 
+                window.hkDateTimeToMs(a.date, a.time || '00:00') - window.hkDateTimeToMs(b.date, b.time || '00:00')
+            );
+
+            // 6. 操作日誌（20分鐘內同用戶堆疊合併為 1 筆）
+            const rawSortedLogs = [...(galleryLogsStore || [])].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+            const TWENTY_MINS = 20 * 60 * 1000;
+            const logGroups = [];
+            let curGrp = null;
+
+            for (const log of rawSortedLogs) {
+                const uName = log.user || '未知';
+                const dateKey = window.formatDateStrHK(log.timestamp || Date.now());
+                if (!curGrp) {
+                    curGrp = {
+                        dateKey,
+                        user: uName,
+                        color: log.color || '#38bdf8',
+                        latestTs: log.timestamp,
+                        oldestTs: log.timestamp,
+                        items: [log]
+                    };
+                } else {
+                    const isSameDay = curGrp.dateKey === dateKey;
+                    const isSameUser = curGrp.user === uName;
+                    const within20Mins = Math.abs(curGrp.oldestTs - log.timestamp) <= TWENTY_MINS;
+
+                    if (isSameDay && isSameUser && within20Mins) {
+                        curGrp.items.push(log);
+                        curGrp.oldestTs = log.timestamp;
+                    } else {
+                        curGrp.id = `dash_grp_${curGrp.dateKey}_${curGrp.user}_${curGrp.latestTs}_${curGrp.oldestTs}`;
+                        logGroups.push(curGrp);
+                        if (logGroups.length >= 5) {
+                            curGrp = null;
+                            break;
+                        }
+                        curGrp = {
+                            dateKey,
+                            user: uName,
+                            color: log.color || '#38bdf8',
+                            latestTs: log.timestamp,
+                            oldestTs: log.timestamp,
+                            items: [log]
+                        };
+                    }
+                }
+            }
+            if (curGrp && logGroups.length < 5) {
+                curGrp.id = `dash_grp_${curGrp.dateKey}_${curGrp.user}_${curGrp.latestTs}_${curGrp.oldestTs}`;
+                logGroups.push(curGrp);
+            }
 
             container.innerHTML = `
-            <div class="space-y-3 pb-8">
-                <!-- 頂部即時營運指標 -->
-                <div class="grid grid-cols-3 gap-2">
-                    <div onclick="window.switchTab('patrol')" class="bg-white p-2.5 rounded-2xl border border-slate-200 shadow-2xs flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all">
-                        <span class="text-[10px] font-bold text-slate-400 mb-0.5">剔檔 (${curSlot})</span>
-                        <div class="text-base font-black ${patrolPct === 100 ? 'text-emerald-600' : 'text-blue-600'}">${patrolFilled}/${patrolStalls.length}</div>
-                        <span class="text-[9.5px] font-mono text-slate-500 font-bold">${patrolPct}% 完成</span>
-                    </div>
-
-                    <div onclick="window.switchTab('patrol'); setTimeout(window.openTempModal, 150);" class="bg-white p-2.5 rounded-2xl border border-slate-200 shadow-2xs flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all">
-                        <span class="text-[10px] font-bold text-slate-400 mb-0.5">測溫 (${curSlot})</span>
-                        <div class="text-base font-black ${tempFilled === 12 ? 'text-emerald-600' : 'text-rose-500'}">${tempFilled}/12</div>
-                        <span class="text-[9.5px] font-bold ${tempFilled === 12 ? 'text-emerald-600' : 'text-rose-500'}">${tempFilled === 12 ? '✔ 已完成' : `差 ${12 - tempFilled} 處`}</span>
-                    </div>
-
-                    <div onclick="window.switchTab('coldRoom')" class="bg-white p-2.5 rounded-2xl border border-slate-200 shadow-2xs flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all">
-                        <span class="text-[10px] font-bold text-slate-400 mb-0.5">雪房存放</span>
-                        <div class="text-base font-black text-cyan-700">${crRemainBoxes} <span class="text-xs font-bold text-slate-400">箱</span></div>
-                        <span class="text-[9.5px] font-bold text-slate-500">${activeCrRecords.length} 批存放中</span>
-                    </div>
-                </div>
-
-                <!-- 🌟 圖庫精準業務盤點卡 -->
-                <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-                    <div class="px-3.5 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-                        <div class="flex items-center space-x-1.5">
-                            <i data-lucide="image" class="w-4 h-4 text-blue-500"></i>
-                            <h3 class="font-black text-xs text-slate-800">今日圖庫相片核對</h3>
+            <div class="space-y-3.5 pb-10">
+                <!-- ① 今日圖庫相片核對 (柔色線條卡片風) -->
+                <div class="soft-card p-3.5 space-y-2.5">
+                    <div class="flex items-center justify-between pb-1.5 border-b border-slate-100">
+                        <div class="flex items-center space-x-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                            <h3 class="font-black text-xs text-slate-800 tracking-wide">今日圖庫相片核對</h3>
                         </div>
-                        <button type="button" onclick="window.switchTab('gallery')" class="text-[10.5px] font-bold text-blue-600 hover:underline">前往圖庫</button>
+                        <button type="button" onclick="window.switchTab('gallery')" class="text-[11px] font-black text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-0.5 rounded-lg active:scale-95 transition-all">前往圖庫</button>
                     </div>
 
-                    <div class="p-3 space-y-2.5 text-xs">
+                    <div class="space-y-2 text-xs">
                         <!-- 收工與清潔 -->
-                        <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+                        <div class="soft-box-slate p-2 flex items-center justify-between">
                             <div class="flex items-center space-x-3">
-                                <div><span class="text-slate-500 font-bold">提早收工:</span> <span class="font-black text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded">${earlyCloseCount} 個</span></div>
-                                <div><span class="text-slate-500 font-bold">清潔:</span> <span class="font-black text-sky-800 bg-sky-50 border border-sky-200 px-1.5 py-0.2 rounded">${cleanPhotoCount} 個</span></div>
+                                <div class="flex items-center gap-1.5"><span class="text-slate-500 font-bold text-[11px]">提早收工</span> <span class="font-mono font-black text-amber-700 bg-amber-100/90 border border-amber-300 px-2 py-0.5 rounded-md text-[11px]">${earlyCloseCount} 個</span></div>
+                                <div class="flex items-center gap-1.5"><span class="text-slate-500 font-bold text-[11px]">清潔</span> <span class="font-mono font-black text-cyan-800 bg-cyan-100/90 border border-cyan-300 px-2 py-0.5 rounded-md text-[11px]">${cleanPhotoCount} 個</span></div>
                             </div>
-                            <span class="text-[10px] font-mono text-slate-400 font-bold">共 ${todayPhotos.length} 張相</span>
+                            <span class="text-[10px] font-mono text-slate-400 font-black">共 ${todayPhotos.length} 張</span>
                         </div>
 
                         <!-- 營業相 (13張) -->
-                        <div class="p-2 rounded-xl border ${businessReady ? 'bg-emerald-50/50 border-emerald-200' : 'bg-slate-50 border-slate-200'}">
-                            <div class="flex items-center justify-between mb-1">
-                                <span class="font-bold text-slate-700 flex items-center">
-                                    <span class="w-1.5 h-1.5 rounded-full ${businessReady ? 'bg-emerald-500' : 'bg-rose-400'} mr-1.5"></span>
+                        <div class="${businessReady ? 'soft-box-green' : 'soft-box-slate'} p-2.5">
+                            <div class="flex items-center justify-between mb-0.5">
+                                <span class="font-black text-slate-800 flex items-center">
+                                    <i data-lucide="store" class="w-3.5 h-3.5 mr-1.5 ${businessReady ? 'text-green-600' : 'text-slate-400'}"></i>
                                     營業相 (一樓肉檔)
                                 </span>
-                                <span class="font-mono font-black ${businessReady ? 'text-emerald-700' : 'text-slate-700'}">${uploadedFirstFloorCodes.size} / 13 張 ${businessReady ? '✔ 已齊' : ''}</span>
+                                <span class="font-mono font-black text-xs px-2 py-0.5 rounded-md ${businessReady ? 'bg-white text-green-700 border border-green-300' : 'bg-slate-200/80 text-slate-700'}">${uploadedFirstFloorCodes.size} / 13 張 ${businessReady ? '✔' : ''}</span>
                             </div>
                             ${!businessReady ? `
-                                <div class="text-[10.5px] text-rose-600 font-bold truncate">
+                                <div class="text-[10.5px] text-rose-600 font-bold truncate pl-5">
                                     未齊！缺檔號: <span class="font-mono">${missingBusinessStalls.join(', ')}</span>
                                 </div>
-                            ` : `<div class="text-[10.5px] text-emerald-700 font-bold">13 檔營業相已全部拍攝齊全！</div>`}
+                            ` : `<div class="text-[10.5px] text-green-700 font-bold pl-5">13 檔營業相已全部拍攝齊全！</div>`}
                         </div>
 
                         <!-- 開工-雞相 (4檔) -->
-                        <div class="p-2 rounded-xl border ${chickenReady ? 'bg-purple-50/50 border-purple-200' : 'bg-slate-50 border-slate-200'}">
-                            <div class="flex items-center justify-between mb-1">
-                                <span class="font-bold text-slate-700 flex items-center">
-                                    <span class="w-1.5 h-1.5 rounded-full ${chickenReady ? 'bg-purple-500' : 'bg-rose-400'} mr-1.5"></span>
+                        <div class="${chickenReady ? 'soft-box-purple' : 'soft-box-slate'} p-2.5">
+                            <div class="flex items-center justify-between mb-0.5">
+                                <span class="font-black text-slate-800 flex items-center">
+                                    <i data-lucide="leaf" class="w-3.5 h-3.5 mr-1.5 ${chickenReady ? 'text-purple-600' : 'text-slate-400'}"></i>
                                     開工-雞相 (花園仔)
                                 </span>
-                                <span class="font-mono font-black ${chickenReady ? 'text-purple-700' : 'text-slate-700'}">${uploadedChickenCodes.size} / 4 檔 ${chickenReady ? '✔ 已齊' : ''}</span>
+                                <span class="font-mono font-black text-xs px-2 py-0.5 rounded-md ${chickenReady ? 'bg-white text-purple-700 border border-purple-300' : 'bg-slate-200/80 text-slate-700'}">${uploadedChickenCodes.size} / 4 檔 ${chickenReady ? '✔' : ''}</span>
                             </div>
                             ${!chickenReady ? `
-                                <div class="text-[10.5px] text-rose-600 font-bold truncate">
+                                <div class="text-[10.5px] text-rose-600 font-bold truncate pl-5">
                                     未齊！缺檔號: <span class="font-mono">${missingChickenStalls.join(', ')}</span>
                                 </div>
-                            ` : `<div class="text-[10.5px] text-purple-700 font-bold">4 檔開工雞相已全部就位！</div>`}
+                            ` : `<div class="text-[10.5px] text-purple-700 font-bold pl-5">4 檔開工雞相已全部就位！</div>`}
                         </div>
 
                         <!-- 測溫相 (上/下午 各最少 6 張) -->
                         <div class="grid grid-cols-2 gap-2">
-                            <div class="p-2 rounded-xl border ${amTempPhotos >= 6 ? 'bg-emerald-50/50 border-emerald-200' : 'bg-amber-50/50 border-amber-200'}">
-                                <div class="text-[10px] font-bold text-slate-500 mb-0.5">上午測溫相 (最少 6 張)</div>
+                            <div class="${amTempPhotos >= 6 ? 'soft-box-green' : 'soft-box-amber'} p-2 flex flex-col justify-between">
+                                <div class="text-[10px] font-black text-slate-600 mb-1">上午測溫 (最少 6 張)</div>
                                 <div class="flex items-baseline space-x-1">
-                                    <span class="font-mono text-base font-black ${amTempPhotos >= 6 ? 'text-emerald-700' : 'text-amber-800'}">${amTempPhotos}</span>
+                                    <span class="font-mono text-base font-black ${amTempPhotos >= 6 ? 'text-green-700' : 'text-amber-800'}">${amTempPhotos}</span>
                                     <span class="text-[10px] font-bold text-slate-400">/ 6 張</span>
-                                    <span class="text-[9.5px] font-bold ${amTempPhotos >= 6 ? 'text-emerald-600' : 'text-amber-700'} ml-auto">${amTempPhotos >= 6 ? '✔ 達標' : `差 ${6 - amTempPhotos} 張`}</span>
+                                    <span class="text-[9.5px] font-black ${amTempPhotos >= 6 ? 'text-green-600' : 'text-amber-700'} ml-auto">${amTempPhotos >= 6 ? '✔ 達標' : `差 ${6 - amTempPhotos}`}</span>
                                 </div>
                             </div>
 
-                            <div class="p-2 rounded-xl border ${pmTempPhotos >= 6 ? 'bg-emerald-50/50 border-emerald-200' : 'bg-indigo-50/50 border-indigo-200'}">
-                                <div class="text-[10px] font-bold text-slate-500 mb-0.5">下午測溫相 (最少 6 張)</div>
+                            <div class="${pmTempPhotos >= 6 ? 'soft-box-green' : 'soft-box-cyan'} p-2 flex flex-col justify-between">
+                                <div class="text-[10px] font-black text-slate-600 mb-1">下午測溫 (最少 6 張)</div>
                                 <div class="flex items-baseline space-x-1">
-                                    <span class="font-mono text-base font-black ${pmTempPhotos >= 6 ? 'text-emerald-700' : 'text-indigo-800'}">${pmTempPhotos}</span>
+                                    <span class="font-mono text-base font-black ${pmTempPhotos >= 6 ? 'text-green-700' : 'text-cyan-800'}">${pmTempPhotos}</span>
                                     <span class="text-[10px] font-bold text-slate-400">/ 6 張</span>
-                                    <span class="text-[9.5px] font-bold ${pmTempPhotos >= 6 ? 'text-emerald-600' : 'text-indigo-700'} ml-auto">${pmTempPhotos >= 6 ? '✔ 達標' : `差 ${6 - pmTempPhotos} 張`}</span>
+                                    <span class="text-[9.5px] font-black ${pmTempPhotos >= 6 ? 'text-green-600' : 'text-cyan-700'} ml-auto">${pmTempPhotos >= 6 ? '✔ 達標' : `差 ${6 - pmTempPhotos}`}</span>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- 🌟 最新 5 筆系統操作日誌 -->
-                <div class="bg-white rounded-2xl border border-slate-200 shadow-xs p-3 space-y-2">
+                <!-- ② 剔檔 / 測溫 / 雪房 (柔色三格按鈕) -->
+                <div class="grid grid-cols-3 gap-2">
+                    <div onclick="window.switchTab('patrol')" class="soft-box-blue p-2.5 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all text-center">
+                        <span class="text-[10px] font-black text-blue-600 mb-0.5">剔檔 (${curSlot})</span>
+                        <div class="text-base font-black text-blue-900">${patrolFilled}/${patrolStalls.length}</div>
+                        <span class="mt-1 px-2 py-0.2 bg-white text-[9.5px] font-mono text-blue-700 font-black rounded-md border border-blue-200">${patrolPct}% 完成</span>
+                    </div>
+
+                    <div onclick="window.switchTab('patrol'); setTimeout(window.openTempModal, 150);" class="soft-box-green p-2.5 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all text-center">
+                        <span class="text-[10px] font-black text-green-700 mb-0.5">測溫 (${curSlot})</span>
+                        <div class="text-base font-black ${tempFilled === 12 ? 'text-green-900' : 'text-rose-600'}">${tempFilled}/12</div>
+                        <span class="mt-1 px-2 py-0.2 bg-white text-[9.5px] font-black ${tempFilled === 12 ? 'text-green-700 border-green-200' : 'text-rose-600 border-rose-200'} rounded-md border">${tempFilled === 12 ? '✔ 已滿溫' : `差 ${12 - tempFilled} 處`}</span>
+                    </div>
+
+                    <div onclick="window.switchTab('coldRoom')" class="soft-box-amber p-2.5 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all text-center">
+                        <span class="text-[10px] font-black text-amber-800 mb-0.5">雪房存放</span>
+                        <div class="text-base font-black text-amber-950">${crRemainBoxes} <span class="text-xs font-bold text-amber-700">箱</span></div>
+                        <span class="mt-1 px-2 py-0.2 bg-white text-[9.5px] font-black text-amber-800 rounded-md border border-amber-200">${activeCrRecords.length} 批存放</span>
+                    </div>
+                </div>
+
+                <!-- ③ 未來任務備忘錄 -->
+                <div class="soft-card p-3.5 space-y-2.5">
                     <div class="flex items-center justify-between pb-1.5 border-b border-slate-100">
-                        <div class="flex items-center space-x-1.5">
-                            <i data-lucide="scroll-text" class="w-4 h-4 text-slate-600"></i>
-                            <h3 class="font-black text-xs text-slate-800">最新 5 筆操作日誌</h3>
+                        <div class="flex items-center space-x-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
+                            <h3 class="font-black text-xs text-slate-800 tracking-wide">未來任務備忘錄 <span class="text-[10px] font-mono text-purple-600 font-bold">(${sortedMemos.length})</span></h3>
                         </div>
-                        <button type="button" onclick="window.openLogsModal()" class="text-[10.5px] font-bold text-blue-600 hover:underline">完整日誌</button>
+                        <div class="flex items-center space-x-1.5">
+                            <button type="button" onclick="window.openMemoEditor()" class="px-2.5 py-0.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-[10.5px] font-black flex items-center active:scale-95 transition-all">
+                                <i data-lucide="plus" class="w-3 h-3 mr-0.5"></i>新增
+                            </button>
+                            <button type="button" onclick="window.switchTab('memo')" class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-[10.5px] font-bold active:scale-95 transition-all">管理</button>
+                        </div>
                     </div>
 
                     <div class="space-y-1.5">
-                        ${sortedLogs.length === 0 ? '<div class="text-[11px] text-slate-400 text-center py-2">尚無操作紀錄</div>' : sortedLogs.map(log => {
-                            const badgeCls = window.getLogBadgeStyle(log.action);
+                        ${sortedMemos.length === 0 ? `
+                            <div class="soft-box-slate py-4 text-center text-[11px] font-bold text-slate-400">
+                                目前沒有待辦的備忘任務
+                            </div>
+                        ` : sortedMemos.map(m => {
+                            const diff = window.hkDateTimeToMs(m.date, m.time || '00:00') - nowMs;
+                            let cdBadge = '';
+                            if (diff <= 0) {
+                                cdBadge = `<span class="bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0.5 text-[9.5px] font-black rounded-md shrink-0 animate-pulse">已到期 / 進行中</span>`;
+                            } else {
+                                const d = Math.floor(diff / 86400000);
+                                const h = Math.floor((diff % 86400000) / 3600000);
+                                const min = Math.floor((diff % 3600000) / 60000);
+                                cdBadge = `<span class="bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 text-[9.5px] font-mono font-black rounded-md shrink-0">⏳ ${d > 0 ? d + '天 ' : ''}${h}h ${min}m</span>`;
+                            }
                             return `
-                            <div class="p-1.5 bg-slate-50 rounded-xl border border-slate-200/70 flex items-center justify-between text-[11px]">
-                                <div class="flex items-center space-x-1.5 min-w-0 pr-1">
-                                    <span class="font-mono text-[9.5px] font-bold text-slate-400 shrink-0">${window.formatLogTime(log.timestamp).split(' ')[1] || ''}</span>
-                                    <span class="font-black text-[10px] px-1.5 py-0.2 rounded border shrink-0 ${badgeCls}">${log.action}</span>
-                                    <span class="font-black text-slate-800 truncate">${window.esc(log.targetName || '')}</span>
+                            <div onclick="window.openMemoEditorForEdit('${m.id}')" class="soft-box-slate p-2 cursor-pointer hover:border-purple-300 active:scale-[0.99] transition-all flex items-start justify-between gap-2">
+                                <div class="min-w-0 flex-1">
+                                    <div class="text-xs font-black text-slate-800 truncate">${window.esc(m.title)}</div>
+                                    ${m.content ? `<div class="text-[10.5px] text-slate-500 line-clamp-1 mt-0.5 break-words">${window.esc(m.content)}</div>` : ''}
+                                    <div class="text-[9.5px] font-mono font-bold text-purple-700 mt-1 flex items-center">
+                                        <i data-lucide="calendar" class="w-3 h-3 mr-1 text-purple-500"></i>${m.date} ${m.time || ''}
+                                    </div>
                                 </div>
-                                <span class="font-black text-[10px] shrink-0" style="color: ${log.color || '#38bdf8'}">${window.esc(log.user || '未知')}</span>
+                                ${cdBadge}
+                            </div>`;
+                        }).join('')}
+                    </div>
+                </div>
+
+                <!-- ④ 最新 5 筆操作日誌（堆疊合併算 1 筆） -->
+                <div class="soft-card p-3.5 space-y-2.5">
+                    <div class="flex items-center justify-between pb-1.5 border-b border-slate-100">
+                        <div class="flex items-center space-x-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-slate-600"></span>
+                            <h3 class="font-black text-xs text-slate-800 tracking-wide">最新 5 筆操作日誌</h3>
+                        </div>
+                        <button type="button" onclick="window.openLogsModal()" class="text-[11px] font-black text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-0.5 rounded-lg active:scale-95 transition-all">完整日誌</button>
+                    </div>
+
+                    <div class="space-y-1.5">
+                        ${logGroups.length === 0 ? '<div class="soft-box-slate text-[11px] text-slate-400 text-center py-3 font-bold">尚無操作紀錄</div>' : logGroups.map(group => {
+                            if (group.items.length === 1) {
+                                const log = group.items[0];
+                                const badgeCls = window.getLogBadgeStyle(log.action);
+                                const clearAction = window.getClearLogAction ? window.getClearLogAction(log.action) : log.action;
+                                return `
+                                <div class="soft-box-slate p-2 flex items-center justify-between text-[11px] gap-1.5">
+                                    <div class="flex items-center space-x-1.5 min-w-0 flex-1 overflow-hidden">
+                                        <span class="font-mono text-[9.5px] font-bold text-slate-400 shrink-0">${window.formatLogTime(log.timestamp)}</span>
+                                        <span class="font-black text-[9.5px] px-1.5 py-0.2 rounded border shrink-0 ${badgeCls}">${window.esc(clearAction)}</span>
+                                        <span class="font-black text-slate-800 truncate">[${window.esc(log.targetName || '無標題')}]</span>
+                                    </div>
+                                    <span class="font-black text-[10px] shrink-0" style="color: ${log.color || '#38bdf8'}">${window.esc(log.user || '未知')}</span>
+                                </div>`;
+                            }
+
+                            const isExpanded = window.expandedDashLogGroups.has(group.id);
+                            const startFull = window.formatLogTime(group.oldestTs);
+                            const endFull = window.formatLogTime(group.latestTs);
+                            const startTime = startFull.split(' ')[1] || '';
+                            const endTime = endFull.split(' ')[1] || '';
+                            const datePrefix = endFull.split(' ')[0] || '';
+                            const timeRangeStr = (startTime === endTime) ? `${datePrefix} ${startTime}` : `${datePrefix} ${startTime}~${endTime}`;
+
+                            const detailsHtml = group.items.map(log => {
+                                const badgeCls = window.getLogBadgeStyle(log.action);
+                                const clearAction = window.getClearLogAction ? window.getClearLogAction(log.action) : log.action;
+                                return `
+                                <div class="py-1 px-2 bg-white rounded-md border border-slate-200/70 flex items-center gap-1.5 text-[10px] whitespace-nowrap overflow-x-auto scrollbar-hide">
+                                    <span class="font-mono text-[9px] text-slate-400 shrink-0">${window.formatLogTime(log.timestamp).split(' ')[1] || ''}</span>
+                                    <span class="font-bold text-[9px] px-1.5 py-0.2 rounded border shrink-0 ${badgeCls}">${window.esc(clearAction)}</span>
+                                    <span class="font-black text-slate-800 shrink-0">[${window.esc(log.targetName || '無標題')}]</span>
+                                    ${log.detail ? `<span class="text-slate-500 font-medium text-[9.5px] shrink-0">${window.esc(log.detail)}</span>` : ''}
+                                </div>`;
+                            }).join('');
+
+                            return `
+                            <div class="soft-box-slate overflow-hidden">
+                                <button type="button" onclick="window.toggleDashLogGroup('${group.id}', event)" class="w-full p-2 flex items-center justify-between text-left active:bg-slate-100 transition-colors select-none">
+                                    <div class="flex items-center space-x-1.5 min-w-0 pr-1 overflow-hidden">
+                                        <span class="font-mono text-[9.5px] font-bold text-slate-400 shrink-0">${timeRangeStr}</span>
+                                        <span class="font-black text-[11px] shrink-0" style="color: ${group.color || '#38bdf8'}">${window.esc(group.user || '未知')}</span>
+                                        <span class="bg-blue-100 text-blue-700 border border-blue-200 text-[9.5px] font-black px-1.5 py-0.2 rounded shrink-0">
+                                            合併 ${group.items.length} 筆
+                                        </span>
+                                    </div>
+                                    <div class="flex items-center space-x-0.5 shrink-0 text-blue-600 text-[10px] font-black">
+                                        <span>${isExpanded ? '收合' : '展開'}</span>
+                                        <i data-lucide="${isExpanded ? 'chevron-up' : 'chevron-down'}" class="w-3.5 h-3.5"></i>
+                                    </div>
+                                </button>
+                                ${isExpanded ? `<div class="p-2 pt-1 space-y-1 border-t border-slate-200/60 bg-slate-100/60">${detailsHtml}</div>` : ''}
                             </div>`;
                         }).join('')}
                     </div>
@@ -8865,9 +9088,10 @@ tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility)
             if (tabVisibilityState['dashboard'] === undefined) tabVisibilityState['dashboard'] = true;
             if (!tabOrderList.includes('dashboard')) tabOrderList.unshift('dashboard');
             
-            checkAndResetDailySchedule(); 
+checkAndResetDailySchedule(); 
             window.applyTabVisibility();
-            window.switchTab('gallery');   // 每次都固定開圖庫
+            const savedTab = localStorage.getItem('activeTab') || 'gallery';
+            window.switchTab(tabVisibilityState[savedTab] === false ? 'gallery' : savedTab);
         }
 
         function setupPureRealtimeSync() {
@@ -13090,8 +13314,9 @@ galleryCategories = (imp.galleryCategories || galleryCategories).filter(c => c !
             }
         };
 
-        window.switchTab = (tab) => {
+window.switchTab = (tab) => {
             const pages = { 
+                dashboard: 'dashboardPage', // 👈 確保有這行才能切換顯示儀表板
                 patrol: 'patrolPage', 
                 gallery: 'galleryPage', 
                 timeline: 'timelinePage', 
@@ -15378,8 +15603,8 @@ historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
         </header>
 
 <!-- ==================== 0. 儀表板 (總覽戰情室) 專屬分頁 ==================== -->
-        <main id="dashboardPage" class="hidden flex-1 min-h-0 overflow-y-auto p-3 relative z-10 bg-[#fdfbf7] scrollbar-hide">
-            <div id="dashboardContent" class="max-w-[420px] mx-auto"></div>
+        <main id="dashboardPage" class="hidden flex-col flex-1 min-h-0 overflow-y-auto p-3 relative z-10 bg-[#f0ebe1] scrollbar-hide">
+            <div id="dashboardContent" class="w-full max-w-[420px] mx-auto"></div>
         </main>
 
         <!-- ==================== 1. 剔檔 (巡查) 專屬分頁 ==================== -->
