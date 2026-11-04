@@ -5460,8 +5460,9 @@ window.renderPatrolSearchResults = (queryStr) => {
             window.open(popUrl.toString(), 'WorkRecordPopup', `width=${w},height=${h},left=${l},top=${t},menubar=no,status=no,toolbar=no,location=no,scrollbars=no,resizable=yes`);
         };
 
-        let crRecords = [], crItemTypes = ['海鮮', '肉類', '蔬果', '包裝冰', '其他'], crCurrentSelectedType = '', crCurrentTab = 'active';
-        // 雪房超時警報及 24 小時限制已移除；固定五個檔口與存取紀錄功能維持不變.
+let crRecords = [], crItemTypes = ['海鮮', '肉類', '蔬果', '包裝冰', '其他'], crCurrentSelectedType = '', crCurrentTab = 'active';
+        // 🌟 24 小時常數（純粹用於卡片計算超時標籤，不觸發聲音或橫幅警報）
+        const CR_TIME_LIMIT_MS = 24 * 60 * 60 * 1000;
         let actionHistory = [], futureMemos = [], timeOffset = 0, isFastForwarding = false, simInterval = null, timelineUpdateInterval;
         // 強制鎖定為香港時間 (UTC+8)
 
@@ -5549,10 +5550,8 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             } catch (e) { console.error('提示音播放失敗：', e); }
         };
 
-        window.stopOverdueAlarm = () => {
-            if (crSoundIntervalId) { clearInterval(crSoundIntervalId); crSoundIntervalId = null; }
+window.stopOverdueAlarm = () => {
             if (crBannerTimeoutId) { clearTimeout(crBannerTimeoutId); crBannerTimeoutId = null; }
-            if (crAudioCtx && crAudioCtx.state !== 'closed') { try { crAudioCtx.close(); } catch(e){} }
             const banner = $('crOverdueAlertBanner');
             if (banner) { banner.style.opacity = '0'; setTimeout(() => banner.classList.add('hidden'), 300); }
         };
@@ -5581,9 +5580,9 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             let isEnabled = getLocal('work_cache_cr_notify', false);
             if (!isEnabled) {
                 if ("Notification" in window && await Notification.requestPermission() === "granted") {
-                    safeSetLocal('work_cache_cr_notify', true); window.showToast("✅ 已開啟推播提醒！"); window.playAlertSound();
+                    safeSetLocal('work_cache_cr_notify', true); window.showToast("✅ 已開啟備忘推播！"); window.playAlertSound();
                 } else {
-                    safeSetLocal('work_cache_cr_notify', true); window.showToast("✅ 已開啟站內提示音！"); window.playAlertSound();
+                    safeSetLocal('work_cache_cr_notify', true); window.showToast("✅ 已開啟備忘提示音！"); window.playAlertSound();
                 }
             } else { safeSetLocal('work_cache_cr_notify', false); window.stopOverdueAlarm(); window.showToast("🔕 已關閉提醒"); }
             window.crUpdateNotificationBtn();
@@ -5591,17 +5590,16 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
 
         window.crUpdateNotificationBtn = () => {
             const isEnabled = getLocal('work_cache_cr_notify', false);
-            ['crNotifyToggleBtn', 'memoNotifyToggleBtn'].forEach(btnId => {
-                const btn = $(btnId); if (!btn) return;
-                if (isEnabled) {
-                    btn.className = "flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-100 border border-emerald-300 text-emerald-700 shadow-xs hover:bg-emerald-200 transition-all active:scale-95 cursor-pointer";
-                    btn.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span><i data-lucide="bell" class="w-3.5 h-3.5 text-emerald-600 pointer-events-none"></i><span class="text-[10px] font-black">提醒中</span>`;
-                } else {
-                    btn.className = "flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-400 shadow-xs hover:bg-slate-200 transition-all active:scale-95 cursor-pointer";
-                    btn.innerHTML = `<i data-lucide="bell-off" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i><span class="text-[10px] font-bold">靜音</span>`;
-                }
-            });
-            lucide.createIcons();
+            const btn = $('memoNotifyToggleBtn'); 
+            if (!btn) return;
+            if (isEnabled) {
+                btn.className = "flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-100 border border-emerald-300 text-emerald-700 shadow-xs hover:bg-emerald-200 transition-all active:scale-95 cursor-pointer";
+                btn.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span><i data-lucide="bell" class="w-3.5 h-3.5 text-emerald-600 pointer-events-none"></i><span class="text-[10px] font-black">提醒中</span>`;
+            } else {
+                btn.className = "flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-400 shadow-xs hover:bg-slate-200 transition-all active:scale-95 cursor-pointer";
+                btn.innerHTML = `<i data-lucide="bell-off" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i><span class="text-[10px] font-bold">靜音</span>`;
+            }
+            if (window.lucide) lucide.createIcons();
         };
 
     // ==========================================
@@ -7419,6 +7417,19 @@ window.clearTrashPermanently = () => {
         const STANDARD_CHICKEN_STALLS = ['J-018', 'J-020', 'J-021', 'J-022'];
         const STANDARD_CLEAN_STALLS = ['J-018', 'J-020', 'J-021', 'J-022', 'J-024', 'J-025'];
 
+// 🌟 儀表板智慧自動更新排程（防抖 200ms，且僅在儀表板開啟時執行）
+        window._dashUpdateTimer = null;
+        window.scheduleDashboardUpdate = () => {
+            const page = $('dashboardPage');
+            if (!page || page.classList.contains('hidden')) return;
+            clearTimeout(window._dashUpdateTimer);
+            window._dashUpdateTimer = setTimeout(() => {
+                if (typeof window.renderDashboard === 'function') {
+                    window.renderDashboard();
+                }
+            }, 200);
+        };
+
         window.renderDashboard = () => {
             try {
                 const container = document.getElementById('dashboardContent');
@@ -9226,7 +9237,14 @@ checkAndResetDailySchedule();
                     if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
                 }
             });
-            bindSync('future_memos', 'work_cache_future_memos', d => { futureMemos = d.memos || []; safeSetLocal('work_cache_future_memos', futureMemos); if (!$('memoPage')?.classList.contains('hidden')) window.renderMemos(); window.checkMemoAlerts(); });
+bindSync('future_memos', 'work_cache_future_memos', d => { 
+                futureMemos = d.memos || []; 
+                safeSetLocal('work_cache_future_memos', futureMemos); 
+                if (!$('memoPage')?.classList.contains('hidden')) window.renderMemos(); 
+                window.checkMemoAlerts(); 
+                // 🌟 新增或修改備忘任務時，儀表板待辦卡片自動同步
+                window.scheduleDashboardUpdate?.(); 
+            });
 
             // 🌟 客服名單與 5 日排班雲端同步（包含多日字典多設備即時同步）
             bindSync('team_members', 'work_cache_team_members', d => {
@@ -9451,7 +9469,7 @@ window.listenPatrolDateDoc = (dateKey) => {
                         });
                     });
 
-                    if (hasUpdated) {
+if (hasUpdated) {
                         safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
                         if (currentPatrolDate === dateKey) {
                             patrolState = patrolHistoryStore[currentPatrolDate] || {};
@@ -9460,6 +9478,8 @@ window.listenPatrolDateDoc = (dateKey) => {
                                 window.renderPatrol();
                             }
                         }
+                        // 🌟 同事剔檔更新時，即時重算儀表板進度百分比
+                        window.scheduleDashboardUpdate?.();
                     }
                 }, console.error);
             };
@@ -9523,12 +9543,12 @@ window.listenPatrolDateDoc = (dateKey) => {
                 }
             }, err => console.warn('溫度即時監聽異常:', err));
 
-            // 雪房存貨監聽
+// 雪房存貨監聽
             bindSync('coldRoom', 'coldRoomRecords', d => {
                 if (d.records) { crRecords = d.records; safeSetLocal('coldRoomRecords', crRecords); }
                 if (d.types) { crItemTypes = d.types; safeSetLocal('coldRoomTypes', crItemTypes); }
                 if (!$('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
-                window.checkColdRoomOverdueAlerts();
+                window.scheduleDashboardUpdate?.();
             });
 
 onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snap) => {
@@ -9613,10 +9633,12 @@ onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items')
                     window.renderTrashList();
                 }
 
-                if (newIncomingCount > 0) {
+if (newIncomingCount > 0) {
                     window.playAlertSound();
                     window.showGalleryTopNotification(newIncomingCount);
                 }
+                // 🌟 當同事上傳/修改相片時，即時更新儀表板盤點數據
+                window.scheduleDashboardUpdate?.();
             }, console.error);
 
 // 即時同步操作日誌：顯示最近 30 天；前端只讀取，不再自行永久刪除雲端日誌。
@@ -9637,10 +9659,12 @@ onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items')
                         }
                     });
 
-                    galleryLogsStore = list;
+galleryLogsStore = list;
                     if ($('galleryLogsModal') && !$('galleryLogsModal').classList.contains('hidden')) {
                         window.renderGalleryLogs();
                     }
+                    // 🌟 有新的操作日誌推送到雲端時，儀表板「最新 5 筆」自動刷新
+                    window.scheduleDashboardUpdate?.();
                 }, err => window.reportCloudError('操作日誌監聽中斷', err));
             } catch(e) {
                 window.reportCloudError('操作日誌初始化失敗', e);
@@ -13061,7 +13085,7 @@ window.crSaveData = () => {
                                 </div>`;
                             }
 
-// 🐟 情況 B：一般限時貨物卡片
+// 🐟 情況 B：一般限時貨物卡片（保留 24 小時倒數與超時視覺標籤，靜音不報警）
                             const r = item.record;
                             const crLimitMs = (typeof CR_TIME_LIMIT_MS !== 'undefined') ? CR_TIME_LIMIT_MS : 86400000;
                             const tLeft = (r.depositTime + crLimitMs) - now;
@@ -13075,8 +13099,8 @@ window.crSaveData = () => {
                             } else {
                                 const od = Math.abs(tLeft);
                                 const odH = Math.floor(od / 3600000), odM = Math.floor((od % 3600000) / 60000);
-                                timeBadge = `<span class="text-red-600 font-black text-[11px] flex items-center animate-pulse">
-                                    <i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500"></i>超時 ${odH > 0 ? odH + 'h ' : ''}${odM}m
+                                timeBadge = `<span class="text-red-600 font-black text-[11px] flex items-center">
+                                    <i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-red-500"></i>已超時 ${odH > 0 ? odH + 'h ' : ''}${odM}m
                                 </span>`;
                             }
 
@@ -13622,6 +13646,7 @@ window._globalClockInterval = setInterval(() => {
 if (window._globalMinuteInterval) clearInterval(window._globalMinuteInterval);
 window._globalMinuteInterval = setInterval(() => {
     checkAndResetDailySchedule();
+    if (!$('dashboardPage')?.classList.contains('hidden')) window.scheduleDashboardUpdate(); // 👈 每分鐘自動更新倒數與狀態
     if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
     if (!$('memoPage')?.classList.contains('hidden')) window.updateMemoCountdowns();
     if (!$('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
@@ -16162,7 +16187,7 @@ historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
                         <button type="button" class="sim-restore-btn hidden bg-white border border-slate-200 text-slate-600 rounded-md w-6 h-6 shadow-sm active:scale-95 flex items-center justify-center" onclick="window.restoreRealTime()"><i data-lucide="rotate-ccw" class="w-3.5 h-3.5 pointer-events-none"></i></button>
                         <button type="button" class="sim-toggle-btn bg-white border border-slate-200 text-slate-600 rounded-md w-6 h-6 shadow-sm active:scale-95 flex items-center justify-center" onclick="window.toggleSimulation()"><i data-lucide="fast-forward" class="w-3.5 h-3.5 pointer-events-none"></i></button>
                     </div>
-                    <div class="flex items-center space-x-1.5 z-10">
+<div class="flex items-center space-x-1.5 z-10">
                         <button onclick="window.crExportToCSV()" class="text-slate-500 hover:text-emerald-600 p-1.5 rounded-full active:scale-95 shadow-sm border border-transparent hover:border-emerald-200" title="匯出CSV"><i data-lucide="file-spreadsheet" class="w-4 h-4 pointer-events-none"></i></button>
                     </div>
                 </div>
