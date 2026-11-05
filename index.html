@@ -131,9 +131,9 @@
             position: relative;
             overflow: hidden;
         }
-        .soft-box-green {
-            background: rgba(240, 253, 244, 0.9);
-            border: 2px solid #4ade80;
+.soft-box-green {
+            background: rgba(220, 252, 231, 0.85);
+            border: 2px solid #22c55e;
             border-radius: 0.9rem;
             position: relative;
             overflow: hidden;
@@ -277,9 +277,18 @@
             }
             return window._pendingGalleryLogs;
         };
-        const _saveLogQueue = () => {
-            if (window._pendingGalleryLogs.length > 300) window._pendingGalleryLogs = window._pendingGalleryLogs.slice(-300);
-            try { localStorage.setItem('work_pending_gallery_logs', JSON.stringify(window._pendingGalleryLogs)); } catch (e) { console.warn('日誌佇列寫入失敗', e); }
+const _saveLogQueue = () => {
+            // 🌟 限制離線日誌佇列最多保留 50 筆最新紀錄，避免離線時塞爆容量
+            if (window._pendingGalleryLogs.length > 50) {
+                window._pendingGalleryLogs = window._pendingGalleryLogs.slice(-50);
+            }
+            try { 
+                localStorage.setItem('work_pending_gallery_logs', JSON.stringify(window._pendingGalleryLogs)); 
+            } catch (e) { 
+                console.warn('日誌佇列寫入受限，自動修剪：', e);
+                window._pendingGalleryLogs = window._pendingGalleryLogs.slice(-20);
+                try { localStorage.setItem('work_pending_gallery_logs', JSON.stringify(window._pendingGalleryLogs)); } catch (err) {}
+            }
         };
         window.flushPendingGalleryLogs = async () => {
             if (!currentUser || !db) return;
@@ -354,49 +363,77 @@
             window.renderGalleryLogs();
         };
 
-        window.getClearLogAction = (action) => {
+window.getClearLogAction = (action) => {
             const map = {
-                '取消剔檔': '取消巡查標記',
-                '剔檔標記': '設定巡查狀態',
+                // 剔檔巡查
+                '取消剔檔': '取消剔檔',
+                '剔檔標記': '標記剔檔',
                 '清空剔檔': '清空當日巡查紀錄',
-                '導出巡查報表': '匯出巡查與溫度 Excel',
-                '每日歸檔': '系統跨日歸檔照片',
+                '導出巡查報表': '匯出巡查與溫度表',
+
+                // 溫度測量
+                '記錄溫度': '記錄溫度',
+                '取消溫度': '取消溫度',
+
+                // 照片管理
+                '發布圖片': '發布照片',
+                '修改圖片': '修改照片/改名',
                 '旋轉圖片': '旋轉照片',
-                '移至垃圾桶': '移除照片（可還原）',
-                '批次移至垃圾桶': '批次移除照片（可還原）',
+                '移至垃圾桶': '移除照片',
+                '批次移至垃圾桶': '批次移除照片',
                 '還原圖片': '還原照片',
-                '還原整日': '按日期批次還原照片',
+                '還原整日': '還原整日',
                 '全部還原': '還原全部照片',
-                '永久清空': '永久刪除垃圾桶照片',
-                '修改圖片': '修改照片資料',
-                '導出圖片': '匯出原圖 PNG',
-                '導出報表': '匯出提早收工 CSV',
-                '發布圖片': '發布並同步照片',
-                '雪房存入': '新增雪房存貨紀錄',
-                '導出雪房表': '匯出雪房存貨 CSV',
-                '導出系統備份': '匯出系統 JSON 備份'
+                '永久清空': '永久清空垃圾桶照片',
+'每日歸檔': '系統跨日歸檔',
+
+                // 報表匯出
+                '導出圖片': '導出圖片',
+                '導出報表': '匯出提早收工',
+                '導出系統備份': '導出系統備份',
+
+                // 雪房存取
+                '雪房存入': '雪房存入',
+                '雪房取出': '雪房取出',
+                '導出雪房表': '匯出雪房記錄'
             };
             return map[action] || action || '其他操作';
         };
 
         window.getLogBadgeStyle = (action) => {
             const act = String(action || '');
-            // 🔴 刪除類：紅色
-            if (act.includes('刪除') || act.includes('清空') || act.includes('取消') || act.includes('移至垃圾桶')) {
+            // 🔴 刪除 / 清空 / 取消類：醒目紅色
+            if (act.includes('刪除') || act.includes('清空') || act.includes('取消') || act.includes('移除') || act.includes('垃圾桶')) {
                 return 'bg-red-100 text-red-700 border-red-300 font-black';
             }
-            // 🟡 導出類：黃色 / 琥珀色
+            // 🟡 導出 / 匯出類：琥珀黃色
             if (act.includes('導出') || act.includes('匯出')) {
                 return 'bg-amber-100 text-amber-800 border-amber-300 font-black';
             }
-            // 🟢 上傳 / 發布類：綠色
-            if (act.includes('上傳') || act.includes('發布')) {
+            // 🟢 發布 / 存入類：翠綠色
+            if (act.includes('上傳') || act.includes('發布') || act.includes('存入')) {
                 return 'bg-emerald-100 text-emerald-700 border-emerald-300 font-black';
             }
-            // 其餘輔助動作維持清晰辨識
-            if (act.includes('還原')) return 'bg-blue-100 text-blue-700 border-blue-300 font-bold';
-            if (act.includes('修改') || act.includes('旋轉')) return 'bg-purple-100 text-purple-700 border-purple-300 font-bold';
-            if (act.includes('剔檔')) return 'bg-teal-100 text-teal-800 border-teal-300 font-bold';
+            // 🔵 還原類：海藍色
+            if (act.includes('還原')) {
+                return 'bg-blue-100 text-blue-700 border-blue-300 font-bold';
+            }
+            // 🟣 修改 / 旋轉類：紫羅蘭色
+            if (act.includes('修改') || act.includes('旋轉') || act.includes('改名')) {
+                return 'bg-purple-100 text-purple-700 border-purple-300 font-bold';
+            }
+            // 🧊 雪房取出類：橙色
+            if (act.includes('取出')) {
+                return 'bg-orange-100 text-orange-800 border-orange-300 font-bold';
+            }
+            // 🌡️ 溫度類：青色
+            if (act.includes('溫度')) {
+                return 'bg-cyan-100 text-cyan-800 border-cyan-300 font-bold';
+            }
+            // 📋 剔檔類：藍綠色
+            if (act.includes('剔檔')) {
+                return 'bg-teal-100 text-teal-800 border-teal-300 font-bold';
+            }
             return 'bg-slate-100 text-slate-700 border-slate-300 font-bold';
         };
 
@@ -436,44 +473,45 @@
                 dayBuckets.get(dateKey).rawLogs.push(log);
             });
 
-            // 3. 在每一天內部，將 20 分鐘內同一使用者的操作聚合為一組（絕不跨日混組）
+// 3. 在每一天內部，按使用者獨立聚合 20 分鐘時間桶（不再受其他人插隊打斷）
             const TWENTY_MINS = 20 * 60 * 1000;
             dayBuckets.forEach(bucket => {
-                let currentGroup = null;
+                const userBuckets = new Map();
+
                 bucket.rawLogs.forEach(log => {
                     const uName = log.user || '未知';
-                    if (!currentGroup) {
-                        currentGroup = {
+                    if (!userBuckets.has(uName)) {
+                        userBuckets.set(uName, []);
+                    }
+                    const groupsForUser = userBuckets.get(uName);
+                    // 尋找此使用者現有組中，時間相差在 20 分鐘內的群組
+                    let matchedGrp = groupsForUser.find(g => Math.abs(g.oldestTs - log.timestamp) <= TWENTY_MINS || Math.abs(g.latestTs - log.timestamp) <= TWENTY_MINS);
+
+                    if (matchedGrp) {
+                        matchedGrp.items.push(log);
+                        if (log.timestamp > matchedGrp.latestTs) matchedGrp.latestTs = log.timestamp;
+                        if (log.timestamp < matchedGrp.oldestTs) matchedGrp.oldestTs = log.timestamp;
+                    } else {
+                        groupsForUser.push({
                             user: uName,
                             color: log.color || '#38bdf8',
                             latestTs: log.timestamp,
                             oldestTs: log.timestamp,
                             items: [log]
-                        };
-                    } else {
-                        const isSameUser = currentGroup.user === uName;
-                        const within20Mins = Math.abs(currentGroup.oldestTs - log.timestamp) <= TWENTY_MINS;
-
-                        if (isSameUser && within20Mins) {
-                            currentGroup.items.push(log);
-                            currentGroup.oldestTs = log.timestamp;
-                        } else {
-                            currentGroup.id = `grp_${bucket.dateKey}_${currentGroup.user}_${currentGroup.latestTs}_${currentGroup.oldestTs}`;
-                            bucket.groups.push(currentGroup);
-                            currentGroup = {
-                                user: uName,
-                                color: log.color || '#38bdf8',
-                                latestTs: log.timestamp,
-                                oldestTs: log.timestamp,
-                                items: [log]
-                            };
-                        }
+                        });
                     }
                 });
-                if (currentGroup) {
-                    currentGroup.id = `grp_${bucket.dateKey}_${currentGroup.user}_${currentGroup.latestTs}_${currentGroup.oldestTs}`;
-                    bucket.groups.push(currentGroup);
-                }
+
+                // 將各用戶歸納好的群組攤平，並按最新時間由新到舊排序
+                const allGroups = [];
+                userBuckets.forEach(groups => {
+                    groups.forEach(g => {
+                        g.id = `grp_${bucket.dateKey}_${g.user}_${g.latestTs}_${g.oldestTs}`;
+                        allGroups.push(g);
+                    });
+                });
+                allGroups.sort((a, b) => b.latestTs - a.latestTs);
+                bucket.groups = allGroups;
             });
 
             // 4. 渲染「日子分組」與內部紀錄（預設全部收合，點擊後展開）
@@ -580,7 +618,7 @@
         // 🌟 專屬管理員（「手提電腦」、「雲」）點擊日誌內用戶名時彈出修改
         window.openEditOtherUserModal = (targetUser, targetColor, groupId = null) => {
             if (!window.isAdminUnlocked()) {
-                window.showToast('需要管理員解鎖才能修改別人的日誌', true);
+                window.showToast('需要先解鎖權限才能修改此紀錄', true);
                 window.openAdminAuthModal();
                 return;
             }
@@ -727,26 +765,82 @@
 
         const $ = id => document.getElementById(id);
         const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
+// 🌟 根源垃圾回收器：清理舊版廢棄 Key、混入佇列的肥大 Base64、以及超過 14 天的本地快取副本（雲端資料不受影響）
+        window.purgeObsoleteLocalStorage = () => {
+            try {
+                // 1. 移除舊版遺留與重複冗餘的肥大 Key
+                const obsoleteKeys = [
+                    'work_cache_patrol_records',
+                    'work_cache_gallery_items', // 圖庫清單統一由 IndexedDB 專責管理
+                    'stall_db_stable_v1',
+                    'stall_db_stable'
+                ];
+                obsoleteKeys.forEach(k => localStorage.removeItem(k));
+
+                // 2. 清理 _syncQueue 中過去不小心塞入的肥大 Base64 圖片資料 (rotate_chunks)
+                try {
+                    const rawQ = JSON.parse(localStorage.getItem('work_pending_config_sync') || '[]');
+                    const cleanQ = rawQ.filter(item => !(item && item.data && item.data.dataUrl));
+                    if (cleanQ.length !== rawQ.length) {
+                        localStorage.setItem('work_pending_config_sync', JSON.stringify(cleanQ));
+                    }
+                } catch (e) {}
+
+                // 3. 為本地歷史快取瘦身：只保留最近 14 天的本機快取（更早的歷史隨時可從雲端拉取）
+                const cutoffMs = Date.now() - 14 * 86400000;
+                const trimDateMap = (storageKey) => {
+                    try {
+                        const obj = JSON.parse(localStorage.getItem(storageKey) || '{}');
+                        let trimmed = false;
+                        Object.keys(obj).forEach(dateStr => {
+                            const dMs = new Date(dateStr).getTime();
+                            if (!isNaN(dMs) && dMs < cutoffMs) {
+                                delete obj[dateStr];
+                                trimmed = true;
+                            }
+                        });
+                        if (trimmed) localStorage.setItem(storageKey, JSON.stringify(obj));
+                    } catch (e) {}
+                };
+                trimDateMap('work_cache_patrol_history');
+                trimDateMap('work_cache_patrol_temp_records');
+                trimDateMap('work_cache_cs_multiday_schedules');
+                trimDateMap('work_cache_clean_multiday_schedules');
+            } catch (e) {
+                console.error('清理過期本機快取時發生異常：', e);
+            }
+        };
+        // 網頁載入時立即執行一次根源瘦身
+        window.purgeObsoleteLocalStorage();
+
         const safeSetLocal = (k, d) => { 
             try { 
                 localStorage.setItem(k, JSON.stringify(d));
                 return true;
             } catch (e) {
-                console.error('localStorage 寫入失敗：', k, e);
-                if (typeof window.showToast === 'function') window.showToast(`⚠️ 本機儲存失敗：${k}`, true);
-                return false;
+                // 🌟 遇到容量滿溢時，先執行根源瘦身釋放空間，再重試一次真實寫入
+                window.purgeObsoleteLocalStorage();
+                try {
+                    localStorage.setItem(k, JSON.stringify(d));
+                    return true;
+                } catch (retryErr) {
+                    console.error('localStorage 寫入失敗：', k, retryErr);
+                    if (typeof window.showToast === 'function') window.showToast(`⚠️ 本機儲存失敗：${k}`, true);
+                    return false;
+                }
             } 
         };
 
-        // ====== 關鍵修正：圖庫專用防爆儲存 (自動剔除肥大 Base64 並雙寫 IndexedDB) ======
+        // ====== 關鍵修正：圖庫清單統一由大容量 IndexedDB 儲存，徹底釋放 localStorage ======
         const saveGalleryItemsSafe = async (items) => {
             const cleanList = (items || []).map(it => {
                 const copy = { ...it };
-                delete copy.src;    // 剔除大圖字串，防止塞爆記憶體與 5MB 上限
+                delete copy.src;    // 剔除大圖字串
                 delete copy.chunks; // 剔除切片字串
                 return copy;
             });
-            safeSetLocal('work_cache_gallery_items', cleanList);
+            // 移除 localStorage 重複寫入，釋放寶貴的 5MB 配額給系統設定檔
+            localStorage.removeItem('work_cache_gallery_items');
             try {
                 await idbSet('app_gallery_metadata_list', cleanList);
             } catch (e) {
@@ -849,28 +943,28 @@ window.safeSetLocal = safeSetLocal;
             h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
             return 'h_' + (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
         };
-        window.openAdminAuthModal = () => {
+       window.openAdminAuthModal = () => {
             document.getElementById('adminAuthModal')?.remove();
             if (currentUser && !window._adminAuthReady) {
-                window.showToast('管理員設定同步中，請稍後再試', true);
+                window.showToast('設定同步中，請稍後再試', true);
                 return;
             }
             const cfg = _adminAuthLocal();
             const body = window.isAdminUnlocked()
-                ? `<p class="text-xs text-emerald-700 font-bold text-center mb-3">✅ 管理員模式已解鎖（剩餘 ${Math.ceil((window._adminUnlockedUntil - Date.now()) / 60000)} 分鐘）</p>
+                ? `<p class="text-xs text-emerald-700 font-bold text-center mb-3">✅ 已解鎖（剩餘 ${Math.ceil((window._adminUnlockedUntil - Date.now()) / 60000)} 分鐘）</p>
                    <button type="button" onclick="window.lockAdminMode()" class="w-full py-2 bg-slate-800 text-white rounded-xl text-xs font-black">立即鎖定</button>`
                 : cfg
                 ? `<div class="space-y-2">
-                     <input type="password" id="adminPwdInput" placeholder="管理員密碼" class="w-full border border-slate-300 rounded-lg p-2 text-sm text-center">
+                     <input type="password" id="adminPwdInput" placeholder="請輸入密碼" class="w-full border border-slate-300 rounded-lg p-2 text-sm text-center">
                      <button type="button" onclick="window._adminLogin()" class="w-full py-2 bg-indigo-600 text-white rounded-xl text-xs font-black">解鎖</button>
                    </div>`
                 : `<div class="space-y-2">
-                     <p class="text-[11px] text-slate-500 text-center">第一次使用：設定管理員密碼（至少 6 位）</p>
+                     <p class="text-[11px] text-slate-500 text-center">第一次使用：設定密碼（至少 6 位）</p>
                      <input type="password" id="adminPwd1" placeholder="設定密碼" class="w-full border border-slate-300 rounded-lg p-2 text-sm text-center">
                      <input type="password" id="adminPwd2" placeholder="再輸入一次" class="w-full border border-slate-300 rounded-lg p-2 text-sm text-center">
                      <button type="button" onclick="window._adminSetup()" class="w-full py-2 bg-indigo-600 text-white rounded-xl text-xs font-black">設定並啟用</button>
                    </div>`;
-            const html = `<div id="adminAuthModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10060] flex items-center justify-center p-4" onclick="if(event.target===this) this.remove()"><div class="bg-white rounded-2xl p-4 w-full max-w-[320px] shadow-2xl" onclick="event.stopPropagation()"><div class="flex items-center justify-between pb-2 mb-3 border-b border-slate-100"><h3 class="font-black text-sm text-slate-800">🔑 管理員</h3><button onclick="document.getElementById('adminAuthModal').remove()" class="text-slate-400 p-1">✕</button></div>${body}<p class="text-[10px] text-slate-400 mt-3 leading-relaxed">這個密碼只在本機比對，用來防止同事改名冒充管理員；它不能取代伺服器端權限控管。</p></div></div>`;
+            const html = `<div id="adminAuthModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10060] flex items-center justify-center p-4" onclick="if(event.target===this) this.remove()"><div class="bg-white rounded-2xl p-4 w-full max-w-[320px] shadow-2xl" onclick="event.stopPropagation()"><div class="flex items-center justify-between pb-2 mb-3 border-b border-slate-100"><h3 class="font-black text-sm text-slate-800">🔑 </h3><button onclick="document.getElementById('adminAuthModal').remove()" class="text-slate-400 p-1">✕</button></div>${body}</div></div>`;
             document.body.insertAdjacentHTML('beforeend', html);
         };
         window._adminSetup = async () => {
@@ -885,7 +979,7 @@ window.safeSetLocal = safeSetLocal;
             syncConfig('admin_auth', cfg);
             window._adminUnlockedUntil = Date.now() + 30 * 60 * 1000;
             document.getElementById('adminAuthModal')?.remove();
-            window.showToast('✅ 管理員密碼已設定並解鎖 30 分鐘');
+            window.showToast('✅ 密碼已設定並解鎖 30 分鐘');
             if (typeof window.renderGalleryLogs === 'function') window.renderGalleryLogs();
         };
         window._adminLogin = async () => {
@@ -896,16 +990,16 @@ window.safeSetLocal = safeSetLocal;
             if (hash !== cfg.hash) return window.showToast('密碼不正確', true);
             window._adminUnlockedUntil = Date.now() + 30 * 60 * 1000;
             document.getElementById('adminAuthModal')?.remove();
-            window.showToast('✅ 已解鎖管理員模式（30 分鐘）');
+            window.showToast('✅ 已解鎖（30 分鐘）');
             if (typeof window.renderGalleryLogs === 'function') window.renderGalleryLogs();
         };
         window.lockAdminMode = () => {
             window._adminUnlockedUntil = 0;
             document.getElementById('adminAuthModal')?.remove();
-            window.showToast('🔒 已鎖定管理員模式');
+            window.showToast('🔒 已鎖定');
             if (typeof window.renderGalleryLogs === 'function') window.renderGalleryLogs();
         };
-window.getLocal = getLocal;
+        window.getLocal = getLocal;
         const pad = (n) => String(n).padStart(2, '0');
 
         const IDB_STORE = 'hd_full_images';
@@ -1492,6 +1586,13 @@ window.openTabVisibilityModal = () => {
                         syncConfig('team_members', { members: csMembersStore });
                     }
                 }
+            }
+
+// 🌟 若含有 Base64 大頭像，同步備份到無容量限制的 IndexedDB，防止 profiles 肥大化
+            if (profileData?.avatar && profileData.avatar.startsWith('data:image')) {
+                try {
+                    idbSet(`avatar_${name}`, profileData.avatar);
+                } catch (e) {}
             }
 
             memberProfilesStore[name] = Object.assign({ id: '', avatar: '', gender: '女', prefs: [] }, memberProfilesStore[name] || {}, profileData);
@@ -4014,7 +4115,7 @@ window.timeOffset = window.timeOffset || 0;
                 }
             }
 
-            if (val === '') {
+if (val === '') {
                 delete patrolTempRecords[date][slot][pointId];
             } else {
                 patrolTempRecords[date][slot][pointId] = val;
@@ -4022,6 +4123,15 @@ window.timeOffset = window.timeOffset || 0;
             patrolTempRecords[date][slot][`${pointId}_ts`] = nowTs;
 
             safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
+
+            // 🌟 加入溫度操作日誌
+            const ptObj = RAW_TEMPERATURE_POINTS.find(p => p.id === pointId);
+            const ptName = ptObj ? ptObj.name : pointId;
+            if (key === 'CLEAR' || val === '') {
+                window.writeGalleryLog('取消溫度', ptName, `時段: ${slot}`);
+            } else {
+                window.writeGalleryLog('記錄溫度', ptName, `時段: ${slot} · 溫度: ${val}°C`);
+            }
 
             const popupDisplay = document.getElementById('tempKeypadCurrentDisplay');
             if (popupDisplay) {
@@ -5637,89 +5747,115 @@ window.stopOverdueAlarm = () => {
 
         // 👇 ====== 【從這裡開始替換：修正點一】 ====== 👇
 
-        // 1. 每日自動清理：排除已被手動還原的相片 (!i.restored)
+// 1. 每日自動清理：排除已被手動還原的相片 (!i.restored)
 window.autoCleanupGalleryToTrash = async () => {
-            const now = window.getNow();
-            const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+            // 🌟 防重複機制 1：若當前正在執行中，禁止併發二次進入
+            if (window._isAutoArchiving) return;
 
-            // 1. 取得所有在佇列中尚未傳完的 ID 集合，絕對不將排隊中的昨日照片移入還原清單
-            const pendingIds = new Set([
-                ...(window._uploadQueue || []).map(q => String(q.tempId || q.id)),
-                ...getLocal('work_pending_offline_uploads', []).map(q => String(q.tempId || q.id))
-            ]);
+            const todayStr = getTodayDateStr();
+            // 🌟 防重複機制 2：今日已成功標記過，直接退出，徹底根絕洗版！
+            const lastArchiveDate = localStorage.getItem('work_last_auto_archive_date');
+            if (lastArchiveDate === todayStr) {
+                return;
+            }
 
-            // 2. 超過 7 天（7 * 86400000 ms）的項目徹底物理刪除
-            const SEVEN_DAYS_MS = 7 * 86400000;
-            const expiredItems = galleryItems.filter(i => i.isDeleted && (now.getTime() - (i.deletedAt || i.createdAt || 0)) > SEVEN_DAYS_MS);
-            if (expiredItems.length > 0) {
-                const expiredIds = new Set(expiredItems.map(x => String(x.id)));
+            window._isAutoArchiving = true;
+
+            try {
+                const now = window.getNow();
+                const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+                // 1. 取得所有在佇列中尚未傳完的 ID 集合，絕對不將排隊中的昨日照片移入還原清單
+                const pendingIds = new Set([
+                    ...(window._uploadQueue || []).map(q => String(q.tempId || q.id)),
+                    ...getLocal('work_pending_offline_uploads', []).map(q => String(q.tempId || q.id))
+                ]);
+
+                // 2. 超過 7 天（7 * 86400000 ms）的項目徹底物理刪除
+                const SEVEN_DAYS_MS = 7 * 86400000;
+                const expiredItems = galleryItems.filter(i => i.isDeleted && (now.getTime() - (i.deletedAt || i.createdAt || 0)) > SEVEN_DAYS_MS);
+                if (expiredItems.length > 0) {
+                    const expiredIds = new Set(expiredItems.map(x => String(x.id)));
+                    if (currentUser && db && navigator.onLine) {
+                        try {
+                            for (let i = 0; i < expiredItems.length; i += 400) {
+                                const batch = writeBatch(db);
+                                expiredItems.slice(i, i + 400).forEach(it => {
+                                    batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(it.id)));
+                                });
+                                await batch.commit();
+                            }
+                        } catch (e) {
+                            console.error('過期垃圾清理雲端同步失敗，保留本地記錄稍後重試', e);
+                            return;
+                        }
+                    }
+                    galleryItems = galleryItems.filter(x => !expiredIds.has(String(x.id)));
+                    expiredItems.forEach(item => {
+                        idbDel(item.id);
+                        idbDel(`${item.id}_v_${item.createdAt || 0}`);
+                        idbDel(`${item.id}_v_${item.updatedAt || 0}`);
+                        idbDel(`thumb_${item.id}_v_${item.updatedAt || item.createdAt || 0}`);
+                    });
+                    await saveGalleryItemsSafe(galleryItems);
+                }
+
+                // 3. 昨日照片跨日自動歸檔（嚴格排除未傳完的項目與手動還原項目）
+                const yesterdayItems = galleryItems.filter(i => 
+                    !i.isDeleted && 
+                    !i.restored && 
+                    !pendingIds.has(String(i.id)) && 
+                    i.createdAt && 
+                    i.createdAt < startOfToday
+                );
+
+                // 🌟 關鍵修復：即使今日沒有昨日照片，也必須標記今日已完成，絕不重跑！
+                if (!yesterdayItems.length) {
+                    localStorage.setItem('work_last_auto_archive_date', todayStr);
+                    return;
+                }
+
+                const cleanupTime = Date.now();
+
+                // 4. 雲端同步失敗時直接終止，絕對不私自改寫本地快取，防止狀態裂解
                 if (currentUser && db && navigator.onLine) {
                     try {
-                        for (let i = 0; i < expiredItems.length; i += 400) {
+                        for (let i = 0; i < yesterdayItems.length; i += 400) {
                             const batch = writeBatch(db);
-                            expiredItems.slice(i, i + 400).forEach(it => {
-                                batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(it.id)));
+                            yesterdayItems.slice(i, i + 400).forEach(i => {
+                                const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(i.id));
+                                batch.set(ref, { isDeleted: true, isManualDeleted: false, deletedAt: cleanupTime }, { merge: true });
                             });
                             await batch.commit();
                         }
-                    } catch (e) {
-                        console.error('過期垃圾清理雲端同步失敗，保留本地記錄稍後重試', e);
+                    } catch(e) {
+                        console.error("每日自動歸檔雲端同步失敗，終止本地歸檔:", e);
                         return;
                     }
                 }
-                galleryItems = galleryItems.filter(x => !expiredIds.has(String(x.id)));
-                expiredItems.forEach(item => {
-                    idbDel(item.id);
-                    idbDel(`${item.id}_v_${item.createdAt || 0}`);
-                    idbDel(`${item.id}_v_${item.updatedAt || 0}`);
-                    idbDel(`thumb_${item.id}_v_${item.updatedAt || item.createdAt || 0}`);
+
+                yesterdayItems.forEach(i => {
+                    i.isDeleted = true;
+                    i.isManualDeleted = false;
+                    i.deletedAt = cleanupTime;
                 });
+
                 await saveGalleryItemsSafe(galleryItems);
-            }
 
-            // 3. 昨日照片跨日自動歸檔（嚴格排除未傳完的項目與手動還原項目）
-            const yesterdayItems = galleryItems.filter(i => 
-                !i.isDeleted && 
-                !i.restored && 
-                !pendingIds.has(String(i.id)) && 
-                (i.createdAt || 0) < startOfToday
-            );
-            if (!yesterdayItems.length) return;
+                // 🌟 寫入成功後鎖定今日日期
+                localStorage.setItem('work_last_auto_archive_date', todayStr);
 
-            const cleanupTime = Date.now();
-
-            // 4. 雲端同步失敗時直接終止，絕對不私自改寫本地快取，防止狀態裂解
-            if (currentUser && db && navigator.onLine) {
-                try {
-                    for (let i = 0; i < yesterdayItems.length; i += 400) {
-                        const batch = writeBatch(db);
-                        yesterdayItems.slice(i, i + 400).forEach(i => {
-                            const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(i.id));
-                            batch.set(ref, { isDeleted: true, isManualDeleted: false, deletedAt: cleanupTime }, { merge: true });
-                        });
-                        await batch.commit();
-                    }
-                } catch(e) {
-                    console.error("每日自動移至還原清單雲端同步失敗，終止本地歸檔:", e);
-                    return;
+                // 🌟 更新文字：改為「跨日自動刪除」
+                window.writeGalleryLog('每日歸檔', `${yesterdayItems.length} 張昨日相片`, '跨日自動刪除', '系統自動', '#64748b');
+                window._lastRenderFingerprint = '';
+                if (!$('galleryPage')?.classList.contains('hidden')) {
+                    window.renderGallery();
                 }
-            }
-
-            yesterdayItems.forEach(i => {
-                i.isDeleted = true;
-                i.isManualDeleted = false;
-                i.deletedAt = cleanupTime;
-            });
-
-            await saveGalleryItemsSafe(galleryItems);
-
-            window.writeGalleryLog('每日歸檔', `${yesterdayItems.length} 張昨日相片`, '跨日自動移至還原清單', '系統自動', '#64748b');
-            window._lastRenderFingerprint = '';
-            if (!$('galleryPage')?.classList.contains('hidden')) {
-                window.renderGallery();
-            }
-            if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
-                window.renderTrashList();
+                if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
+                    window.renderTrashList();
+                }
+            } finally {
+                window._isAutoArchiving = false;
             }
         };
 
@@ -6269,28 +6405,31 @@ window.autoCleanupGalleryToTrash = async () => {
                             // 嚴格等待雲端 commit 完成
                             await batch.commit();
                             
-                            window.writeGalleryLog('旋轉圖片', targetItem?.title || itemId, `旋轉 ${angleDeg > 0 ? '+90°' : '-90°'}`);
+const photoName = targetItem?.title ? `[${targetItem.title}]` : `[未命名照片_${itemId}]`;
+window.writeGalleryLog('旋轉圖片', photoName, `旋轉 ${angleDeg > 0 ? '+90°' : '-90°'}`);
                             window.showToast("✅ 圖片旋轉已成功保存並同步至所有設備！");
                         }
 } catch (cloudErr) {
-                        console.error("雲端切片旋轉同步失敗，排入離線重試佇列:", cloudErr);
-                        // 🌟 根源修復：將旋轉未成功的圖片記錄排入補傳佇列，連線時自動重試
-                        window.markSyncError(`rotate_${itemId}`, {
-                            type: 'rotate_chunks',
-                            itemId: itemId,
-                            updatedAt: newTimestamp,
-                            dataUrl: rotatedDataUrl
-                        }, false, cloudErr);
-                        window.showToast("⚠️ 本機已旋轉，已排入背景重試佇列", true);
+                        console.error("雲端切片旋轉同步失敗，排入圖庫離線佇列:", cloudErr);
+                        // 🌟 根源修復：圖片實體已在步驟 3 存入 IndexedDB，佇列只存輕量 metadata（不含 Base64），連網後由 resumeBatchUploadQueue 正確寫回 gallery_items 切片
+                        await idbSet(String(itemId), rotatedDataUrl);
+                        if (targetItem) {
+                            window._uploadQueue = (window._uploadQueue || []).filter(q => String(q.tempId || q.id) !== String(itemId));
+                            window._uploadQueue.push({ ...targetItem, tempId: itemId, updatedAt: newTimestamp });
+                            const safeQueue = window._uploadQueue.map(q => { const c = { ...q }; delete c.src; delete c.chunks; return c; });
+                            safeSetLocal('work_pending_offline_uploads', safeQueue);
+                        }
+                        window.showToast("⚠️ 本機已旋轉，連網時將自動同步切片", true);
                     }
                 } else {
+                    await idbSet(String(itemId), rotatedDataUrl);
+                    if (targetItem) {
+                        window._uploadQueue = (window._uploadQueue || []).filter(q => String(q.tempId || q.id) !== String(itemId));
+                        window._uploadQueue.push({ ...targetItem, tempId: itemId, updatedAt: newTimestamp });
+                        const safeQueue = window._uploadQueue.map(q => { const c = { ...q }; delete c.src; delete c.chunks; return c; });
+                        safeSetLocal('work_pending_offline_uploads', safeQueue);
+                    }
                     window.showToast("✅ 圖片已在本機旋轉儲存（離線待同步）！");
-                    window.markSyncError(`rotate_${itemId}`, {
-                        type: 'rotate_chunks',
-                        itemId: itemId,
-                        updatedAt: newTimestamp,
-                        dataUrl: rotatedDataUrl
-                    }, false, new Error('Offline'));
                 }
                 // 👆【你要加的區塊結束】
 
@@ -6373,7 +6512,8 @@ window.autoCleanupGalleryToTrash = async () => {
             }
 
             // 👇【第一個地方：寫入「移至垃圾桶」】
-            window.writeGalleryLog('移至垃圾桶', item.title || item.id, `分類: ${item.category || '未分類'}`);
+const photoName = item.title ? `[${item.title}]` : `[未命名照片_${item.id}]`;
+window.writeGalleryLog('移至垃圾桶', photoName, `分類: ${item.category || '未分類'} · 時間: ${item.time || '12:00'}`);
 
             window._lastRenderFingerprint = '';
             await window.renderGallery();
@@ -6426,7 +6566,13 @@ window.deleteSelectedGalleryItems = () => {
             idsToDelete.forEach(id => window.queueGalleryMetadataPatch(id, batchDeletePatch));
         }
 
-        window.writeGalleryLog('批次移至垃圾桶', `${count} 張圖片`, '多選移至還原清單');
+const removedNames = galleryItems
+    .filter(i => idsToDelete.includes(String(i.id)))
+    .map(i => i.title || '未命名')
+    .slice(0, 5)
+    .join('、');
+const displayTarget = count === 1 ? `[${removedNames}]` : `共 ${count} 張: [${removedNames}${count > 5 ? '...等' : ''}]`;
+window.writeGalleryLog('批次移至垃圾桶', displayTarget, `批次刪除`);
 
         // 3. 重置選取模式並刷新畫面
         window.isGallerySelectMode = false;
@@ -6484,7 +6630,8 @@ window.deleteSelectedGalleryItems = () => {
                 window.queueGalleryMetadataPatch(id, restorePatch);
             }
 
-            window.writeGalleryLog('還原圖片', item.title || item.id, `自垃圾桶還原`);
+const photoName = item.title ? `[${item.title}]` : `[未命名照片_${item.id}]`;
+window.writeGalleryLog('還原圖片', photoName, `自還原清單救回 · 分類: ${item.category || '未分類'}`);
 
             window._lastRenderFingerprint = '';
             window.renderTrashList();
@@ -6541,7 +6688,9 @@ window.deleteSelectedGalleryItems = () => {
                 trashed.forEach(item => window.queueGalleryMetadataPatch(item.id, dateRestorePatch));
             }
 
-            window.writeGalleryLog('還原整日', `${dateStr} (${trashed.length} 張)`, '依日期批次還原');
+const restoredNames = trashed.map(i => i.title || '未命名').slice(0, 6).join('、');
+const detailSummary = `${dateStr} 共 ${trashed.length} 張: [${restoredNames}${trashed.length > 6 ? '...等' : ''}]`;
+window.writeGalleryLog('還原整日', detailSummary, '依日期批次還原');
 
             window._lastRenderFingerprint = '';
             window.renderTrashList();
@@ -6593,7 +6742,9 @@ window.deleteSelectedGalleryItems = () => {
                 trashed.forEach(item => window.queueGalleryMetadataPatch(item.id, allRestorePatch));
             }
 
-            window.writeGalleryLog('全部還原', `${trashed.length} 張圖片`, `全部清單還原`);
+const allNames = trashed.map(i => i.title || '未命名').slice(0, 6).join('、');
+const allSummary = `共 ${trashed.length} 張: [${allNames}${trashed.length > 6 ? '...等' : ''}]`;
+window.writeGalleryLog('全部還原', allSummary, '全部清單還原');
 
             window._lastRenderFingerprint = '';
             window.closeTrashModal();
@@ -6664,7 +6815,9 @@ window.clearTrashPermanently = () => {
                     }
                 }
 
-                window.writeGalleryLog('永久清空', `${trashed.length} 張相片`, '已永久清空垃圾桶');
+const clearedNames = trashed.map(i => i.title || '未命名').slice(0, 6).join('、');
+const clearedSummary = `共 ${trashed.length} 張: [${clearedNames}${trashed.length > 6 ? '...等' : ''}]`;
+window.writeGalleryLog('永久清空', clearedSummary, '永久刪除且無法復原');
                 window.showToast("🔥 已永久清空垃圾桶！");
             });
         };
@@ -6957,42 +7110,50 @@ window.clearTrashPermanently = () => {
             const newTime = $('editModalTimeInput')?.value || '12:00';
 
             const editTs = Date.now();
+            const oldTitle = item.title || '無標題';
+            const isRenamed = oldTitle !== newTitle;
+            
             item.title = newTitle;
-            item.category = newCat;
-            item.time = newTime;
-            item.updatedAt = editTs;
-            const editPatch = { title: newTitle, category: newCat, time: newTime, updatedAt: editTs };
+item.category = newCat;
+      item.time = newTime;
+      item.updatedAt = editTs;
+      const editPatch = { title: newTitle, category: newCat, time: newTime, updatedAt: editTs };
 
-            await saveGalleryItemsSafe(galleryItems);
-            if (currentUser && db) {
-                try {
-                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), editPatch, { merge: true });
-                } catch (err) {
-                    window.queueGalleryMetadataPatch(id, editPatch);
-                    window.reportCloudError('圖片修改同步失敗，已排隊補傳', err);
-                }
-            } else {
-                window.queueGalleryMetadataPatch(id, editPatch);
-            }
+      await saveGalleryItemsSafe(galleryItems);
+      if (currentUser && db) {
+          try {
+              await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', id), editPatch, { merge: true });
+          } catch (err) {
+              window.queueGalleryMetadataPatch(id, editPatch);
+              window.reportCloudError('圖片修改同步失敗，已排隊補傳', err);
+          }
+      } else {
+          window.queueGalleryMetadataPatch(id, editPatch);
+      }
 
-            window.writeGalleryLog('修改圖片', newTitle, `分類: ${newCat} · 時間: ${newTime}`);
+      // 🌟 記錄修改前的原名稱與修改後的新名稱（移除重複宣告）
+      const logTarget = isRenamed ? `[${oldTitle}] → [${newTitle}]` : `[${newTitle}]`;
+      const logDetail = isRenamed 
+          ? `照片改名成功 · 分類: ${newCat} · 時間: ${newTime}` 
+          : `修改資料 · 分類: ${newCat} · 時間: ${newTime}`;
+      window.writeGalleryLog('修改圖片', logTarget, logDetail);
 
-            $('galleryItemEditModal')?.remove();
-            window._lastRenderFingerprint = '';
-            window.renderGallery();
-            await window.autoSyncClosedStallsToPatrol(true); // 🌟 分類一旦改掉（例如改成營業相），立即撤銷剔檔中的 0
-            window.showToast(`✅ 已儲存！分類確定為「${newCat}」`);
-        };
+      $('galleryItemEditModal')?.remove();
+      window._lastRenderFingerprint = '';
+      window.renderGallery();
+      await window.autoSyncClosedStallsToPatrol(true);
+      window.showToast(`✅ 已儲存！分類確定為「${newCat}」`);
+  };
 
-        // ====== 多選狀態與輔助函式 ======
-        window.isGallerySelectMode = false;
-        window.selectedGalleryIds = new Set();
+  // ====== 多選狀態與輔助函式 ======
+  window.isGallerySelectMode = false;
+  window.selectedGalleryIds = new Set();
 
-        window.toggleGallerySelectMode = () => {
-            window.isGallerySelectMode = !window.isGallerySelectMode;
-            window.selectedGalleryIds.clear();
-            window.renderGallery();
-        };
+  window.toggleGallerySelectMode = () => {
+      window.isGallerySelectMode = !window.isGallerySelectMode;
+      window.selectedGalleryIds.clear();
+      window.renderGallery();
+  };
 
         window.toggleSelectGalleryItem = (id, e) => {
             if (e) e.stopPropagation();
@@ -7541,54 +7702,47 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
                     return tA - tB;
                 });
 
-                // 6. 操作日誌（20分鐘內同用戶堆疊合併為 1 筆）
-                const rawSortedLogs = [...(typeof galleryLogsStore !== 'undefined' && Array.isArray(galleryLogsStore) ? galleryLogsStore : [])].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-                const TWENTY_MINS = 20 * 60 * 1000;
-                const logGroups = [];
-                let curGrp = null;
+// 6. 操作日誌（按使用者獨立聚合 20 分鐘時間桶，不被插隊切斷）
+            const rawSortedLogs = [...(galleryLogsStore || [])].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+            const TWENTY_MINS = 20 * 60 * 1000;
+            const userBuckets = new Map();
 
-                for (const log of rawSortedLogs) {
-                    const uName = log.user || '未知';
-                    const dateKey = window.formatDateStrHK ? window.formatDateStrHK(log.timestamp || Date.now()) : '';
-                    if (!curGrp) {
-                        curGrp = {
-                            dateKey,
-                            user: uName,
-                            color: log.color || '#38bdf8',
-                            latestTs: log.timestamp,
-                            oldestTs: log.timestamp,
-                            items: [log]
-                        };
-                    } else {
-                        const isSameDay = curGrp.dateKey === dateKey;
-                        const isSameUser = curGrp.user === uName;
-                        const within20Mins = Math.abs(curGrp.oldestTs - log.timestamp) <= TWENTY_MINS;
+            for (const log of rawSortedLogs) {
+                const uName = log.user || '未知';
+                const dateKey = window.formatDateStrHK(log.timestamp || Date.now());
+                const userKey = `${dateKey}_${uName}`;
 
-                        if (isSameDay && isSameUser && within20Mins) {
-                            curGrp.items.push(log);
-                            curGrp.oldestTs = log.timestamp;
-                        } else {
-                            curGrp.id = `dash_grp_${curGrp.dateKey}_${curGrp.user}_${curGrp.latestTs}_${curGrp.oldestTs}`;
-                            logGroups.push(curGrp);
-                            if (logGroups.length >= 5) {
-                                curGrp = null;
-                                break;
-                            }
-                            curGrp = {
-                                dateKey,
-                                user: uName,
-                                color: log.color || '#38bdf8',
-                                latestTs: log.timestamp,
-                                oldestTs: log.timestamp,
-                                items: [log]
-                            };
-                        }
-                    }
+                if (!userBuckets.has(userKey)) {
+                    userBuckets.set(userKey, []);
                 }
-                if (curGrp && logGroups.length < 5) {
-                    curGrp.id = `dash_grp_${curGrp.dateKey}_${curGrp.user}_${curGrp.latestTs}_${curGrp.oldestTs}`;
-                    logGroups.push(curGrp);
+                const groups = userBuckets.get(userKey);
+                let matched = groups.find(g => Math.abs(g.oldestTs - log.timestamp) <= TWENTY_MINS || Math.abs(g.latestTs - log.timestamp) <= TWENTY_MINS);
+
+                if (matched) {
+                    matched.items.push(log);
+                    if (log.timestamp > matched.latestTs) matched.latestTs = log.timestamp;
+                    if (log.timestamp < matched.oldestTs) matched.oldestTs = log.timestamp;
+                } else {
+                    groups.push({
+                        dateKey,
+                        user: uName,
+                        color: log.color || '#38bdf8',
+                        latestTs: log.timestamp,
+                        oldestTs: log.timestamp,
+                        items: [log]
+                    });
                 }
+            }
+
+            let logGroups = [];
+            userBuckets.forEach(groups => {
+                groups.forEach(g => {
+                    g.id = `dash_grp_${g.dateKey}_${g.user}_${g.latestTs}_${g.oldestTs}`;
+                    logGroups.push(g);
+                });
+            });
+            logGroups.sort((a, b) => b.latestTs - a.latestTs);
+            logGroups = logGroups.slice(0, 5); // 儀表板取前 5 筆聚合
 
                 container.innerHTML = `
                 <div class="space-y-2 pb-8">
@@ -7603,30 +7757,34 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
                         </div>
 
                         <div class="space-y-1.5 text-xs">
-                            <!-- 提早收工與清潔相（並排顯示） -->
-                            <div class="soft-box-slate p-1.5 px-2 flex items-center justify-between">
-                                <div class="flex items-center space-x-3">
-                                    <div class="flex items-center gap-1"><span class="text-slate-500 font-bold text-[11px]">提早收工</span> <span class="font-mono font-black text-amber-800 bg-amber-100/90 border border-amber-300 px-1.5 py-0.2 rounded text-[10.5px]">${earlyCloseCount} 個</span></div>
-                                    <div class="flex items-center gap-1"><span class="text-slate-500 font-bold text-[11px]">清潔相</span> <span class="font-mono font-black text-cyan-800 bg-cyan-100/90 border border-cyan-300 px-1.5 py-0.2 rounded text-[10.5px]">${cleanPhotoCount} 個</span></div>
+<!-- 提早收工與清潔相：規整對齊版 -->
+                        <div class="soft-box-slate p-2 space-y-1.5">
+                            <div class="flex items-center justify-between">
+                                <!-- 左側：提早收工 -->
+                                <div class="flex items-center space-x-1.5">
+                                    <span class="text-slate-600 font-bold text-[11px]">提早收工</span>
+                                    <span class="font-mono font-black text-amber-800 bg-amber-100/90 border border-amber-300 px-2 py-0.5 rounded-md text-[11px] shadow-2xs">${earlyCloseCount} 個</span>
                                 </div>
-                                <span class="text-[10px] font-mono text-slate-400 font-bold">共 ${todayPhotos.length} 張</span>
+
+                                <!-- 右側：清潔相 -->
+                                <div class="flex items-center space-x-1.5">
+                                    <span class="text-slate-600 font-bold text-[11px] flex items-center">
+                                        <i data-lucide="sparkles" class="w-3.5 h-3.5 mr-1 ${cleanReady ? 'text-cyan-600' : 'text-slate-400'}"></i>清潔相
+                                    </span>
+                                    <span class="font-mono font-black text-[11px] px-2 py-0.5 rounded-md border shadow-2xs ${cleanReady ? 'bg-cyan-50 text-cyan-700 border-cyan-300' : 'bg-cyan-100/90 text-cyan-800 border-cyan-300'}">
+                                        ${uploadedCleanCodes.size} / 6 檔 ${cleanReady ? '✔' : ''}
+                                    </span>
+                                </div>
                             </div>
 
-                            <!-- 🌟 清潔相 (特定 6 檔核對) -->
-                            <div class="${cleanReady ? 'soft-box-cyan' : 'soft-box-slate'} p-2">
-                                <div class="flex items-center justify-between mb-0.5">
-                                    <span class="font-black text-slate-800 flex items-center text-[11px]">
-                                        <i data-lucide="sparkles" class="w-3.5 h-3.5 mr-1 ${cleanReady ? 'text-cyan-600' : 'text-slate-400'}"></i>
-                                        清潔相 (特定 6 檔)
-                                    </span>
-                                    <span class="font-mono font-black text-[11px] px-1.5 py-0.2 rounded ${cleanReady ? 'bg-white text-cyan-700 border border-cyan-300' : 'bg-slate-200/80 text-slate-700'}">${uploadedCleanCodes.size} / 6 檔 ${cleanReady ? '✔' : ''}</span>
+                            <!-- 若未齊，以整齊的淡粉色小標籤條置底顯示，不歪斜、不破版 -->
+                            ${!cleanReady && missingCleanStalls.length > 0 ? `
+                                <div class="bg-rose-50/80 border border-rose-200/80 rounded-md px-2 py-1 flex items-center justify-between text-[10px]">
+                                    <span class="text-rose-600 font-bold shrink-0">未齊缺號：</span>
+                                    <span class="font-mono font-bold text-rose-700 truncate pl-1">${missingCleanStalls.join(', ')}</span>
                                 </div>
-                                ${!cleanReady ? `
-                                    <div class="text-[10px] text-rose-600 font-bold truncate pl-4">
-                                        未齊！缺號: <span class="font-mono">${missingCleanStalls.join(', ')}</span>
-                                    </div>
-                                ` : `<div class="text-[10px] text-cyan-700 font-bold pl-4">6 檔清潔相已全部拍攝齊全！</div>`}
-                            </div>
+                            ` : ''}
+                        </div>
 
                             <!-- 營業相 (13張) -->
                             <div class="${businessReady ? 'soft-box-green' : 'soft-box-slate'} p-2">
@@ -7635,7 +7793,7 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
                                         <i data-lucide="store" class="w-3.5 h-3.5 mr-1 ${businessReady ? 'text-green-600' : 'text-slate-400'}"></i>
                                         營業相 (一樓肉檔)
                                     </span>
-                                    <span class="font-mono font-black text-[11px] px-1.5 py-0.2 rounded ${businessReady ? 'bg-white text-green-700 border border-green-300' : 'bg-slate-200/80 text-slate-700'}">${uploadedFirstFloorCodes.size} / 13 張 ${businessReady ? '✔' : ''}</span>
+<span class="font-mono font-black text-[11px] px-1.5 py-0.2 rounded ${businessReady ? 'bg-white text-green-700 border border-green-500' : 'bg-slate-200/80 text-slate-700'}">${uploadedFirstFloorCodes.size} / 13 張 ${businessReady ? '✔' : ''}</span>
                                 </div>
                                 ${!businessReady ? `
                                     <div class="text-[10px] text-rose-600 font-bold truncate pl-4">
@@ -8197,7 +8355,7 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
 
 window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
-                // 🌟 離線佇列安全化：剔除肥大切片，僅保留元數據存入本機，防止爆 5MB 上限
+// 🌟 離線佇列安全化：剔除肥大切片，僅保留元數據存入本機，防止爆 5MB 上限
                 window._uploadQueue = [...window._uploadQueue, ...items];
                 window._totalUploadCount = window._uploadQueue.length;
                 const safeQueue = window._uploadQueue.map(q => {
@@ -8207,6 +8365,12 @@ window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
                     return copy;
                 });
                 safeSetLocal('work_pending_offline_uploads', safeQueue);
+
+                // 🌟 補回：記錄圖片發布與上傳動作
+const itemTitles = items.map(it => it.title || '未命名').join('、');
+const uploadTarget = items.length === 1 ? `[${items[0].title || '未命名'}]` : `共 ${items.length} 張: [${itemTitles}]`;
+const uploadDetail = `分類: ${items[0].category || '未分類'} · 時間: ${items[0].time || '12:00'}`;
+window.writeGalleryLog('發布圖片', uploadTarget, uploadDetail);
 
                 window.closeUploadBatchModal(true);
 
@@ -9184,32 +9348,36 @@ checkAndResetDailySchedule();
                 }, console.error);
             };
 
+// 🌟 動態從單日存檔組裝開會記錄，不再重複存一整包 market_reports_all_data 浪費雙倍空間
+           window.getAllLocalMeetingReports = () => {
+               const index = getLocal('market_reports_index', []);
+               const all = {};
+               index.forEach(k => {
+                   const r = getLocal('market_report_' + k, null);
+                   if (r && r.data) all[k] = r;
+               });
+               return all;
+           };
+
            onSnapshot(cfgDoc('meeting_report_data'), (snap) => {
-    if (!snap.exists()) return;
-    const d = snap.data();
-    const remoteReports = d?.reports || {};
+               if (!snap.exists()) return;
+               const d = snap.data();
+               const remoteReports = d?.reports || {};
 
-    // 🌟 關鍵修復：直接以雲端推送的最新資料覆蓋本地快取，解決手機與電腦時鐘微小誤差導致不更新的問題
-    let all = getLocal('market_reports_all_data', {});
-    Object.keys(remoteReports).forEach(k => {
-        const remote = remoteReports[k];
-        if (remote && remote.data) {
-            all[k] = remote;
-            safeSetLocal('market_report_' + k, remote);
-        }
-    });
-    safeSetLocal('market_reports_all_data', all);
+               let index = getLocal('market_reports_index', []);
+               Object.keys(remoteReports).forEach(k => {
+                   const remote = remoteReports[k];
+                   if (remote && remote.data) {
+                       safeSetLocal('market_report_' + k, remote);
+                       if (!index.includes(k)) index.push(k);
+                   }
+               });
+               index.sort((a, b) => b.localeCompare(a));
+               safeSetLocal('market_reports_index', index);
+               localStorage.removeItem('market_reports_all_data'); // 移除冗餘大包
 
-    let index = getLocal('market_reports_index', []);
-    Object.keys(all).forEach(k => {
-        if (!index.includes(k)) index.push(k);
-    });
-    index.sort((a, b) => b.localeCompare(a));
-    safeSetLocal('market_reports_index', index);
-
-    // 推給 iframe 時用「合併後」的完整資料
-    window.pushMeetingReportsToAllIframes(all);
-}, console.error);
+               window.pushMeetingReportsToAllIframes(window.getAllLocalMeetingReports());
+           }, console.error);
 
             bindSync('gallery_categories', 'work_cache_gallery_categories', d => { 
                 if (d.categories && Array.isArray(d.categories)) {
@@ -12717,7 +12885,7 @@ window.crSaveData = () => {
             // 🌟 強制必選經手客服人員
             if (!withdrawStaff) return window.showToast('⚠️ 請選擇取出貨物的經手客服人員！', true);
 
-            // 處理「合併包裝冰」批次扣減（自動從最久遠的那批開始扣）
+// 處理「合併包裝冰」批次扣減
             if (id && id.startsWith('MERGED_ICE_')) {
                 const stallId = id.replace('MERGED_ICE_', '');
                 const iceBatches = crRecords
@@ -12739,6 +12907,11 @@ window.crSaveData = () => {
                     if (batch.remainingQuantity === 0) batch.status = 'history';
                 }
                 window.crSaveData();
+
+                // 🌟 加入合併包裝冰取出日誌
+                const finalRemain = totalRemain - qty;
+                window.writeGalleryLog('雪房取出', stallId, `取出: ${qty}箱包裝冰 · 經手: ${withdrawStaff} · 剩餘: ${finalRemain}箱`);
+
                 window.crCloseWithdrawModal();
                 window.crRenderList();
                 window.showToast(`✅ 已從 ${stallId} 取出 ${qty} 箱包裝冰 (經手: ${withdrawStaff})`);
@@ -12754,6 +12927,10 @@ window.crSaveData = () => {
             r.lastWithdrawStaff = withdrawStaff;
             if (r.remainingQuantity === 0) r.status = 'history';
             window.crSaveData();
+
+            // 🌟 加入單批貨物取出日誌
+            window.writeGalleryLog('雪房取出', r.tenant, `取出: ${qty}箱 · 經手: ${withdrawStaff} · 剩餘: ${r.remainingQuantity}箱`);
+
             window.crCloseWithdrawModal();
             window.crRenderList();
             window.showToast(`✅ 已取出 ${qty} 箱 (經手: ${withdrawStaff})`);
@@ -13643,19 +13820,17 @@ window._globalClockInterval = setInterval(() => {
     if (!isFastForwarding) window.updateClockUI();
 }, 1000);
 
-if (window._globalMinuteInterval) clearInterval(window._globalMinuteInterval);
-window._globalMinuteInterval = setInterval(() => {
-    checkAndResetDailySchedule();
-    if (!$('dashboardPage')?.classList.contains('hidden')) window.scheduleDashboardUpdate(); // 👈 每分鐘自動更新倒數與狀態
-    if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
-    if (!$('memoPage')?.classList.contains('hidden')) window.updateMemoCountdowns();
-    if (!$('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
-    if (!$('closingPage')?.classList.contains('hidden')) {
-        const input = $('stallQueryInput');
-        if (input && input.value.trim()) window.searchStall();
+// 🌟 徹底拔除 60 秒盲目定時器，改為手機螢幕喚醒/切回前景時才精準檢查一次
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+        checkAndResetDailySchedule();
+        const activeTab = localStorage.getItem('activeTab') || 'gallery';
+        if (activeTab === 'map') window.updateMapSimulation();
+        if (activeTab === 'memo') window.updateMemoCountdowns();
+        if (activeTab === 'coldRoom') window.crRenderList();
+        window.checkMemoAlerts();
     }
-    window.checkMemoAlerts();
-}, 60000);
+});
 
         window.renderMemos = () => {
             const container = $('memoContainer'); if (!container) return; window.crUpdateNotificationBtn();
@@ -14173,7 +14348,7 @@ async function bootstrapApp() {
 
 // 同時把開會記錄推給「分頁 iframe」和「彈窗 iframe」
 window.pushMeetingReportsToAllIframes = (reports) => {
-    const data = reports || getLocal('market_reports_all_data', {});
+    const data = reports || (window.getAllLocalMeetingReports ? window.getAllLocalMeetingReports() : {});
     ['meetingReportIframe', 'meetingReportPageIframe'].forEach(id => {
         const iframe = document.getElementById(id);
         if (iframe && iframe.contentWindow) {
@@ -15372,15 +15547,17 @@ if (savedRaw) {
     const calNextMonth = document.getElementById('cal-next-month');
     const calBtnCurToday = document.getElementById('cal-btn-cur-today');
 
+const today = new Date();
     let calViewYear = today.getFullYear();
     let calViewMonth = today.getMonth();
 
     function renderCalendarGrid() {
+      const nowToday = new Date();
       calMonthTitle.innerText = calViewYear + '年 ' + (calViewMonth + 1) + '月';
       calDaysGrid.innerHTML = '';
       const archiveIndex = getArchiveIndex();
       const currentSelectedKey = getCurrentDateKey();
-      const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+      const todayStr = nowToday.getFullYear() + '-' + String(nowToday.getMonth() + 1).padStart(2, '0') + '-' + String(nowToday.getDate()).padStart(2, '0');
       const firstDayIndex = new Date(calViewYear, calViewMonth, 1).getDay();
       const totalDaysInMonth = new Date(calViewYear, calViewMonth + 1, 0).getDate();
 
@@ -16520,7 +16697,7 @@ historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
                 <h3 class="font-bold text-sm text-slate-800 tracking-wide">操作日誌</h3>
             </div>
             <div class="flex items-center space-x-2">
-                <button type="button" id="adminLockBtn" onclick="window.openAdminAuthModal()" class="text-[10px] font-bold text-slate-600 hover:bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 transition-all">🔑 管理員</button>
+<button type="button" id="adminLockBtn" onclick="window.openAdminAuthModal()" class="text-[10px] font-bold text-slate-600 hover:bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 transition-all">🔑</button>
                 <button type="button" onclick="window.openUserNameModal()" class="text-[10px] font-bold text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-lg border border-blue-200 transition-all">
                     身分: <span id="currentLogUserDisplay">---</span>
                 </button>
