@@ -797,7 +797,7 @@ window.getClearLogAction = (action) => {
 
             window.closeUserNameModal();
             window.renderGalleryLogs();
-            window.showToast(
+window.showToast(
                 isEditingOtherUser
                     ? `✅ 已將「${oldName}」改為「${name}」（您的身分維持「${sysUserName}」不變）`
                     : `✅ 已將您的身分儲存為「${name}」！`
@@ -806,70 +806,170 @@ window.getClearLogAction = (action) => {
 
         const $ = id => document.getElementById(id);
         const getLocal = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
-// 🌟 根源垃圾回收器：清理舊版廢棄 Key、混入佇列的肥大 Base64、以及超過 14 天的本地快取副本（雲端資料不受影響）
-        window.purgeObsoleteLocalStorage = () => {
+
+        // 🌟 寫入前自動瘦身器：不影響記憶體與雲端完整資料，僅針對要存入 localStorage 的副本進行減肥
+        window.shrinkDataForLocalStorage = (k, d) => {
+            if (!d || typeof d !== 'object') return d;
+            try {
+                // 1. 人員檔案：將肥大的 Base64 頭像移出 localStorage（頭像由記憶體、雲端與 IndexedDB 保存）
+                if (k === 'work_cache_member_profiles') {
+                    const slimProfiles = {};
+                    Object.keys(d).forEach(name => {
+                        const prof = d[name];
+                        if (prof && typeof prof === 'object') {
+                            slimProfiles[name] = { ...prof };
+                            if (typeof slimProfiles[name].avatar === 'string' && slimProfiles[name].avatar.startsWith('data:image')) {
+                                delete slimProfiles[name].avatar;
+                            }
+                        }
+                    });
+                    return slimProfiles;
+                }
+
+                // 2. 多日日期字典：本機快取只保留最近 7 天，避免歷史紀錄無限膨脹塞爆 5MB
+                const dateMapKeys = [
+                    'work_cache_patrol_history',
+                    'work_cache_patrol_temp_records',
+                    'work_cache_cs_multiday_schedules',
+                    'work_cache_clean_multiday_schedules',
+                    'work_cache_cs_weekly_roster'
+                ];
+                if (dateMapKeys.includes(k) && !Array.isArray(d)) {
+                    const cutoffMs = Date.now() - 7 * 86400000;
+                    const slimMap = {};
+                    Object.keys(d).forEach(dateStr => {
+                        const dMs = new Date(dateStr).getTime();
+                        if (isNaN(dMs) || dMs >= cutoffMs) {
+                            slimMap[dateStr] = d[dateStr];
+                        }
+                    });
+                    return slimMap;
+                }
+
+                // 3. 雪房紀錄：本機快取保留所有「存放中 (active)」與最近 30 筆「歷史紀錄 (history)」
+                if (k === 'coldRoomRecords' && Array.isArray(d)) {
+                    const activeList = d.filter(r => r && r.status === 'active');
+                    const historyList = d.filter(r => r && r.status !== 'active').slice(0, 30);
+                    return [...activeList, ...historyList];
+                }
+
+                // 4. 離線同步佇列：過濾掉任何夾帶大圖的項目並限制最多 15 筆
+                if (k === 'work_pending_config_sync' && Array.isArray(d)) {
+                    return d.filter(item => !(item && item.data && item.data.dataUrl)).slice(-15);
+                }
+
+                // 5. 開會紀錄整包冗餘鍵：直接回傳空物件（由單日 market_report_YYYY-MM-DD 獨立儲存）
+                if (k === 'market_reports_all_data') {
+                    return {};
+                }
+            } catch (err) {
+                console.warn('資料瘦身處理異常：', err);
+            }
+            return d;
+        };
+
+        // 🌟 根源垃圾回收器：清理舊版廢棄 Key、超大殘留項目與過期本機快取
+        window.purgeObsoleteLocalStorage = (aggressive = false) => {
             try {
                 // 1. 移除舊版遺留與重複冗餘的肥大 Key
                 const obsoleteKeys = [
                     'work_cache_patrol_records',
-                    'work_cache_gallery_items', // 圖庫清單統一由 IndexedDB 專責管理
+                    'work_cache_gallery_items',
                     'stall_db_stable_v1',
-                    'stall_db_stable'
+                    'stall_db_stable',
+                    'market_reports_all_data'
                 ];
                 obsoleteKeys.forEach(k => localStorage.removeItem(k));
 
-                // 2. 清理 _syncQueue 中過去不小心塞入的肥大 Base64 圖片資料 (rotate_chunks)
-                try {
-                    const rawQ = JSON.parse(localStorage.getItem('work_pending_config_sync') || '[]');
-                    const cleanQ = rawQ.filter(item => !(item && item.data && item.data.dataUrl));
-                    if (cleanQ.length !== rawQ.length) {
-                        localStorage.setItem('work_pending_config_sync', JSON.stringify(cleanQ));
-                    }
-                } catch (e) {}
+                // 2. 掃描整個 localStorage，將既有肥大資料立即瘦身，並在空間吃緊時清除過大快取
+                const allKeys = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const keyName = localStorage.key(i);
+                    if (keyName) allKeys.push(keyName);
+                }
 
-                // 3. 為本地歷史快取瘦身：只保留最近 14 天的本機快取（更早的歷史隨時可從雲端拉取）
-                const cutoffMs = Date.now() - 14 * 86400000;
-                const trimDateMap = (storageKey) => {
+                const cutoff14Days = Date.now() - 14 * 86400000;
+                allKeys.forEach(keyName => {
                     try {
-                        const obj = JSON.parse(localStorage.getItem(storageKey) || '{}');
-                        let trimmed = false;
-                        Object.keys(obj).forEach(dateStr => {
-                            const dMs = new Date(dateStr).getTime();
-                            if (!isNaN(dMs) && dMs < cutoffMs) {
-                                delete obj[dateStr];
-                                trimmed = true;
+                        const rawVal = localStorage.getItem(keyName) || '';
+                        // 清理超過 14 天的舊開會紀錄本機快取
+                        if (keyName.startsWith('market_report_') && keyName !== 'market_reports_index') {
+                            const datePart = keyName.replace('market_report_', '');
+                            const dMs = new Date(datePart).getTime();
+                            if (!isNaN(dMs) && dMs < cutoff14Days) {
+                                localStorage.removeItem(keyName);
+                                return;
                             }
-                        });
-                        if (trimmed) localStorage.setItem(storageKey, JSON.stringify(obj));
+                        }
+                        // 若開啟強制清理模式，移除單一超過 150KB 的舊快取或非本系統產生的網域殘留垃圾
+                        if (aggressive && rawVal.length > 150000) {
+                            localStorage.removeItem(keyName);
+                            return;
+                        }
                     } catch (e) {}
-                };
-                trimDateMap('work_cache_patrol_history');
-                trimDateMap('work_cache_patrol_temp_records');
-                trimDateMap('work_cache_cs_multiday_schedules');
-                trimDateMap('work_cache_clean_multiday_schedules');
+                });
+
+                // 3. 將現有重要快取重新套用瘦身規則寫回
+                [
+                    'work_cache_member_profiles',
+                    'work_cache_patrol_history',
+                    'work_cache_patrol_temp_records',
+                    'work_cache_cs_multiday_schedules',
+                    'work_cache_clean_multiday_schedules',
+                    'coldRoomRecords',
+                    'work_pending_config_sync'
+                ].forEach(storageKey => {
+                    try {
+                        const rawStr = localStorage.getItem(storageKey);
+                        if (rawStr) {
+                            const parsed = JSON.parse(rawStr);
+                            const slimmed = window.shrinkDataForLocalStorage(storageKey, parsed);
+                            localStorage.setItem(storageKey, JSON.stringify(slimmed));
+                        }
+                    } catch (e) {
+                        if (aggressive) localStorage.removeItem(storageKey);
+                    }
+                });
             } catch (e) {
                 console.error('清理過期本機快取時發生異常：', e);
             }
         };
         // 網頁載入時立即執行一次根源瘦身
-        window.purgeObsoleteLocalStorage();
+        window.purgeObsoleteLocalStorage(false);
 
-        const safeSetLocal = (k, d) => { 
-            try { 
-                localStorage.setItem(k, JSON.stringify(d));
+        const safeSetLocal = (k, d) => {
+            if (k === 'market_reports_all_data') {
+                localStorage.removeItem('market_reports_all_data');
+                return true;
+            }
+            const slimData = window.shrinkDataForLocalStorage(k, d);
+            const jsonStr = JSON.stringify(slimData);
+            try {
+                localStorage.setItem(k, jsonStr);
                 return true;
             } catch (e) {
-                // 🌟 遇到容量滿溢時，先執行根源瘦身釋放空間，再重試一次真實寫入
-                window.purgeObsoleteLocalStorage();
+                // 🌟 第一次滿溢：執行強制瘦身後重試寫入瘦身後的資料
+                window.purgeObsoleteLocalStorage(true);
                 try {
-                    localStorage.setItem(k, JSON.stringify(d));
+                    localStorage.setItem(k, jsonStr);
                     return true;
                 } catch (retryErr) {
-                    console.error('localStorage 寫入失敗：', k, retryErr);
-                    if (typeof window.showToast === 'function') window.showToast(`⚠️ 本機儲存失敗：${k}`, true);
-                    return false;
+                    // 🌟 第二次滿溢（如手機無痕模式或同網域其他網頁佔滿空間）：釋放快取區並退回 IndexedDB，絕不彈紅字干擾操作
+                    try {
+                        ['work_cache_patrol_history', 'work_cache_cs_multiday_schedules', 'work_cache_clean_multiday_schedules', 'work_cache_member_profiles'].forEach(ck => {
+                            if (ck !== k) localStorage.removeItem(ck);
+                        });
+                        localStorage.setItem(k, jsonStr);
+                        return true;
+                    } catch (finalErr) {
+                        console.warn('localStorage 已達手機瀏覽器硬性上限，自動轉存 IndexedDB：', k);
+                        try {
+                            if (typeof idbSet === 'function') idbSet(`ls_backup_${k}`, slimData);
+                        } catch (idbErr) {}
+                        return false;
+                    }
                 }
-            } 
+            }
         };
 
         const saveGalleryItemsSafe = async (items) => {
