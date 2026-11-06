@@ -9969,14 +9969,13 @@ galleryLogsStore = list;
 }
 window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML = ''; window.updateMapSimulation(); };
 
-        window.updateMapSimulation = () => {
+window.updateMapSimulation = () => {
             if ($('mapPage')?.classList.contains('hidden')) return;
             const container = $('mapPointsContainer'); if (!container) return;
             const now = window.getNow(), nowTime = now.getTime(), curMins = now.getHours() * 60 + now.getMinutes();
             let activeMembers = {}, incomingMembers = {};
 
             // 🌟 嚴格防呆：若班表內有舊名字，強制對齊當前最新正式成員名單 (teamMembers)
-            // 修復：不再就地改寫 memberSchedules（那會污染共用的排班資料），改用解析後的新陣列。
             const _resolvedSchedules = memberSchedules.map(s => {
                 if (!s || !s.name) return s;
                 let nm = s.name;
@@ -9989,11 +9988,11 @@ window.renderMap = () => { const c = $('mapPointsContainer'); if (c) c.innerHTML
                 return nm === s.name ? s : { ...s, name: nm };
             });
 
-const isCleanRole = window.currentMapRole === 'clean';
-            // 根源修復：建立局部展示變數，絕不就地覆寫或截斷全域 memberSchedules 陣列
-            const activeSimSchedules = _resolvedSchedules.filter(s => s && s.name && (teamMembers.length === 0 || teamMembers.includes(s.name)));
+            const isCleanRole = window.currentMapRole === 'clean';
+            // 🌟 嚴格過濾：只保留目前存在於正式名單 (teamMembers) 內的人員，徹底擋掉幽靈
+            memberSchedules = _resolvedSchedules.filter(s => s && s.name && teamMembers.includes(s.name));
 
-            activeSimSchedules.forEach(sched => {
+            memberSchedules.forEach(sched => {
                 const _range = window.getScheduleRange(sched.start, sched.end, nowTime);
                 const s = _range.s.getTime(), e = _range.e.getTime();
                 if (nowTime >= s && nowTime <= e) {
@@ -10001,7 +10000,6 @@ const isCleanRole = window.currentMapRole === 'clean';
                     if (activeMembers[sched.name] !== 'pt_7') {
                         activeMembers[sched.name] = sched.locationId;
                     }
-                    // 修復：用實際區間算剩餘分鐘，跨午夜班次才不會變成負數。
                     const remainMins = Math.max(0, Math.round((e - nowTime) / 60000));
 
                     // 當前班次剩餘 10 分鐘內，檢查下一班接替者
@@ -10013,6 +10011,7 @@ const isCleanRole = window.currentMapRole === 'clean';
                         }
                     }
 
+                    // ====== 僅限「客服模式」：下一個時段前往「客服室 (pt_1)」才提早 15 分鐘標示「待:」======
                     if (!isCleanRole && sched.locationId !== 'pt_1') {
                         const nextDuty = memberSchedules.find(ns => ns.name === sched.name && parseTime(ns.start).getTime() === parseTime(sched.end).getTime() && ns.locationId === 'pt_1');
                         if (nextDuty && remainMins > 0 && remainMins <= 15) {
@@ -10044,6 +10043,69 @@ const isCleanRole = window.currentMapRole === 'clean';
 
             let locGroups = {}; Object.entries(activeMembers).forEach(([n, loc]) => { (locGroups[loc] = locGroups[loc] || []).push(n); });
 
+            // 🌟 核心三層標籤輔助函式：
+            // 1. 最上層：由原本獨立的「待:人名」變成直接疊在該當值人員正上方（橘框橘字）
+            // 2. 中間層：該人員還剩多少時間「時:分 (HH:MM)」換班 / 休息 / 下班（橘字）
+            const usedIncomingByLoc = {};
+            const getCountdownAndIncomingHtml = (personName, locId, personIdx) => {
+                const curSched = memberSchedules.find(s => {
+                    if (s.name !== personName || s.locationId !== locId) return false;
+                    const r = window.getScheduleRange(s.start, s.end, nowTime);
+                    return nowTime >= r.s.getTime() && nowTime <= r.e.getTime();
+                });
+                if (!curSched) return '';
+
+                let endTargetMs = window.getScheduleRange(curSched.start, curSched.end, nowTime).e.getTime();
+
+                // 若該員在當前班次結束前有排定「休息中 (pt_7)」，則倒數時間以去休息的時間為準
+                if (locId !== 'pt_7') {
+                    memberSchedules.forEach(rs => {
+                        if (rs.name === personName && rs.locationId === 'pt_7') {
+                            const rRange = window.getScheduleRange(rs.start, rs.end, nowTime);
+                            const rStart = rRange.s.getTime();
+                            if (rStart > nowTime && rStart < endTargetMs) {
+                                endTargetMs = rStart;
+                            }
+                        }
+                    });
+                }
+
+                const remainMins = Math.max(0, Math.ceil((endTargetMs - nowTime) / 60000));
+                const rH = String(Math.floor(remainMins / 60)).padStart(2, '0');
+                const rM = String(remainMins % 60).padStart(2, '0');
+                const remainTimeStr = `${rH}:${rM}`;
+
+                if (!usedIncomingByLoc[locId]) usedIncomingByLoc[locId] = new Set();
+                const curNamesSet = new Set(locGroups[locId] || []);
+                let waitingName = '';
+
+                // 優先配對：在該員結束時間 (endTargetMs) 緊接著到同一崗位接替他的人
+                const nextReplacement = memberSchedules.find(ns => {
+                    if (ns.locationId !== locId || ns.name === personName) return false;
+                    if (curNamesSet.has(ns.name) || usedIncomingByLoc[locId].has(ns.name)) return false;
+                    const nsStartMs = window.getScheduleRange(ns.start, ns.end, nowTime).s.getTime();
+                    return Math.abs(nsStartMs - endTargetMs) <= 60000;
+                });
+
+                if (nextReplacement) {
+                    waitingName = nextReplacement.name;
+                    usedIncomingByLoc[locId].add(waitingName);
+                } else {
+                    // 次要配對：來自 incomingMembers 的待命人員
+                    const incomingList = (incomingMembers[locId] || []).filter(n => !curNamesSet.has(n) && !usedIncomingByLoc[locId].has(n));
+                    if (incomingList.length > 0) {
+                        waitingName = incomingList[0];
+                        usedIncomingByLoc[locId].add(waitingName);
+                    }
+                }
+
+                return `
+                    <div class="flex flex-col items-center justify-center leading-none mb-0.5 pointer-events-none select-none">
+                        ${waitingName ? `<div class="bg-white/95 border-2 border-orange-500 text-orange-500 text-[10.5px] font-black px-1.5 py-0.5 rounded-md shadow-xs whitespace-nowrap mb-0.5 tracking-tight animate-flag-in">待:${window.esc(waitingName)}</div>` : ''}
+                        <div class="text-orange-500 font-mono text-[11px] font-black tracking-tight bg-[#fdfbf7]/90 px-1 rounded leading-tight drop-shadow-2xs">${remainTimeStr}</div>
+                    </div>`;
+            };
+
             ['pt_2', 'pt_6', 'pt_7'].forEach(locId => {
                 const names = locGroups[locId] || [], incoming = incomingMembers[locId] || [];
                 const card = $(`station-${locId}`);
@@ -10054,12 +10116,15 @@ const isCleanRole = window.currentMapRole === 'clean';
                     else box.innerHTML = '';
                     
                     if (!isCleanRole) {
-                        // 🎧 客服模式：完全維持原本樣式
-                        names.forEach(n => box.insertAdjacentHTML('beforeend', `<div class="flex flex-col items-center justify-center m-0.5"><div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${n}</div><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div></div>`));
-                        incoming.forEach(n => box.insertAdjacentHTML('beforeend', `<div class="flex flex-col items-center justify-center m-0.5 animate-flag-in"><div class="bg-amber-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider border border-white/90 flex items-center shadow-amber-500/30"><i data-lucide="user-plus" class="w-3 h-3 mr-1 text-white"></i>待:${n}</div><div class="w-5 h-5 bg-amber-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div></div>`));
+                        // 🎧 客服模式外圍站點：由上而下「待:人名」➔「剩餘時:分」➔「當值人名」
+                        names.forEach((n, idx) => box.insertAdjacentHTML('beforeend', `<div class="flex flex-col items-center justify-center m-0.5">${getCountdownAndIncomingHtml(n, locId, idx)}<div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${window.esc(n)}</div><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div></div>`));
+                        // 若該外圍站點目前沒人當值，但有「待:人名」即將進入，單獨顯示
+                        if (names.length === 0) {
+                            incoming.forEach(n => box.insertAdjacentHTML('beforeend', `<div class="flex flex-col items-center justify-center m-0.5 animate-flag-in"><div class="bg-white border-2 border-orange-500 text-orange-500 text-xs font-black px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider">待:${window.esc(n)}</div><div class="w-5 h-5 bg-amber-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div></div>`));
+                        }
                     } else {
-                        // 🧹 清潔模式：顯示大頭像、編號並支援點擊展開
-                        names.forEach(n => {
+                        // 🧹 清潔模式外圍站點：由上而下「待:人名」➔「剩餘時:分」➔「當值人名」
+                        names.forEach((n, idx) => {
                             const profile = window.getMemberProfile(n);
                             const col = window.getMemberColorClass(n);
                             const avatarHtml = profile.avatar 
@@ -10068,10 +10133,11 @@ const isCleanRole = window.currentMapRole === 'clean';
                             const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== n.trim().toUpperCase();
 
                             box.insertAdjacentHTML('beforeend', `
-                                <div onclick="window.openMemberProfilePopup('${n}', '外圍站點')" class="flex flex-col items-center justify-center m-0.5 cursor-pointer active:scale-95 transition-transform group max-w-full">
+                                <div onclick="window.openMemberProfilePopup('${window.jsAttr(n)}', '外圍站點')" class="flex flex-col items-center justify-center m-0.5 cursor-pointer active:scale-95 transition-transform group max-w-full">
+                                    ${getCountdownAndIncomingHtml(n, locId, idx)}
                                     <div class="bg-slate-900/90 text-white px-1.5 py-0.5 rounded-md shadow-md max-w-full mb-0.5 tracking-wider border border-white/80 flex flex-col items-center justify-center text-center">
-                                        <span class="text-[9.5px] font-black leading-tight truncate max-w-[68px]">${n}</span>
-                                        ${hasUniqueId ? `<span class="text-amber-300 font-mono text-[7.5px] font-bold leading-none mt-0.5 truncate max-w-[68px]">${profile.id.trim()}</span>` : ''}
+                                        <span class="text-[9.5px] font-black leading-tight truncate max-w-[68px]">${window.esc(n)}</span>
+                                        ${hasUniqueId ? `<span class="text-amber-300 font-mono text-[7.5px] font-bold leading-none mt-0.5 truncate max-w-[68px]">${window.esc(profile.id.trim())}</span>` : ''}
                                     </div>
                                     <div class="w-7 h-7 sm:w-8 sm:h-8 ${col.activeBg} rounded-full border-2 border-white shadow-md flex items-center justify-center overflow-hidden shrink-0">
                                         ${avatarHtml}
@@ -10080,24 +10146,26 @@ const isCleanRole = window.currentMapRole === 'clean';
                             `);
                         });
 
-                        incoming.forEach(n => {
-                            const profile = window.getMemberProfile(n);
-                            const avatarHtml = profile.avatar 
-                                ? `<img src="${profile.avatar}" class="w-full h-full object-cover rounded-full">`
-                                : `<i data-lucide="user" class="w-3.5 h-3.5 text-white"></i>`;
-                            const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== n.trim().toUpperCase();
+                        if (names.length === 0) {
+                            incoming.forEach(n => {
+                                const profile = window.getMemberProfile(n);
+                                const avatarHtml = profile.avatar 
+                                    ? `<img src="${profile.avatar}" class="w-full h-full object-cover rounded-full">`
+                                    : `<i data-lucide="user" class="w-3.5 h-3.5 text-white"></i>`;
+                                const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== n.trim().toUpperCase();
 
-                            box.insertAdjacentHTML('beforeend', `
-                                <div onclick="window.openMemberProfilePopup('${n}', '外圍站點')" class="flex flex-col items-center justify-center m-0.5 animate-flag-in cursor-pointer active:scale-95 transition-transform group max-w-full">
-                                    <div class="bg-amber-600/95 text-white px-1.5 py-0.5 rounded-md shadow-md max-w-full mb-0.5 tracking-wider border border-white/90 flex flex-col items-center justify-center text-center shadow-amber-500/30">
-                                        <span class="text-[9.5px] font-black leading-tight truncate max-w-[68px]">待:${n}</span>${hasUniqueId ? `<span class="text-amber-200 font-mono text-[7.5px] font-bold leading-none mt-0.5 truncate max-w-[68px]">${profile.id.trim()}</span>` : ''}
+                                box.insertAdjacentHTML('beforeend', `
+                                    <div onclick="window.openMemberProfilePopup('${window.jsAttr(n)}', '外圍站點')" class="flex flex-col items-center justify-center m-0.5 animate-flag-in cursor-pointer active:scale-95 transition-transform group max-w-full">
+                                        <div class="bg-white border-2 border-orange-500 text-orange-500 px-1.5 py-0.5 rounded-md shadow-md max-w-full mb-0.5 tracking-wider flex flex-col items-center justify-center text-center">
+                                            <span class="text-[9.5px] font-black leading-tight truncate max-w-[68px]">待:${window.esc(n)}</span>${hasUniqueId ? `<span class="text-orange-400 font-mono text-[7.5px] font-bold leading-none mt-0.5 truncate max-w-[68px]">${window.esc(profile.id.trim())}</span>` : ''}
+                                        </div>
+                                        <div class="w-7 h-7 sm:w-8 sm:h-8 bg-amber-500 rounded-full border-2 border-white shadow-md flex items-center justify-center overflow-hidden shrink-0">
+                                            ${avatarHtml}
+                                        </div>
                                     </div>
-                                    <div class="w-7 h-7 sm:w-8 sm:h-8 bg-amber-500 rounded-full border-2 border-white shadow-md flex items-center justify-center overflow-hidden shrink-0">
-                                        ${avatarHtml}
-                                    </div>
-                                </div>
-                            `);
-                        });
+                                `);
+                            });
+                        }
                     }
                 }
             });
@@ -10146,14 +10214,12 @@ const isCleanRole = window.currentMapRole === 'clean';
 
                         if (window.dutyCountdownMode === 'rest') {
                             // ====== ☕ 模式二：休息倒數 ======
-                            // 找出地點為 pt_7 (人員休息中) 的班次
                             const restShifts = shifts.filter(s => s.locationId === 'pt_7');
 
                             if (!restShifts.length) {
                                 rank = 4; subSort = 9999;
                                 statusBadge = `<div class="bg-slate-100 border border-slate-200 text-slate-400 font-medium text-[10px] px-2 py-0.5 rounded-md flex items-center whitespace-nowrap"><i data-lucide="coffee" class="w-3 h-3 mr-1 text-slate-400"></i>無排定休息</div>`;
                             } else {
-                                // 檢查目前是否正在休息中
                                 let currentRest = null;
                                 let upcomingRest = null;
 
@@ -10174,23 +10240,20 @@ const isCleanRole = window.currentMapRole === 'clean';
                                 });
 
                                 if (currentRest) {
-                                    // 正在休息中
                                     rank = 1; subSort = currentRest.remain;
                                     const h = Math.floor(currentRest.remain / 60), m = currentRest.remain % 60;
                                     statusBadge = `<div class="bg-amber-100 border border-amber-300 text-amber-800 font-black text-[10px] px-2 py-0.5 rounded-md flex items-center shadow-xs whitespace-nowrap animate-pulse"><i data-lucide="coffee" class="w-3 h-3 mr-1 text-amber-600"></i>休息中 (剩 ${h>0?h+'小時':''}${m}分)</div>`;
                                 } else if (upcomingRest) {
-                                    // 即將休息倒數
                                     rank = 2; subSort = upcomingRest.diff;
                                     const h = Math.floor(upcomingRest.diff / 60), m = upcomingRest.diff % 60;
                                     statusBadge = `<div class="bg-sky-50 border border-sky-300 text-sky-700 font-bold text-[10px] px-2 py-0.5 rounded-md flex items-center shadow-xs whitespace-nowrap"><i data-lucide="clock" class="w-3 h-3 mr-1 text-sky-600"></i>再過 ${h>0?h+'小時':''}${m}分 休息</div>`;
                                 } else {
-                                    // 今日休息已結束
                                     rank = 3; subSort = 9000;
                                     statusBadge = `<div class="bg-slate-100 border border-slate-200 text-slate-400 font-medium text-[10px] px-2 py-0.5 rounded-md flex items-center whitespace-nowrap"><i data-lucide="check" class="w-3 h-3 mr-1 text-slate-400"></i>休息已結束</div>`;
                                 }
                             }
                         } else {
-
+                            // ====== 🏃 模式一：上下班倒數 (原邏輯) ======
                             const earliest = shifts.reduce((min, s) => s.start < min ? s.start : min, "23:59");
                             const latest = shifts.reduce((max, s) => s.end > max ? s.end : max, "00:00");
                             const [esH, esM] = earliest.split(':').map(Number), [leH, leM] = latest.split(':').map(Number);
@@ -10233,30 +10296,31 @@ const isCleanRole = window.currentMapRole === 'clean';
 
             document.querySelectorAll('.member-dynamic-marker').forEach(el => el.dataset.active = "false");
             
-            // 處理地圖各主要點位（含 pt_1 客服室、pt_3 花園仔、pt_4 魚檔、pt_5 整體巡邏）的當前與待命人員
+            // 🌟 處理地圖各主要點位：將「待:人名」與「剩餘時:分」直接整合在當值人員頭頂上
             const allLocKeys = Array.from(new Set([...Object.keys(locGroups), ...Object.keys(incomingMembers)]));
             allLocKeys.forEach(locId => {
                 if (['pt_2', 'pt_6', 'pt_7'].includes(locId) || !mapData.points[locId]) return;
                 const loc = mapData.points[locId], names = locGroups[locId] || [], incoming = incomingMembers[locId] || [];
 
-               names.forEach((name, idx) => {
+                names.forEach((name, idx) => {
                     let marker = $(`dyn-marker-${name}-${locId}-current`) || document.createElement('div');
                     marker.id = `dyn-marker-${name}-${locId}-current`;
                     const isCleanRole = window.currentMapRole === 'clean';
+                    const topStackHtml = getCountdownAndIncomingHtml(name, locId, idx);
 
                     if (!isCleanRole) {
-                        // 🎧 客服模式：100% 原版樣式、原版座標與漂浮動畫
-                        marker.innerHTML = `<div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-lg whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${name}</div><div class="relative flex items-center justify-center"><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md z-10 relative flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div><div class="absolute w-8 h-8 bg-blue-400/40 rounded-full radar-slow z-0"></div></div>`;
+                        // 🎧 客服模式：最上層「待:人名」➔ 中間層「剩餘時:分」➔ 最下層「當值人名」
+                        marker.innerHTML = `${topStackHtml}<div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-lg whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${window.esc(name)}</div><div class="relative flex items-center justify-center"><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md z-10 relative flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div><div class="absolute w-8 h-8 bg-blue-400/40 rounded-full radar-slow z-0"></div></div>`;
                         if (marker.parentNode !== container) container.appendChild(marker);
                         const off = names.length > 1 ? (idx - (names.length - 1) / 2) * 75 : 0;
                         marker.style.left = `calc(${loc.x}% + ${off}px - 20px)`;
-                        marker.style.top = `calc(${loc.y}% - 50px)`;
+                        marker.style.top = `calc(${loc.y}% - 65px)`;
                         let seed = 0; for (let i = 0; i < name.length; i++) seed += name.charCodeAt(i);
                         marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 pointer-events-none z-40 drop-shadow-xl ${['animate-float-a', 'animate-float-b', 'animate-float-c'][seed % 3]}`;
                         marker.style.animationDelay = `${(seed % 5) * -3}s`;
                         marker.onclick = null;
                     } else {
-                        // 🧹 清潔模式：固定位置無漂浮、大頭像、工號、點擊展開個人卡
+                        // 🧹 清潔模式：最上層「待:人名」➔ 中間層「剩餘時:分」➔ 最下層「當值人名」
                         const profile = window.getMemberProfile(name);
                         const col = window.getMemberColorClass(name);
                         const avatarHtml = profile.avatar 
@@ -10265,9 +10329,10 @@ const isCleanRole = window.currentMapRole === 'clean';
                         const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== name.trim().toUpperCase();
 
                         marker.innerHTML = `
+                            ${topStackHtml}
                             <div class="bg-slate-900/90 text-white px-2 py-0.5 rounded-md shadow-md whitespace-nowrap mb-1 tracking-wider border border-white/80 flex flex-col items-center justify-center text-center">
-                                <span class="text-[11px] font-black leading-tight">${name}</span>
-                                ${hasUniqueId ? `<span class="text-amber-300 font-mono text-[8.5px] font-bold leading-none mt-0.5">${profile.id.trim()}</span>` : ''}
+                                <span class="text-[11px] font-black leading-tight">${window.esc(name)}</span>
+                                ${hasUniqueId ? `<span class="text-amber-300 font-mono text-[8.5px] font-bold leading-none mt-0.5">${window.esc(profile.id.trim())}</span>` : ''}
                             </div>
                             <div class="relative flex items-center justify-center group-hover:scale-110 transition-transform">
                                 <div class="w-9 h-9 ${col.activeBg} rounded-full border-2 border-white shadow-md z-10 flex items-center justify-center overflow-hidden">
@@ -10279,7 +10344,7 @@ const isCleanRole = window.currentMapRole === 'clean';
                         if (marker.parentNode !== container) container.appendChild(marker);
                         const off = names.length > 1 ? (idx - (names.length - 1) / 2) * 65 : 0;
                         marker.style.left = `calc(${loc.x}% + ${off}px)`; 
-                        marker.style.top = `calc(${loc.y}% - 25px)`;
+                        marker.style.top = `calc(${loc.y}% - 28px)`;
                         marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 -translate-y-1/2 pointer-events-auto cursor-pointer z-40 drop-shadow-md transition-transform active:scale-95 group`;
                         marker.style.animationDelay = '0s';
                         marker.onclick = (e) => {
@@ -10291,44 +10356,26 @@ const isCleanRole = window.currentMapRole === 'clean';
                     marker.dataset.active = "true";
                 });
 
-                incoming.forEach((name, idx) => {
-                    let marker = $(`dyn-marker-${name}-${locId}-incoming`) || document.createElement('div');
-                    marker.id = `dyn-marker-${name}-${locId}-incoming`;
-
-                    const profile = window.getMemberProfile(name);
-                    const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== name.trim().toUpperCase();
-
-                    marker.innerHTML = `
-                        <div class="bg-amber-600/95 text-white px-2 py-0.5 rounded-md shadow-md whitespace-nowrap mb-1 tracking-wider border border-white/90 flex flex-col items-center justify-center text-center shadow-amber-500/30">
-                            <span class="text-[10px] font-black leading-tight flex items-center">
-                                <i data-lucide="user-plus" class="w-3 h-3 mr-1 text-white"></i>待: ${name}
-                            </span>
-                            ${hasUniqueId ? `<span class="text-amber-200 font-mono text-[8px] font-bold leading-none mt-0.5">${profile.id.trim()}</span>` : ''}
-                        </div>
-                        <div class="relative flex items-center justify-center">
-                            <div class="w-5 h-5 bg-amber-500 rounded-full border-[2px] border-white shadow-md z-10 relative flex items-center justify-center">
-                                <i data-lucide="user" class="w-3 h-3 text-white"></i>
+                // 若某個點位目前「完全沒有人當值」，但 15 分鐘內有人準備進入，才單獨顯示「待:人名」
+                if (names.length === 0 && incoming.length > 0) {
+                    incoming.forEach((name, idx) => {
+                        let marker = $(`dyn-marker-${name}-${locId}-incoming`) || document.createElement('div');
+                        marker.id = `dyn-marker-${name}-${locId}-incoming`;
+                        marker.innerHTML = `
+                            <div class="bg-white/95 border-2 border-orange-500 text-orange-500 px-2 py-0.5 rounded-md shadow-md whitespace-nowrap mb-1 tracking-wider text-[10.5px] font-black">
+                                待:${window.esc(name)}
                             </div>
-                            <div class="absolute w-8 h-8 bg-amber-400/40 rounded-full radar-slow z-0"></div>
-                        </div>`;
-
-                    if (marker.parentNode !== container) container.appendChild(marker);
-                    
-                    // 針對客服室 (pt_1) 定位至右側區域，改為「垂直向下」依序排列
-                    if (locId === 'pt_1') {
-                        const offY = idx * 34; // 垂直向下延伸，避免橫向重疊擠壓
-                        marker.style.left = `calc(${loc.x}% + 38px)`;
-                        marker.style.top = `calc(${loc.y}% + ${offY}px)`;
-                    } else {
+                            <div class="w-5 h-5 bg-amber-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center">
+                                <i data-lucide="user" class="w-3 h-3 text-white"></i>
+                            </div>`;
+                        if (marker.parentNode !== container) container.appendChild(marker);
                         const off = incoming.length > 1 ? (idx - (incoming.length - 1) / 2) * 55 : 0;
-                        marker.style.left = `calc(${loc.x}% + ${off}px - 35px)`;
-                        let topOff = (locId === 'pt_3' || locId === 'pt_4' ? '-90px' : '-70px');
-                        marker.style.top = `calc(${loc.y}% + ${topOff})`;
-                    }
-
-                    marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 pointer-events-none z-20 drop-shadow-xl animate-flag-in`;
-                    marker.dataset.active = "true";
-                });
+                        marker.style.left = `calc(${loc.x}% + ${off}px)`;
+                        marker.style.top = `calc(${loc.y}% - 45px)`;
+                        marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 pointer-events-none z-20 drop-shadow-xl animate-flag-in`;
+                        marker.dataset.active = "true";
+                    });
+                }
             });
             lucide.createIcons(); document.querySelectorAll('.member-dynamic-marker[data-active="false"]').forEach(el => el.remove());
         };
