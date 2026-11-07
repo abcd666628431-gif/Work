@@ -1440,9 +1440,9 @@ window.openTabVisibilityModal = () => {
             'pt_5': { name: '整體巡邏', x: 50, y: 88 }, 'pt_6': { name: '地面層 大清點', x: 0, y: 0 },
             'pt_7': { name: '休息中', x: 0, y: 0 }
         };
-        const defaultCleanMapPoints = {
-            'pt_1': { name: '一樓+廁所', x: 50, y: 18 },
-            'pt_4': { name: '魚檔', x: 50, y: 46 },
+const defaultCleanMapPoints = {
+            'pt_1': { name: '一樓+廁所', x: 50, y: 30 },
+            'pt_4': { name: '魚檔', x: 50, y: 58 },
             'pt_8': { name: '花園仔(男廁)', x: 15.5, y: 86 },
             'pt_3': { name: '花園仔', x: 43, y: 86 },
             'pt_9': { name: '花園仔(女廁)+(傷健廁所)', x: 79, y: 86 },
@@ -2770,7 +2770,7 @@ ${isClean ? `
                             if (!personName) return;
 
                             const prof = window.getMemberProfile(personName);
-                            const specialSched = (prof.futureSchedules || []).find(sc => sc.date === targetDateStr);
+const specialSched = (prof.fixedShiftTime ? { shiftTime: prof.fixedShiftTime } : null) || (prof.futureSchedules || []).find(sc => sc.date === targetDateStr);
                             
                             // 1. 先解析該員工常態的「理想休息時段」（支援 1~2 段，如 (08:00-10:00),(15:00-17:00)）
                             let idealIntervals = parseIdealIntervals(prof.idealRestTime);
@@ -3480,9 +3480,9 @@ window.openMemberProfilePopup(name, window._currentPopupLocation);
             window.showToast(`✅ 已將「${canonical}」成功歸類至【${targetRole === 'clean' ? '清潔' : '客服'}】名單！`);
         };
 
-window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
-            const inp1 = document.getElementById('idealRestTimeInput1')?.value.trim() || '';
-            const inp2 = document.getElementById('idealRestTimeInput2')?.value.trim() || '';
+// 🌟 理想休息時段：支援動態新增、刪除，預設起始為 1 個
+        window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
+            const inputs = Array.from(document.querySelectorAll('.ideal-rest-input'));
             const tag = document.getElementById('idealRestHoursTag');
 
             const toMinutes = (t) => {
@@ -3492,7 +3492,8 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             };
 
             let totalMinutes = 0;
-            [inp1, inp2].forEach(val => {
+            const values = inputs.map(inp => inp.value.trim());
+            values.forEach(val => {
                 if (!val) return;
                 const norm = val.replace(/[～~—–－至到]/g, '-').replace(/：/g, ':');
                 const match = norm.match(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/);
@@ -3510,14 +3511,72 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             }
 
             if (shouldSave && memberName) {
-                const combined = [inp1, inp2].filter(Boolean).join(', ');
+                const combined = values.filter(Boolean).join(', ');
                 window.saveMemberProfile(memberName, { idealRestTime: combined });
                 window.showToast(combined ? `✅ 已儲存理想休息（共 ${totalHours}h）` : '🧹 已清空理想休息時間');
             }
         };
 
+        window.addIdealRestSlot = (memberName) => {
+            const inputs = Array.from(document.querySelectorAll('.ideal-rest-input')).map(i => i.value.trim());
+            inputs.push('');
+            window._tempIdealRestSlots = inputs;
+            window.openMemberProfilePopup(memberName, window._currentPopupLocation);
+        };
+
+        window.removeIdealRestSlot = (memberName, idx) => {
+            const inputs = Array.from(document.querySelectorAll('.ideal-rest-input')).map(i => i.value.trim());
+            if (inputs.length <= 1) {
+                inputs[0] = '';
+            } else {
+                inputs.splice(idx, 1);
+            }
+            window._tempIdealRestSlots = inputs;
+            const combined = inputs.filter(Boolean).join(', ');
+            window.saveMemberProfile(memberName, { idealRestTime: combined });
+            window.openMemberProfilePopup(memberName, window._currentPopupLocation);
+        };
+
+        // 🌟 固定上班時間：即時計算時數並儲存
+        window.calcAndSaveFixedShift = (memberName, shouldSave = false) => {
+            const inp = document.getElementById('fixedShiftTimeInput');
+            const tag = document.getElementById('fixedShiftHoursTag');
+            const val = (inp?.value || '').trim();
+
+            const toMinutes = (t) => {
+                const cleanT = String(t || '00:00').replace(/[^\d:：]/g, '').replace(/：/g, ':');
+                const [h, m] = cleanT.split(':').map(Number);
+                return (h || 0) * 60 + (m || 0);
+            };
+
+            let totalMinutes = 0;
+            if (val) {
+                const norm = val.replace(/[～~—–－至到]/g, '-').replace(/：/g, ':');
+                const regex = /(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g;
+                let match;
+                while ((match = regex.exec(norm)) !== null) {
+                    const sM = toMinutes(match[1]), eM = toMinutes(match[2]);
+                    if (!isNaN(sM) && !isNaN(eM) && eM > sM) totalMinutes += (eM - sM);
+                }
+            }
+
+            const totalHours = parseFloat((totalMinutes / 60).toFixed(2));
+            if (tag) {
+                tag.innerText = totalHours > 0 ? `${totalHours}h` : '常態';
+            }
+
+            if (shouldSave && memberName) {
+                window.saveMemberProfile(memberName, { fixedShiftTime: val });
+                window.showToast(val ? `✅ 已儲存固定上班時間：${val}` : '🧹 已恢復常態上班時間');
+            }
+        };
+
         window.openMemberProfilePopup = (name, locationName) => {
             const canonicalName = window.resolveMemberIdentity ? window.resolveMemberIdentity(name) : (name || '').trim();
+            if (window._lastPopupMemberName !== canonicalName) {
+                window._tempIdealRestSlots = null;
+                window._lastPopupMemberName = canonicalName;
+            }
             const profile = window.getMemberProfile(canonicalName);
             window._currentPopupLocation = (locationName || '當前崗位').trim();
 
@@ -3526,7 +3585,7 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                 popup = document.createElement('div');
                 popup.id = 'memberProfileModal';
                 popup.className = 'fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[320] flex items-center justify-center p-4';
-                popup.onclick = (e) => { if (e.target === popup) popup.classList.add('hidden'); };
+                popup.onclick = (e) => { if (e.target === popup) { window._tempIdealRestSlots = null; popup.classList.add('hidden'); } };
                 document.body.appendChild(popup);
             }
 
@@ -3538,28 +3597,41 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                 .filter(([k]) => k !== 'pt_7')
                 .sort(([a], [b]) => (order.indexOf(a) === -1 ? 999 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 999 : order.indexOf(b)));
 
+            // 取得理想休息時段陣列（起始為 1 個）
+            const rawRest = (profile.idealRestTime || '').replace(/[～~—–－]/g, '-').replace(/：/g, ':');
+            const savedRestParts = rawRest.split(/[,，、/]+/).map(s => s.trim()).filter(Boolean);
+            const restSlots = Array.isArray(window._tempIdealRestSlots) && window._tempIdealRestSlots.length > 0
+                ? window._tempIdealRestSlots
+                : (savedRestParts.length > 0 ? savedRestParts : ['']);
+
+            // 取得固定上班時間（相容舊版 futureSchedules 內最後一筆設定）
+            const legacyShift = (profile.futureSchedules && profile.futureSchedules.length > 0)
+                ? (profile.futureSchedules[profile.futureSchedules.length - 1].shiftTime || '')
+                : '';
+            const curFixedShift = profile.fixedShiftTime !== undefined ? profile.fixedShiftTime : legacyShift;
+
             popup.innerHTML = `
                 <div class="bg-white rounded-2xl p-4 shadow-2xl border border-slate-200 w-full max-w-[300px] flex flex-col items-center text-center animate-pop-in relative" onclick="event.stopPropagation()">
-                    <button type="button" onclick="document.getElementById('memberProfileModal').classList.add('hidden')" class="absolute top-2.5 right-2.5 text-slate-400 hover:text-slate-600 p-1">
+                    <button type="button" onclick="window._tempIdealRestSlots=null; document.getElementById('memberProfileModal').classList.add('hidden')" class="absolute top-2.5 right-2.5 text-slate-400 hover:text-slate-600 p-1">
                         <i data-lucide="x" class="w-4 h-4"></i>
                     </button>
                     
-                   <div class="relative group cursor-pointer mb-2 mt-1">
-    <div class="w-20 h-20 rounded-2xl border-2 border-slate-200 overflow-hidden shadow-inner flex items-center justify-center bg-[#fdfbf7]">
-        ${profile.avatar 
-            ? `<img id="popupMemberAvatarImg" src="${profile.avatar}" class="w-full h-full object-cover">` 
-            : `<div id="popupMemberAvatarImg" class="w-full h-full flex flex-col items-center justify-center text-slate-300">
-                <i data-lucide="user" class="w-10 h-10"></i>
-                <span class="text-[9px] font-bold text-slate-400 mt-0.5">未上傳</span>
-               </div>`
-        }
-    </div>
-    <label class="absolute inset-0 bg-black/40 text-white rounded-2xl flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold cursor-pointer">
-        <i data-lucide="camera" class="w-5 h-5 mb-1"></i>
-        <span>更換頭像</span>
-        <input type="file" accept="image/*" class="hidden" onchange="window.handleUploadMemberAvatar('${safeNameAttr}', this)">
-    </label>
-</div>
+                    <div class="relative group cursor-pointer mb-2 mt-1">
+                        <div class="w-20 h-20 rounded-2xl border-2 border-slate-200 overflow-hidden shadow-inner flex items-center justify-center bg-[#fdfbf7]">
+                            ${profile.avatar 
+                                ? `<img id="popupMemberAvatarImg" src="${profile.avatar}" class="w-full h-full object-cover">` 
+                                : `<div id="popupMemberAvatarImg" class="w-full h-full flex flex-col items-center justify-center text-slate-300">
+                                    <i data-lucide="user" class="w-10 h-10"></i>
+                                    <span class="text-[9px] font-bold text-slate-400 mt-0.5">未上傳</span>
+                                   </div>`
+                            }
+                        </div>
+                        <label class="absolute inset-0 bg-black/40 text-white rounded-2xl flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold cursor-pointer">
+                            <i data-lucide="camera" class="w-5 h-5 mb-1"></i>
+                            <span>更換頭像</span>
+                            <input type="file" accept="image/*" class="hidden" onchange="window.handleUploadMemberAvatar('${safeNameAttr}', this)">
+                        </label>
+                    </div>
 
                     <div class="w-full mb-1.5 flex items-center gap-1">
                         <input type="text" id="popupMemberNameInput" value="${canonicalName}" placeholder="輸入成員姓名" 
@@ -3571,7 +3643,7 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                         </button>
                     </div>
 
-                   <!-- 性別、分類、本地/外地與員工編號 -->
+                    <!-- 性別、分類、本地/外地與員工編號 -->
                     <div class="w-full mt-1.5 bg-slate-50 p-2 rounded-xl border border-slate-200 space-y-2">
                         <div class="flex items-center justify-between">
                             <span class="text-[11px] font-bold text-slate-500">性別分組：</span>
@@ -3581,7 +3653,6 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                             </div>
                         </div>
 
-                        <!-- 🌟 新增：成員所屬分類切換（客服 / 清潔） -->
                         <div class="flex items-center justify-between">
                             <span class="text-[11px] font-bold text-slate-500">所屬分類：</span>
                             <div class="flex gap-1">
@@ -3608,68 +3679,52 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
                     </div>
 
                     <div class="w-full mt-2 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-200/80 text-left space-y-2">
-                      <!-- ① 理想休息時間設定（分開 2 個獨立輸入框） -->
+                        <!-- ① 理想休息時段（起始 1 個，可動態新增/刪除） -->
                         <div class="space-y-1.5 pb-2 border-b border-indigo-200/60 text-left">
                             <div class="flex items-center justify-between">
                                 <span class="text-[11px] font-black text-indigo-800 flex items-center shrink-0">
                                     <i data-lucide="coffee" class="w-3.5 h-3.5 mr-1 text-indigo-600"></i>理想休息時段
                                 </span>
-                                <span id="idealRestHoursTag" class="text-[10px] font-mono font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-1.5 py-0.2 rounded">
-                                    0h
-                                </span>
-                            </div>
-
-                            <!-- 拆解現有理想休息字串 -->
-                            ${(() => {
-                                const raw = (profile.idealRestTime || '').replace(/[～~—–－]/g, '-').replace(/：/g, ':');
-                                const parts = raw.split(/[,，、/\s]+/).filter(Boolean);
-                                const t1 = parts[0] || '';
-                                const t2 = parts[1] || '';
-                                return `
-                                <div class="flex items-center justify-between gap-1.5">
-                                    <span class="text-[10.5px] font-bold text-slate-600 shrink-0">第 1 次：</span>
-                                    <input type="text" id="idealRestTimeInput1" value="${t1}" placeholder="例: 10:00-11:00"
-                                        oninput="window.calcAndSaveDualRest('${safeNameAttr}', false)"
-                                        onchange="window.calcAndSaveDualRest('${safeNameAttr}', true)"
-                                        class="flex-1 bg-white border border-indigo-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
+                                <div class="flex items-center gap-1">
+                                    <span id="idealRestHoursTag" class="text-[10px] font-mono font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-1.5 py-0.2 rounded">0h</span>
+                                    <button type="button" onclick="window.addIdealRestSlot('${safeNameAttr}')" class="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[10px] font-black flex items-center active:scale-95">
+                                        <i data-lucide="plus" class="w-2.5 h-2.5 mr-0.5"></i>新增
+                                    </button>
                                 </div>
-                                <div class="flex items-center justify-between gap-1.5">
-                                    <span class="text-[10.5px] font-bold text-slate-600 shrink-0">第 2 次：</span>
-                                    <input type="text" id="idealRestTimeInput2" value="${t2}" placeholder="例: 15:00-16:00 (選填)"
-                                        oninput="window.calcAndSaveDualRest('${safeNameAttr}', false)"
-                                        onchange="window.calcAndSaveDualRest('${safeNameAttr}', true)"
-                                        class="flex-1 bg-white border border-indigo-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
-                                </div>`;
-                            })()}
+                            </div>
+                            <div class="space-y-1">
+                                ${restSlots.map((slotVal, sIdx) => `
+                                    <div class="flex items-center justify-between gap-1">
+                                        <span class="text-[10px] font-bold text-slate-600 shrink-0">第 ${sIdx + 1} 段：</span>
+                                        <input type="text" value="${window.esc(slotVal)}" placeholder="例: 10:00-11:00"
+                                            oninput="window.calcAndSaveDualRest('${safeNameAttr}', false)"
+                                            onchange="window._tempIdealRestSlots=null; window.calcAndSaveDualRest('${safeNameAttr}', true)"
+                                            class="ideal-rest-input flex-1 min-w-0 bg-white border border-indigo-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
+                                        <button type="button" onclick="window.removeIdealRestSlot('${safeNameAttr}', ${sIdx})" class="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors shrink-0" title="刪除此段">
+                                            <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
+                                        </button>
+                                    </div>
+                                `).join('')}
+                            </div>
                         </div>
 
-                        <!-- ② 未來特定日期特殊排程（改為直接顯示清單與快速新增） -->
+                        <!-- ② 固定上班時間（取代原「未來特定排程」） -->
                         <div class="space-y-1.5 pb-2 border-b border-indigo-200/60">
                             <div class="flex items-center justify-between">
-                                <span class="text-[10.5px] font-black text-indigo-800 flex items-center">
-                                    <i data-lucide="calendar-plus" class="w-3.5 h-3.5 mr-1 text-indigo-600"></i>未來特定排程 (${(profile.futureSchedules || []).length}筆)
+                                <span class="text-[11px] font-black text-indigo-800 flex items-center">
+                                    <i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-indigo-600"></i>固定上班時間
                                 </span>
-                                <button type="button" onclick="event.stopPropagation(); window.openMemberFutureScheduleModal('${safeNameAttr}');" class="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-[10px] font-black shadow-2xs active:scale-95 flex items-center cursor-pointer">
-                                    <i data-lucide="plus" class="w-3 h-3 mr-0.5 pointer-events-none"></i>新增
-                                </button>
+                                <span id="fixedShiftHoursTag" class="text-[10px] font-mono font-black text-indigo-700 bg-indigo-100 border border-indigo-300 px-1.5 py-0.2 rounded">常態</span>
                             </div>
-
-                            <!-- 直接展開顯示每筆排程內容清單 -->
-                            <div class="space-y-1 max-h-[110px] overflow-y-auto pr-0.5">
-                                ${(!profile.futureSchedules || profile.futureSchedules.length === 0) 
-                                    ? '<div class="text-[9.5px] text-slate-400 text-center py-1 font-bold">目前尚無特殊日期設定</div>' 
-                                    : profile.futureSchedules.map((sc, scIdx) => `
-                                        <div class="bg-white border border-indigo-100 rounded-lg p-1.5 flex items-center justify-between text-[10px] shadow-2xs">
-                                            <div class="min-w-0 pr-1">
-                                                <span class="font-mono font-black text-indigo-700">${sc.date}</span>
-                                                <span class="text-slate-600 ml-1">上班: <strong class="font-mono">${sc.shiftTime || '常態'}</strong></span>
-                                                ${sc.restHours ? `<span class="text-emerald-700 ml-1">休: <strong class="font-mono">${sc.restHours}</strong></span>` : ''}
-                                            </div>
-                                            <button type="button" onclick="event.stopPropagation(); window.removeMemberFutureSchedule('${safeNameAttr}', ${scIdx})" class="text-slate-400 hover:text-red-500 p-0.5 rounded transition-colors shrink-0" title="刪除">
-                                                <i data-lucide="trash-2" class="w-3 h-3 pointer-events-none"></i>
-                                            </button>
-                                        </div>
-                                    `).join('')}
+                            <div class="flex items-center justify-between gap-1">
+                                <input type="text" id="fixedShiftTimeInput" value="${window.esc(curFixedShift)}" placeholder="例: 06:30-15:30 (留空為預設)"
+                                    oninput="window.calcAndSaveFixedShift('${safeNameAttr}', false)"
+                                    onchange="window.calcAndSaveFixedShift('${safeNameAttr}', true)"
+                                    class="flex-1 min-w-0 bg-white border border-indigo-300 rounded-md px-2 py-1 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
+                                ${curFixedShift ? `
+                                <button type="button" onclick="document.getElementById('fixedShiftTimeInput').value=''; window.calcAndSaveFixedShift('${safeNameAttr}', true); window.openMemberProfilePopup('${safeNameAttr}', window._currentPopupLocation);" class="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors shrink-0" title="清空">
+                                    <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
+                                </button>` : ''}
                             </div>
                         </div>
 
@@ -3691,10 +3746,8 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             popup.classList.remove('hidden');
             if (window.lucide) lucide.createIcons({ root: popup });
 
-            // 🌟 核心修復：彈窗生成後立即計算當前填入的時數，讓 0h 變為正確的總時數！
-            if (window.calcAndSaveDualRest) {
-                window.calcAndSaveDualRest(canonicalName, false);
-            }
+            if (window.calcAndSaveDualRest) window.calcAndSaveDualRest(canonicalName, false);
+            if (window.calcAndSaveFixedShift) window.calcAndSaveFixedShift(canonicalName, false);
         };
 
         // 🌟 計算「前2日、昨日、當日、明日、後2日」共 5 天的日期陣列
@@ -3917,19 +3970,37 @@ window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
             // 一樓 (豬肉類 / 牛肉類 15 檔)
             { floor: "一樓", id: "1-020", type: "豬肉類", name: "黃樹根", gender: "男" },
             { floor: "一樓", id: "1-021", type: "豬肉類", name: "陳麗新", gender: "女" },
-            { floor: "一樓", id: "1-023", type: "豬肉類", name: "羅志友", gender: "男" },
+{ floor: "一樓", id: "1-023", type: "豬肉類", name: "羅志友", gender: "男" },
             { floor: "一樓", id: "1-024", type: "豬肉類", name: "邱其仁", gender: "男" }
         ];
 
-window.timeOffset = window.timeOffset || 0;
-        window.getNow = () => {
-            return new Date(Date.now() + (window.timeOffset || 0));
+        // ==========================================
+        // 🕒 核心時間引擎：物理真實時間 vs 模擬預覽時間 徹底分離
+        // ==========================================
+        window.timeOffset = Number(window.timeOffset) || 0;
+        window.isFastForwarding = false;
+
+        // 判斷目前是否處於「時間模擬（跳躍或加速）」狀態
+        window.isSimulatingTime = () => (Number(window.timeOffset) || 0) !== 0 || !!window.isFastForwarding;
+
+        // 🌟 1. 物理世界真實香港時間（用於所有實際存檔、日誌、拍照、雪房、排班日期，絕不受模擬影響）
+        window.getRealNow = () => {
+            const now = new Date();
+            const utcMs = now.getTime() + (now.getTimezoneOffset() * 60000);
+            return new Date(utcMs + (8 * 3600000));
         };
-        // 🌟 物理世界真實時間戳（用於存檔、日誌，絕不受快進影響）
+
+        // 🌟 2. 物理世界真實時間戳（毫秒）
         window.getRealTimeTs = () => Date.now();
 
+        // 🌟 3. 畫面顯示與模擬專用時間（僅供時鐘、地圖走位、動態時間軸預覽使用）
+        window.getNow = () => {
+            return new Date(window.getRealNow().getTime() + (Number(window.timeOffset) || 0));
+        };
+
+        // 🌟 4. 格式化香港日期 YYYY-MM-DD（預設強制使用「物理真實時間」，保護所有存檔 Key 不因模擬跨日而錯亂）
         window.formatDateStrHK = (msOrDate) => {
-            const d = msOrDate ? new Date(msOrDate) : window.getNow();
+            const d = msOrDate ? new Date(msOrDate) : window.getRealNow();
             try {
                 return new Intl.DateTimeFormat('en-CA', {
                     timeZone: 'Asia/Hong_Kong',
@@ -3944,7 +4015,7 @@ window.timeOffset = window.timeOffset || 0;
             }
         };
 
-        const getTodayDateStr = () => window.formatDateStrHK();
+        const getTodayDateStr = () => window.formatDateStrHK(window.getRealNow().getTime());
         let currentPatrolDate = getTodayDateStr();
         let patrolHistoryStore = getLocal('work_cache_patrol_history', {});
         localStorage.removeItem('work_cache_patrol_records');
@@ -5867,8 +5938,10 @@ window.stopOverdueAlarm = () => {
             if (window.lucide) lucide.createIcons();
         };
 
-        window.checkMemoAlerts = () => {
+window.checkMemoAlerts = () => {
             if (!getLocal('work_cache_cr_notify', false)) return;
+            // 🌟 模擬時間期間不觸發真實備忘錄已讀寫入，防止污染真實警報紀錄
+            if (timeOffset !== 0 || window.timeOffset !== 0 || isFastForwarding) return;
             const now = window.getNowMs(); let newDueMemos = [];
             futureMemos.forEach(m => {
                 if (now >= window.hkDateTimeToMs(m.date, m.time || '00:00') && !window.memoNotifiedSet.has(m.id)) {
@@ -5889,18 +5962,22 @@ window.stopOverdueAlarm = () => {
      });
 
         const getNowInputStrs = (targetMs) => {
-            const d = targetMs ? new Date(targetMs) : window.getNow();
+            // 🌟 預設強制使用物理真實時間 getRealNow()，保護拍照、雪房、排班存檔不被模擬時間影響
+            const d = targetMs ? new Date(targetMs) : window.getRealNow();
             return { date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, time: `${pad(d.getHours())}:${pad(d.getMinutes())}` };
         };
 
-        // 👇 ====== 【從這裡開始替換：修正點一】 ====== 👇
+// 👇 ====== 【從這裡開始替換：修正點一】 ====== 👇
 
 // 1. 每日自動清理：排除已被手動還原的相片 (!i.restored)
 window.autoCleanupGalleryToTrash = async () => {
+            // 🌟 防護：只要處於「時間跳躍」或「時間加速」中，絕對不執行跨日自動歸檔
+            if (timeOffset !== 0 || window.timeOffset !== 0 || isFastForwarding) return;
+
             // 🌟 防重複機制 1：若當前正在執行中，禁止併發二次進入
             if (window._isAutoArchiving) return;
 
-            const todayStr = getTodayDateStr();
+            const todayStr = window.formatDateStrHK(window.getRealNow().getTime());
             // 🌟 防重複機制 2：今日已成功標記過，直接退出，徹底根絕洗版！
             const lastArchiveDate = localStorage.getItem('work_last_auto_archive_date');
             if (lastArchiveDate === todayStr) {
@@ -5910,7 +5987,7 @@ window.autoCleanupGalleryToTrash = async () => {
             window._isAutoArchiving = true;
 
             try {
-                const now = window.getNow();
+                const now = window.getRealNow();
                 const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 
                 // 1. 取得所有在佇列中尚未傳完的 ID 集合，絕對不將排隊中的昨日照片移入還原清單
@@ -6007,9 +6084,11 @@ window.autoCleanupGalleryToTrash = async () => {
             }
         };
 
-        // 2. 每日排班自動切換至今日（保留 5 日多日排班資料，絕不清空）
+// 2. 每日排班自動切換至今日（嚴格依據真實時間，時間跳躍/加速期間絕不觸發跨日重設）
         function checkAndResetDailySchedule() {
-            const todayStr = getNowInputStrs().date;
+            if (timeOffset !== 0 || window.timeOffset !== 0 || isFastForwarding) return;
+            const realNowMs = window.getRealNow().getTime();
+            const todayStr = getNowInputStrs(realNowMs).date;
             const lastSavedDate = getLocal('work_cache_schedule_date', '');
             if (lastSavedDate !== todayStr) {
                 safeSetLocal('work_cache_schedule_date', todayStr);
@@ -6018,7 +6097,7 @@ window.autoCleanupGalleryToTrash = async () => {
             }
 
             // 跨日時自動將剔檔頁日期推進至新的一天，並切換雲端即時監聽
-            const patrolToday = getTodayDateStr();
+            const patrolToday = window.formatDateStrHK(realNowMs);
             const lastPatrolDate = getLocal('work_last_active_patrol_date', '');
             if (lastPatrolDate && lastPatrolDate !== patrolToday && currentPatrolDate === lastPatrolDate) {
                 currentPatrolDate = patrolToday;
@@ -9417,11 +9496,15 @@ window.resumeBatchUploadQueue = async () => {
             crItemTypes = getLocal('coldRoomTypes', ['海鮮', '肉類', '蔬果', '包裝冰', '其他']);
             if (!crItemTypes.includes('包裝冰')) crItemTypes.push('包裝冰');
 
-            const _savedPts = (mapData && mapData.points) || {};
+const _savedPts = (mapData && mapData.points) || {};
             const _savedIsClean = !!(_savedPts.pt_8 || _savedPts.pt_9);
             const _wantClean = window.currentMapRole === 'clean';
             const _basePts = JSON.parse(JSON.stringify(_wantClean ? defaultCleanMapPoints : defaultMapPoints));
             mapData.points = (_savedIsClean === _wantClean) ? Object.assign(_basePts, _savedPts) : _basePts;
+if (_savedIsClean) {
+                if (mapData.points.pt_1 && mapData.points.pt_1.y < 30) mapData.points.pt_1.y = 30;
+                if (mapData.points.pt_4 && mapData.points.pt_4.y < 58) mapData.points.pt_4.y = 58;
+            }
 
             // 🌟 升級：載入 5 日排班快取字典，並自動轉換舊版資料
             const todayInitStr = getNowInputStrs().date;
@@ -9839,12 +9922,20 @@ if (hasUpdated) {
                 }
             }, err => console.warn('溫度即時監聽異常:', err));
 
-// 雪房存貨監聽
+// 雪房存貨監聽（智慧聯集合併類型，防止新增的貨物類型被其他設備舊快取洗掉而消失）
             bindSync('coldRoom', 'coldRoomRecords', d => {
                 if (d.records) { crRecords = d.records; safeSetLocal('coldRoomRecords', crRecords); }
-                if (d.types) { crItemTypes = d.types; safeSetLocal('coldRoomTypes', crItemTypes); }
+                if (Array.isArray(d.types) && d.types.length > 0) {
+                    const delList = getLocal('coldRoomDeletedTypes', []);
+                    const mergedTypes = Array.from(new Set([...crItemTypes, ...d.types])).filter(t => !delList.includes(t));
+                    if (mergedTypes.length > 0) {
+                        crItemTypes = mergedTypes;
+                        safeSetLocal('coldRoomTypes', crItemTypes);
+                    }
+                    if ($('crAddModal')?.classList.contains('flex')) window.crRenderTypesInModal();
+                }
                 if (!$('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
-                window.scheduleDashboardUpdate?.();
+                window.checkColdRoomOverdueAlerts();
             });
 
 onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items'), (snap) => {
@@ -10002,8 +10093,8 @@ window.updateMapSimulation = () => {
                     }
                     const remainMins = Math.max(0, Math.round((e - nowTime) / 60000));
 
-                    // 當前班次剩餘 10 分鐘內，檢查下一班接替者
-                    if (remainMins > 0 && remainMins <= 10) {
+// 🌟 當前班次剩餘 15 分鐘內，檢查下一班接替者
+                    if (remainMins > 0 && remainMins <= 15) {
                         const nextSched = memberSchedules.find(ns => ns.locationId === sched.locationId && ns.name !== sched.name && parseTime(ns.start).getTime() === parseTime(sched.end).getTime());
                         if (nextSched && activeMembers[nextSched.name] !== sched.locationId) { 
                             incomingMembers[sched.locationId] = incomingMembers[sched.locationId] || []; 
@@ -10070,54 +10161,61 @@ window.updateMapSimulation = () => {
                     });
                 }
 
-                const remainMins = Math.max(0, Math.ceil((endTargetMs - nowTime) / 60000));
-                const rH = String(Math.floor(remainMins / 60)).padStart(2, '0');
-                const rM = String(remainMins % 60).padStart(2, '0');
-                const remainTimeStr = `${rH}:${rM}`;
+const remainMins = Math.max(0, Math.ceil((endTargetMs - nowTime) / 60000));
+                const rH = Math.floor(remainMins / 60);
+                const rM = remainMins % 60;
 
-                if (!usedIncomingByLoc[locId]) usedIncomingByLoc[locId] = new Set();
+if (!usedIncomingByLoc[locId]) usedIncomingByLoc[locId] = new Set();
                 const curNamesSet = new Set(locGroups[locId] || []);
                 let waitingName = '';
 
-                // 優先配對：在該員結束時間 (endTargetMs) 緊接著到同一崗位接替他的人
-                const nextReplacement = memberSchedules.find(ns => {
-                    if (ns.locationId !== locId || ns.name === personName) return false;
-                    if (curNamesSet.has(ns.name) || usedIncomingByLoc[locId].has(ns.name)) return false;
-                    const nsStartMs = window.getScheduleRange(ns.start, ns.end, nowTime).s.getTime();
-                    return Math.abs(nsStartMs - endTargetMs) <= 60000;
-                });
+                // 🌟 嚴格判定：只有剩餘時間 <= 15 分鐘時，才顯示「待:接替人名」
+                if (remainMins > 0 && remainMins <= 15) {
+                    const nextReplacement = memberSchedules.find(ns => {
+                        if (ns.locationId !== locId || ns.name === personName) return false;
+                        if (curNamesSet.has(ns.name) || usedIncomingByLoc[locId].has(ns.name)) return false;
+                        const nsStartMs = window.getScheduleRange(ns.start, ns.end, nowTime).s.getTime();
+                        return Math.abs(nsStartMs - endTargetMs) <= 60000;
+                    });
 
-                if (nextReplacement) {
-                    waitingName = nextReplacement.name;
-                    usedIncomingByLoc[locId].add(waitingName);
-                } else {
-                    // 次要配對：來自 incomingMembers 的待命人員
-                    const incomingList = (incomingMembers[locId] || []).filter(n => !curNamesSet.has(n) && !usedIncomingByLoc[locId].has(n));
-                    if (incomingList.length > 0) {
-                        waitingName = incomingList[0];
+                    if (nextReplacement) {
+                        waitingName = nextReplacement.name;
                         usedIncomingByLoc[locId].add(waitingName);
+                    } else {
+                        const incomingList = (incomingMembers[locId] || []).filter(n => !curNamesSet.has(n) && !usedIncomingByLoc[locId].has(n));
+                        if (incomingList.length > 0) {
+                            waitingName = incomingList[0];
+                            usedIncomingByLoc[locId].add(waitingName);
+                        }
                     }
                 }
 
+// 🌟 亮白半透明毛玻璃長方框（不再變黑），並移除上下間距讓「待:」「時間」「名稱」三層緊貼
+                const timeStr = rH > 0 ? `${rH}h ${rM > 0 ? rM + 'm' : ''}`.trim() : `${rM}m`;
+                const timeBoxHtml = `
+                    <div class="inline-flex items-center justify-center px-1.5 py-[1.5px] rounded-[4px] bg-white/75 backdrop-blur-xs text-slate-800 font-mono text-[10px] font-black leading-none shadow-2xs border border-slate-300/80 whitespace-nowrap">
+                        ${timeStr}
+                    </div>`;
+
                 return `
-                    <div class="flex flex-col items-center justify-center leading-none mb-0.5 pointer-events-none select-none">
-                        ${waitingName ? `<div class="bg-white/95 border-2 border-orange-500 text-orange-500 text-[10.5px] font-black px-1.5 py-0.5 rounded-md shadow-xs whitespace-nowrap mb-0.5 tracking-tight animate-flag-in">待:${window.esc(waitingName)}</div>` : ''}
-                        <div class="text-orange-500 font-mono text-[11px] font-black tracking-tight bg-[#fdfbf7]/90 px-1 rounded leading-tight drop-shadow-2xs">${remainTimeStr}</div>
+                    <div class="flex flex-col items-center justify-center leading-none -space-y-[1px] pointer-events-none select-none z-10">
+                        ${waitingName ? `<div class="bg-white/95 border border-orange-400 text-orange-500 text-[10px] font-bold px-1.5 py-[1.5px] rounded-[4px] shadow-2xs whitespace-nowrap tracking-tight leading-none animate-flag-in">待:${window.esc(waitingName)}</div>` : ''}
+                        ${timeBoxHtml}
                     </div>`;
             };
 
-            ['pt_2', 'pt_6', 'pt_7'].forEach(locId => {
+['pt_2', 'pt_6', 'pt_7'].forEach(locId => {
                 const names = locGroups[locId] || [], incoming = incomingMembers[locId] || [];
                 const card = $(`station-${locId}`);
                 const isCleanRole = window.currentMapRole === 'clean';
                 if (card) {
                     let box = card.querySelector('.ext-members-box') || document.createElement('div');
-                    if (!box.parentNode) { box.className = 'ext-members-box flex flex-wrap items-center justify-center gap-1.5 -mt-1 pt-0'; card.appendChild(box); }
-                    else box.innerHTML = '';
+                    if (!box.parentNode) { box.className = 'ext-members-box flex flex-wrap items-end justify-center gap-1.5 -mt-1 pt-0'; card.appendChild(box); }
+                    else { box.className = 'ext-members-box flex flex-wrap items-end justify-center gap-1.5 -mt-1 pt-0'; box.innerHTML = ''; }
                     
                     if (!isCleanRole) {
-                        // 🎧 客服模式外圍站點：由上而下「待:人名」➔「剩餘時:分」➔「當值人名」
-                        names.forEach((n, idx) => box.insertAdjacentHTML('beforeend', `<div class="flex flex-col items-center justify-center m-0.5">${getCountdownAndIncomingHtml(n, locId, idx)}<div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${window.esc(n)}</div><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div></div>`));
+                        // 🎧 客服模式外圍站點：「待:」「時間」「名稱」緊貼
+                        names.forEach((n, idx) => box.insertAdjacentHTML('beforeend', `<div class="flex flex-col items-center justify-center m-0.5"><div class="flex flex-col items-center -space-y-[1px] mb-1">${getCountdownAndIncomingHtml(n, locId, idx)}<div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${window.esc(n)}</div></div><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div></div>`));
                         // 若該外圍站點目前沒人當值，但有「待:人名」即將進入，單獨顯示
                         if (names.length === 0) {
                             incoming.forEach(n => box.insertAdjacentHTML('beforeend', `<div class="flex flex-col items-center justify-center m-0.5 animate-flag-in"><div class="bg-white border-2 border-orange-500 text-orange-500 text-xs font-black px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider">待:${window.esc(n)}</div><div class="w-5 h-5 bg-amber-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div></div>`));
@@ -10132,12 +10230,15 @@ window.updateMapSimulation = () => {
                                 : `<i data-lucide="user" class="w-3.5 h-3.5 text-white"></i>`;
                             const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== n.trim().toUpperCase();
 
+                            // 清潔模式外圍站點
                             box.insertAdjacentHTML('beforeend', `
                                 <div onclick="window.openMemberProfilePopup('${window.jsAttr(n)}', '外圍站點')" class="flex flex-col items-center justify-center m-0.5 cursor-pointer active:scale-95 transition-transform group max-w-full">
-                                    ${getCountdownAndIncomingHtml(n, locId, idx)}
-                                    <div class="bg-slate-900/90 text-white px-1.5 py-0.5 rounded-md shadow-md max-w-full mb-0.5 tracking-wider border border-white/80 flex flex-col items-center justify-center text-center">
-                                        <span class="text-[9.5px] font-black leading-tight truncate max-w-[68px]">${window.esc(n)}</span>
-                                        ${hasUniqueId ? `<span class="text-amber-300 font-mono text-[7.5px] font-bold leading-none mt-0.5 truncate max-w-[68px]">${window.esc(profile.id.trim())}</span>` : ''}
+                                    <div class="flex flex-col items-center -space-y-[1px] mb-0.5">
+                                        ${getCountdownAndIncomingHtml(n, locId, idx)}
+                                        <div class="bg-slate-900/90 text-white px-1.5 py-0.5 rounded-md shadow-md max-w-full tracking-wider border border-white/80 flex flex-col items-center justify-center text-center">
+                                            <span class="text-[9.5px] font-black leading-tight truncate max-w-[68px]">${window.esc(n)}</span>
+                                            ${hasUniqueId ? `<span class="text-amber-300 font-mono text-[7.5px] font-bold leading-none mt-0.5 truncate max-w-[68px]">${window.esc(profile.id.trim())}</span>` : ''}
+                                        </div>
                                     </div>
                                     <div class="w-7 h-7 sm:w-8 sm:h-8 ${col.activeBg} rounded-full border-2 border-white shadow-md flex items-center justify-center overflow-hidden shrink-0">
                                         ${avatarHtml}
@@ -10308,19 +10409,21 @@ window.updateMapSimulation = () => {
                     const isCleanRole = window.currentMapRole === 'clean';
                     const topStackHtml = getCountdownAndIncomingHtml(name, locId, idx);
 
-                    if (!isCleanRole) {
-                        // 🎧 客服模式：最上層「待:人名」➔ 中間層「剩餘時:分」➔ 最下層「當值人名」
-                        marker.innerHTML = `${topStackHtml}<div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-lg whitespace-nowrap mb-1 tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${window.esc(name)}</div><div class="relative flex items-center justify-center"><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md z-10 relative flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div><div class="absolute w-8 h-8 bg-blue-400/40 rounded-full radar-slow z-0"></div></div>`;
-                        if (marker.parentNode !== container) container.appendChild(marker);
+if (!isCleanRole) {
+                        // 🎧 客服模式：外層鎖定底部圓點位置，內層執行動畫，確保不往下掉且有「待:」時水平對齊
+                        let seed = 0; for (let i = 0; i < name.length; i++) seed += name.charCodeAt(i);
+                        const floatCls = ['animate-float-a', 'animate-float-b', 'animate-float-c'][seed % 3];
+                        const floatDelay = `${(seed % 5) * -3}s`;
+                        marker.innerHTML = `<div class="flex flex-col items-center justify-end ${floatCls}" style="animation-delay:${floatDelay};"><div class="flex flex-col items-center -space-y-[1px] mb-1">${topStackHtml}<div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-lg whitespace-nowrap tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${window.esc(name)}</div></div><div class="relative flex items-center justify-center"><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md z-10 relative flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div><div class="absolute w-8 h-8 bg-blue-400/40 rounded-full radar-slow z-0"></div></div></div>`;
+if (marker.parentNode !== container) container.appendChild(marker);
                         const off = names.length > 1 ? (idx - (names.length - 1) / 2) * 75 : 0;
                         marker.style.left = `calc(${loc.x}% + ${off}px - 20px)`;
-                        marker.style.top = `calc(${loc.y}% - 65px)`;
-                        let seed = 0; for (let i = 0; i < name.length; i++) seed += name.charCodeAt(i);
-                        marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 pointer-events-none z-40 drop-shadow-xl ${['animate-float-a', 'animate-float-b', 'animate-float-c'][seed % 3]}`;
-                        marker.style.animationDelay = `${(seed % 5) * -3}s`;
+                        marker.style.top = locId === 'pt_1' ? `calc(${loc.y}% + 22px)` : `calc(${loc.y}% - 6px)`;
+                        marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-end transform -translate-x-1/2 -translate-y-full pointer-events-none z-40 drop-shadow-xl`;
+                        marker.style.animationDelay = '0s';
                         marker.onclick = null;
                     } else {
-                        // 🧹 清潔模式：最上層「待:人名」➔ 中間層「剩餘時:分」➔ 最下層「當值人名」
+                        // 🧹 清潔模式：以底部頭像為基準向上對齊，有「待:」時往上延伸、頭像與人名完全水平對齊
                         const profile = window.getMemberProfile(name);
                         const col = window.getMemberColorClass(name);
                         const avatarHtml = profile.avatar 
@@ -10329,10 +10432,12 @@ window.updateMapSimulation = () => {
                         const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== name.trim().toUpperCase();
 
                         marker.innerHTML = `
-                            ${topStackHtml}
-                            <div class="bg-slate-900/90 text-white px-2 py-0.5 rounded-md shadow-md whitespace-nowrap mb-1 tracking-wider border border-white/80 flex flex-col items-center justify-center text-center">
-                                <span class="text-[11px] font-black leading-tight">${window.esc(name)}</span>
-                                ${hasUniqueId ? `<span class="text-amber-300 font-mono text-[8.5px] font-bold leading-none mt-0.5">${window.esc(profile.id.trim())}</span>` : ''}
+                            <div class="flex flex-col items-center -space-y-[1px] mb-1">
+                                ${topStackHtml}
+                                <div class="bg-slate-900/90 text-white px-2 py-0.5 rounded-md shadow-md whitespace-nowrap tracking-wider border border-white/80 flex flex-col items-center justify-center text-center">
+                                    <span class="text-[11px] font-black leading-tight">${window.esc(name)}</span>
+                                    ${hasUniqueId ? `<span class="text-amber-300 font-mono text-[8.5px] font-bold leading-none mt-0.5">${window.esc(profile.id.trim())}</span>` : ''}
+                                </div>
                             </div>
                             <div class="relative flex items-center justify-center group-hover:scale-110 transition-transform">
                                 <div class="w-9 h-9 ${col.activeBg} rounded-full border-2 border-white shadow-md z-10 flex items-center justify-center overflow-hidden">
@@ -10344,8 +10449,8 @@ window.updateMapSimulation = () => {
                         if (marker.parentNode !== container) container.appendChild(marker);
                         const off = names.length > 1 ? (idx - (names.length - 1) / 2) * 65 : 0;
                         marker.style.left = `calc(${loc.x}% + ${off}px)`; 
-                        marker.style.top = `calc(${loc.y}% - 28px)`;
-                        marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-center transform -translate-x-1/2 -translate-y-1/2 pointer-events-auto cursor-pointer z-40 drop-shadow-md transition-transform active:scale-95 group`;
+                        marker.style.top = `calc(${loc.y}% + 8px)`;
+                        marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-end transform -translate-x-1/2 -translate-y-full pointer-events-auto cursor-pointer z-40 drop-shadow-md transition-transform active:scale-95 group`;
                         marker.style.animationDelay = '0s';
                         marker.onclick = (e) => {
                             e.stopPropagation();
@@ -10361,12 +10466,20 @@ window.updateMapSimulation = () => {
                     incoming.forEach((name, idx) => {
                         let marker = $(`dyn-marker-${name}-${locId}-incoming`) || document.createElement('div');
                         marker.id = `dyn-marker-${name}-${locId}-incoming`;
+                        // 清潔模式主要點位
                         marker.innerHTML = `
-                            <div class="bg-white/95 border-2 border-orange-500 text-orange-500 px-2 py-0.5 rounded-md shadow-md whitespace-nowrap mb-1 tracking-wider text-[10.5px] font-black">
-                                待:${window.esc(name)}
+                            <div class="flex flex-col items-center -space-y-[1px] mb-1">
+                                ${topStackHtml}
+                                <div class="bg-slate-900/90 text-white px-2 py-0.5 rounded-md shadow-md whitespace-nowrap tracking-wider border border-white/80 flex flex-col items-center justify-center text-center">
+                                    <span class="text-[11px] font-black leading-tight">${window.esc(name)}</span>
+                                    ${hasUniqueId ? `<span class="text-amber-300 font-mono text-[8.5px] font-bold leading-none mt-0.5">${window.esc(profile.id.trim())}</span>` : ''}
+                                </div>
                             </div>
-                            <div class="w-5 h-5 bg-amber-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center">
-                                <i data-lucide="user" class="w-3 h-3 text-white"></i>
+                            <div class="relative flex items-center justify-center group-hover:scale-110 transition-transform">
+                                <div class="w-9 h-9 ${col.activeBg} rounded-full border-2 border-white shadow-md z-10 flex items-center justify-center overflow-hidden">
+                                    ${avatarHtml}
+                                </div>
+                                <div class="absolute w-10 h-10 bg-sky-400/30 rounded-full radar-slow z-0"></div>
                             </div>`;
                         if (marker.parentNode !== container) container.appendChild(marker);
                         const off = incoming.length > 1 ? (idx - (incoming.length - 1) / 2) * 55 : 0;
@@ -11806,13 +11919,11 @@ window.toggleSplitHour = (dateStr, locId, hourStr) => {
                 });
                 if (cur) merged.push(cur);
 
-                // 🌟 決定顯示名稱：外地人若有設定員工編號則優先顯示編號（如 EH0045-2），本地人或本身即為編號者直接顯示
+// 🌟 決定顯示名稱：只有「外地人」才顯示員工編號；「本地人」一律顯示真實姓名！
                 const prof = window.getMemberProfile ? window.getMemberProfile(canonName) : null;
                 let displayLabel = canonName;
-                if (prof && prof.id && prof.id.trim()) {
-                    if (prof.residency === '外地' || window.nonLocalDisplayMode === 'id' || window.isStaffIdFormat(canonName)) {
-                        displayLabel = prof.id.trim();
-                    }
+                if (prof && prof.residency === '外地' && prof.id && prof.id.trim()) {
+                    displayLabel = prof.id.trim();
                 }
 
                 memberBlocks.push({
@@ -13280,13 +13391,37 @@ window.crSaveData = () => {
             lucide.createIcons({ root: c });
         };
 
-        window.crSelectType = (t) => { crCurrentSelectedType = (crCurrentSelectedType === t) ? '' : t; window.crRenderTypesInModal(); };
+window.crSelectType = (t) => { crCurrentSelectedType = (crCurrentSelectedType === t) ? '' : t; window.crRenderTypesInModal(); };
         window.crAddNewType = () => {
             const inp = $('crInputNewType'), val = inp.value.trim();
             if (!val || crItemTypes.includes(val)) return window.showToast('類型已存在或為空', true);
-            crItemTypes.push(val); window.crSaveData(); inp.value = ''; crCurrentSelectedType = val; window.crRenderTypesInModal();
+            crItemTypes.push(val);
+            let delList = getLocal('coldRoomDeletedTypes', []);
+            delList = delList.filter(x => x !== val);
+            safeSetLocal('coldRoomDeletedTypes', delList);
+            window.crSaveData(); inp.value = ''; crCurrentSelectedType = val; window.crRenderTypesInModal();
+            window.showToast(`✅ 已新增貨物類型「${val}」`);
         };
-        window.crDeleteType = (i) => { if (crCurrentSelectedType === crItemTypes[i]) crCurrentSelectedType = ''; crItemTypes.splice(i, 1); window.crSaveData(); window.crRenderTypesInModal(); };
+        window.crDeleteType = (i) => {
+            const targetType = crItemTypes[i];
+            if (!targetType) return;
+            // 🌟 第一次確認
+            window.showConfirm('刪除貨物類型 (1/2)', `確定要刪除「${targetType}」這個貨物類型選項嗎？`, () => {
+                // 🌟 第二次確認
+                setTimeout(() => {
+                    window.showConfirm('最終確認刪除 (2/2)', `再次確認：刪除「${targetType}」後將從選單移除，確定執行嗎？`, () => {
+                        if (crCurrentSelectedType === targetType) crCurrentSelectedType = '';
+                        crItemTypes.splice(i, 1);
+                        let delList = getLocal('coldRoomDeletedTypes', []);
+                        if (!delList.includes(targetType)) delList.push(targetType);
+                        safeSetLocal('coldRoomDeletedTypes', delList);
+                        window.crSaveData();
+                        window.crRenderTypesInModal();
+                        window.showToast(`🗑️ 已刪除貨物類型「${targetType}」`);
+                    });
+                }, 120);
+            });
+        };
 
         // 開啟雪房數字鍵盤
         window.openCrKeypadModal = () => {
@@ -14279,55 +14414,54 @@ const targetPage = $(pages[tab]);
             setTimeout(window.updateCurrentTimeIndicator, 100);
         };
 
-        window.promptChangeTime = () => {
-            const modalHtml = `<div id="dynamicTimeModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();"><div class="bg-white rounded-2xl p-5 w-full max-w-[280px] shadow-2xl relative" onclick="event.stopPropagation()"><h3 class="font-bold text-lg mb-2 text-slate-800 flex items-center"><i data-lucide="clock" class="w-5 h-5 mr-2 text-blue-500"></i>時間跳躍</h3><p class="text-[11px] text-slate-500 mb-4 text-center">設定穿越時間後，時間將從該點繼續流逝。</p><div class="space-y-4"><input type="time" id="dyJumpTime" class="w-full border border-slate-300 rounded-xl p-3 h-14 text-xl focus:border-blue-500 focus:outline-none font-mono font-black text-center shadow-inner text-slate-700"></div><div class="mt-5 flex justify-end space-x-2 border-t border-slate-100 pt-4"><button onclick="document.getElementById('dynamicTimeModal').remove()" class="px-4 py-2.5 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold">取消</button><button onclick="window.confirmChangeTime()" class="px-4 py-2.5 bg-blue-500 text-white rounded-lg text-sm font-bold shadow-sm flex items-center"><i data-lucide="zap" class="w-4 h-4 mr-1"></i>穿越</button></div></div></div>`;
-            document.body.insertAdjacentHTML('beforeend', modalHtml); lucide.createIcons(); $('dyJumpTime').value = getNowInputStrs().time;
+window.promptChangeTime = () => {
+            const simNow = window.getNow();
+            const curSimTimeStr = `${pad(simNow.getHours())}:${pad(simNow.getMinutes())}`;
+            const modalHtml = `<div id="dynamicTimeModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();"><div class="bg-white rounded-2xl p-5 w-full max-w-[280px] shadow-2xl relative" onclick="event.stopPropagation()"><h3 class="font-bold text-lg mb-2 text-slate-800 flex items-center"><i data-lucide="clock" class="w-5 h-5 mr-2 text-blue-500"></i>時間跳躍 (純模擬)</h3><p class="text-[11px] text-slate-500 mb-4 text-center">僅預覽地圖走位与動態任務，<strong>絕不影響任何實際資料</strong>。</p><div class="space-y-4"><input type="time" id="dyJumpTime" class="w-full border border-slate-300 rounded-xl p-3 h-14 text-xl focus:border-blue-500 focus:outline-none font-mono font-black text-center shadow-inner text-slate-700"></div><div class="mt-5 flex justify-end space-x-2 border-t border-slate-100 pt-4"><button onclick="document.getElementById('dynamicTimeModal').remove()" class="px-4 py-2.5 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold">取消</button><button onclick="window.confirmChangeTime()" class="px-4 py-2.5 bg-blue-500 text-white rounded-lg text-sm font-bold shadow-sm flex items-center"><i data-lucide="zap" class="w-4 h-4 mr-1"></i>穿越</button></div></div></div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            lucide.createIcons();
+            $('dyJumpTime').value = curSimTimeStr;
+        };
+
+        // 🌟 純視覺模擬刷新：不觸碰剔檔資料，快進時輕量更新不卡頓
+        window.syncAllViewsAfterTimeJump = (shouldCenterTimeline = false, isFastTick = false) => {
+            window.updateClockUI();
+            // 1. 動態時間軸
+            if (!$('timelinePage')?.classList.contains('hidden')) {
+                if (isFastTick) {
+                    window.updateConveyorBelt();
+                } else {
+                    window.renderTimeline(shouldCenterTimeline);
+                    window.updateCurrentTimeIndicator();
+                }
+            }
+            // 2. 地圖分頁：更新人員走位、剩餘時間與「待:」接替標籤
+            if (!$('mapPage')?.classList.contains('hidden')) {
+                window.updateMapSimulation();
+            }
+            // 3. 雪房、備忘錄倒數、收工查核預覽
+            if (!isFastTick && !$('coldRoomPage')?.classList.contains('hidden')) window.crRenderList();
+            if (!$('memoPage')?.classList.contains('hidden')) window.updateMemoCountdowns();
+            if (!isFastTick && !$('closingPage')?.classList.contains('hidden')) window.searchStall();
         };
 
         window.confirmChangeTime = () => {
-            const input = $('dyJumpTime').value;
-            if (input) {
-                const [h, m] = input.split(':').map(Number);
-                if (!isNaN(h) && !isNaN(m)) {
-                    const cur = window.getNow();
-                    const target = new Date(cur); target.setHours(h, m, 0, 0);
-                    timeOffset += (target.getTime() - cur.getTime());
-                    $('dynamicTimeModal').remove(); window.showToast(`🕒 時間已跳躍至 ${input}`);
-                    window.updateClockUI();
-                    if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
-                    if (!$('mapPage').classList.contains('hidden')) window.updateMapSimulation();
-                    if (!$('coldRoomPage').classList.contains('hidden')) window.crRenderList();
-                    if (!$('memoPage').classList.contains('hidden')) window.updateMemoCountdowns();
-                    if (!$('closingPage')?.classList.contains('hidden')) window.searchStall();
-                    window.checkColdRoomOverdueAlerts(); window.checkMemoAlerts();
-                }
-            }
-        };
+            const input = $('dyJumpTime')?.value;
+            if (!input) return;
+            const [h, m] = input.split(':').map(Number);
+            if (isNaN(h) || isNaN(m)) return;
 
-        window.editTimelineTask = (taskId, eventOrIsNew) => {
-            const isNew = eventOrIsNew === true, task = dailyScheduleData.find(t => t.id === taskId); if (!task) return;
-            const cancelAct = isNew ? `window.cancelNewTimelineTask('${taskId}')` : `document.getElementById('dynamicEditModal')?.remove()`;
-            const modalHtml = `<div id="dynamicEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) { ${cancelAct}; }"><div class="bg-white rounded-2xl p-5 w-full max-w-[320px] shadow-2xl relative" onclick="event.stopPropagation()"><h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center"><i data-lucide="edit" class="w-5 h-5 mr-2 text-blue-500"></i>${isNew ? '新增動態任務' : '編輯任務'}</h3><div class="space-y-4"><div><label class="text-[11px] font-bold text-slate-500 mb-1 block">任務標題</label><input type="text" id="dyEditTitle" value="${window.escAttr(task.title || '')}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-bold text-slate-700 shadow-inner text-center"></div><div class="flex gap-3"><div class="flex-1 relative"><label class="text-[11px] font-bold text-slate-500 mb-1 block">開始時間</label><input type="time" id="dyEditStart" value="${task.start}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner text-center"></div><div class="flex-1 relative"><label class="text-[11px] font-bold text-slate-500 mb-1 block">結束時間</label><input type="time" id="dyEditEnd" value="${task.end}" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-blue-500 focus:outline-none font-mono font-bold shadow-inner text-center"></div></div><div class="mt-3"><label class="text-[11px] font-bold text-slate-500 mb-1 block">任務分組 (選填)</label><div class="flex gap-2">${['', 'A', 'B', 'C'].map(g => `<label class="flex-1 text-center cursor-pointer active:scale-95 transition-transform"><input type="radio" name="dyEditGroup" value="${g}" ${task.group === g || (!task.group && g === '') ? 'checked' : ''} class="sr-only peer"><div class="py-1.5 rounded-lg border border-slate-200 text-slate-500 text-xs font-bold peer-checked:bg-blue-50 peer-checked:text-blue-600 peer-checked:border-blue-300 peer-checked:shadow-sm transition-all">${g ? g + '組' : '無'}</div></label>`).join('')}</div></div></div><div class="mt-6 flex justify-between items-center border-t border-slate-100 pt-4"><button onclick="window.deleteTimelineTask('${taskId}')" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-2.5 rounded-lg text-sm font-bold flex items-center shadow-sm"><i data-lucide="trash-2" class="w-4 h-4 mr-1"></i>刪除</button><div class="space-x-2 flex"><button onclick="${cancelAct}" class="px-3 py-2.5 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold">取消</button><button onclick="window.saveTimelineTask('${taskId}')" class="px-4 py-2.5 bg-blue-500 text-white rounded-lg text-sm font-bold shadow-sm">儲存</button></div></div></div></div>`;
-            document.body.insertAdjacentHTML('beforeend', modalHtml); lucide.createIcons();
-            if (isNew) { const tInp = $('dyEditTitle'); if (tInp) { tInp.focus(); tInp.select(); } }
-        };
+            const realNow = window.getRealNow();
+            const target = new Date(realNow);
+            target.setHours(h, m, 0, 0);
+            // 🌟 同步寫入 timeOffset 與 window.timeOffset，解決時鐘與地圖不跳轉的問題
+            timeOffset = target.getTime() - realNow.getTime();
+            window.timeOffset = timeOffset;
 
-        window.cancelNewTimelineTask = (taskId) => {
-            $('dynamicEditModal')?.remove(); dailyScheduleData = dailyScheduleData.filter(t => t.id !== taskId);
-            syncConfig('schedule', { tasks: dailyScheduleData }); if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
+            $('dynamicTimeModal')?.remove();
+            window.showToast(`🕒 模擬時間已跳躍至 ${input}（不影響實際資料）`);
+            window.syncAllViewsAfterTimeJump(true, false);
         };
-
-        window.saveTimelineTask = (taskId) => {
-            const title = $('dyEditTitle').value.trim(), start = $('dyEditStart').value, end = $('dyEditEnd').value;
-            const group = document.querySelector('input[name="dyEditGroup"]:checked')?.value || '', task = dailyScheduleData.find(t => t.id === taskId);
-            if (task && title) {
-                task.title = title; task.start = start; task.end = end; task.group = group;
-                syncConfig('schedule', { tasks: dailyScheduleData }, true); $('dynamicEditModal')?.remove();
-                window.showToast("已儲存"); if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
-            }
-        };
-
-        window.deleteTimelineTask = (taskId) => { window.showConfirm('刪除確認', '確定要永久刪除這張任務卡片嗎？', () => { $('dynamicEditModal')?.remove(); window.deleteTaskCard(taskId); }); };
 
         window.toggleSimulation = () => {
             isFastForwarding = !isFastForwarding;
@@ -14336,30 +14470,30 @@ const targetPage = $(pages[tab]);
                 b.classList.toggle('bg-amber-500', isFastForwarding); b.classList.toggle('text-white', isFastForwarding); b.classList.toggle('animate-pulse', isFastForwarding);
             });
             if (isFastForwarding) {
-                window.showToast("🚀 時間加速中"); document.querySelectorAll('.sim-restore-btn').forEach(b => b.classList.remove('hidden'));
+                if (simInterval) clearInterval(simInterval);
+                window.showToast("🚀 時間模擬加速中");
+                document.querySelectorAll('.sim-restore-btn').forEach(b => b.classList.remove('hidden'));
                 simInterval = setInterval(() => {
-                    timeOffset += 60000; window.updateClockUI();
-                    if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
-                    if (!$('mapPage').classList.contains('hidden')) window.updateMapSimulation();
-                    if (!$('coldRoomPage').classList.contains('hidden')) window.crRenderList();
-                    if (!$('memoPage').classList.contains('hidden')) window.updateMemoCountdowns();
-                    if (!$('closingPage')?.classList.contains('hidden')) window.searchStall();
-                    window.checkColdRoomOverdueAlerts(); window.checkMemoAlerts();
+                    timeOffset += 60000;
+                    window.timeOffset = timeOffset;
+                    window.syncAllViewsAfterTimeJump(false, true);
                 }, 200);
-            } else { clearInterval(simInterval); window.showToast("⏸️ 暫停加速"); }
+            } else {
+                if (simInterval) { clearInterval(simInterval); simInterval = null; }
+                window.showToast("⏸️ 暫停加速");
+                window.syncAllViewsAfterTimeJump(false, false);
+            }
         };
 
         window.restoreRealTime = () => {
-            isFastForwarding = false; clearInterval(simInterval); timeOffset = 0;
+            isFastForwarding = false;
+            if (simInterval) { clearInterval(simInterval); simInterval = null; }
+            timeOffset = 0;
+            window.timeOffset = 0;
             document.querySelectorAll('.sim-toggle-btn').forEach(b => { b.classList.remove('bg-amber-500', 'text-white', 'border-transparent', 'animate-pulse'); b.classList.add('bg-white', 'text-slate-600', 'border-slate-200'); });
             document.querySelectorAll('.sim-restore-btn').forEach(b => b.classList.add('hidden'));
-            window.showToast("🌍 已回到現實時間"); window.updateClockUI();
-            if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(true);
-            if (!$('mapPage').classList.contains('hidden')) window.updateMapSimulation();
-            if (!$('coldRoomPage').classList.contains('hidden')) window.crRenderList();
-            if (!$('memoPage').classList.contains('hidden')) window.updateMemoCountdowns();
-            if (!$('closingPage')?.classList.contains('hidden')) window.searchStall();
-            window.checkColdRoomOverdueAlerts(); window.checkMemoAlerts();
+            window.showToast("🌍 已回到現實時間");
+            window.syncAllViewsAfterTimeJump(true, false);
         };
 
         window.promptResetOptions = () => {
@@ -14726,7 +14860,7 @@ const matched = (window.stallList || []).filter(s => {
             }
         }
 
-        onAuthStateChanged(auth, (user) => {
+onAuthStateChanged(auth, (user) => {
             currentUser = user; const dot = $('connectionDot'), st = $('connectionStatus');
             if (user) { 
                 dot?.classList.replace('bg-red-500', 'bg-green-500'); 
@@ -14734,10 +14868,12 @@ const matched = (window.stallList || []).filter(s => {
                 setupPureRealtimeSync(); 
                 setupPatrolSync();
                 window.flushPendingGalleryLogs?.();
-            window.flushGalleryMetadataPatches?.();
-            window.flushPendingTempSync?.();
-            window._flushSyncQueue?.();
-                window.autoCleanupGalleryToTrash();
+                window.flushGalleryMetadataPatches?.();
+                window.flushPendingTempSync?.();
+                window._flushSyncQueue?.();
+                if (timeOffset === 0 && window.timeOffset === 0 && !isFastForwarding) {
+                    window.autoCleanupGalleryToTrash();
+                }
                 window.autoSyncClosedStallsToPatrol(true);
 
                 // 🌟 重開網頁連上雲端時，自動檢查並補傳離線期間拍的照片
@@ -16799,13 +16935,13 @@ historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
                                 <div class="absolute top-1 left-2.5 text-emerald-400/80 font-black text-sm tracking-widest select-none">花園仔</div>
                             </div>
 
-                            <!-- 左：花園仔(男廁) -->
+<!-- 左：花園仔(男廁) -->
                             <div class="absolute top-[73%] left-[3%] w-[25%] h-[23%] bg-sky-100/85 border-2 border-sky-500 rounded-lg overflow-hidden flex flex-col justify-end pb-1.5 items-center shadow-inner px-0.5 hover:bg-sky-200/60 transition-colors" title="點擊切換模式">
                                 <div class="text-sky-800 font-black text-[10px] tracking-tighter text-center leading-tight pointer-events-none">花園仔(男廁)</div>
                             </div>
 
                             <!-- 中：花園仔 -->
-                            <div class="absolute top-[73%] left-[31%] w-[28%] h-[23%] bg-green-100/85 border-2 border-green-500 rounded-lg overflow-hidden flex flex-col justify-end pb-1.5 items-center shadow-inner hover:bg-green-200/60 transition-colors" title="點GIS切換模式">
+                            <div class="absolute top-[73%] left-[31%] w-[28%] h-[23%] bg-green-100/85 border-2 border-green-500 rounded-lg overflow-hidden flex flex-col justify-end pb-1.5 items-center shadow-inner hover:bg-green-200/60 transition-colors" title="點擊切換模式">
                                 <div class="text-green-800 font-black text-xs tracking-wider pointer-events-none">花園仔</div>
                             </div>
 
