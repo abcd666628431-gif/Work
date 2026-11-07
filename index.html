@@ -8006,8 +8006,32 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
             logGroups.sort((a, b) => b.latestTs - a.latestTs);
             logGroups = logGroups.slice(0, 5); // 儀表板取前 5 筆聚合
 
-                container.innerHTML = `
+container.innerHTML = `
                 <div class="space-y-2 pb-8">
+                    <!-- ① 剔檔 / 溫度 / 雪房 -->
+                    <div class="grid grid-cols-3 gap-1.5">
+                        <div onclick="window.switchTab('patrol')" class="soft-box-green p-2 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all text-center relative">
+                            <i data-lucide="clipboard-check" class="w-12 h-12 watermark-bg-icon text-green-700"></i>
+                            <span class="text-[10px] font-black text-green-700 mb-0.5 relative z-10">剔檔 (${curSlot})</span>
+                            <div class="text-sm font-black text-green-950 relative z-10">${patrolFilled}/${patrolStalls.length}</div>
+                            <span class="mt-0.5 px-1.5 py-0.2 bg-white text-[9px] font-mono text-green-700 font-black rounded border border-green-300 relative z-10">${patrolPct}% 完成</span>
+                        </div>
+
+                        <div onclick="window.switchTab('patrol'); setTimeout(window.openTempModal, 150);" class="soft-box-blue p-2 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all text-center relative">
+                            <i data-lucide="thermometer" class="w-12 h-12 watermark-bg-icon text-blue-600"></i>
+                            <span class="text-[10px] font-black text-blue-600 mb-0.5 relative z-10">溫度 (${curSlot})</span>
+                            <div class="text-sm font-black ${tempFilled === 12 ? 'text-blue-900' : 'text-rose-600'} relative z-10">${tempFilled}/12</div>
+                            <span class="mt-0.5 px-1.5 py-0.2 bg-white text-[9px] font-black ${tempFilled === 12 ? 'text-blue-700 border-blue-200' : 'text-rose-600 border-rose-200'} rounded border relative z-10">${tempFilled === 12 ? '✔ 已滿溫' : `差 ${12 - tempFilled} 處`}</span>
+                        </div>
+
+                        <div onclick="window.switchTab('coldRoom')" class="soft-box-cyan p-2 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all text-center relative">
+                            <i data-lucide="snowflake" class="w-12 h-12 watermark-bg-icon text-cyan-600"></i>
+                            <span class="text-[10px] font-black text-cyan-800 mb-0.5 relative z-10">雪房存放</span>
+                            <div class="text-sm font-black text-cyan-950 relative z-10">${crRemainBoxes} <span class="text-[10px] font-bold text-cyan-700">箱</span></div>
+                            <span class="mt-0.5 px-1.5 py-0.2 bg-white text-[9px] font-black text-cyan-800 rounded border border-cyan-300 relative z-10">${activeCrRecords.length} 批存放</span>
+                        </div>
+                    </div>
+
                     <!-- ① 今日圖庫相片核對 -->
                     <div class="soft-card p-2.5 space-y-2">
                         <div class="flex items-center justify-between pb-1 border-b border-slate-100">
@@ -8019,36 +8043,7 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
                         </div>
 
                         <div class="space-y-1.5 text-xs">
-<!-- 提早收工與清潔相：規整對齊版 -->
-                        <div class="soft-box-slate p-2 space-y-1.5">
-                            <div class="flex items-center justify-between">
-                                <!-- 左側：提早收工 -->
-                                <div class="flex items-center space-x-1.5">
-                                    <span class="text-slate-600 font-bold text-[11px]">提早收工</span>
-                                    <span class="font-mono font-black text-amber-800 bg-amber-100/90 border border-amber-300 px-2 py-0.5 rounded-md text-[11px] shadow-2xs">${earlyCloseCount} 個</span>
-                                </div>
-
-                                <!-- 右側：清潔相 -->
-                                <div class="flex items-center space-x-1.5">
-                                    <span class="text-slate-600 font-bold text-[11px] flex items-center">
-                                        <i data-lucide="sparkles" class="w-3.5 h-3.5 mr-1 ${cleanReady ? 'text-cyan-600' : 'text-slate-400'}"></i>清潔相
-                                    </span>
-                                    <span class="font-mono font-black text-[11px] px-2 py-0.5 rounded-md border shadow-2xs ${cleanReady ? 'bg-cyan-50 text-cyan-700 border-cyan-300' : 'bg-cyan-100/90 text-cyan-800 border-cyan-300'}">
-                                        ${uploadedCleanCodes.size} / 6 檔 ${cleanReady ? '✔' : ''}
-                                    </span>
-                                </div>
-                            </div>
-
-                            <!-- 若未齊，以整齊的淡粉色小標籤條置底顯示，不歪斜、不破版 -->
-                            ${!cleanReady && missingCleanStalls.length > 0 ? `
-                                <div class="bg-rose-50/80 border border-rose-200/80 rounded-md px-2 py-1 flex items-center justify-between text-[10px]">
-                                    <span class="text-rose-600 font-bold shrink-0">未齊缺號：</span>
-                                    <span class="font-mono font-bold text-rose-700 truncate pl-1">${missingCleanStalls.join(', ')}</span>
-                                </div>
-                            ` : ''}
-                        </div>
-
-<!-- 營業相 (13張) & 開工-雞相 (4檔) 左右並排 -->
+                            <!-- 營業相 (13張) & 開工-雞相 (4檔) 左右並排 -->
                             <div class="grid grid-cols-2 gap-1.5">
                                 <!-- 左：營業相 (13張) -->
                                 <div class="${businessReady ? 'soft-box-green' : 'soft-box-slate'} p-2 flex flex-col justify-between">
@@ -8105,30 +8100,33 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
 
-                    <!-- ② 剔檔 / 溫度 / 雪房 -->
-                    <div class="grid grid-cols-3 gap-1.5">
-                        <div onclick="window.switchTab('patrol')" class="soft-box-green p-2 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all text-center relative">
-                            <i data-lucide="clipboard-check" class="w-12 h-12 watermark-bg-icon text-green-700"></i>
-                            <span class="text-[10px] font-black text-green-700 mb-0.5 relative z-10">剔檔 (${curSlot})</span>
-                            <div class="text-sm font-black text-green-950 relative z-10">${patrolFilled}/${patrolStalls.length}</div>
-                            <span class="mt-0.5 px-1.5 py-0.2 bg-white text-[9px] font-mono text-green-700 font-black rounded border border-green-300 relative z-10">${patrolPct}% 完成</span>
-                        </div>
+<!-- 提早收工與清潔相：左右並排，未齊縮於右側清潔相下方 -->
+                            <div class="grid grid-cols-2 gap-1.5">
+                                <!-- 左側：提早收工 -->
+                                <div class="soft-box-slate p-2 flex items-center justify-between">
+                                    <span class="text-slate-600 font-black text-[11px]">提早收工</span>
+                                    <span class="font-mono font-black text-amber-800 bg-amber-100/90 border border-amber-300 px-2 py-0.5 rounded-md text-[11px] shadow-2xs">${earlyCloseCount} 個</span>
+                                </div>
 
-                        <div onclick="window.switchTab('patrol'); setTimeout(window.openTempModal, 150);" class="soft-box-blue p-2 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all text-center relative">
-                            <i data-lucide="thermometer" class="w-12 h-12 watermark-bg-icon text-blue-600"></i>
-                            <span class="text-[10px] font-black text-blue-600 mb-0.5 relative z-10">溫度 (${curSlot})</span>
-                            <div class="text-sm font-black ${tempFilled === 12 ? 'text-blue-900' : 'text-rose-600'} relative z-10">${tempFilled}/12</div>
-                            <span class="mt-0.5 px-1.5 py-0.2 bg-white text-[9px] font-black ${tempFilled === 12 ? 'text-blue-700 border-blue-200' : 'text-rose-600 border-rose-200'} rounded border relative z-10">${tempFilled === 12 ? '✔ 已滿溫' : `差 ${12 - tempFilled} 處`}</span>
-                        </div>
-
-                        <div onclick="window.switchTab('coldRoom')" class="soft-box-cyan p-2 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all text-center relative">
-                            <i data-lucide="snowflake" class="w-12 h-12 watermark-bg-icon text-cyan-600"></i>
-                            <span class="text-[10px] font-black text-cyan-800 mb-0.5 relative z-10">雪房存放</span>
-                            <div class="text-sm font-black text-cyan-950 relative z-10">${crRemainBoxes} <span class="text-[10px] font-bold text-cyan-700">箱</span></div>
-                            <span class="mt-0.5 px-1.5 py-0.2 bg-white text-[9px] font-black text-cyan-800 rounded border border-cyan-300 relative z-10">${activeCrRecords.length} 批存放</span>
+                                <!-- 右側：清潔相 + 底部未齊缺號 -->
+                                <div class="${cleanReady ? 'soft-box-cyan' : 'soft-box-slate'} p-2 flex flex-col justify-between gap-1">
+                                    <div class="flex items-center justify-between gap-1">
+                                        <span class="text-slate-700 font-black text-[11px] flex items-center truncate">
+                                            <i data-lucide="sparkles" class="w-3.5 h-3.5 mr-1 shrink-0 ${cleanReady ? 'text-cyan-600' : 'text-slate-400'}"></i>
+                                            <span class="truncate">清潔相</span>
+                                        </span>
+                                        <span class="font-mono font-black text-[10.5px] px-1.5 py-0.2 rounded-md border shrink-0 shadow-2xs ${cleanReady ? 'bg-white text-cyan-700 border-cyan-400' : 'bg-cyan-100/90 text-cyan-800 border-cyan-300'}">
+                                            ${uploadedCleanCodes.size}/6 檔 ${cleanReady ? '✔' : ''}
+                                        </span>
+                                    </div>
+                                    ${!cleanReady && missingCleanStalls.length > 0 ? `
+                                        <div class="text-[9.5px] text-rose-600 font-bold truncate" title="缺號: ${missingCleanStalls.join(', ')}">
+                                            未齊: <span class="font-mono">${missingCleanStalls.join(', ')}</span>
+                                        </div>
+                                    ` : `<div class="text-[9.5px] text-cyan-700 font-bold truncate">6 檔已全部拍齊！</div>`}
+                                </div>
+                            </div>
                         </div>
                     </div>
 
