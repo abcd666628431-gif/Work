@@ -284,15 +284,50 @@ tr[class*="pref-row-highlight-"] .sub-line-item[data-name=""] {
         window.clientDeviceId = clientDeviceId;
         window.clientSessionId = clientSessionId;
 
-        // 🌟 2. 隨機成員名稱產生後立刻鎖入本機，以後重開都固定為同一號碼！
-        let sysUserName = localStorage.getItem('gallery_user_name');        if (!sysUserName) {
+// 🌟 計算「手機硬體 + GPU + Canvas」特徵碼（專治微信內置瀏覽器清快取）
+        window.getDeviceFingerprint = () => {
+            try {
+                const gl = document.createElement('canvas').getContext('webgl');
+                const dbg = gl ? gl.getExtension('WEBGL_debug_renderer_info') : null;
+                const gpu = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '';
+                const cvs = document.createElement('canvas');
+                cvs.width = 160; cvs.height = 32;
+                const ctx = cvs.getContext('2d');
+                ctx.textBaseline = 'top';
+                ctx.font = '14px Arial';
+                ctx.fillStyle = '#f60';
+                ctx.fillRect(10, 1, 62, 20);
+                ctx.fillStyle = '#069';
+                ctx.fillText('MacauMarket_FP_2026', 2, 15);
+                const rawSig = [
+                    screen.width, screen.height, window.devicePixelRatio || 1,
+                    navigator.hardwareConcurrency || 0, navigator.platform || '',
+                    gpu, cvs.toDataURL().slice(-64)
+                ].join('|');
+                let h = 0x811c9dc5;
+                for (let i = 0; i < rawSig.length; i++) {
+                    h ^= rawSig.charCodeAt(i);
+                    h = Math.imul(h, 0x01000193);
+                }
+                return 'fp_' + (h >>> 0).toString(16);
+            } catch (e) {
+                return '';
+            }
+        };
+        window.deviceFingerprint = window.getDeviceFingerprint();
+
+        // 🌟 2. 隨機成員名稱產生後立刻鎖入本機
+        let sysUserName = '';
+        try { sysUserName = localStorage.getItem('gallery_user_name') || ''; } catch (e) {}
+        if (!sysUserName) {
             sysUserName = '成員_' + Math.floor(Math.random() * 900 + 100);
-            localStorage.setItem('gallery_user_name', sysUserName);
+            try { localStorage.setItem('gallery_user_name', sysUserName); } catch (e) {}
         }
-        let sysUserColor = localStorage.getItem('gallery_user_color');
+        let sysUserColor = '';
+        try { sysUserColor = localStorage.getItem('gallery_user_color') || ''; } catch (e) {}
         if (!sysUserColor) {
             sysUserColor = '#38bdf8';
-            localStorage.setItem('gallery_user_color', sysUserColor);
+            try { localStorage.setItem('gallery_user_color', sysUserColor); } catch (e) {}
         }
         let galleryLogsStore = [];
         window.expandedLogGroups = new Set(); // 記錄使用者展開的群組 ID
@@ -740,11 +775,20 @@ window.getClearLogAction = (action) => {
             }
 
             // 若是點右上角「身分」清除自己，才將本機變為隨機名稱；若是管理員清除別人，自己維持原名
-            if (!isEditingOtherUser) {
-                sysUserName = randomName;
-                sysUserColor = randomColor;
-                localStorage.setItem('gallery_user_name', sysUserName);
-                localStorage.setItem('gallery_user_color', sysUserColor);
+if (!isEditingOtherUser) {
+                sysUserName = name;
+                sysUserColor = color;
+                try {
+                    localStorage.setItem('gallery_user_name', sysUserName);
+                    localStorage.setItem('gallery_user_color', sysUserColor);
+                } catch (e) {}
+                if (db && window.deviceFingerprint) {
+                    setDoc(cfgDoc('device_identities'), {
+                        fingerprints: {
+                            [window.deviceFingerprint]: { name: sysUserName, color: sysUserColor, updatedAt: Date.now() }
+                        }
+                    }, { merge: true }).catch(() => {});
+                }
             }
 
             window.closeUserNameModal();
@@ -8004,36 +8048,39 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
                             ` : ''}
                         </div>
 
-                            <!-- 營業相 (13張) -->
-                            <div class="${businessReady ? 'soft-box-green' : 'soft-box-slate'} p-2">
-                                <div class="flex items-center justify-between mb-0.5">
-                                    <span class="font-black text-slate-800 flex items-center text-[11px]">
-                                        <i data-lucide="store" class="w-3.5 h-3.5 mr-1 ${businessReady ? 'text-green-600' : 'text-slate-400'}"></i>
-                                        營業相 (一樓肉檔)
-                                    </span>
-<span class="font-mono font-black text-[11px] px-1.5 py-0.2 rounded ${businessReady ? 'bg-white text-green-700 border border-green-500' : 'bg-slate-200/80 text-slate-700'}">${uploadedFirstFloorCodes.size} / 13 張 ${businessReady ? '✔' : ''}</span>
-                                </div>
-                                ${!businessReady ? `
-                                    <div class="text-[10px] text-rose-600 font-bold truncate pl-4">
-                                        未齊！缺號: <span class="font-mono">${missingBusinessStalls.join(', ')}</span>
+<!-- 營業相 (13張) & 開工-雞相 (4檔) 左右並排 -->
+                            <div class="grid grid-cols-2 gap-1.5">
+                                <!-- 左：營業相 (13張) -->
+                                <div class="${businessReady ? 'soft-box-green' : 'soft-box-slate'} p-2 flex flex-col justify-between">
+                                    <div class="flex items-center justify-between gap-1 mb-1">
+                                        <span class="font-black text-slate-800 flex items-center text-[10.5px] truncate">
+                                            <i data-lucide="store" class="w-3.5 h-3.5 mr-1 shrink-0 ${businessReady ? 'text-green-600' : 'text-slate-400'}"></i>
+                                            <span class="truncate">營業相(一樓)</span>
+                                        </span>
+                                        <span class="font-mono font-black text-[10px] px-1 py-0.2 rounded shrink-0 ${businessReady ? 'bg-white text-green-700 border border-green-500' : 'bg-slate-200/80 text-slate-700'}">${uploadedFirstFloorCodes.size}/13 ${businessReady ? '✔' : ''}</span>
                                     </div>
-                                ` : `<div class="text-[10px] text-green-700 font-bold pl-4">13 檔營業相已全部拍攝齊全！</div>`}
-                            </div>
+                                    ${!businessReady ? `
+                                        <div class="text-[9.5px] text-rose-600 font-bold truncate" title="缺號: ${missingBusinessStalls.join(', ')}">
+                                            缺: <span class="font-mono">${missingBusinessStalls.join(', ')}</span>
+                                        </div>
+                                    ` : `<div class="text-[9.5px] text-green-700 font-bold truncate">已全部拍攝齊全！</div>`}
+                                </div>
 
-                            <!-- 開工-雞相 (4檔) -->
-                            <div class="${chickenReady ? 'soft-box-purple' : 'soft-box-slate'} p-2">
-                                <div class="flex items-center justify-between mb-0.5">
-                                    <span class="font-black text-slate-800 flex items-center text-[11px]">
-                                        <i data-lucide="leaf" class="w-3.5 h-3.5 mr-1 ${chickenReady ? 'text-purple-600' : 'text-slate-400'}"></i>
-                                        開工-雞相 (花園仔 4 檔)
-                                    </span>
-                                    <span class="font-mono font-black text-[11px] px-1.5 py-0.2 rounded ${chickenReady ? 'bg-white text-purple-700 border border-purple-300' : 'bg-slate-200/80 text-slate-700'}">${uploadedChickenCodes.size} / 4 檔 ${chickenReady ? '✔' : ''}</span>
-                                </div>
-                                ${!chickenReady ? `
-                                    <div class="text-[10px] text-rose-600 font-bold truncate pl-4">
-                                        未齊！缺號: <span class="font-mono">${missingChickenStalls.join(', ')}</span>
+                                <!-- 右：開工-雞相 (4檔) -->
+                                <div class="${chickenReady ? 'soft-box-purple' : 'soft-box-slate'} p-2 flex flex-col justify-between">
+                                    <div class="flex items-center justify-between gap-1 mb-1">
+                                        <span class="font-black text-slate-800 flex items-center text-[10.5px] truncate">
+                                            <i data-lucide="leaf" class="w-3.5 h-3.5 mr-1 shrink-0 ${chickenReady ? 'text-purple-600' : 'text-slate-400'}"></i>
+                                            <span class="truncate">開工-雞相</span>
+                                        </span>
+                                        <span class="font-mono font-black text-[10px] px-1 py-0.2 rounded shrink-0 ${chickenReady ? 'bg-white text-purple-700 border border-purple-300' : 'bg-slate-200/80 text-slate-700'}">${uploadedChickenCodes.size}/4 ${chickenReady ? '✔' : ''}</span>
                                     </div>
-                                ` : `<div class="text-[10px] text-purple-700 font-bold pl-4">4 檔開工雞相已全部就位！</div>`}
+                                    ${!chickenReady ? `
+                                        <div class="text-[9.5px] text-rose-600 font-bold truncate" title="缺號: ${missingChickenStalls.join(', ')}">
+                                            缺: <span class="font-mono">${missingChickenStalls.join(', ')}</span>
+                                        </div>
+                                    ` : `<div class="text-[9.5px] text-purple-700 font-bold truncate">4 檔已全部就位！</div>`}
+                                </div>
                             </div>
 
                             <!-- 測溫相 -->
@@ -10149,22 +10196,24 @@ window.updateMapSimulation = () => {
                 });
                 if (!curSched) return '';
 
-                let endTargetMs = window.getScheduleRange(curSched.start, curSched.end, nowTime).e.getTime();
+let endTargetMs = window.getScheduleRange(curSched.start, curSched.end, nowTime).e.getTime();
+                let isGoingToRest = false;
 
-                // 若該員在當前班次結束前有排定「休息中 (pt_7)」，則倒數時間以去休息的時間為準
+                // 若該員接下來是「休息中 (pt_7)」，倒數時間以去休息的時間為準，並標記顯示休息圖示
                 if (locId !== 'pt_7') {
                     memberSchedules.forEach(rs => {
                         if (rs.name === personName && rs.locationId === 'pt_7') {
                             const rRange = window.getScheduleRange(rs.start, rs.end, nowTime);
                             const rStart = rRange.s.getTime();
-                            if (rStart > nowTime && rStart < endTargetMs) {
-                                endTargetMs = rStart;
+                            if (rStart > nowTime && rStart <= endTargetMs + 60000) {
+                                if (rStart < endTargetMs) endTargetMs = rStart;
+                                isGoingToRest = true;
                             }
                         }
                     });
                 }
 
-const remainMins = Math.max(0, Math.ceil((endTargetMs - nowTime) / 60000));
+                const remainMins = Math.max(0, Math.ceil((endTargetMs - nowTime) / 60000));
                 const rH = Math.floor(remainMins / 60);
                 const rM = remainMins % 60;
 
@@ -10193,11 +10242,12 @@ if (!usedIncomingByLoc[locId]) usedIncomingByLoc[locId] = new Set();
                     }
                 }
 
-// 🌟 亮白半透明毛玻璃長方框（不再變黑），並移除上下間距讓「待:」「時間」「名稱」三層緊貼
+// 🌟 亮白半透明毛玻璃長方框：接下來有休息時加上線條咖啡杯圖示，沒有休息則不加
                 const timeStr = rH > 0 ? `${rH}h ${rM > 0 ? rM + 'm' : ''}`.trim() : `${rM}m`;
+                const coffeeIconHtml = `<svg class="w-2.5 h-2.5 text-slate-600 mr-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v2"/><path d="M14 2v2"/><path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/><path d="M6 2v2"/></svg>`;
                 const timeBoxHtml = `
                     <div class="inline-flex items-center justify-center px-1.5 py-[1.5px] rounded-[4px] bg-white/75 backdrop-blur-xs text-slate-800 font-mono text-[10px] font-black leading-none shadow-2xs border border-slate-300/80 whitespace-nowrap">
-                        ${timeStr}
+                        ${isGoingToRest ? coffeeIconHtml : ''}<span>${timeStr}</span>
                     </div>`;
 
                 return `
@@ -14863,11 +14913,48 @@ const matched = (window.stallList || []).filter(s => {
             }
         }
 
-onAuthStateChanged(auth, (user) => {
+window.recoverIdentityByFingerprint = async () => {
+            try {
+                const fpKey = window.deviceFingerprint;
+                if (!fpKey || !db) return;
+                const { getDoc } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
+                const snap = await getDoc(cfgDoc('device_identities'));
+                const fingerprints = snap.exists() ? (snap.data()?.fingerprints || {}) : {};
+                const cloudRec = fingerprints[fpKey];
+
+                // 若本機快取被微信清掉變回隨機「成員_XXX」，且雲端有此手機特徵碼的正式姓名，立即還原
+                if (cloudRec && cloudRec.name && !/^成員_\d+$/.test(cloudRec.name) && /^成員_\d+$/.test(sysUserName)) {
+                    sysUserName = cloudRec.name;
+                    sysUserColor = cloudRec.color || sysUserColor;
+                    try {
+                        localStorage.setItem('gallery_user_name', sysUserName);
+                        localStorage.setItem('gallery_user_color', sysUserColor);
+                    } catch (e) {}
+                    if ($('galleryLogsModal') && !$('galleryLogsModal').classList.contains('hidden')) {
+                        window.renderGalleryLogs();
+                    }
+                    return;
+                }
+
+                // 若本機已有自訂姓名，確保雲端特徵碼表同步更新
+                if (!/^成員_\d+$/.test(sysUserName)) {
+                    await setDoc(cfgDoc('device_identities'), {
+                        fingerprints: {
+                            [fpKey]: { name: sysUserName, color: sysUserColor, updatedAt: Date.now() }
+                        }
+                    }, { merge: true });
+                }
+            } catch (e) {
+                console.warn('手機特徵碼比對略過：', e);
+            }
+        };
+
+        onAuthStateChanged(auth, (user) => {
             currentUser = user; const dot = $('connectionDot'), st = $('connectionStatus');
             if (user) { 
                 dot?.classList.replace('bg-red-500', 'bg-green-500'); 
                 if (st) st.textContent = '系統已連線並同步'; 
+                window.recoverIdentityByFingerprint();
                 setupPureRealtimeSync(); 
                 setupPatrolSync();
                 window.flushPendingGalleryLogs?.();
