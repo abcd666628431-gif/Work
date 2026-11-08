@@ -173,9 +173,9 @@ tr[class*="pref-row-highlight-"] .sub-line-item[data-name=""] {
             overflow: hidden;
         }
 .soft-box-green {
-            background: rgba(220, 252, 231, 0.85);
+            background: #f0fdf4;
             border: 2px solid #22c55e;
-            border-radius: 0.9rem;
+            border-radius: 12px;
             position: relative;
             overflow: hidden;
         }
@@ -6016,24 +6016,36 @@ window.checkMemoAlerts = () => {
 // 1. 每日自動清理：排除已被手動還原的相片 (!i.restored)
 window.autoCleanupGalleryToTrash = async () => {
             // 🌟 防護：只要處於「時間跳躍」或「時間加速」中，絕對不執行跨日自動歸檔
-            if (timeOffset !== 0 || window.timeOffset !== 0 || isFastForwarding) return;
+            const curOffset = (typeof timeOffset !== 'undefined' ? Number(timeOffset) : 0) || (Number(window.timeOffset) || 0);
+            if (curOffset !== 0 || (typeof isFastForwarding !== 'undefined' && isFastForwarding)) return;
 
-            // 🌟 防重複機制 1：若當前正在執行中，禁止併發二次進入
-            if (window._isAutoArchiving) return;
-
-            const todayStr = window.formatDateStrHK(window.getRealNow().getTime());
-            // 🌟 防重複機制 2：今日已成功標記過，直接退出，徹底根絕洗版！
-            const lastArchiveDate = localStorage.getItem('work_last_auto_archive_date');
-            if (lastArchiveDate === todayStr) {
+            // 🌟 防重複機制 1：若當前正在執行中，登記「完成後再掃一次」標記，絕不漏掉晚到的快照
+            if (window._isAutoArchiving) {
+                window._needReRunAutoArchive = true;
                 return;
             }
 
+            // 🌟 防重複機制 2：短時間（3秒內）節流，避免連續快照重複觸發
+            const realNowMs = Date.now();
+            if (window._lastAutoArchiveRunTs && (realNowMs - window._lastAutoArchiveRunTs) < 3000) {
+                return;
+            }
+
+            // 🌟 標準補零香港日期 (YYYY-MM-DD)，徹底杜絕 1~9 號與 10~31 號字串比大小錯誤
+            const toPaddedHKDate = (ms) => {
+                const hk = new Date(ms + 8 * 3600000);
+                const y = hk.getUTCFullYear();
+                const m = String(hk.getUTCMonth() + 1).padStart(2, '0');
+                const d = String(hk.getUTCDate()).padStart(2, '0');
+                return `${y}-${m}-${d}`;
+            };
+
+            const todayStr = toPaddedHKDate(realNowMs);
             window._isAutoArchiving = true;
+            window._needReRunAutoArchive = false;
+            window._lastAutoArchiveRunTs = realNowMs;
 
             try {
-                const now = window.getRealNow();
-                const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-
                 // 1. 取得所有在佇列中尚未傳完的 ID 集合，絕對不將排隊中的昨日照片移入還原清單
                 const pendingIds = new Set([
                     ...(window._uploadQueue || []).map(q => String(q.tempId || q.id)),
@@ -6042,7 +6054,7 @@ window.autoCleanupGalleryToTrash = async () => {
 
                 // 2. 超過 7 天（7 * 86400000 ms）的項目徹底物理刪除
                 const SEVEN_DAYS_MS = 7 * 86400000;
-                const expiredItems = galleryItems.filter(i => i.isDeleted && (now.getTime() - (i.deletedAt || i.createdAt || 0)) > SEVEN_DAYS_MS);
+                const expiredItems = galleryItems.filter(i => i.isDeleted && (realNowMs - (i.deletedAt || i.createdAt || 0)) > SEVEN_DAYS_MS);
                 if (expiredItems.length > 0) {
                     const expiredIds = new Set(expiredItems.map(x => String(x.id)));
                     if (currentUser && db && navigator.onLine) {
@@ -6069,62 +6081,88 @@ window.autoCleanupGalleryToTrash = async () => {
                     await saveGalleryItemsSafe(galleryItems);
                 }
 
-                // 3. 昨日照片跨日自動歸檔（嚴格排除未傳完的項目與手動還原項目）
-                const yesterdayItems = galleryItems.filter(i => 
-                    !i.isDeleted && 
-                    !i.restored && 
-                    !pendingIds.has(String(i.id)) && 
-                    i.createdAt && 
-                    i.createdAt < startOfToday
-                );
+                // 3. 昨日照片跨日自動歸檔：相容數字／字串／ID 內嵌時間戳
+                const getItemCreatedMs = (it) => {
+                    if (!it) return 0;
+                    if (typeof it.createdAt === 'number' && it.createdAt > 0) return it.createdAt;
+                    if (typeof it.createdAt === 'string' && it.createdAt.trim()) {
+                        const parsed = Number(it.createdAt) || Date.parse(it.createdAt);
+                        if (!isNaN(parsed) && parsed > 0) return parsed;
+                    }
+                    const idMatch = String(it.id || '').match(/img_(\d{13})/);
+                    return idMatch ? Number(idMatch[1]) : 0;
+                };
 
-                // 🌟 關鍵修復：即使今日沒有昨日照片，也必須標記今日已完成，絕不重跑！
-                if (!yesterdayItems.length) {
-                    localStorage.setItem('work_last_auto_archive_date', todayStr);
+                const yesterdayItems = galleryItems.filter(i => {
+                    if (!i || i.isDeleted || i.restored) return false;
+                    if (pendingIds.has(String(i.id))) return false;
+                    const cMs = getItemCreatedMs(i);
+                    if (!cMs) return false;
+                    return toPaddedHKDate(cMs) < todayStr;
+                });
+
+                // 檢查是否有「本地已標記自動歸檔、但尚未同步上雲端」的項目一併補推
+                const localOnlyArchived = galleryItems.filter(i => i && i.isDeleted === true && i.isManualDeleted === false && i._pendingCloudArchive);
+
+                if (!yesterdayItems.length && !localOnlyArchived.length) {
                     return;
                 }
 
                 const cleanupTime = Date.now();
+                const toSyncList = [...yesterdayItems, ...localOnlyArchived];
 
-                // 4. 雲端同步失敗時直接終止，絕對不私自改寫本地快取，防止狀態裂解
+                // 4. 雲端同步（同步寫入 updatedAt: cleanupTime，防止雲端監聽把舊版本洗回來）
                 if (currentUser && db && navigator.onLine) {
                     try {
-                        for (let i = 0; i < yesterdayItems.length; i += 400) {
+                        for (let i = 0; i < toSyncList.length; i += 400) {
                             const batch = writeBatch(db);
-                            yesterdayItems.slice(i, i + 400).forEach(i => {
-                                const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(i.id));
-                                batch.set(ref, { isDeleted: true, isManualDeleted: false, deletedAt: cleanupTime }, { merge: true });
+                            toSyncList.slice(i, i + 400).forEach(it => {
+                                const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(it.id));
+                                batch.set(ref, {
+                                    isDeleted: true,
+                                    isManualDeleted: false,
+                                    deletedAt: it.deletedAt || cleanupTime,
+                                    updatedAt: cleanupTime
+                                }, { merge: true });
                             });
                             await batch.commit();
                         }
+                        toSyncList.forEach(it => { delete it._pendingCloudArchive; });
                     } catch(e) {
-                        console.error("每日自動歸檔雲端同步失敗，終止本地歸檔:", e);
+                        console.error("每日自動歸檔雲端同步失敗，稍後重試:", e);
                         return;
                     }
+                } else {
+                    // 尚未連上雲端時先標記待同步，連上後自動補寫
+                    yesterdayItems.forEach(it => { it._pendingCloudArchive = true; });
                 }
 
-                yesterdayItems.forEach(i => {
-                    i.isDeleted = true;
-                    i.isManualDeleted = false;
-                    i.deletedAt = cleanupTime;
-                });
+                if (yesterdayItems.length > 0) {
+                    yesterdayItems.forEach(i => {
+                        i.isDeleted = true;
+                        i.isManualDeleted = false;
+                        i.deletedAt = cleanupTime;
+                        i.updatedAt = cleanupTime;
+                    });
 
-                await saveGalleryItemsSafe(galleryItems);
+                    await saveGalleryItemsSafe(galleryItems);
 
-                // 🌟 寫入成功後鎖定今日日期
-                localStorage.setItem('work_last_auto_archive_date', todayStr);
-
-                // 🌟 更新文字：改為「跨日自動刪除」
-                window.writeGalleryLog('每日歸檔', `${yesterdayItems.length} 張昨日相片`, '跨日自動刪除', '系統自動', '#64748b');
-                window._lastRenderFingerprint = '';
-                if (!$('galleryPage')?.classList.contains('hidden')) {
-                    window.renderGallery();
-                }
-                if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
-                    window.renderTrashList();
+                    window.writeGalleryLog('每日歸檔', `${yesterdayItems.length} 張昨日相片`, '跨日自動刪除', '系統自動', '#64748b');
+                    window._lastRenderFingerprint = '';
+                    if (!$('galleryPage')?.classList.contains('hidden')) {
+                        window.renderGallery();
+                    }
+                    if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
+                        window.renderTrashList();
+                    }
                 }
             } finally {
                 window._isAutoArchiving = false;
+                if (window._needReRunAutoArchive) {
+                    window._needReRunAutoArchive = false;
+                    window._lastAutoArchiveRunTs = 0;
+                    setTimeout(() => window.autoCleanupGalleryToTrash(), 200);
+                }
             }
         };
 
@@ -8006,22 +8044,85 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
             logGroups.sort((a, b) => b.latestTs - a.latestTs);
             logGroups = logGroups.slice(0, 5); // 儀表板取前 5 筆聚合
 
-container.innerHTML = `
+// 🌟 產生全部 4 個時段的進度小方格（2×2 排列）
+                const allFourSlots = (typeof PATROL_SLOTS !== 'undefined' && Array.isArray(PATROL_SLOTS) && PATROL_SLOTS.length)
+                    ? PATROL_SLOTS
+                    : ((typeof patrolSlots !== 'undefined' && Array.isArray(patrolSlots) && patrolSlots.length)
+                        ? patrolSlots
+                        : ['上午9點', '上午11點', '下午3點', '下午5點']);
+                const totalStallsCount = patrolStalls.length || 105;
+                const totalTempCount = tempPoints.length || 12;
+
+                const getSlotPatrolFilled = (slot) => {
+                    return patrolStalls.filter(s => {
+                        const k = window.getPatrolKey ? window.getPatrolKey(s) : `${s.floor}-${s.id}`;
+                        return !!dayRecords[k]?.[slot];
+                    }).length;
+                };
+
+                const dayTempRecords = (typeof patrolTempRecords !== 'undefined' && patrolTempRecords[todayStr]) ? patrolTempRecords[todayStr] : {};
+                const getSlotTempFilled = (slot) => {
+                    const slotTemps = dayTempRecords[slot] || {};
+                    return tempPoints.filter(pt => {
+                        const v = slotTemps[pt.id];
+                        return v !== undefined && v !== null && String(v).trim() !== '';
+                    }).length;
+                };
+
+const allPatrolSlotsHtml = allFourSlots.map(slot => {
+                    const cnt = getSlotPatrolFilled(slot);
+                    const isFull = cnt >= totalStallsCount;
+                    const isCur = slot === curSlot;
+                    const boxCls = isFull
+                        ? 'bg-emerald-100/95 border-emerald-400 text-emerald-900'
+                        : (cnt > 0 ? 'bg-amber-50/95 border-amber-300 text-amber-900' : 'bg-white/80 border-slate-200/90 text-slate-500');
+                    return `
+                        <div class="rounded-md px-1 py-1 border flex flex-col items-center justify-center leading-tight ${boxCls} ${isCur ? 'ring-1 ring-green-600' : ''}">
+                            <span class="text-[8.5px] font-bold tracking-tighter">${slot}${isFull ? ' ✔' : ''}</span>
+                            <span class="text-[10px] font-mono font-black mt-0.5">${cnt}/${totalStallsCount}</span>
+                        </div>`;
+                }).join('');
+
+                const allTempSlotsHtml = allFourSlots.map(slot => {
+                    const cnt = getSlotTempFilled(slot);
+                    const isFull = cnt >= 12;
+                    const isCur = slot === curSlot;
+                    const boxCls = isFull
+                        ? 'bg-blue-100/95 border-blue-400 text-blue-900'
+                        : (cnt > 0 ? 'bg-sky-50/95 border-sky-300 text-sky-900' : 'bg-white/80 border-slate-200/90 text-slate-500');
+                    return `
+                        <div class="rounded-md px-1 py-1 border flex flex-col items-center justify-center leading-tight ${boxCls} ${isCur ? 'ring-1 ring-blue-600' : ''}">
+                            <span class="text-[8.5px] font-bold tracking-tighter">${slot}${isFull ? ' ✔' : ''}</span>
+                            <span class="text-[10px] font-mono font-black mt-0.5 ${!isFull && isCur && cnt === 0 ? 'text-rose-600' : ''}">${cnt}/12</span>
+                        </div>`;
+                }).join('');
+
+                container.innerHTML = `
                 <div class="space-y-2 pb-8">
-                    <!-- ① 剔檔 / 溫度 / 雪房 -->
+                    <!-- ① 剔檔 / 溫度 -->
                     <div class="grid grid-cols-3 gap-1.5">
-                        <div onclick="window.switchTab('patrol')" class="soft-box-green p-2 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all text-center relative">
+<!-- 左格：剔檔（右上角顯示當前時段完成百分比） -->
+                        <div onclick="window.switchTab('patrol')" class="soft-box-green p-2 flex flex-col justify-between cursor-pointer active:scale-95 transition-all relative overflow-hidden">
                             <i data-lucide="clipboard-check" class="w-12 h-12 watermark-bg-icon text-green-700"></i>
-                            <span class="text-[10px] font-black text-green-700 mb-0.5 relative z-10">剔檔 (${curSlot})</span>
-                            <div class="text-sm font-black text-green-950 relative z-10">${patrolFilled}/${patrolStalls.length}</div>
-                            <span class="mt-0.5 px-1.5 py-0.2 bg-white text-[9px] font-mono text-green-700 font-black rounded border border-green-300 relative z-10">${patrolPct}% 完成</span>
+                            <div class="flex items-center justify-between w-full mb-1 relative z-10">
+                                <span class="text-[10.5px] font-black text-green-800">剔檔進度</span>
+                                <span class="text-[9px] font-mono font-black text-green-700 bg-white/90 px-1.5 py-0.2 rounded border border-green-300">${patrolPct}% 完成</span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-1 w-full relative z-10">
+                                ${allPatrolSlotsHtml}
+                            </div>
                         </div>
 
-                        <div onclick="window.switchTab('patrol'); setTimeout(window.openTempModal, 150);" class="soft-box-blue p-2 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all text-center relative">
+                        <!-- 右格：溫度（右上角顯示當前時段欠缺處數或已滿溫） -->
+                        <div onclick="window.switchTab('patrol'); setTimeout(window.openTempModal, 150);" class="soft-box-blue p-2 flex flex-col justify-between cursor-pointer active:scale-95 transition-all relative overflow-hidden">
                             <i data-lucide="thermometer" class="w-12 h-12 watermark-bg-icon text-blue-600"></i>
-                            <span class="text-[10px] font-black text-blue-600 mb-0.5 relative z-10">溫度 (${curSlot})</span>
-                            <div class="text-sm font-black ${tempFilled === 12 ? 'text-blue-900' : 'text-rose-600'} relative z-10">${tempFilled}/12</div>
-                            <span class="mt-0.5 px-1.5 py-0.2 bg-white text-[9px] font-black ${tempFilled === 12 ? 'text-blue-700 border-blue-200' : 'text-rose-600 border-rose-200'} rounded border relative z-10">${tempFilled === 12 ? '✔ 已滿溫' : `差 ${12 - tempFilled} 處`}</span>
+                            <div class="flex items-center justify-between w-full mb-1 relative z-10">
+                                <span class="text-[10.5px] font-black text-blue-800">溫度記錄</span>
+                                <span class="text-[9px] font-black bg-white/90 px-1.5 py-0.2 rounded border ${tempFilled === totalTempCount ? 'text-blue-700 border-blue-200' : 'text-rose-600 border-rose-200'}">${tempFilled === totalTempCount ? '✔ 已滿溫' : `差 ${totalTempCount - tempFilled} 處`}</span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-1 w-full relative z-10">
+                                ${allTempSlotsHtml}
+                            </div>
                         </div>
 
                         <div onclick="window.switchTab('coldRoom')" class="soft-box-cyan p-2 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all text-center relative">
@@ -9424,10 +9525,14 @@ window.resumeBatchUploadQueue = async () => {
             } finally {
                 // 根源修復 4：只在所有非同步工作完全停止後，於 finally 區塊統一解除鎖定
                 window.isUploading = false;
-                if (!window._uploadQueue.length) {
-                    releaseWakeLock();
-                    window.setUploadProgress(-1, "");
+if (!window._uploadQueue.length) {
+                window._isProcessingUploadQueue = false;
+                if (((typeof timeOffset !== 'undefined' ? Number(timeOffset) : 0) || (Number(window.timeOffset) || 0)) === 0) {
+                    window._lastAutoArchiveRunTs = 0;
+                    window.autoCleanupGalleryToTrash();
                 }
+                return;
+            }
             }
         };
 
@@ -10033,14 +10138,18 @@ onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items')
                     remoteMap.set(idStr, it);
                 });
 
-                // 雙向合併：以全域 galleryItems 的最新即時狀態做 base，合併遠端資料
+// 雙向合併：以全域 galleryItems 的最新即時狀態做 base，合併遠端資料
                 const mergedMap = new Map();
                 galleryItems.forEach(localIt => {
                     const idStr = String(localIt.id);
                     if (remoteMap.has(idStr)) {
                         const remoteIt = remoteMap.get(idStr);
-                        // 保留 updatedAt 較新者
-                        mergedMap.set(idStr, (remoteIt.updatedAt || 0) >= (localIt.updatedAt || 0) ? remoteIt : localIt);
+                        // 🌟 若本機已完成跨日自動歸檔，且遠端並非「手動還原 (restored)」，強制保留歸檔狀態不被洗掉
+                        if (localIt.isDeleted === true && localIt.isManualDeleted === false && remoteIt.isDeleted === false && !remoteIt.restored) {
+                            mergedMap.set(idStr, localIt);
+                        } else {
+                            mergedMap.set(idStr, (remoteIt.updatedAt || 0) >= (localIt.updatedAt || 0) ? remoteIt : localIt);
+                        }
                     } else {
                         // 正在等待上傳的本地項目必須予以保留
                         const isPending = (window._uploadQueue || []).some(q => String(q.tempId || q.id) === idStr) ||
@@ -10056,10 +10165,14 @@ onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items')
                     }
                 });
 
-                galleryItems = Array.from(mergedMap.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+galleryItems = Array.from(mergedMap.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
                 saveGalleryItemsSafe(galleryItems);
                 
-                window._galleryCloudLoaded = true;
+window._galleryCloudLoaded = true;
+                if ((Number(window.timeOffset) || 0) === 0 && !isFastForwarding) {
+                    window._lastAutoArchiveRunTs = 0;
+                    window.autoCleanupGalleryToTrash();
+                }
                 window._lastRenderFingerprint = '';
                 if (!$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
                 window.autoSyncClosedStallsToPatrol(true);
@@ -10248,9 +10361,9 @@ if (!usedIncomingByLoc[locId]) usedIncomingByLoc[locId] = new Set();
                         ${isGoingToRest ? coffeeIconHtml : ''}<span>${timeStr}</span>
                     </div>`;
 
-                return `
+return `
                     <div class="flex flex-col items-center justify-center leading-none -space-y-[1px] pointer-events-none select-none z-10">
-                        ${waitingName ? `<div class="bg-white/95 border border-orange-400 text-orange-500 text-[10px] font-bold px-1.5 py-[1.5px] rounded-[4px] shadow-2xs whitespace-nowrap tracking-tight leading-none animate-flag-in">待:${window.esc(waitingName)}</div>` : ''}
+                        ${waitingName ? `<div class="bg-white/95 border border-orange-400 text-orange-500 text-[10px] font-bold px-1.5 py-[1.5px] rounded-[4px] shadow-2xs whitespace-nowrap tracking-tight leading-none animate-flag-in">頂-${window.esc(waitingName)}</div>` : ''}
                         ${timeBoxHtml}
                     </div>`;
             };
@@ -10267,9 +10380,9 @@ if (!usedIncomingByLoc[locId]) usedIncomingByLoc[locId] = new Set();
                     if (!isCleanRole) {
                         // 🎧 客服模式外圍站點：「待:」「時間」「名稱」緊貼
                         names.forEach((n, idx) => box.insertAdjacentHTML('beforeend', `<div class="flex flex-col items-center justify-center m-0.5"><div class="flex flex-col items-center -space-y-[1px] mb-1">${getCountdownAndIncomingHtml(n, locId, idx)}<div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${window.esc(n)}</div></div><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div></div>`));
-                        // 若該外圍站點目前沒人當值，但有「待:人名」即將進入，單獨顯示
+// 若該外圍站點目前沒人當值，但有「頂-人名」即將進入，單獨顯示
                         if (names.length === 0) {
-                            incoming.forEach(n => box.insertAdjacentHTML('beforeend', `<div class="flex flex-col items-center justify-center m-0.5 animate-flag-in"><div class="bg-white border-2 border-orange-500 text-orange-500 text-xs font-black px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider">待:${window.esc(n)}</div><div class="w-5 h-5 bg-amber-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div></div>`));
+                            incoming.forEach(n => box.insertAdjacentHTML('beforeend', `<div class="flex flex-col items-center justify-center m-0.5 animate-flag-in"><div class="bg-white border-2 border-orange-500 text-orange-500 text-xs font-black px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap mb-1 tracking-wider">頂-${window.esc(n)}</div><div class="w-5 h-5 bg-amber-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div></div>`));
                         }
                     } else {
                         // 🧹 清潔模式外圍站點：由上而下「待:人名」➔「剩餘時:分」➔「當值人名」
@@ -10306,10 +10419,10 @@ if (!usedIncomingByLoc[locId]) usedIncomingByLoc[locId] = new Set();
                                     : `<i data-lucide="user" class="w-3.5 h-3.5 text-white"></i>`;
                                 const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== n.trim().toUpperCase();
 
-                                box.insertAdjacentHTML('beforeend', `
+box.insertAdjacentHTML('beforeend', `
                                     <div onclick="window.openMemberProfilePopup('${window.jsAttr(n)}', '外圍站點')" class="flex flex-col items-center justify-center m-0.5 animate-flag-in cursor-pointer active:scale-95 transition-transform group max-w-full">
                                         <div class="bg-white border-2 border-orange-500 text-orange-500 px-1.5 py-0.5 rounded-md shadow-md max-w-full mb-0.5 tracking-wider flex flex-col items-center justify-center text-center">
-                                            <span class="text-[9.5px] font-black leading-tight truncate max-w-[68px]">待:${window.esc(n)}</span>${hasUniqueId ? `<span class="text-orange-400 font-mono text-[7.5px] font-bold leading-none mt-0.5 truncate max-w-[68px]">${window.esc(profile.id.trim())}</span>` : ''}
+                                            <span class="text-[9.5px] font-black leading-tight truncate max-w-[68px]">頂-${window.esc(n)}</span>${hasUniqueId ? `<span class="text-orange-400 font-mono text-[7.5px] font-bold leading-none mt-0.5 truncate max-w-[68px]">${window.esc(profile.id.trim())}</span>` : ''}
                                         </div>
                                         <div class="w-7 h-7 sm:w-8 sm:h-8 bg-amber-500 rounded-full border-2 border-white shadow-md flex items-center justify-center overflow-hidden shrink-0">
                                             ${avatarHtml}
@@ -10497,8 +10610,10 @@ if (marker.parentNode !== container) container.appendChild(marker);
                                 <div class="absolute w-10 h-10 bg-sky-400/30 rounded-full radar-slow z-0"></div>
                             </div>`;
 
-                        if (marker.parentNode !== container) container.appendChild(marker);
-                        const off = names.length > 1 ? (idx - (names.length - 1) / 2) * 65 : 0;
+if (marker.parentNode !== container) container.appendChild(marker);
+                        const step = (locId === 'pt_4') ? 80 : 65;
+                        const centerShift = (locId === 'pt_4' && names.length > 1) ? -4 : 0;
+                        const off = names.length > 1 ? (idx - (names.length - 1) / 2) * step + centerShift : 0;
                         marker.style.left = `calc(${loc.x}% + ${off}px)`; 
                         marker.style.top = `calc(${loc.y}% + 8px)`;
                         marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-end transform -translate-x-1/2 -translate-y-full pointer-events-auto cursor-pointer z-40 drop-shadow-md transition-transform active:scale-95 group`;
