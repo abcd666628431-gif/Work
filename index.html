@@ -6426,12 +6426,12 @@ window.autoCleanupGalleryToTrash = async () => {
             if (actionHistory.length > 30) actionHistory.shift();
         };
 
-window.isSaoMode = getLocal('work_cache_sao_mode', true);
+window.isSaoMode = getLocal('work_cache_sao_mode', false);
 
         window.updateSaoModeBtnUI = () => {
             const btn = $('saoModeToggleBtn');
             if (!btn) return;
-            const isSao = window.isSaoMode !== false;
+            const isSao = window.isSaoMode === true;
             btn.innerHTML = isSao
                 ? `<i data-lucide="layout-template" class="w-3.5 h-3.5 mr-2 text-amber-500"></i> 切換為原介面`
                 : `<i data-lucide="swords" class="w-3.5 h-3.5 mr-2 text-amber-500"></i> 切換為 SAO 模式`;
@@ -6439,7 +6439,7 @@ window.isSaoMode = getLocal('work_cache_sao_mode', true);
         };
 
         window.toggleSaoMode = () => {
-            window.isSaoMode = !(window.isSaoMode !== false);
+            window.isSaoMode = !(window.isSaoMode === true);
             safeSetLocal('work_cache_sao_mode', window.isSaoMode);
             document.body.classList.remove('dark-mode');
             localStorage.removeItem('work_cache_dark_mode');
@@ -14584,10 +14584,15 @@ window.crOpenMergedIceWithdrawModal = (stallId, e) => {
             $('crWithdrawTenantDisplay').textContent = `${stallId} (包裝冰合併)`;
             $('crWithdrawRemainDisplay').textContent = totalRemain;
             $('crInputWithdrawQty').value = totalRemain;
-            const { date, time } = getNowInputStrs();
+const { date, time } = getNowInputStrs();
             $('crInputWithdrawDate').value = date;
             $('crInputWithdrawTime').value = time;
             window.crPopulateWithdrawStaffSelect();
+
+            if (window.isSaoMode !== true) {
+                $('crWithdrawModal')?.classList.replace('hidden', 'flex');
+                return;
+            }
 
             window._saoCrState = {
                 mode: 'withdraw',
@@ -14665,20 +14670,9 @@ window.crOpenMergedIceWithdrawModal = (stallId, e) => {
             window.showToast(`✅ 已取出 ${qty} 箱 (經手: ${withdrawStaff})`);
         };
 
-        window.crDeleteRecord = (id, e) => {
+window.crDeleteRecord = (id, e) => {
             if (e) e.stopPropagation();
             window.showConfirm('刪除紀錄', '確定要刪除這筆雪房紀錄嗎？', () => { crRecords = crRecords.filter(r => r.id !== id); window.crSaveData(); window.crRenderList(); window.showToast('已刪除'); });
-        };
-
-window.crOpenEditModal = (id) => {
-            const r = crRecords.find(x => x.id === id); if (!r) return;
-            const { date, time } = getNowInputStrs(r.depositTime);
-            const fixedTenants = ['R-067', 'R-013', 'R-014', 'R-073', 'R-006'];
-            const csList = csMembersStore.length ? csMembersStore : teamMembers;
-            const modalHtml = `<div id="crEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();"><div class="bg-white rounded-2xl p-4 w-full max-w-[320px] shadow-[0_0_24px_rgba(245,158,11,0.22)] border-2 border-amber-400/80 relative scrollbar-hide" onclick="event.stopPropagation()"><h3 class="font-bold text-base mb-3 text-slate-800 flex items-center border-b pb-2"><i data-lucide="edit" class="w-4 h-4 mr-2 text-amber-500"></i> 修改存放內容</h3><div class="space-y-3"><div><label class="text-[10px] font-bold text-slate-500 block mb-1">檔主編號 / 名稱</label><select id="crEditTenant" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">${Array.from(new Set([...(r.tenant ? [r.tenant] : []), ...fixedTenants])).map(t => `<option value="${t}" ${r.tenant === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div><div class="flex gap-2"><div class="flex-1"><label class="text-[10px] font-bold text-slate-500 block mb-1">存入日期</label><input type="date" id="crEditDate" value="${date}" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs focus:border-blue-500 focus:outline-none text-center"></div><div class="flex-1"><label class="text-[10px] font-bold text-slate-500 block mb-1">時間</label><input type="time" id="crEditTime" value="${time}" class="w-full border border-slate-300 rounded-lg p-1.5 text-xs focus:border-blue-500 focus:outline-none text-center"></div></div><div><label class="text-[10px] font-bold text-slate-500 block mb-1">經手客服人員</label><input type="hidden" id="crEditStaff" value="${window.esc(r.staff || '')}"><div id="crEditStaffSaoBox"></div></div><div><label class="text-[10px] font-bold text-slate-500 block mb-1">貨物類型</label><select id="crEditType" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center">${crItemTypes.map(t => `<option value="${t}" ${r.type === t ? 'selected' : ''}>${t}</option>`).join('')}<option value="未指定" ${!r.type || r.type === '未指定' ? 'selected' : ''}>未指定</option></select></div><div><label class="text-[10px] font-bold text-slate-500 block mb-1">剩餘數量</label><input type="number" id="crEditRemain" value="${r.remainingQuantity}" min="0" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:border-blue-500 focus:outline-none font-bold text-slate-700 bg-slate-50 text-center"></div></div><div class="mt-4 flex justify-between items-center border-t border-slate-100 pt-3"><button onclick="window.crDeleteRecord('${r.id}'); document.getElementById('crEditModal').remove();" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors">刪除紀錄</button><div class="space-x-2 flex"><button onclick="document.getElementById('crEditModal').remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">取消</button><button onclick="window.crSaveEditRecord('${r.id}')" class="px-3 py-1.5 sao-amber-glow border rounded-lg text-xs font-black">儲存</button></div></div></div></div>`;
-            document.body.insertAdjacentHTML('beforeend', modalHtml);
-            window.renderSaoStaffPicker('crEditStaffSaoBox', 'crEditStaff', csList, r.staff || '');
-            lucide.createIcons();
         };
 
         window.crSaveEditRecord = (id) => {
@@ -17650,7 +17644,7 @@ historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
                         <div class="border-t border-slate-100 my-1"></div>
                         
 <button onclick="window.openAsPopout(); window.toggleSettingsMenu();" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left"><i data-lucide="external-link" class="w-3.5 h-3.5 mr-2 text-slate-400"></i> 以獨立視窗開啟</button>
-                        <button id="saoModeToggleBtn" onclick="window.toggleSaoMode(); window.toggleSettingsMenu();" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-amber-50 hover:text-amber-700 rounded-xl transition-colors text-left"><i data-lucide="layout-template" class="w-3.5 h-3.5 mr-2 text-amber-500"></i> 切換為原介面</button>
+<button id="saoModeToggleBtn" onclick="window.toggleSaoMode(); window.toggleSettingsMenu();" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-amber-50 hover:text-amber-700 rounded-xl transition-colors text-left"><i data-lucide="swords" class="w-3.5 h-3.5 mr-2 text-amber-500"></i> 切換為 SAO 模式</button>
                         <button onclick="window.openTabVisibilityModal()" class="w-full flex items-center px-3 py-2 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors text-left"><i data-lucide="layout-grid" class="w-3.5 h-3.5 mr-2 text-slate-400"></i> 調整分頁顯示</button>
                         <div class="border-t border-slate-100 my-1"></div>
                         <input type="file" id="importInput" accept=".json" class="hidden" onchange="window.importData(event)">
