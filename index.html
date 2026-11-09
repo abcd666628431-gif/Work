@@ -1172,8 +1172,9 @@ window.showToast(
             });
             // 移除 localStorage 重複寫入，釋放寶貴的 5MB 配額給系統設定檔
             localStorage.removeItem('work_cache_gallery_items');
-            try {
+try {
                 await idbSet('app_gallery_metadata_list', cleanList);
+                try { localStorage.setItem('work_gallery_sync_ping', String(Date.now())); } catch (err) {}
             } catch (e) {
                 console.error('圖庫清單寫入 IndexedDB 失敗：', e);
                 if (!window._idbWarned) {
@@ -7070,8 +7071,9 @@ window.writeGalleryLog('旋轉圖片', photoName, `旋轉 ${angleDeg > 0 ? '+90�
 const photoName = item.title ? `[${item.title}]` : `[未命名照片_${item.id}]`;
 window.writeGalleryLog('移至垃圾桶', photoName, `分類: ${item.category || '未分類'} · 時間: ${item.time || '12:00'}`);
 
-            window._lastRenderFingerprint = '';
+window._lastRenderFingerprint = '';
             await window.renderGallery();
+            window.renderDashboard?.();
             await window.autoSyncClosedStallsToPatrol(true); // 🌟 照片被取消/刪除，立即撤銷剔檔中的 0
             window.showToast("🗑️ 圖片已移至垃圾桶");
         };
@@ -7129,11 +7131,12 @@ const removedNames = galleryItems
 const displayTarget = count === 1 ? `[${removedNames}]` : `共 ${count} 張: [${removedNames}${count > 5 ? '...等' : ''}]`;
 window.writeGalleryLog('批次移至垃圾桶', displayTarget, `批次刪除`);
 
-        // 3. 重置選取模式並刷新畫面
+// 3. 重置選取模式並刷新畫面
         window.isGallerySelectMode = false;
         window.selectedGalleryIds.clear();
         window._lastRenderFingerprint = '';
         await window.renderGallery();
+        window.renderDashboard?.();
 
         await window.autoSyncClosedStallsToPatrol(true); // 🌟 批次刪除照片，立即撤銷剔檔中的 0
 
@@ -7188,9 +7191,10 @@ window.writeGalleryLog('批次移至垃圾桶', displayTarget, `批次刪除`);
 const photoName = item.title ? `[${item.title}]` : `[未命名照片_${item.id}]`;
 window.writeGalleryLog('還原圖片', photoName, `自還原清單救回 · 分類: ${item.category || '未分類'}`);
 
-            window._lastRenderFingerprint = '';
+window._lastRenderFingerprint = '';
             window.renderTrashList();
             await window.renderGallery();
+            window.renderDashboard?.();
             window.showToast("✅ 已成功還原圖片！");
         };
 
@@ -7247,11 +7251,12 @@ const restoredNames = trashed.map(i => i.title || '未命名').slice(0, 6).join(
 const detailSummary = `${dateStr} 共 ${trashed.length} 張: [${restoredNames}${trashed.length > 6 ? '...等' : ''}]`;
 window.writeGalleryLog('還原整日', detailSummary, '依日期批次還原');
 
-            window._lastRenderFingerprint = '';
+window._lastRenderFingerprint = '';
             window.renderTrashList();
             await window.renderGallery();
+            window.renderDashboard?.();
             window.showToast(`✅ 已還原 ${dateStr} 共 ${trashed.length} 張相片！`);
-        };  
+        };
 
       // ====== 全部還原 (附帶免死金牌 restored: true) ======
         window.restoreAllTrashItems = async () => {
@@ -7301,9 +7306,10 @@ const allNames = trashed.map(i => i.title || '未命名').slice(0, 6).join('、'
 const allSummary = `共 ${trashed.length} 張: [${allNames}${trashed.length > 6 ? '...等' : ''}]`;
 window.writeGalleryLog('全部還原', allSummary, '全部清單還原');
 
-            window._lastRenderFingerprint = '';
+window._lastRenderFingerprint = '';
             window.closeTrashModal();
             await window.renderGallery();
+            window.renderDashboard?.();
             window.showToast(`✅ 已還原全部 ${trashed.length} 張圖片！`);
         };
 
@@ -7693,9 +7699,10 @@ item.category = newCat;
           : `修改資料 · 分類: ${newCat} · 時間: ${newTime}`;
       window.writeGalleryLog('修改圖片', logTarget, logDetail);
 
-      $('galleryItemEditModal')?.remove();
+$('galleryItemEditModal')?.remove();
       window._lastRenderFingerprint = '';
       window.renderGallery();
+      window.renderDashboard?.();
       await window.autoSyncClosedStallsToPatrol(true);
       window.showToast(`✅ 已儲存！分類確定為「${newCat}」`);
   };
@@ -8179,15 +8186,16 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
                 const earlyCloseCount = todayPhotos.filter(i => i.category === '提早收工' || i.category === '收工').length;
                 const cleanPhotoCount = todayPhotos.filter(i => i.category === '清潔').length;
 
-                // 清潔相特定 6 檔核對盤點
+// 清潔相特定 6 檔核對盤點（嚴格排除 1- / R- 跨樓層誤判）
                 const uploadedCleanCodes = new Set();
                 todayPhotos.forEach(i => {
                     if (i.category === '清潔') {
                         const clean = (i.title || '').trim().replace(/^#/, '').toUpperCase();
+                        const isNotOtherFloor = !/^[1R]-?/i.test(clean);
                         STANDARD_CLEAN_STALLS.forEach(std => {
                             const stdNum = std.replace(/^J-0*/, '');
                             const cleanNum = clean.replace(/^[1RJ]-0*/, '');
-                            if (clean === std || (clean.startsWith('J-') && cleanNum === stdNum) || cleanNum === stdNum) {
+                            if (isNotOtherFloor && (clean === std || (clean.startsWith('J-') && cleanNum === stdNum) || (!clean.includes('-') && cleanNum === stdNum))) {
                                 uploadedCleanCodes.add(std);
                             }
                         });
@@ -8196,15 +8204,18 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
                 const missingCleanStalls = STANDARD_CLEAN_STALLS.filter(std => !uploadedCleanCodes.has(std));
                 const cleanReady = missingCleanStalls.length === 0;
 
-                // 營業相 (13張)
+                // 營業相 (13張)：尊重手動修改後的分類，且嚴格排除 R- / J- 跨樓層誤判
                 const uploadedFirstFloorCodes = new Set();
                 todayPhotos.forEach(i => {
-                    if (i.category === '營業相' || (i.time || '12:00') < '10:00') {
+                    const isUncategorized = !i.category || i.category === '未分類';
+                    const isBizCat = i.category === '營業相' || (isUncategorized && (i.time || '12:00') < '10:00');
+                    if (isBizCat) {
                         const clean = (i.title || '').trim().replace(/^#/, '').toUpperCase();
+                        const isNotOtherFloor = !/^[RJ]-?/i.test(clean);
                         STANDARD_FIRST_FLOOR_STALLS.forEach(std => {
                             const stdNum = std.replace(/^1-0*/, '');
                             const cleanNum = clean.replace(/^[1RJ]-0*/, '');
-                            if (clean === std || (clean.startsWith('1-') && cleanNum === stdNum) || cleanNum === stdNum) {
+                            if (isNotOtherFloor && (clean === std || (clean.startsWith('1-') && cleanNum === stdNum) || (!clean.includes('-') && cleanNum === stdNum))) {
                                 uploadedFirstFloorCodes.add(std);
                             }
                         });
@@ -8213,17 +8224,18 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
                 const missingBusinessStalls = STANDARD_FIRST_FLOOR_STALLS.filter(std => !uploadedFirstFloorCodes.has(std));
                 const businessReady = missingBusinessStalls.length === 0;
 
-                // 開工-雞相 (4檔)
+                // 開工-雞相 (4檔)：手動選為「開工-雞相」直接計入；或「營業相」12:00 前的 J- 雞檔計入
                 const uploadedChickenCodes = new Set();
                 todayPhotos.forEach(i => {
+                    const clean = (i.title || '').trim().replace(/^#/, '').toUpperCase();
                     const isMorning = (i.time || '12:00') < '12:00';
-                    const isChickenCat = i.category === '開工-雞相' || (i.category === '營業相' && /^J-/i.test(i.title || ''));
-                    if (isMorning && isChickenCat) {
-                        const clean = (i.title || '').trim().replace(/^#/, '').toUpperCase();
+                    const isChickenCat = i.category === '開工-雞相' || (i.category === '營業相' && isMorning && /^J-/i.test(clean));
+                    if (isChickenCat) {
+                        const isNotOtherFloor = !/^[1R]-?/i.test(clean);
                         STANDARD_CHICKEN_STALLS.forEach(std => {
                             const stdNum = std.replace(/^J-0*/, '');
                             const cleanNum = clean.replace(/^[1RJ]-0*/, '');
-                            if (clean === std || (clean.startsWith('J-') && cleanNum === stdNum) || cleanNum === stdNum) {
+                            if (isNotOtherFloor && (clean === std || (clean.startsWith('J-') && cleanNum === stdNum) || (!clean.includes('-') && cleanNum === stdNum))) {
                                 uploadedChickenCodes.add(std);
                             }
                         });
@@ -8232,14 +8244,16 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
                 const missingChickenStalls = STANDARD_CHICKEN_STALLS.filter(std => !uploadedChickenCodes.has(std));
                 const chickenReady = missingChickenStalls.length === 0;
 
-                // 測溫相盤點
+                // 測溫相盤點：尊重手動改分類結果
                 const amTempPhotos = todayPhotos.filter(i => {
-                    const isTemp = i.category === '測溫相' || (i.title && i.title.includes('測溫'));
+                    const isUncategorized = !i.category || i.category === '未分類';
+                    const isTemp = i.category === '測溫相' || (isUncategorized && i.title && i.title.includes('測溫'));
                     return isTemp && (i.time || '12:00') < '12:00';
                 }).length;
 
                 const pmTempPhotos = todayPhotos.filter(i => {
-                    const isTemp = i.category === '測溫相' || (i.title && i.title.includes('測溫'));
+                    const isUncategorized = !i.category || i.category === '未分類';
+                    const isTemp = i.category === '測溫相' || (isUncategorized && i.title && i.title.includes('測溫'));
                     return isTemp && (i.time || '12:00') >= '12:00';
                 }).length;
 
@@ -9112,9 +9126,10 @@ const useSao = window.isSaoMode !== false;
                 }
                 await saveGalleryItemsSafe(galleryItems);
 
-                // 立即刷新介面
+// 立即刷新介面
                 window._lastRenderFingerprint = '';
                 window.renderGallery();
+                window.renderDashboard?.();
 
 window.autoSyncClosedStallsToPatrol(true); // 🌟 立即更新剔檔
 
@@ -9935,6 +9950,20 @@ if (!window._uploadQueue.length) {
             }
             }
         };
+
+window.addEventListener('storage', async (e) => {
+            if (e.key === 'work_gallery_sync_ping') {
+                try {
+                    const latestList = await idbGet('app_gallery_metadata_list');
+                    if (Array.isArray(latestList)) {
+                        galleryItems = latestList;
+                        window._lastRenderFingerprint = '';
+                        if (!$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
+                        window.renderDashboard?.();
+                    }
+                } catch (err) {}
+            }
+        });
 
         window.addEventListener('online', () => {
             const offlinePending = getLocal('work_pending_offline_uploads', []);
