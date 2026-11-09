@@ -7999,13 +7999,13 @@ $('galleryItemEditModal')?.remove();
                     pmSelfRun = (s16 === 'A' || s18 === 'A') ? 'Y' : 'N';
                 }
 
-                // 🌟 2. 寫入資料：「檔主 (ownerName)」移至最後一項
+// 🌟 2. 寫入資料：「檔主 (ownerName)」移至最後一項
                 excelRows.push([
                     displayDate,
                     floor,
                     code,
                     timeStr,
-                    'Y',        // 是否拍照存檔
+                    '是',       // 是否拍照存檔
                     '售完',     // 其他
                     'Y',        // 檔主 通知賣清 (Y/N)
                     amSelfRun,  // 上午檔主 親身經營 (Y/N)
@@ -14561,6 +14561,69 @@ document.body.classList.remove('dark-mode');
         } else {
             window.updateSaoModeBtnUI?.();
         }
+
+        window.crPopulateWithdrawStaffSelect = () => {
+            const staffSel = $('crInputWithdrawStaff');
+            if (!staffSel) return;
+            const useSao = window.isSaoMode === true;
+            const csList = (typeof csMembersStore !== 'undefined' && csMembersStore.length > 0)
+                ? csMembersStore
+                : ['周靜儀', '蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲'];
+            staffSel.innerHTML = '<option value="">請選擇經手客服人員...</option>' + csList.map(m => `<option value="${m}">${m}</option>`).join('');
+            staffSel.value = '';
+
+            let saoBox = $('crWithdrawStaffSaoBox');
+            if (!useSao) {
+                staffSel.classList.remove('hidden');
+                if (saoBox) saoBox.classList.add('hidden');
+                const withdrawModal = $('crWithdrawModal');
+                const card = withdrawModal?.firstElementChild;
+                if (card) card.classList.remove('border-2', 'border-amber-400/80', 'shadow-[0_0_24px_rgba(245,158,11,0.22)]');
+                return;
+            }
+
+            staffSel.classList.add('hidden');
+            if (!saoBox) {
+                saoBox = document.createElement('div');
+                saoBox.id = 'crWithdrawStaffSaoBox';
+                staffSel.parentNode.insertBefore(saoBox, staffSel.nextSibling);
+            }
+            saoBox.classList.remove('hidden');
+            window.renderSaoStaffPicker('crWithdrawStaffSaoBox', 'crInputWithdrawStaff', csList, '');
+        };
+
+        window.crOpenWithdrawModal = (id) => {
+            const r = crRecords.find(x => x.id === id);
+            if (!r) return;
+            $('crCurrentActionId').value = id;
+            $('crWithdrawTenantDisplay').textContent = r.tenant;
+            $('crWithdrawRemainDisplay').textContent = r.remainingQuantity;
+            $('crInputWithdrawQty').value = r.remainingQuantity;
+            const { date, time } = getNowInputStrs();
+            $('crInputWithdrawDate').value = date;
+            $('crInputWithdrawTime').value = time;
+            window.crPopulateWithdrawStaffSelect();
+
+            if (window.isSaoMode !== true) {
+                $('crWithdrawModal')?.classList.replace('hidden', 'flex');
+                return;
+            }
+
+            window._saoCrState = {
+                mode: 'withdraw',
+                recordId: id,
+                maxQty: Number(r.remainingQuantity) || 1,
+                activeCircle: 'staff',
+                activeSubCat: 'main',
+                tenant: r.tenant,
+                type: r.type || '未指定',
+                staff: '',
+                qty: String(r.remainingQuantity)
+            };
+            window.playSaoSound?.('open');
+            window.renderSaoColdRoomHud();
+        };
+
         window.crCloseWithdrawModal = () => {
             window.closeSaoColdRoomHud(false);
             $('crWithdrawModal')?.classList.replace('flex', 'hidden');
