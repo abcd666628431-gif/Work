@@ -421,61 +421,86 @@ tr[class*="pref-row-highlight-"] .sub-line-item[data-name=""] {
         let currentUser = null;
 
 // ====== 操作日誌核心邏輯 (含剔檔、圖庫與 20 分鐘同用戶聚合折疊) ======
-        // 🌟 1. 使用 window 屬性讀取或初始化，保證絕不拋出重複宣告錯誤！
-        if (!localStorage.getItem('work_client_device_id')) {
-            localStorage.setItem('work_client_device_id', 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6));
+        // 🌟 讀寫 10 年期 Cookie 輔助函式（防微信/瀏覽器清 localStorage，且每台手機 100% 獨立不撞號）
+        window.setIdentityCookie = (k, v) => {
+            try {
+                document.cookie = `${k}=${encodeURIComponent(v || '')}; max-age=315360000; path=/; SameSite=Lax`;
+            } catch (e) {}
+        };
+        window.getIdentityCookie = (k) => {
+            try {
+                const m = document.cookie.match(new RegExp('(?:^|; )' + k + '=([^;]*)'));
+                return m ? decodeURIComponent(m[1]) : '';
+            } catch (e) { return ''; }
+        };
+
+        // 🌟 一次性清理舊版因「同型號手機硬體特徵碼撞號」而被認錯的用戶名
+        try {
+            if (!localStorage.getItem('work_identity_v3_clean')) {
+                localStorage.removeItem('gallery_user_name');
+                localStorage.setItem('work_identity_v3_clean', '1');
+            }
+        } catch (e) {}
+
+        // 🌟 1. 取得或建立每台設備絕對唯一的 Device ID（優先從 localStorage -> Cookie 救援）
+        let clientDeviceId = '';
+        try { clientDeviceId = localStorage.getItem('work_client_device_id') || window.getIdentityCookie('work_cid') || ''; } catch (e) {}
+        if (!clientDeviceId) {
+            clientDeviceId = 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
         }
-        // 🌟 修復：定義每次分頁開啟時的唯一 Session ID（掛在 window 確保全域可用）
-        const clientDeviceId = localStorage.getItem('work_client_device_id');
+        try { localStorage.setItem('work_client_device_id', clientDeviceId); } catch (e) {}
+        window.setIdentityCookie('work_cid', clientDeviceId);
+
         const clientSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
         window.clientDeviceId = clientDeviceId;
         window.clientSessionId = clientSessionId;
+        window.deviceFingerprint = clientDeviceId; // 改為綁定唯一設備碼，徹底停用會撞號的硬體螢幕/GPU特徵碼
 
-// 🌟 計算「手機硬體 + GPU + Canvas」特徵碼（專治微信內置瀏覽器清快取）
-        window.getDeviceFingerprint = () => {
-            try {
-                const gl = document.createElement('canvas').getContext('webgl');
-                const dbg = gl ? gl.getExtension('WEBGL_debug_renderer_info') : null;
-                const gpu = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '';
-                const cvs = document.createElement('canvas');
-                cvs.width = 160; cvs.height = 32;
-                const ctx = cvs.getContext('2d');
-                ctx.textBaseline = 'top';
-                ctx.font = '14px Arial';
-                ctx.fillStyle = '#f60';
-                ctx.fillRect(10, 1, 62, 20);
-                ctx.fillStyle = '#069';
-                ctx.fillText('MacauMarket_FP_2026', 2, 15);
-                const rawSig = [
-                    screen.width, screen.height, window.devicePixelRatio || 1,
-                    navigator.hardwareConcurrency || 0, navigator.platform || '',
-                    gpu, cvs.toDataURL().slice(-64)
-                ].join('|');
-                let h = 0x811c9dc5;
-                for (let i = 0; i < rawSig.length; i++) {
-                    h ^= rawSig.charCodeAt(i);
-                    h = Math.imul(h, 0x01000193);
-                }
-                return 'fp_' + (h >>> 0).toString(16);
-            } catch (e) {
-                return '';
-            }
-        };
-        window.deviceFingerprint = window.getDeviceFingerprint();
-
-        // 🌟 2. 隨機成員名稱產生後立刻鎖入本機
+        // 🌟 2. 讀取本機專屬用戶名（localStorage -> Cookie -> 隨機成員名）
         let sysUserName = '';
-        try { sysUserName = localStorage.getItem('gallery_user_name') || ''; } catch (e) {}
+        try { sysUserName = localStorage.getItem('gallery_user_name') || window.getIdentityCookie('work_uname') || ''; } catch (e) {}
         if (!sysUserName) {
             sysUserName = '成員_' + Math.floor(Math.random() * 900 + 100);
-            try { localStorage.setItem('gallery_user_name', sysUserName); } catch (e) {}
         }
+        try { localStorage.setItem('gallery_user_name', sysUserName); } catch (e) {}
+        window.setIdentityCookie('work_uname', sysUserName);
+
         let sysUserColor = '';
-        try { sysUserColor = localStorage.getItem('gallery_user_color') || ''; } catch (e) {}
+        try { sysUserColor = localStorage.getItem('gallery_user_color') || window.getIdentityCookie('work_ucol') || ''; } catch (e) {}
         if (!sysUserColor) {
             sysUserColor = '#38bdf8';
-            try { localStorage.setItem('gallery_user_color', sysUserColor); } catch (e) {}
         }
+        try { localStorage.setItem('gallery_user_color', sysUserColor); } catch (e) {}
+        window.setIdentityCookie('work_ucol', sysUserColor);
+
+        // 🌟 統一將本機身分同步至 localStorage + Cookie + IndexedDB + 雲端唯一設備表
+        window.persistMyIdentityEverywhere = (name, color) => {
+            sysUserName = name;
+            sysUserColor = color;
+            try {
+                localStorage.setItem('gallery_user_name', name);
+                localStorage.setItem('gallery_user_color', color);
+                localStorage.setItem('work_identity_v3_clean', '1');
+            } catch (e) {}
+            window.setIdentityCookie('work_uname', name);
+            window.setIdentityCookie('work_ucol', color);
+            window.setIdentityCookie('work_cid', window.clientDeviceId);
+            if (typeof idbSet === 'function') {
+                idbSet('_local_user_identity_v3', {
+                    deviceId: window.clientDeviceId,
+                    name: name,
+                    color: color,
+                    updatedAt: Date.now()
+                }).catch(() => {});
+            }
+            if (db && currentUser) {
+                const devPatch = {
+                    [window.clientDeviceId]: { name, color, uid: currentUser.uid, updatedAt: Date.now() },
+                    [currentUser.uid]: { name, color, deviceId: window.clientDeviceId, updatedAt: Date.now() }
+                };
+                setDoc(cfgDoc('device_identities'), { devices: devPatch }, { merge: true }).catch(() => {});
+            }
+        };
         let galleryLogsStore = [];
         window.expandedLogGroups = new Set(); // 記錄使用者展開的群組 ID
 
@@ -860,26 +885,31 @@ window.getClearLogAction = (action) => {
             document.getElementById('userNameModal')?.classList.replace('flex', 'hidden');
         };
 
-        // 🌟 輔助：篩選出真正屬於目標對象的日誌（防止同名舊資料把管理員自己也綁進去）
+// 🌟 輔助：精準鎖定目標設備的日誌，絕不波及其他同名設備
         window.getTargetLogsForUserEdit = (oldName, isEditingOtherUser, targetGroupId) => {
-            // 若點擊的對象跟管理員自己同名（連住了），只分離所點擊的那一組/那一設備的日誌
-            if (isEditingOtherUser && oldName === sysUserName && targetGroupId) {
+            if (isEditingOtherUser && targetGroupId) {
                 const m = String(targetGroupId).match(/_(\d+)_(\d+)$/);
-                if (!m) return [];
-                const latestTs = Number(m[1]);
-                const oldestTs = Number(m[2]);
-                return galleryLogsStore.filter(l =>
-                    l.user === oldName &&
-                    l.timestamp >= oldestTs &&
-                    l.timestamp <= latestTs
-                );
+                if (m) {
+                    const latestTs = Number(m[1]);
+                    const oldestTs = Number(m[2]);
+                    const groupLogs = galleryLogsStore.filter(l =>
+                        l.user === oldName &&
+                        l.timestamp >= oldestTs &&
+                        l.timestamp <= latestTs
+                    );
+                    const targetDevId = groupLogs.find(l => l.deviceId && l.deviceId !== 'system')?.deviceId;
+                    if (targetDevId && targetDevId !== window.clientDeviceId) {
+                        return galleryLogsStore.filter(l => l.user === oldName && l.deviceId === targetDevId);
+                    }
+                    return groupLogs;
+                }
             }
             return galleryLogsStore.filter(l => {
                 if (l.user !== oldName) return false;
                 if (isEditingOtherUser) {
-                    return !l.deviceId || l.deviceId !== clientDeviceId;
+                    return !l.deviceId || l.deviceId !== window.clientDeviceId;
                 } else {
-                    return l.deviceId === clientDeviceId;
+                    return l.deviceId === window.clientDeviceId;
                 }
             });
         };
@@ -921,21 +951,8 @@ window.getClearLogAction = (action) => {
                 }
             }
 
-            // 若是點右上角「身分」清除自己，才將本機變為隨機名稱；若是管理員清除別人，自己維持原名
-if (!isEditingOtherUser) {
-                sysUserName = name;
-                sysUserColor = color;
-                try {
-                    localStorage.setItem('gallery_user_name', sysUserName);
-                    localStorage.setItem('gallery_user_color', sysUserColor);
-                } catch (e) {}
-                if (db && window.deviceFingerprint) {
-                    setDoc(cfgDoc('device_identities'), {
-                        fingerprints: {
-                            [window.deviceFingerprint]: { name: sysUserName, color: sysUserColor, updatedAt: Date.now() }
-                        }
-                    }, { merge: true }).catch(() => {});
-                }
+            if (!isEditingOtherUser) {
+                window.persistMyIdentityEverywhere(randomName, randomColor);
             }
 
             window.closeUserNameModal();
@@ -980,15 +997,12 @@ if (!isEditingOtherUser) {
             }
 
             if (!isEditingOtherUser) {
-                sysUserName = name;
-                sysUserColor = color;
-                localStorage.setItem('gallery_user_name', sysUserName);
-                localStorage.setItem('gallery_user_color', sysUserColor);
+                window.persistMyIdentityEverywhere(name, color);
             }
 
             window.closeUserNameModal();
             window.renderGalleryLogs();
-window.showToast(
+            window.showToast(
                 isEditingOtherUser
                     ? `✅ 已將「${oldName}」改為「${name}」（您的身分維持「${sysUserName}」不變）`
                     : `✅ 已將您的身分儲存為「${name}」！`
@@ -1504,20 +1518,82 @@ let tabOrderList = getLocal('work_tab_order_ids', defaultTabOrder);
     }
 })();
 
+window.getSplitTabLists = () => {
+            const visibleTabs = tabOrderList.filter(k => tabMetadataMap[k] && tabVisibilityState[k] !== false);
+            if (visibleTabs.length > 5) {
+                return {
+                    primaryTabs: visibleTabs.slice(0, 5),
+                    overflowTabs: visibleTabs.slice(5)
+                };
+            }
+            return { primaryTabs: visibleTabs, overflowTabs: [] };
+        };
+
+        window.closeMoreTabsMenu = () => {
+            document.getElementById('moreTabsDropdown')?.remove();
+        };
+
+        window.toggleMoreTabsMenu = (e) => {
+            if (e) e.stopPropagation();
+            const existing = document.getElementById('moreTabsDropdown');
+            if (existing) {
+                existing.remove();
+                return;
+            }
+            const { overflowTabs } = window.getSplitTabLists();
+            if (!overflowTabs.length) return;
+
+            const moreBtn = $('tabMoreBtn');
+            const rect = moreBtn ? moreBtn.getBoundingClientRect() : { bottom: 48, right: window.innerWidth - 8 };
+            const curActive = localStorage.getItem('activeTab') || 'gallery';
+
+            const menu = document.createElement('div');
+            menu.id = 'moreTabsDropdown';
+            menu.style.top = `${Math.round(rect.bottom + 6)}px`;
+            menu.style.right = `${Math.max(8, Math.round(window.innerWidth - rect.right))}px`;
+            menu.className = 'fixed z-[9990] bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-200 p-1.5 min-w-[132px] space-y-1 animate-pop-in';
+            menu.onclick = (ev) => ev.stopPropagation();
+
+            menu.innerHTML = overflowTabs.map(k => {
+                const meta = tabMetadataMap[k];
+                const isAct = curActive === k;
+                return `
+                    <button type="button" onclick="window.closeMoreTabsMenu(); window.switchTab('${k}');"
+                        class="w-full px-3 py-2 rounded-xl text-xs font-black flex items-center justify-between gap-2 transition-colors ${isAct ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'text-slate-700 hover:bg-slate-100'}">
+                        <span class="flex items-center gap-2">
+                            <i data-lucide="${meta.icon}" class="w-3.5 h-3.5 ${isAct ? 'text-blue-600' : 'text-slate-500'}"></i>
+                            <span>${meta.name}</span>
+                        </span>
+                        ${isAct ? '<span class="text-[10px] text-blue-600">✔</span>' : ''}
+                    </button>`;
+            }).join('');
+
+            document.body.appendChild(menu);
+            if (window.lucide) lucide.createIcons({ root: menu });
+        };
+
         window.applyTabVisibility = () => {
             const container = $('tabBarContainer');
             if (!container) return;
-            const curActive = localStorage.getItem('activeTab') || 'gallery';
+            window.closeMoreTabsMenu();
 
-            container.innerHTML = tabOrderList.map(tabKey => {
+            const curActive = localStorage.getItem('activeTab') || 'gallery';
+            const { primaryTabs, overflowTabs } = window.getSplitTabLists();
+            const actCls = "flex-1 py-1.5 px-1 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-wider text-center whitespace-nowrap";
+            const inactCls = "flex-1 py-1.5 px-1 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-wider text-center whitespace-nowrap";
+
+            let html = primaryTabs.map(tabKey => {
                 const meta = tabMetadataMap[tabKey];
-                if (!meta) return '';
-                const isVisible = tabVisibilityState[tabKey] !== false;
                 const isCurrent = curActive === tabKey;
-                const actCls = "flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
-                const inactCls = "flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap";
-                return `<button id="${meta.btnId}" onclick="window.switchTab('${tabKey}')" style="${isVisible ? '' : 'display:none;'}" class="${isCurrent ? actCls : inactCls} ${isVisible ? '' : 'hidden'}">${meta.name}</button>`;
+                return `<button id="${meta.btnId}" onclick="window.switchTab('${tabKey}')" class="${isCurrent ? actCls : inactCls}">${meta.name}</button>`;
             }).join('');
+
+            if (overflowTabs.length > 0) {
+                const isMoreActive = overflowTabs.includes(curActive);
+                html += `<button id="tabMoreBtn" type="button" onclick="window.toggleMoreTabsMenu(event)" class="${isMoreActive ? actCls : inactCls}">更多▾</button>`;
+            }
+
+            container.innerHTML = html;
 
             if (tabVisibilityState[curActive] === false) {
                 const firstVisible = tabOrderList.find(k => tabVisibilityState[k] !== false);
@@ -6242,12 +6318,14 @@ window.checkMemoAlerts = () => {
             if (newDueMemos.length > 0) { window.playAlertSound(); window.showOverdueAlertBanner(newDueMemos.map(x => x.title).join('、'), "📌 備忘任務到期提醒！"); }
         };
 
-        window.toggleSettingsMenu = (e) => { if (e) e.stopPropagation(); $('settingsDropdown')?.classList.toggle('hidden'); };
+window.toggleSettingsMenu = (e) => { if (e) e.stopPropagation(); $('settingsDropdown')?.classList.toggle('hidden'); };
         document.addEventListener('click', (e) => {
          const dropdown = $('settingsDropdown'), btn = $('settingsMenuBtn');
          if (dropdown && !dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && e.target !== btn) dropdown.classList.add('hidden');
          const calPop = $('patrolCalendarPopover'), calBtn = $('btnTogglePatrolCal');
          if (calPop && !calPop.classList.contains('hidden') && !calPop.contains(e.target) && e.target !== calBtn) calPop.classList.add('hidden');
+         const moreMenu = document.getElementById('moreTabsDropdown'), moreBtn = $('tabMoreBtn');
+         if (moreMenu && !moreMenu.contains(e.target) && e.target !== moreBtn) moreMenu.remove();
      });
 
         const getNowInputStrs = (targetMs) => {
@@ -15658,8 +15736,9 @@ window.switchTab = (tab) => {
                 closing: 'closingPage' 
             };
 
-            const actCls = "flex-1 py-1.5 px-2 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-widest text-center whitespace-nowrap";
-            const inactCls = "flex-1 py-1.5 px-2 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-widest text-center whitespace-nowrap";
+const actCls = "flex-1 py-1.5 px-1 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-wider text-center whitespace-nowrap";
+            const inactCls = "flex-1 py-1.5 px-1 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-wider text-center whitespace-nowrap";
+            window.closeMoreTabsMenu?.();
             
             // 🌟 關鍵修正第 1 步：先隱藏其他頁面，並立刻顯示目標頁面（移除 hidden）
             Object.values(pages).forEach(id => { 
@@ -15673,13 +15752,16 @@ const targetPage = $(pages[tab]);
                 targetPage.classList.add(['dashboard', 'map', 'gallery', 'coldRoom', 'closing'].includes(tab) ? 'flex' : 'block'); 
             }
 
-// 更新按鈕樣式
+// 更新按鈕樣式（包含「更多」按鈕）
+            const { overflowTabs } = window.getSplitTabLists ? window.getSplitTabLists() : { overflowTabs: [] };
             tabOrderList.forEach(k => {
                 const btn = $(tabMetadataMap[k]?.btnId);
                 if (btn) btn.className = inactCls;
             });
             const targetBtn = $(tabMetadataMap[tab]?.btnId);
             if (targetBtn) targetBtn.className = actCls;
+            const moreBtn = $('tabMoreBtn');
+            if (moreBtn) moreBtn.className = overflowTabs.includes(tab) ? actCls : inactCls;
 
             // 🌟 關鍵修正第 2 步：頁面已經移除 hidden 後，才執行對應的渲染函式
             ({
@@ -16233,37 +16315,55 @@ const matched = (window.stallList || []).filter(s => {
 
 window.recoverIdentityByFingerprint = async () => {
             try {
-                const fpKey = window.deviceFingerprint;
-                if (!fpKey || !db) return;
+                // 1. 先從本機 IndexedDB 救援（同手機跨清快取 100% 準確，絕不跟他人撞號）
+                if (typeof idbGet === 'function') {
+                    const idbIdentity = await idbGet('_local_user_identity_v3');
+                    if (idbIdentity && idbIdentity.deviceId) {
+                        window.clientDeviceId = idbIdentity.deviceId;
+                        try { localStorage.setItem('work_client_device_id', idbIdentity.deviceId); } catch (e) {}
+                        window.setIdentityCookie('work_cid', idbIdentity.deviceId);
+                    }
+                    if (idbIdentity && idbIdentity.name && !/^成員_\d+$/.test(idbIdentity.name) && /^成員_\d+$/.test(sysUserName)) {
+                        window.persistMyIdentityEverywhere(idbIdentity.name, idbIdentity.color || sysUserColor);
+                        if ($('galleryLogsModal') && !$('galleryLogsModal').classList.contains('hidden')) {
+                            window.renderGalleryLogs();
+                        }
+                        return;
+                    }
+                }
+
+                if (!db || !currentUser) return;
                 const { getDoc } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
                 const snap = await getDoc(cfgDoc('device_identities'));
-                const fingerprints = snap.exists() ? (snap.data()?.fingerprints || {}) : {};
-                const cloudRec = fingerprints[fpKey];
+                const data = snap.exists() ? (snap.data() || {}) : {};
 
-                // 若本機快取被微信清掉變回隨機「成員_XXX」，且雲端有此手機特徵碼的正式姓名，立即還原
-                if (cloudRec && cloudRec.name && !/^成員_\d+$/.test(cloudRec.name) && /^成員_\d+$/.test(sysUserName)) {
-                    sysUserName = cloudRec.name;
-                    sysUserColor = cloudRec.color || sysUserColor;
-                    try {
-                        localStorage.setItem('gallery_user_name', sysUserName);
-                        localStorage.setItem('gallery_user_color', sysUserColor);
-                    } catch (e) {}
+                // 2. 若雲端還留著舊版會導致撞號的 fingerprints 欄位，直接從雲端刪除它
+                if (data.fingerprints) {
+                    updateDoc(cfgDoc('device_identities'), { fingerprints: deleteField() }).catch(() => {});
+                }
+
+                // 3. 僅允許使用「唯一設備碼 (clientDeviceId)」或「Firebase 唯一匿名帳號 (currentUser.uid)」還原
+                const devicesMap = data.devices || {};
+                const myCloudRec = devicesMap[window.clientDeviceId] || devicesMap[currentUser.uid];
+
+                if (myCloudRec && myCloudRec.name && !/^成員_\d+$/.test(myCloudRec.name) && /^成員_\d+$/.test(sysUserName)) {
+                    if (myCloudRec.deviceId) {
+                        window.clientDeviceId = myCloudRec.deviceId;
+                        try { localStorage.setItem('work_client_device_id', myCloudRec.deviceId); } catch (e) {}
+                    }
+                    window.persistMyIdentityEverywhere(myCloudRec.name, myCloudRec.color || sysUserColor);
                     if ($('galleryLogsModal') && !$('galleryLogsModal').classList.contains('hidden')) {
                         window.renderGalleryLogs();
                     }
                     return;
                 }
 
-                // 若本機已有自訂姓名，確保雲端特徵碼表同步更新
+                // 4. 若本機已設定正式姓名，同步備份至本機 IndexedDB 與雲端唯一設備表
                 if (!/^成員_\d+$/.test(sysUserName)) {
-                    await setDoc(cfgDoc('device_identities'), {
-                        fingerprints: {
-                            [fpKey]: { name: sysUserName, color: sysUserColor, updatedAt: Date.now() }
-                        }
-                    }, { merge: true });
+                    window.persistMyIdentityEverywhere(sysUserName, sysUserColor);
                 }
             } catch (e) {
-                console.warn('手機特徵碼比對略過：', e);
+                console.warn('專屬設備身分同步略過：', e);
             }
         };
 
