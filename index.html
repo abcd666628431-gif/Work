@@ -6123,34 +6123,55 @@ window.crNotifiedSet = new Set(JSON.parse(sessionStorage.getItem('work_cr_notifi
             } catch (e) {}
         };
 
-        window.playAlertSound = () => {
+// 🌟 使用者首次點擊或按鍵時預先喚醒音效晶片，避免背景新通知響起時首音爆音
+        const _unlockAudioCtxOnce = () => {
             try {
                 const AudioCtx = window.AudioContext || window.webkitAudioContext;
                 if (!AudioCtx) return;
-                // 修復：重用同一個 AudioContext，不再每次播放都新建（舊版永遠關不掉、亦會累積）。
+                if (!crAudioCtx || crAudioCtx.state === 'closed') crAudioCtx = new AudioCtx();
+                if (crAudioCtx.state === 'suspended') crAudioCtx.resume().catch(() => {});
+            } catch (e) {}
+            document.removeEventListener('pointerdown', _unlockAudioCtxOnce);
+            document.removeEventListener('keydown', _unlockAudioCtxOnce);
+        };
+        document.addEventListener('pointerdown', _unlockAudioCtxOnce, { passive: true });
+        document.addEventListener('keydown', _unlockAudioCtxOnce, { passive: true });
+
+        window.playAlertSound = async () => {
+            try {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (!AudioCtx) return;
                 if (!crAudioCtx || crAudioCtx.state === 'closed') crAudioCtx = new AudioCtx();
                 const ctx = crAudioCtx;
-                if (ctx.state === 'suspended') { ctx.resume(); }
+                if (ctx.state === 'suspended') {
+                    await ctx.resume();
+                }
 
-                const now = ctx.currentTime;
-                
-                // 高質感單次清脆提示音 (柔和悅耳的「叮」一聲)
+                // 預留 0.04 秒緩衝讓硬體音訊流穩定，避免第一粒音開頭被截斷
+                const startAt = ctx.currentTime + 0.04;
+                const duration = 0.42;
+
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
 
                 osc.type = 'sine';
-                // 頻率：從高音平順滑落，製造清脆響亮的提示感
-                osc.frequency.setValueAtTime(1046.50, now); // C6
-                osc.frequency.exponentialRampToValueAtTime(1318.51, now + 0.12); // E6
+                osc.frequency.setValueAtTime(1046.50, startAt); // C6
+                osc.frequency.exponentialRampToValueAtTime(1318.51, startAt + 0.12); // E6
 
-                gain.gain.setValueAtTime(0.25, now);
-                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+                // 🌟 從極小音量平滑淡入 (15ms Attack)，消除波形垂直跳變造成的爆音
+                gain.gain.setValueAtTime(0.0001, startAt);
+                gain.gain.linearRampToValueAtTime(0.24, startAt + 0.015);
+                gain.gain.exponentialRampToValueAtTime(0.0008, startAt + duration);
 
                 osc.connect(gain);
                 gain.connect(ctx.destination);
 
-                osc.start(now);
-                osc.stop(now + 0.4);
+                osc.onended = () => {
+                    try { osc.disconnect(); gain.disconnect(); } catch (e) {}
+                };
+
+                osc.start(startAt);
+                osc.stop(startAt + duration + 0.01);
             } catch (e) { console.error('提示音播放失敗：', e); }
         };
 
@@ -15333,14 +15354,219 @@ galleryCategories = (imp.galleryCategories || galleryCategories).filter(c => c !
             }, 250);
         };
 
+window.editTimelineTask = (taskId, eOrIsNew) => {
+            if (eOrIsNew && typeof eOrIsNew === 'object' && eOrIsNew.stopPropagation) {
+                eOrIsNew.stopPropagation();
+            }
+            const t = dailyScheduleData.find(x => String(x.id) === String(taskId));
+            if (!t) return;
+
+            document.getElementById('timelineEditModal')?.remove();
+            const isNew = eOrIsNew === true;
+            const safeId = window.jsAttr(String(t.id));
+            const curGroup = t.group || '';
+            const curDesc = (t.content && t.content !== '點擊編輯...') ? t.content : (t.note || '');
+
+            const modalHtml = `
+            <div id="timelineEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();">
+                <div class="bg-white rounded-2xl p-5 w-full max-w-[330px] shadow-2xl relative animate-pop-in" onclick="event.stopPropagation()">
+                    <div class="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-100">
+                        <h3 class="font-bold text-base text-slate-800 flex items-center">
+                            <i data-lucide="edit-3" class="w-4 h-4 mr-2 text-blue-500"></i>${isNew ? '新增動態任務' : '修改動態任務'}
+                        </h3>
+                        <button type="button" onclick="document.getElementById('timelineEditModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                    <div class="space-y-3">
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">任務標題</label>
+                            <input type="text" id="tlEditTitle" value="${window.esc(t.title || '')}" placeholder="輸入任務名稱..." class="w-full border border-slate-300 rounded-xl p-2 text-sm font-bold text-slate-800 focus:border-blue-500 focus:outline-none text-center">
+                        </div>
+                        <div class="flex gap-2">
+                            <div class="flex-1">
+                                <label class="text-[11px] font-bold text-slate-500 block mb-1">開始時間</label>
+                                <input type="time" id="tlEditStart" value="${window.esc(t.start || '09:00')}" class="w-full border border-slate-300 rounded-xl p-2 text-xs font-mono font-bold text-slate-800 focus:border-blue-500 focus:outline-none text-center">
+                            </div>
+                            <div class="flex-1">
+                                <label class="text-[11px] font-bold text-slate-500 block mb-1">結束時間</label>
+                                <input type="time" id="tlEditEnd" value="${window.esc(t.end || '10:00')}" class="w-full border border-slate-300 rounded-xl p-2 text-xs font-mono font-bold text-slate-800 focus:border-blue-500 focus:outline-none text-center">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">所屬組別</label>
+                            <select id="tlEditGroup" class="w-full border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-700 bg-slate-50 focus:border-blue-500 focus:outline-none text-center">
+                                <option value="" ${curGroup === '' ? 'selected' : ''}>無指定組別</option>
+                                <option value="A" ${curGroup === 'A' ? 'selected' : ''}>A 組</option>
+                                <option value="B" ${curGroup === 'B' ? 'selected' : ''}>B 組</option>
+                                <option value="C" ${curGroup === 'C' ? 'selected' : ''}>C 組</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">詳細內容 / 備註 (選填)</label>
+                            <textarea id="tlEditContent" placeholder="輸入任務補充說明..." class="w-full border border-slate-300 rounded-xl p-2 text-xs text-slate-700 focus:border-blue-500 focus:outline-none h-20 resize-none">${window.esc(curDesc)}</textarea>
+                        </div>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center">
+                        <button type="button" onclick="window.deleteTaskCard('${safeId}', event); document.getElementById('timelineEditModal')?.remove();" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-xl text-xs font-bold active:scale-95 transition-all">刪除卡片</button>
+                        <div class="space-x-1.5 flex">
+                            <button type="button" onclick="document.getElementById('timelineEditModal')?.remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold">取消</button>
+                            <button type="button" onclick="window.saveTimelineTaskEdit('${safeId}')" class="px-4 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95">儲存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            const modalEl = document.getElementById('timelineEditModal');
+            if (window.lucide && modalEl) lucide.createIcons({ root: modalEl });
+        };
+
+        window.saveTimelineTaskEdit = (taskId) => {
+            const t = dailyScheduleData.find(x => String(x.id) === String(taskId));
+            if (!t) return;
+            const title = ($('tlEditTitle')?.value || '').trim();
+            const start = ($('tlEditStart')?.value || '').trim();
+            const end = ($('tlEditEnd')?.value || '').trim();
+            const group = $('tlEditGroup')?.value || '';
+            const content = ($('tlEditContent')?.value || '').trim();
+
+            if (!title) return window.showToast('⚠️ 請填寫任務標題', true);
+            if (!start || !end) return window.showToast('⚠️ 請設定開始與結束時間', true);
+
+            t.title = title;
+            t.start = start;
+            t.end = end;
+            t.group = group;
+            t.content = content;
+            t.note = content;
+
+            safeSetLocal('work_cache_schedule', dailyScheduleData);
+            syncConfig('schedule', { tasks: dailyScheduleData });
+            document.getElementById('timelineEditModal')?.remove();
+            if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
+            window.showToast('✅ 已更新動態任務');
+        };
+
+window.editTimelineTask = (taskId, eOrIsNew, draftTask = null) => {
+            if (eOrIsNew && typeof eOrIsNew === 'object' && eOrIsNew.stopPropagation) {
+                eOrIsNew.stopPropagation();
+            }
+            const isNew = eOrIsNew === true;
+            const t = draftTask || dailyScheduleData.find(x => String(x.id) === String(taskId));
+            if (!t) return;
+
+            document.getElementById('timelineEditModal')?.remove();
+            const safeId = window.jsAttr(String(t.id));
+            const curGroup = t.group || '';
+            const curDesc = (t.content && t.content !== '點擊編輯...') ? t.content : (t.note || '');
+
+            const modalHtml = `
+            <div id="timelineEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();">
+                <div class="bg-white rounded-2xl p-5 w-full max-w-[330px] shadow-2xl relative animate-pop-in" onclick="event.stopPropagation()">
+                    <div class="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-100">
+                        <h3 class="font-bold text-base text-slate-800 flex items-center">
+                            <i data-lucide="edit-3" class="w-4 h-4 mr-2 text-blue-500"></i>${isNew ? '新增動態任務' : '修改動態任務'}
+                        </h3>
+                        <button type="button" onclick="document.getElementById('timelineEditModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                    <div class="space-y-3">
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">任務標題</label>
+                            <input type="text" id="tlEditTitle" value="${window.esc(t.title || '')}" placeholder="輸入任務名稱..." class="w-full border border-slate-300 rounded-xl p-2 text-sm font-bold text-slate-800 focus:border-blue-500 focus:outline-none text-center">
+                        </div>
+                        <div class="flex gap-2">
+                            <div class="flex-1">
+                                <label class="text-[11px] font-bold text-slate-500 block mb-1">開始時間</label>
+                                <input type="time" id="tlEditStart" value="${window.esc(t.start || '09:00')}" class="w-full border border-slate-300 rounded-xl p-2 text-xs font-mono font-bold text-slate-800 focus:border-blue-500 focus:outline-none text-center">
+                            </div>
+                            <div class="flex-1">
+                                <label class="text-[11px] font-bold text-slate-500 block mb-1">結束時間</label>
+                                <input type="time" id="tlEditEnd" value="${window.esc(t.end || '10:00')}" class="w-full border border-slate-300 rounded-xl p-2 text-xs font-mono font-bold text-slate-800 focus:border-blue-500 focus:outline-none text-center">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">所屬組別</label>
+                            <select id="tlEditGroup" class="w-full border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-700 bg-slate-50 focus:border-blue-500 focus:outline-none text-center">
+                                <option value="" ${curGroup === '' ? 'selected' : ''}>無指定組別</option>
+                                <option value="A" ${curGroup === 'A' ? 'selected' : ''}>A 組</option>
+                                <option value="B" ${curGroup === 'B' ? 'selected' : ''}>B 組</option>
+                                <option value="C" ${curGroup === 'C' ? 'selected' : ''}>C 組</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-[11px] font-bold text-slate-500 block mb-1">詳細內容 / 備註 (選填)</label>
+                            <textarea id="tlEditContent" placeholder="輸入任務補充說明..." class="w-full border border-slate-300 rounded-xl p-2 text-xs text-slate-700 focus:border-blue-500 focus:outline-none h-20 resize-none">${window.esc(curDesc)}</textarea>
+                        </div>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-slate-100 flex ${isNew ? 'justify-end' : 'justify-between'} items-center">
+                        ${isNew ? '' : `<button type="button" onclick="window.deleteTaskCard('${safeId}', event); document.getElementById('timelineEditModal')?.remove();" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-xl text-xs font-bold active:scale-95 transition-all">刪除卡片</button>`}
+                        <div class="space-x-1.5 flex">
+                            <button type="button" onclick="document.getElementById('timelineEditModal')?.remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold">取消</button>
+                            <button type="button" onclick="window.saveTimelineTaskEdit('${safeId}')" class="px-4 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95">儲存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            const modalEl = document.getElementById('timelineEditModal');
+            if (window.lucide && modalEl) lucide.createIcons({ root: modalEl });
+        };
+
+        window.saveTimelineTaskEdit = (taskId) => {
+            const title = ($('tlEditTitle')?.value || '').trim();
+            const start = ($('tlEditStart')?.value || '').trim();
+            const end = ($('tlEditEnd')?.value || '').trim();
+            const group = $('tlEditGroup')?.value || '';
+            const content = ($('tlEditContent')?.value || '').trim();
+
+            if (!title) return window.showToast('⚠️ 請填寫任務標題', true);
+            if (!start || !end) return window.showToast('⚠️ 請設定開始與結束時間', true);
+
+            let t = dailyScheduleData.find(x => String(x.id) === String(taskId));
+            const isAdding = !t;
+            if (isAdding) {
+                t = { id: String(taskId), start, end, title, content, note: content, group, subSteps: [] };
+                dailyScheduleData.push(t);
+            } else {
+                t.title = title;
+                t.start = start;
+                t.end = end;
+                t.group = group;
+                t.content = content;
+                t.note = content;
+            }
+
+            safeSetLocal('work_cache_schedule', dailyScheduleData);
+            syncConfig('schedule', { tasks: dailyScheduleData });
+            document.getElementById('timelineEditModal')?.remove();
+            if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
+            window.showToast(isAdding ? '✅ 已新增動態任務' : '✅ 已更新動態任務');
+        };
+
+        window._lastTlCardTapId = '';
+        window._lastTlCardTapTime = 0;
+        window.onTimelineCardClick = (taskId, e) => {
+            if (e) e.stopPropagation();
+            const now = Date.now();
+            const idStr = String(taskId);
+            if (window._lastTlCardTapId === idStr && (now - window._lastTlCardTapTime) < 380) {
+                window._lastTlCardTapId = '';
+                window._lastTlCardTapTime = 0;
+                window.editTimelineTask(taskId, e);
+            } else {
+                window._lastTlCardTapId = idStr;
+                window._lastTlCardTapTime = now;
+            }
+        };
+
         window.addTimelineTask = () => {
             const { time: startStr } = getNowInputStrs();
             const later = new Date(window.getNow().getTime() + 1800000), endStr = `${pad(later.getHours())}:${pad(later.getMinutes())}`;
             const newId = 't_' + Date.now();
-            dailyScheduleData.push({ id: newId, start: startStr, end: endStr, title: '新動態任務', content: '點擊編輯...', note: '', group: '', subSteps: [] });
-            safeSetLocal('work_cache_schedule', dailyScheduleData); syncConfig('schedule', { tasks: dailyScheduleData }, true);
-            if (!$('timelinePage').classList.contains('hidden')) window.renderTimeline(false);
-            window.editTimelineTask(newId, true);
+            const draftTask = { id: newId, start: startStr, end: endStr, title: '', content: '', note: '', group: '', subSteps: [] };
+            window.editTimelineTask(newId, true, draftTask);
         };
 
         window.updateConveyorBelt = () => {
@@ -15522,7 +15748,7 @@ map: window.renderMap,
                 // 1. 左側時間欄：維持圖 1 原版 p-2 與 mt-0.5，移除 leading-none，恢復原汁原味的垂直距離與自然分佈，寬度僅適度收整為 52px
                 // 2. 右側剔號容器：pr-2 pl-0，將剔號平移靠右
                 // 3. 中間標題：flex-1 p-3 寬度充裕，長標題不再提早截斷
-                html += `<div id="tl-task-wrapper-${t.id}" class="${wClass}" style="${wStyle}" data-task-id="${t.id}" data-start="${t.start}" data-end="${t.end}">${activeLine}<div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div><div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[42px] mr-[3px] ${cClass} overflow-hidden cursor-pointer group/card hover:shadow-md transition-all duration-300" ondblclick="window.editTimelineTask('${t.id}', event)" title="點擊修改"><div class="flex flex-col items-center justify-center shrink-0 w-[52px] bg-slate-100/50 border-r border-slate-200/60 p-2 text-center select-none" onclick="window.editTimelineTask('${t.id}', event)"><span class="font-black text-[15px] text-slate-700 tracking-tighter ${done ? 'opacity-50 line-through decoration-slate-400' : ''}">${t.start}</span><span class="text-[9px] text-slate-400 font-bold mt-0.5 tracking-tighter">${t.end}</span></div><div class="flex-1 p-3 min-w-0 flex flex-col justify-center select-none" onclick="window.editTimelineTask('${t.id}', event)"><div class="flex items-center"><h3 class="font-bold text-slate-800 text-[14px] truncate flex-1 min-w-0 tracking-tight ${done ? 'opacity-50 line-through decoration-slate-400' : ''}" title="${window.esc(t.title)}">${grpBadge}${window.esc(t.title)}</h3></div>${tText}</div><div class="shrink-0 flex items-center justify-center pr-2 pl-0">${checkBtn}</div></div></div>`;
+html += `<div id="tl-task-wrapper-${t.id}" class="${wClass}" style="${wStyle}" data-task-id="${t.id}" data-start="${t.start}" data-end="${t.end}">${activeLine}<div class="absolute top-1/2 -translate-y-1/2 rounded-full z-10 transition-all duration-500 ${dotClass}"></div><div class="timeline-card flex items-stretch rounded-2xl border-2 shadow-sm relative ml-[42px] mr-[3px] ${cClass} overflow-hidden cursor-pointer group/card hover:shadow-md transition-all duration-300" onclick="window.onTimelineCardClick('${t.id}', event)" title="雙擊修改"><div class="flex flex-col items-center justify-center shrink-0 w-[52px] bg-slate-100/50 border-r border-slate-200/60 p-2 text-center select-none"><span class="font-black text-[15px] text-slate-700 tracking-tighter ${done ? 'opacity-50 line-through decoration-slate-400' : ''}">${t.start}</span><span class="text-[9px] text-slate-400 font-bold mt-0.5 tracking-tighter">${t.end}</span></div><div class="flex-1 p-3 min-w-0 flex flex-col justify-center select-none"><div class="flex items-center"><h3 class="font-bold text-slate-800 text-[14px] truncate flex-1 min-w-0 tracking-tight ${done ? 'opacity-50 line-through decoration-slate-400' : ''}" title="${window.esc(t.title)}">${grpBadge}${window.esc(t.title)}</h3></div>${tText}</div><div class="shrink-0 flex items-center justify-center pr-2 pl-0">${checkBtn}</div></div></div>`;
             });
             html += '</div>'; container.innerHTML = html; lucide.createIcons();
             const page = $('timelinePage');
