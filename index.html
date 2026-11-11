@@ -8087,21 +8087,23 @@ $('galleryItemEditModal')?.remove();
                 const patrolKey = `${fullFloor}-${floor}-${paddedCode}`;
                 const stallPatrol = (patrolHistoryStore[patrolDateKey] || {})[patrolKey] || {};
 
-                // 上午經營判定
+// 🌟 上午經營判定：有剔檔紀錄看是否有 A (檔主)；若該時段完全未剔檔，預設為 Y
                 const s9 = stallPatrol['上午9點'] || '';
                 const s11 = stallPatrol['上午11點'] || '';
-                const amSelfRun = (s9 === 'A' || s11 === 'A') ? 'Y' : 'N';
+                const hasAmPatrol = !!(s9 || s11);
+                const amSelfRun = hasAmPatrol ? ((s9 === 'A' || s11 === 'A') ? 'Y' : 'N') : 'Y';
 
-                // 下午經營判定（16:00 前收工標示為 --）
+                // 🌟 下午經營判定：
+                // 1. 若為上午收工（13:00 前收工），下午時段已關門未營業，維持標準標示 '--'
+                // 2. 若為下午收工（13:00 及之後收工）：有剔檔看是否有 A；若該時段完全未剔檔，預設為 Y
                 const [ch, cm] = timeStr.split(':').map(Number);
                 const closeMins = (isNaN(ch) ? 12 : ch) * 60 + (isNaN(cm) ? 0 : cm);
-                let pmSelfRun = 'N';
-                if (closeMins < 16 * 60) {
-                    pmSelfRun = '--';
-                } else {
+                let pmSelfRun = '--';
+                if (closeMins >= 13 * 60) {
                     const s16 = stallPatrol['下午4點'] || '';
                     const s18 = stallPatrol['下午6點'] || '';
-                    pmSelfRun = (s16 === 'A' || s18 === 'A') ? 'Y' : 'N';
+                    const hasPmPatrol = !!(s16 || s18);
+                    pmSelfRun = hasPmPatrol ? ((s16 === 'A' || s18 === 'A') ? 'Y' : 'N') : 'Y';
                 }
 
 // 🌟 2. 寫入資料：「檔主 (ownerName)」移至最後一項
