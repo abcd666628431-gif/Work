@@ -6103,6 +6103,11 @@ window.renderPatrolSearchResults = (queryStr) => {
 let crRecords = [], crItemTypes = ['海鮮', '肉類', '蔬果', '包裝冰', '其他'], crCurrentSelectedType = '', crCurrentTab = 'active';
         // 🌟 24 小時常數（純粹用於卡片計算超時標籤，不觸發聲音或橫幅警報）
         const CR_TIME_LIMIT_MS = 24 * 60 * 60 * 1000;
+        // 🌟 判斷雪房存貨是否無限時：有「冰」且無「魚」才免計時；有「魚」字（如魚+冰）強制計時
+        window.isCrItemUnlimited = (typeStr) => {
+            const t = String(typeStr || '');
+            return t.includes('冰') && !t.includes('魚');
+        };
         let actionHistory = [], futureMemos = [], timeOffset = 0, isFastForwarding = false, simInterval = null, timelineUpdateInterval;
         // 強制鎖定為香港時間 (UTC+8)
 
@@ -14794,7 +14799,7 @@ document.body.classList.remove('dark-mode');
 
 window.crOpenMergedIceWithdrawModal = (stallId, e) => {
             if (e) e.stopPropagation();
-            const iceBatches = crRecords.filter(r => r.status === 'active' && r.type === '包裝冰' && (r.tenant || '').toUpperCase().includes(stallId.toUpperCase()));
+const iceBatches = crRecords.filter(r => r.status === 'active' && window.isCrItemUnlimited(r.type) && (r.tenant || '').toUpperCase().includes(stallId.toUpperCase()));
             if (!iceBatches.length) return;
             const totalRemain = iceBatches.reduce((sum, r) => sum + (r.remainingQuantity || 0), 0);
 
@@ -14840,8 +14845,8 @@ const { date, time } = getNowInputStrs();
 // 處理「合併包裝冰」批次扣減
             if (id && id.startsWith('MERGED_ICE_')) {
                 const stallId = id.replace('MERGED_ICE_', '');
-                const iceBatches = crRecords
-                    .filter(r => r.status === 'active' && r.type === '包裝冰' && (r.tenant || '').toUpperCase().includes(stallId.toUpperCase()))
+const iceBatches = crRecords
+                    .filter(r => r.status === 'active' && window.isCrItemUnlimited(r.type) && (r.tenant || '').toUpperCase().includes(stallId.toUpperCase()))
                     .sort((a, b) => a.depositTime - b.depositTime);
                 const totalRemain = iceBatches.reduce((sum, r) => sum + (r.remainingQuantity || 0), 0);
 
@@ -15050,16 +15055,16 @@ window.crDeleteRecord = (id, e) => {
                 const batchCount = batches.length;
                 const totalInit = batches.reduce((sum, b) => sum + (b.depositQuantity || 0), 0);
                 const totalRemain = batches.reduce((sum, b) => sum + (b.remainingQuantity || 0), 0);
-                const crLimitMs = (typeof CR_TIME_LIMIT_MS !== 'undefined') ? CR_TIME_LIMIT_MS : 86400000;
-                const overdueCount = batches.filter(b => b.type !== '包裝冰' && ((b.depositTime + crLimitMs) - now) <= 0).length;
+const crLimitMs = (typeof CR_TIME_LIMIT_MS !== 'undefined') ? CR_TIME_LIMIT_MS : 86400000;
+                const overdueCount = batches.filter(b => !window.isCrItemUnlimited(b.type) && ((b.depositTime + crLimitMs) - now) <= 0).length;
                 const hasOverdue = overdueCount > 0;
                 
                 // 🌟 預設自動合起來：只有點擊過的檔口才會展開
                 const isOpen = window.crExpandedStalls.has(stall.id);
 
-                // 將存貨拆分為「包裝冰」與「一般限時貨物」
-                const iceBatches = batches.filter(b => b.type === '包裝冰');
-                const normalBatches = batches.filter(b => b.type !== '包裝冰');
+                // 🌟 將存貨拆分為「純冰類（無限時）」與「限時貨物（有魚字或無冰字皆強制計時）」
+                const iceBatches = batches.filter(b => window.isCrItemUnlimited(b.type));
+                const normalBatches = batches.filter(b => !window.isCrItemUnlimited(b.type));
 
                 // 🌟 時間排序：最遙遠（最早存入）在最下面，由下到上（最新在最上面）
                 iceBatches.sort((a, b) => b.depositTime - a.depositTime);
