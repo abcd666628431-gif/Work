@@ -1470,12 +1470,13 @@ window.safeSetLocal = safeSetLocal;
         window.isUploading = false;
         window._isTogglingTask = false;
 
-        const defaultTabVisibility = { dashboard: true, patrol: true, gallery: true, timeline: true, memo: true, map: true, coldRoom: true, closing: true };
-const defaultTabOrder = ['dashboard', 'patrol', 'gallery', 'timeline', 'memo', 'map', 'coldRoom', 'closing'];
+const defaultTabVisibility = { dashboard: true, patrol: true, hygiene: true, gallery: true, timeline: true, memo: true, map: true, coldRoom: true, closing: true };
+const defaultTabOrder = ['dashboard', 'patrol', 'hygiene', 'gallery', 'timeline', 'memo', 'map', 'coldRoom', 'closing'];
 
 const tabMetadataMap = {
     dashboard: { name: '儀表板', btnId: 'tabDashboard', icon: 'layout-dashboard' },
     patrol: { name: '剔檔', btnId: 'tabPatrol', icon: 'clipboard-check' },
+    hygiene: { name: '衛生', btnId: 'tabHygiene', icon: 'sparkles' },
     gallery: { name: '圖庫', btnId: 'tabGallery', icon: 'image' },
     timeline: { name: '動態', btnId: 'tabTimeline', icon: 'activity' },
     memo: { name: '備忘', btnId: 'tabMemo', icon: 'calendar-clock' },
@@ -10547,8 +10548,34 @@ if (hasUpdated) {
                 }, console.error);
             };
 
-            // 啟動當前日期的監聽
+            // 🌟 啟動當前日期的監聽
             window.listenPatrolDateDoc(currentPatrolDate);
+
+            // 🌟 衛生巡查紀錄雲端即時監聽（依時間戳合併）
+            onSnapshot(cfgDoc('hygiene_records'), (snap) => {
+                if (!snap.exists()) return;
+                const remoteRecords = snap.data()?.records || {};
+                let hygUpdated = false;
+                Object.keys(remoteRecords).forEach(dKey => {
+                    if (!hygieneRecordsStore[dKey]) hygieneRecordsStore[dKey] = {};
+                    const rDay = remoteRecords[dKey] || {};
+                    Object.keys(rDay).forEach(sId => {
+                        const rItem = rDay[sId];
+                        if (!rItem || typeof rItem !== 'object') return;
+                        const lItem = hygieneRecordsStore[dKey][sId];
+                        if (!lItem || (Number(rItem.ts) || 0) > (Number(lItem.ts) || 0)) {
+                            hygieneRecordsStore[dKey][sId] = { ...rItem };
+                            hygUpdated = true;
+                        }
+                    });
+                });
+                if (hygUpdated) {
+                    safeSetLocal('work_cache_hygiene_records', hygieneRecordsStore);
+                    if ($('hygienePage') && !$('hygienePage').classList.contains('hidden')) {
+                        window.renderHygienePage();
+                    }
+                }
+            }, err => console.warn('衛生紀錄監聽異常:', err));
 
            // 🌟 連線啟動時，自動補傳離線或未登入期間輸入的溫度紀錄
             window.flushPendingTempSync?.();
@@ -15724,10 +15751,522 @@ window.editTimelineTask = (taskId, eOrIsNew, draftTask = null) => {
             }
         };
 
+// ====== 🧹 衛生巡查分頁核心邏輯（依星期自動分配 15 檔 + 一行過操作 + 雲端與本機同步） ======
+        const HYGIENE_WEEKDAY_STALLS = {
+            1: ['J-002','J-003','J-004','J-005','J-007','J-008','J-009','J-012','J-013','J-014','J-015','J-016','J-017','J-018','J-020'],
+            2: ['J-021','J-022','J-024','J-025','J-026','J-029','J-030','J-031','R-002','R-003','R-005','R-006','R-007','R-008','R-009'],
+            3: ['R-010','R-012','R-013','R-014','R-017','R-019','R-020','R-021','R-023','R-024','R-025','R-026','R-027','R-028','R-029'],
+            4: ['R-030','R-031','R-032','R-033','R-034','R-035','R-037','R-039','R-040','R-042','R-043','R-044','R-045','R-046','R-050'],
+            5: ['R-051','R-053','R-054','R-055','R-057','R-058','R-059','R-060','R-061','R-062','R-063','R-064','R-065','R-066','R-067'],
+            6: ['R-069','R-070','R-071','R-072','R-073','R-074','R-076','R-078','R-079','R-080','R-081','R-082','R-085','R-086','R-087'],
+            0: ['1-001','1-002','1-003','1-005','1-006','1-010','1-013','1-014','1-015','1-018','1-019','1-020','1-021','1-023','1-024']
+        };
+        const HYGIENE_OPT1_LIST = ['清潔', '更換'];
+        const HYGIENE_OPT2_LIST = ['牆身', '枱面', '地面'];
+        const HYGIENE_OPT3_LIST = ['青苔', '污跡'];
+
+        let hygieneRecordsStore = getLocal('work_cache_hygiene_records', {});
+        let currentHygieneDate = getTodayDateStr();
+        window._lastHygieneStaff = '';
+
+        window.ensureHygienePageMounted = () => {
+            if ($('hygienePage')) return;
+            const refPage = $('patrolPage') || $('galleryPage');
+            if (!refPage || !refPage.parentElement) return;
+            const page = document.createElement('div');
+            page.id = 'hygienePage';
+            page.className = 'hidden flex-1 flex-col overflow-hidden h-full w-full px-2 pt-1.5 pb-2';
+            refPage.parentElement.appendChild(page);
+        };
+
+        window.getHygieneDayStalls = (dateStr) => {
+            const parts = String(dateStr || getTodayDateStr()).split('-').map(Number);
+            const d = new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1, 12, 0, 0);
+            const dayIdx = isNaN(d.getDay()) ? new Date().getDay() : d.getDay();
+            const weekNames = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+            return {
+                dayIdx,
+                weekLabel: weekNames[dayIdx],
+                stalls: HYGIENE_WEEKDAY_STALLS[dayIdx] || HYGIENE_WEEKDAY_STALLS[1]
+            };
+        };
+
+        window.changeHygieneDate = (deltaDays) => {
+            if (deltaDays === 0) {
+                currentHygieneDate = getTodayDateStr();
+            } else {
+                const parts = currentHygieneDate.split('-').map(Number);
+                const d = new Date(parts[0], parts[1] - 1, parts[2] + deltaDays, 12, 0, 0);
+                currentHygieneDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+            }
+            window.renderHygienePage();
+        };
+
+window.getHygieneDayStaff = (dateKey) => {
+            const dayData = hygieneRecordsStore[dateKey] || {};
+            if (dayData._meta && dayData._meta.staff) return dayData._meta.staff;
+            const legacyRow = Object.keys(dayData).find(k => k !== '_meta' && dayData[k]?.staff);
+            return legacyRow ? dayData[legacyRow].staff : '';
+        };
+
+        window.updateHygieneDailyStaff = (val) => {
+            const dateKey = currentHygieneDate || getTodayDateStr();
+            if (!hygieneRecordsStore[dateKey]) hygieneRecordsStore[dateKey] = {};
+            const nowTs = Date.now();
+            hygieneRecordsStore[dateKey]._meta = { staff: val, ts: nowTs };
+            if (val) window._lastHygieneStaff = val;
+
+            safeSetLocal('work_cache_hygiene_records', hygieneRecordsStore);
+            if (currentUser && db) {
+                setDoc(cfgDoc('hygiene_records'), {
+                    records: { [dateKey]: { _meta: { staff: val, ts: nowTs } } }
+                }, { merge: true }).catch(e => console.warn('衛生客服同步失敗:', e));
+            }
+            window.renderHygienePage();
+        };
+
+// 🌟 全面取消溫度表提醒（停用定時檢查、彈窗與未填提示吐司）
+        (() => {
+            const noop = () => {};
+            ['checkTempReminder', 'checkTemperatureReminder', 'showTempReminder', 'triggerTempReminder', 'remindTemperature', 'initTempReminder'].forEach(fn => {
+                try {
+                    Object.defineProperty(window, fn, { get: () => noop, set: () => {}, configurable: true });
+                } catch (e) { window[fn] = noop; }
+            });
+            const origToast = window.showToast;
+            if (typeof origToast === 'function' && !origToast._noTempRemind) {
+                const wrappedToast = function(msg, isErr) {
+                    const s = String(msg || '');
+                    if (s.includes('溫度') && (s.includes('提醒') || s.includes('未填') || s.includes('請填') || s.includes('尚未'))) return;
+                    return origToast.apply(this, arguments);
+                };
+                wrappedToast._noTempRemind = true;
+                window.showToast = wrappedToast;
+            }
+            setInterval(() => {
+                ['tempReminderModal', 'tempAlertModal', 'tempReminderBanner', 'temperatureReminderModal'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.remove();
+                });
+            }, 1000);
+        })();
+
+        // 🌟 彈出選擇客服人員名稱視窗（巡查達 50% 自動觸發，或點擊底部客服按鍵觸發）
+        window.openHygieneStaffModal = () => {
+            document.getElementById('hygieneStaffModal')?.remove();
+            const dateKey = currentHygieneDate || getTodayDateStr();
+            const curStaff = window.getHygieneDayStaff(dateKey);
+            const csList = ((Array.isArray(csMembersStore) && csMembersStore.length)
+                ? csMembersStore
+                : ['蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲']
+            ).filter(m => m !== '周靜儀');
+
+            const btnsHtml = csList.map(name => {
+                const isSel = curStaff === name;
+                return `
+                <button type="button" onclick="window.updateHygieneDailyStaff('${window.jsAttr(name)}'); document.getElementById('hygieneStaffModal')?.remove();"
+                    class="py-2.5 px-3 rounded-xl text-xs font-black border transition-all active:scale-95 ${isSel ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-slate-50 hover:bg-blue-50 text-slate-700 border-slate-200'}">
+                    👤 ${window.esc(name)}
+                </button>`;
+            }).join('');
+
+            const modalHtml = `
+            <div id="hygieneStaffModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[9999] flex items-center justify-center p-4" onclick="if(event.target === this) this.remove();">
+                <div class="bg-white rounded-2xl p-4 w-full max-w-[320px] shadow-2xl animate-pop-in" onclick="event.stopPropagation()">
+                    <div class="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-100">
+                        <h3 class="font-black text-sm text-slate-800">👤 請選擇今日巡查客服人員</h3>
+                        <button type="button" onclick="document.getElementById('hygieneStaffModal')?.remove()" class="text-slate-400 hover:text-slate-600 px-1 text-sm font-black">✕</button>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2">
+                        ${btnsHtml}
+                    </div>
+                    ${curStaff ? `<button type="button" onclick="window.updateHygieneDailyStaff(''); document.getElementById('hygieneStaffModal')?.remove();" class="mt-3 w-full py-1.5 rounded-xl text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100">清除已選客服</button>` : ''}
+                </div>
+            </div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+        };
+
+window.setHygieneCheck = (stallId, checkType) => {
+            const dateKey = currentHygieneDate || getTodayDateStr();
+            if (!hygieneRecordsStore[dateKey]) hygieneRecordsStore[dateKey] = {};
+            if (!hygieneRecordsStore[dateKey][stallId]) {
+                hygieneRecordsStore[dateKey][stallId] = { opt1: '', opt2: '', opt3: '', remark: '', checked: false, checkVal: '', redo: false, ts: 0 };
+            }
+            const rec = hygieneRecordsStore[dateKey][stallId];
+            const curVal = rec.checkVal || (rec.checked ? 'V' : '');
+            const nextVal = (curVal === checkType) ? '' : checkType;
+
+            rec.checkVal = nextVal;
+            rec.checked = (nextVal === 'V');
+            rec.ts = Date.now();
+
+            let shouldOpenStaffModal = false;
+            // 🌟 當選取 V 或 X 累計達到今日 50%（8/15 檔）且尚未選擇客服人員時，自動彈出選擇視窗
+            if (nextVal && !window.getHygieneDayStaff(dateKey)) {
+                const { stalls } = window.getHygieneDayStalls(dateKey);
+                const dayData = hygieneRecordsStore[dateKey] || {};
+                const inspectedCount = stalls.filter(sId => {
+                    const c = dayData[sId]?.checkVal || (dayData[sId]?.checked ? 'V' : '');
+                    return c === 'V' || c === 'X';
+                }).length;
+                if (inspectedCount >= Math.ceil(stalls.length * 0.5)) {
+                    shouldOpenStaffModal = true;
+                }
+            }
+
+            safeSetLocal('work_cache_hygiene_records', hygieneRecordsStore);
+            if (currentUser && db) {
+                const payload = { [stallId]: { ...rec } };
+                if (hygieneRecordsStore[dateKey]._meta) {
+                    payload._meta = { ...hygieneRecordsStore[dateKey]._meta };
+                }
+                setDoc(cfgDoc('hygiene_records'), { records: { [dateKey]: payload } }, { merge: true }).catch(() => {});
+            }
+
+            window.renderHygienePage();
+            if (shouldOpenStaffModal) {
+                window.openHygieneStaffModal();
+            }
+        };
+
+        window.updateHygieneField = (stallId, field, val) => {
+            const dateKey = currentHygieneDate || getTodayDateStr();
+            if (!hygieneRecordsStore[dateKey]) hygieneRecordsStore[dateKey] = {};
+            if (!hygieneRecordsStore[dateKey][stallId]) {
+                hygieneRecordsStore[dateKey][stallId] = { opt1: '', opt2: '', opt3: '', remark: '', checked: false, checkVal: '', redo: false, ts: 0 };
+            }
+            const rec = hygieneRecordsStore[dateKey][stallId];
+            const nowTs = Date.now();
+
+            if (field === 'redo') {
+                rec.redo = !rec.redo;
+            } else {
+                rec[field] = val;
+            }
+            rec.ts = nowTs;
+
+            safeSetLocal('work_cache_hygiene_records', hygieneRecordsStore);
+
+            if (currentUser && db) {
+                const payload = { [stallId]: { ...rec } };
+                if (hygieneRecordsStore[dateKey]._meta) {
+                    payload._meta = { ...hygieneRecordsStore[dateKey]._meta };
+                }
+                setDoc(cfgDoc('hygiene_records'), {
+                    records: { [dateKey]: payload }
+                }, { merge: true }).catch(e => console.warn('衛生紀錄雲端同步失敗:', e));
+            }
+
+            if (field !== 'remark') {
+                window.renderHygienePage();
+            }
+        };
+
+window.hygieneCalOpen = false;
+        window.hygieneCalViewYear = 0;
+        window.hygieneCalViewMonth = 0;
+
+        window.hasHygieneRecordOnDate = (dKey) => {
+            const dayObj = hygieneRecordsStore?.[dKey];
+            if (!dayObj || typeof dayObj !== 'object') return false;
+            return Object.keys(dayObj).some(k => {
+                if (k === '_meta') return Boolean(dayObj._meta?.staff);
+                const r = dayObj[k];
+                return r && (r.checked || r.redo || r.opt1 || r.opt2 || r.opt3 || (r.remark && r.remark.trim()));
+            });
+        };
+
+        window.toggleHygieneCalendar = (e) => {
+            if (e) e.stopPropagation();
+            window.hygieneCalOpen = !window.hygieneCalOpen;
+            if (window.hygieneCalOpen) {
+                const parts = String(currentHygieneDate || getTodayDateStr()).split('-').map(Number);
+                window.hygieneCalViewYear = parts[0] || new Date().getFullYear();
+                window.hygieneCalViewMonth = parts[1] || (new Date().getMonth() + 1);
+            }
+            window.renderHygienePage();
+        };
+
+        window.changeHygieneCalMonth = (delta, e) => {
+            if (e) e.stopPropagation();
+            let y = window.hygieneCalViewYear || new Date().getFullYear();
+            let m = (window.hygieneCalViewMonth || (new Date().getMonth() + 1)) + delta;
+            if (m < 1) { m = 12; y--; }
+            if (m > 12) { m = 1; y++; }
+            window.hygieneCalViewYear = y;
+            window.hygieneCalViewMonth = m;
+            window.renderHygienePage();
+        };
+
+        window.selectHygieneCalDate = (dStr, e) => {
+            if (e) e.stopPropagation();
+            currentHygieneDate = dStr;
+            window.hygieneCalOpen = false;
+            window.renderHygienePage();
+        };
+
+        window.jumpHygieneToday = (e) => {
+            if (e) e.stopPropagation();
+            currentHygieneDate = getTodayDateStr();
+            window.hygieneCalOpen = false;
+            window.renderHygienePage();
+        };
+
+        window.clearCurrentHygieneDay = (e) => {
+            if (e) e.stopPropagation();
+            const dateKey = currentHygieneDate || getTodayDateStr();
+            const { stalls } = window.getHygieneDayStalls(dateKey);
+            const nowTs = Date.now();
+            const clearedDay = { _meta: { staff: '', ts: nowTs } };
+            stalls.forEach(sId => {
+                clearedDay[sId] = { opt1: '', opt2: '', opt3: '', remark: '', checked: false, redo: false, ts: nowTs };
+            });
+            hygieneRecordsStore[dateKey] = clearedDay;
+            safeSetLocal('work_cache_hygiene_records', hygieneRecordsStore);
+            if (currentUser && db) {
+                setDoc(cfgDoc('hygiene_records'), {
+                    records: { [dateKey]: clearedDay }
+                }, { merge: true }).catch(() => {});
+            }
+            window.hygieneCalOpen = false;
+            window.renderHygienePage();
+            window.showToast(`🗑️ 已清除 ${dateKey} 的衛生紀錄`);
+        };
+
+        window.buildHygieneCalendarHtml = () => {
+            if (!window.hygieneCalOpen) return '';
+            const y = window.hygieneCalViewYear || new Date().getFullYear();
+            const m = window.hygieneCalViewMonth || (new Date().getMonth() + 1);
+            const firstDayWeek = new Date(y, m - 1, 1).getDay();
+            const daysInMonth = new Date(y, m, 0).getDate();
+            const selDate = currentHygieneDate || getTodayDateStr();
+
+            let cellsHtml = '';
+            for (let i = 0; i < firstDayWeek; i++) {
+                cellsHtml += `<div class="h-9"></div>`;
+            }
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dStr = `${y}-${pad(m)}-${pad(d)}`;
+                const isSel = dStr === selDate;
+                const hasRec = window.hasHygieneRecordOnDate(dStr);
+                const btnCls = isSel
+                    ? 'bg-blue-600 text-white shadow-md rounded-2xl font-black'
+                    : 'text-slate-800 hover:bg-slate-100 rounded-xl font-bold';
+                const dotHtml = hasRec
+                    ? `<span class="w-1.5 h-1.5 rounded-full ${isSel ? 'bg-amber-400' : 'bg-emerald-500'} mt-0.5"></span>`
+                    : `<span class="w-1.5 h-1.5 mt-0.5 opacity-0"></span>`;
+
+                cellsHtml += `
+                    <button type="button" onclick="window.selectHygieneCalDate('${dStr}', event)"
+                        class="h-10 w-full flex flex-col items-center justify-center text-sm transition-all active:scale-95 ${btnCls}">
+                        <span class="leading-none">${d}</span>
+                        ${dotHtml}
+                    </button>`;
+            }
+
+            return `
+            <div class="fixed inset-0 z-[9980]" onclick="window.hygieneCalOpen=false; window.renderHygienePage();"></div>
+            <div class="absolute left-2 top-12 z-[9990] bg-white rounded-3xl shadow-2xl border border-slate-200 p-4 w-[290px] animate-pop-in select-none" onclick="event.stopPropagation()">
+                <div class="flex items-center justify-between pb-3 mb-2 border-b border-slate-100">
+                    <button type="button" onclick="window.changeHygieneCalMonth(-1, event)" class="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg font-black text-sm">❮</button>
+                    <span class="font-black text-base text-slate-900 tracking-tight">${y}年 ${m}月</span>
+                    <button type="button" onclick="window.changeHygieneCalMonth(1, event)" class="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg font-black text-sm">❯</button>
+                </div>
+                <div class="grid grid-cols-7 text-center text-xs font-black mb-1.5">
+                    <span class="text-rose-500">日</span>
+                    <span class="text-slate-400">一</span>
+                    <span class="text-slate-400">二</span>
+                    <span class="text-slate-400">三</span>
+                    <span class="text-slate-400">四</span>
+                    <span class="text-slate-400">五</span>
+                    <span class="text-blue-500">六</span>
+                </div>
+                <div class="grid grid-cols-7 gap-y-1 text-center">
+                    ${cellsHtml}
+                </div>
+                <div class="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs font-black">
+                    <span class="flex items-center gap-1.5 text-slate-500">
+                        <span class="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>有存檔記錄
+                    </span>
+                    <div class="flex items-center gap-3">
+                        <button type="button" onclick="window.clearCurrentHygieneDay(event)" class="text-rose-600 hover:text-rose-700 active:scale-95">清除今天</button>
+                        <button type="button" onclick="window.jumpHygieneToday(event)" class="text-blue-600 hover:text-blue-700 active:scale-95">跳回今天</button>
+                    </div>
+                </div>
+            </div>`;
+        };
+
+        window.exportHygieneExcel = () => {
+            const dateKey = currentHygieneDate || getTodayDateStr();
+            const { weekLabel, stalls } = window.getHygieneDayStalls(dateKey);
+            const dayData = hygieneRecordsStore[dateKey] || {};
+            const dayStaff = window.getHygieneDayStaff(dateKey);
+
+const rows = [
+                ['巡查日期', `${dateKey} (${weekLabel})`, '巡查客服', dayStaff || ''],
+                ['檔號', '承租人', '選單1(清潔/更換)', '選單2(牆身/枱面/地面)', '選單3(青苔/污跡)', '備註', '巡查(V/X)', '是否重做', '負責客服']
+            ];
+stalls.forEach(sId => {
+                const stallObj = RAW_PATROL_STALLS.find(x => x.id === sId);
+                const r = dayData[sId] || {};
+                const checkText = r.checkVal || (r.checked ? 'V' : '');
+                rows.push([
+                    sId,
+                    stallObj?.name || '',
+                    r.opt1 || '',
+                    r.opt2 || '',
+                    r.opt3 || '',
+                    r.remark || '',
+                    checkText || '',
+                    r.redo ? '需重做' : '否',
+                    dayStaff || r.staff || ''
+                ]);
+            });
+
+            if (typeof XLSX !== 'undefined') {
+                const wb = XLSX.utils.book_new();
+                const ws = XLSX.utils.aoa_to_sheet(rows);
+                ws['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 22 }, { wch: 10 }, { wch: 10 }, { wch: 12 }];
+                XLSX.utils.book_append_sheet(wb, ws, '衛生巡查');
+                XLSX.writeFile(wb, `${dateKey} 衛生巡查表.xlsx`);
+                window.showToast(`✅ 已匯出 ${dateKey} 衛生巡查表！`);
+            } else {
+                window.showToast('匯出模組尚未載入', true);
+            }
+        };
+
+        window.renderHygienePage = () => {
+            window.ensureHygienePageMounted();
+            const page = $('hygienePage');
+            if (!page) return;
+
+            const dateKey = currentHygieneDate || getTodayDateStr();
+            const [yStr, mStr, dStr] = dateKey.split('-');
+            const { weekLabel, stalls } = window.getHygieneDayStalls(dateKey);
+            const dayData = hygieneRecordsStore[dateKey] || {};
+            const dayStaff = window.getHygieneDayStaff(dateKey);
+            const csList = ((Array.isArray(csMembersStore) && csMembersStore.length)
+                ? csMembersStore
+                : ['蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲']
+            ).filter(m => m !== '周靜儀');
+
+let checkedCount = 0;
+            let redoCount = 0;
+            stalls.forEach(sId => {
+                const cur = dayData[sId]?.checkVal || (dayData[sId]?.checked ? 'V' : '');
+                if (cur === 'V' || cur === 'X') checkedCount++;
+                if (dayData[sId]?.redo) redoCount++;
+            });
+
+            const bottomStaffOptions = [`<option value="">👤 客服人員 ▾</option>`]
+                .concat(csList.map(m => `<option value="${window.esc(m)}" ${dayStaff === m ? 'selected' : ''}>👤 ${window.esc(m)} ▾</option>`))
+                .join('');
+
+            const rowsHtml = stalls.map(sId => {
+                const r = dayData[sId] || {};
+                const stallInfo = RAW_PATROL_STALLS.find(x => x.id === sId);
+                const ownerName = stallInfo?.name || '';
+                const curCheck = r.checkVal || (r.checked ? 'V' : '');
+                const rowBgCls = r.redo
+                    ? 'bg-rose-50/90 border-rose-400 ring-1 ring-rose-300'
+                    : (curCheck === 'V'
+                        ? 'bg-emerald-50/75 border-emerald-400'
+                        : (curCheck === 'X' ? 'bg-rose-50/60 border-rose-300' : 'bg-white border-slate-200'));
+
+                return `
+                <div class="w-full px-1.5 py-1 rounded-xl border ${rowBgCls} shadow-2xs flex items-center gap-1 whitespace-nowrap overflow-hidden transition-all">
+                    <!-- [檔號] -->
+                    <span class="w-[42px] text-center bg-slate-900 text-white font-mono font-black text-[11px] py-1 rounded-md shrink-0 leading-none" title="${window.esc(ownerName)}">${sId}</span>
+
+                    <!-- 第一格選單：清潔-更換 -->
+                    <select onchange="window.updateHygieneField('${sId}', 'opt1', this.value)"
+                        class="w-[38px] appearance-none text-center bg-slate-50 border ${r.opt1 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md py-1 text-[11px] font-black shrink-0 cursor-pointer focus:border-blue-500 focus:outline-none">
+                        <option value="">--</option>
+                        ${HYGIENE_OPT1_LIST.map(o => `<option value="${o}" ${r.opt1 === o ? 'selected' : ''}>${o}</option>`).join('')}
+                    </select>
+
+                    <!-- 第二格選單：牆身-枱面-地面 -->
+                    <select onchange="window.updateHygieneField('${sId}', 'opt2', this.value)"
+                        class="w-[38px] appearance-none text-center bg-slate-50 border ${r.opt2 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md py-1 text-[11px] font-black shrink-0 cursor-pointer focus:border-blue-500 focus:outline-none">
+                        <option value="">--</option>
+                        ${HYGIENE_OPT2_LIST.map(o => `<option value="${o}" ${r.opt2 === o ? 'selected' : ''}>${o}</option>`).join('')}
+                    </select>
+
+                    <!-- 第三格選單：青苔-污跡 -->
+                    <select onchange="window.updateHygieneField('${sId}', 'opt3', this.value)"
+                        class="w-[38px] appearance-none text-center bg-slate-50 border ${r.opt3 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md py-1 text-[11px] font-black shrink-0 cursor-pointer focus:border-blue-500 focus:outline-none">
+                        <option value="">--</option>
+                        ${HYGIENE_OPT3_LIST.map(o => `<option value="${o}" ${r.opt3 === o ? 'selected' : ''}>${o}</option>`).join('')}
+                    </select>
+
+                    <!-- [備註] 彈性填滿剩餘空間 -->
+                    <input type="text" value="${window.esc(r.remark || '')}" placeholder="備註"
+                        oninput="window.updateHygieneField('${sId}', 'remark', this.value)"
+                        class="flex-1 min-w-[44px] w-0 bg-slate-50 border border-slate-300 rounded-md px-1.5 py-1 text-[11px] font-bold text-slate-800 transition-all focus:bg-white focus:border-blue-500 focus:outline-none">
+
+<!-- [巡查 V / X 獨立按鍵組] -->
+                    <div class="flex items-center gap-0.5 shrink-0">
+                        <span class="text-[10px] font-black text-slate-600 select-none">巡查</span>
+                        <button type="button" onclick="window.setHygieneCheck('${sId}', 'V')"
+                            class="w-[22px] text-center py-1 rounded-md text-[10.5px] font-black border shrink-0 active:scale-95 transition-all ${curCheck === 'V' ? 'bg-emerald-500 text-white border-emerald-600 shadow-2xs' : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50'}">
+                            V
+                        </button>
+                        <button type="button" onclick="window.setHygieneCheck('${sId}', 'X')"
+                            class="w-[22px] text-center py-1 rounded-md text-[10.5px] font-black border shrink-0 active:scale-95 transition-all ${curCheck === 'X' ? 'bg-rose-500 text-white border-rose-600 shadow-2xs' : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50'}">
+                            X
+                        </button>
+                    </div>
+
+                    <!-- [🔄 重做] -->
+                    <button type="button" onclick="window.updateHygieneField('${sId}', 'redo')"
+                        class="px-1.5 py-1 rounded-md text-[10.5px] font-black border shrink-0 active:scale-95 transition-all ${r.redo ? 'bg-rose-500 text-white border-rose-600 shadow-2xs' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}">
+                        🔄重做
+                    </button>
+                </div>`;
+            }).join('');
+
+page.innerHTML = `
+                <div class="relative bg-white rounded-2xl px-2.5 py-1.5 mb-2 border border-slate-200 shadow-2xs flex items-center justify-between gap-1 shrink-0">
+<!-- 左側：只顯示星期幾，點擊開啟月曆選單 -->
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        <button type="button" onclick="window.changeHygieneDate(-1)" class="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-[11px] font-black text-slate-700 active:scale-95">◀</button>
+                        <button type="button" onclick="window.toggleHygieneCalendar(event)" class="flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 hover:bg-blue-50/60 border border-slate-200 rounded-xl text-xs font-black text-blue-700 active:scale-95 transition-all" title="${dateKey}">
+                            <span class="text-slate-800">衛生巡查</span>
+                            <span>${weekLabel}</span>
+                            <span class="w-5 h-5 rounded-lg bg-blue-100 text-blue-600 inline-flex items-center justify-center text-xs">📅</span>
+                        </button>
+                        <button type="button" onclick="window.changeHygieneDate(1)" class="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-[11px] font-black text-slate-700 active:scale-95">▶</button>
+                    </div>
+
+                    <!-- 右側：進度與匯出 -->
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        <span class="text-[11px] font-black px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">已巡 ${checkedCount}/${stalls.length}</span>
+                        ${redoCount > 0 ? `<span class="text-[11px] font-black px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-300">重做 ${redoCount}</span>` : ''}
+                        <button type="button" onclick="window.exportHygieneExcel()" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-black shadow-2xs active:scale-95">匯出</button>
+                    </div>
+
+                    ${window.buildHygieneCalendarHtml()}
+                </div>
+
+                <!-- 中間：15檔一行過列表 ＋ 緊貼列表下方的客服人員按鍵 -->
+                <div class="flex-1 overflow-y-auto space-y-1.5 pb-6 pr-0.5 scrollbar-hide">
+                    ${rowsHtml}
+                    <div class="pt-2 pb-2 flex justify-center">
+                        <select onchange="window.updateHygieneDailyStaff(this.value)"
+                            class="appearance-none text-center bg-white border-2 ${dayStaff ? 'border-blue-500 text-blue-700 bg-blue-50/70' : 'border-slate-300 text-slate-700'} rounded-full px-6 py-1.5 text-xs font-black shadow-md cursor-pointer focus:border-blue-600 focus:outline-none active:scale-95 transition-all">
+                            ${bottomStaffOptions}
+                        </select>
+                    </div>
+                </div>
+            `;
+        };
+
 window.switchTab = (tab) => {
+            window.ensureHygienePageMounted?.();
             const pages = { 
                 dashboard: 'dashboardPage', // 👈 確保有這行才能切換顯示儀表板
                 patrol: 'patrolPage', 
+                hygiene: 'hygienePage',
                 gallery: 'galleryPage', 
                 timeline: 'timelinePage', 
                 memo: 'memoPage', 
@@ -15749,7 +16288,7 @@ const actCls = "flex-1 py-1.5 px-1 text-xs rounded-md bg-white text-blue-600 sha
 const targetPage = $(pages[tab]);
             if (targetPage) { 
                 targetPage.classList.remove('hidden'); 
-                targetPage.classList.add(['dashboard', 'map', 'gallery', 'coldRoom', 'closing'].includes(tab) ? 'flex' : 'block'); 
+                targetPage.classList.add(['dashboard', 'hygiene', 'map', 'gallery', 'coldRoom', 'closing'].includes(tab) ? 'flex' : 'block'); 
             }
 
 // 更新按鈕樣式（包含「更多」按鈕）
@@ -15773,10 +16312,11 @@ const targetPage = $(pages[tab]);
                     }
                     window.setPatrolViewMode('card');
                 },
+                hygiene: window.renderHygienePage,
                 gallery: window.renderGallery,
                 timeline: () => window.renderTimeline(true),
                 memo: window.renderMemos,
-map: window.renderMap,
+                map: window.renderMap,
                 coldRoom: () => window.crSwitchTab(crCurrentTab || 'active'),
                 closing: () => { window.searchStall?.(); },
             })[tab]?.();
