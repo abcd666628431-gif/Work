@@ -5526,7 +5526,7 @@ window.clearTodayPatrolData = (e) => {
                 thumb.style.transform = `translateX(${target.idx * 100}%)`;
             }
 
-            ['all', 'garden', 'fish', 'first'].forEach(f => {
+['all', 'garden', 'fish', 'first'].forEach(f => {
                 const btn = $(`patrol-flt-${f}`);
                 if (btn) {
                     const isSelected = (f === target.id);
@@ -5536,7 +5536,7 @@ window.clearTodayPatrolData = (e) => {
                 }
             });
 
-            window.renderPatrol();
+window.renderPatrol();
         };
 
         // 🌟 支援手指在軌道上「直接滑動/拖曳」手勢
@@ -5615,12 +5615,340 @@ window.clearTodayPatrolData = (e) => {
             }
         };
 
-        window.setPatrolViewMode = () => {
-            patrolViewMode = 'card';
+window.isEditingPatrolMap = false;
+        window._selectedPatrolMapItemUid = null;
+
+        window.getDefaultPatrolMapLayouts = () => {
+            const mk = (uid, kind, num, label, x, y, w = 2, h = 2) => ({ uid, kind, num, label: String(label ?? num), x, y, w, h });
+            return {
+                '地下': [
+                    mk('f_7','stall',7,'7',0,0,3,2), mk('f_8','stall',8,'8',3,0,3,2),
+                    mk('f_5','stall',5,'5',0,2,3,2), mk('f_9','stall',9,'9',3,2,3,2),
+                    mk('f_1','stall',1,'1',0,4,3,2), mk('f_10','stall',10,'10',3,4,3,2),
+                    mk('f_4','stall',4,'4',0,6,3,2), mk('f_11','stall',11,'11',3,6,3,2),
+                    mk('f_2','stall',2,'2',0,9,3,2), mk('f_12','stall',12,'12',3,9,3,2),
+                    mk('f_1b','stall',1,'1',0,11,3,2), mk('f_14','stall',14,'14',3,11,3,2),
+
+                    mk('f_20','stall',20,'20',7,0,3,2), mk('f_21','stall',21,'21',10,0,3,2),
+                    mk('f_18','stall',18,'18',7,2,3,2), mk('f_22','stall',22,'22',10,2,3,2),
+                    mk('f_28','stall',28,'18',7,4,3,2), mk('f_29','stall',29,'29',10,4,3,2),
+                    mk('f_23','stall',23,'23',7,6,3,2), mk('f_24','stall',24,'24',10,6,3,2),
+                    mk('f_lift1','lift',0,'升降機',7,9,3,2), mk('f_40a','stall',40,'40',10,9,3,2),
+                    mk('f_16','stall',16,'16',7,11,3,2), mk('f_15','stall',15,'15',10,11,3,2),
+                    mk('f_20b','stall',20,'20',7,13,3,2),
+
+                    mk('f_33','stall',33,'33',14,0,2,2), mk('f_34','stall',34,'34',16,0,2,2), mk('f_35','stall',35,'35',18,0,2,2),
+                    mk('f_25','stall',25,'25',14,2,2,2), mk('f_36','stall',36,'36',16,2,2,2), mk('f_37','stall',37,'37',18,2,2,2),
+                    mk('f_38','stall',38,'38',14,4,2,2), mk('f_30a','stall',30,'30',16,4,2,2), mk('f_st1','stair',0,'樓梯',18,4,2,2),
+                    mk('f_30b','stall',30,'30',14,9,3,2), mk('f_40b','stall',40,'40',17,9,3,2),
+                    mk('f_20c','stall',20,'20',14,11,3,2), mk('f_41','stall',41,'41',17,11,3,2),
+                    mk('f_24b','stall',24,'24',14,13,3,2), mk('f_42','stall',42,'42',17,13,3,2),
+
+                    mk('f_47','stall',47,'47',21,0,2,2), mk('f_48','stall',48,'48',23,0,2,2), mk('f_49','stall',49,'49',25,0,2,2),
+                    mk('f_45','stall',45,'45',21,2,2,2), mk('f_51','stall',51,'51',23,2,2,2), mk('f_50','stall',50,'50',25,2,2,2),
+                    mk('f_st2','stair',0,'樓梯',21,4,2,2),
+                    mk('f_52','stall',52,'52',21,9,3,2), mk('f_56','stall',56,'56',24,9,3,2),
+                    mk('f_54','stall',54,'54',21,11,3,2), mk('f_st3','stair',0,'樓梯',24,11,3,2),
+
+                    mk('f_63','stall',63,'63',28,0,3,2), mk('f_64','stall',64,'64',31,0,3,2),
+                    mk('f_65','stall',65,'65',28,2,3,2), mk('f_86a','stall',86,'86',31,2,3,2),
+                    mk('f_66','stall',66,'66',28,4,3,2), mk('f_67a','stall',67,'67',31,4,3,2),
+                    mk('f_59','stall',59,'59',28,9,3,2), mk('f_lift2','lift',0,'升降機',31,9,3,2),
+                    mk('f_67b','stall',67,'67',28,11,3,2), mk('f_68','stall',68,'68',31,11,3,2),
+
+                    mk('f_75','stall',75,'75',34,0,3,2), mk('f_85a','stall',85,'85',37,0,3,2),
+                    mk('f_77','stall',77,'77',34,2,3,2), mk('f_81','stall',81,'81',37,2,3,2),
+                    mk('f_76a','stall',76,'76',34,4,3,2), mk('f_83a','stall',83,'83',37,4,3,2),
+                    mk('f_71','stall',71,'71',34,9,3,2), mk('f_86b','stall',86,'86',37,9,3,2),
+                    mk('f_73','stall',73,'73',34,11,3,2), mk('f_83b','stall',83,'83',37,11,3,2),
+                    mk('f_76b','stall',76,'76',34,13,3,2), mk('f_87','stall',87,'87',37,13,3,2)
+                ],
+                '花園仔': [
+                    mk('g_1','stall',1,'1',0,1,2,2), mk('g_2','stall',2,'2',0,3,2,2),
+                    mk('g_36','stall',36,'36',3,0,2,2), mk('g_st1','stair',0,'樓梯',5,0,2,2),
+                    mk('g_35','stall',35,'35',7,0,2,2), mk('g_34','stall',34,'34',9,0,2,2), mk('g_33','stall',33,'33',11,0,2,2),
+                    mk('g_32','stall',32,'32',13,0,2,2), mk('g_31','stall',31,'31',15,0,2,2), mk('g_20a','stall',20,'20',17,0,2,2),
+                    mk('g_29','stall',29,'29',19,0,2,2), mk('g_st2','stair',0,'樓梯',21,0,2,2),
+                    mk('g_26a','stall',26,'26',23,0,2,2), mk('g_27','stall',27,'27',25,0,2,2), mk('g_26b','stall',26,'26',27,0,2,2),
+                    mk('g_25a','stall',25,'25',29,0,2,2), mk('g_24','stall',24,'24',31,0,2,2), mk('g_st3','stair',0,'樓梯',33,0,2,2),
+
+                    mk('g_3','stall',3,'3',3,3,2,2), mk('g_4','stall',4,'4',5,3,2,2), mk('g_5','stall',5,'5',7,3,2,2),
+                    mk('g_6','stall',6,'6',9,3,2,2), mk('g_7','stall',7,'7',11,3,2,2), mk('g_8','stall',8,'8',13,3,2,2),
+                    mk('g_9','stall',9,'9',15,3,2,2),
+                    mk('g_10','stall',10,'10',18,3,2,2), mk('g_11','stall',11,'11',20,3,2,2), mk('g_12','stall',12,'12',22,3,2,2),
+                    mk('g_13','stall',13,'13',24,3,2,2), mk('g_14','stall',14,'14',26,3,2,2), mk('g_15','stall',15,'15',28,3,2,2),
+                    mk('g_16','stall',16,'16',30,3,2,2), mk('g_17','stall',17,'17',32,3,2,2),
+
+                    mk('g_21','stall',21,'21',36,0,2,2), mk('g_22','stall',22,'22',36,2,2,2), mk('g_25b','stall',25,'25',36,4,2,2),
+                    mk('g_20b','stall',20,'20',38,0,2,2), mk('g_19','stall',19,'19',38,2,2,2), mk('g_18','stall',18,'18',38,4,2,2)
+                ],
+                '一樓': [
+                    mk('1_1','stall',1,'1',0,0,4,2), mk('1_2','stall',2,'2',5,0,4,2), mk('1_3','stall',3,'3',10,0,4,2), mk('1_5','stall',5,'5',15,0,4,2),
+                    mk('1_6','stall',6,'6',20,0,4,2), mk('1_10','stall',10,'10',25,0,4,2), mk('1_13','stall',13,'13',30,0,4,2), mk('1_14','stall',14,'14',35,0,4,2),
+                    mk('1_15','stall',15,'15',0,3,4,2), mk('1_18','stall',18,'18',5,3,4,2), mk('1_19','stall',19,'19',10,3,4,2), mk('1_20','stall',20,'20',15,3,4,2),
+                    mk('1_21','stall',21,'21',20,3,4,2), mk('1_23','stall',23,'23',25,3,4,2), mk('1_24','stall',24,'24',30,3,4,2), mk('1_st1','stair',0,'樓梯',35,3,4,2)
+                ]
+            };
+        };
+
+        window.patrolCustomMapLayouts = (() => {
+            const saved = getLocal('work_cache_patrol_map_layouts', null);
+            const def = window.getDefaultPatrolMapLayouts();
+            return (saved && typeof saved === 'object') ? { ...def, ...saved } : def;
+        })();
+
+        window.cyclePatrolMapStall = (floor, num) => {
+            if (window.isEditingPatrolMap) return;
+            const id = `${floor === '地下' ? 'R' : (floor === '一樓' ? '1' : 'J')}-${String(num).padStart(3, '0')}`;
+            const stall = RAW_PATROL_STALLS.find(s => s.floor === floor && s.id === id)
+                || { floor, id, type: floor, name: '', gender: '' };
+            const cur = window.getPatrolStatus(stall, patrolSlot);
+            const order = ['', 'A', '1', '0'];
+            const next = order[(order.indexOf(cur) + 1) % 4];
+            window.setPatrolStatus(stall, next || cur);
+        };
+
+        window.toggleEditPatrolMap = () => {
+            window.isEditingPatrolMap = !window.isEditingPatrolMap;
+            if (!window.isEditingPatrolMap) {
+                window._selectedPatrolMapItemUid = null;
+                safeSetLocal('work_cache_patrol_map_layouts', window.patrolCustomMapLayouts);
+                syncConfig('patrol_map_layouts', { layouts: window.patrolCustomMapLayouts });
+                window.showToast('✅ 平面地圖排版已儲存並同步！');
+            }
+            window.renderPatrolMap();
+        };
+
+        window.getActiveEditFloorName = () => {
+            if (patrolFloor === '地下' || patrolFloor === '花園仔' || patrolFloor === '一樓') return patrolFloor;
+            const selUid = window._selectedPatrolMapItemUid;
+            if (selUid) {
+                for (const flr of ['地下', '花園仔', '一樓']) {
+                    if ((window.patrolCustomMapLayouts[flr] || []).some(it => it.uid === selUid)) return flr;
+                }
+            }
+            return '地下';
+        };
+
+        window.addPatrolMapCustomItem = (kind) => {
+            const flr = window.getActiveEditFloorName();
+            const list = window.patrolCustomMapLayouts[flr] = window.patrolCustomMapLayouts[flr] || [];
+            let num = 0, label = kind === 'lift' ? '升降機' : '樓梯';
+            if (kind === 'stall') {
+                const raw = prompt(`請輸入【${flr}】新檔口編號（例如 88）：`);
+                if (!raw || !raw.trim()) return;
+                label = raw.trim();
+                num = parseInt(label.replace(/\D/g, ''), 10) || 0;
+            }
+            const maxY = list.reduce((m, it) => Math.max(m, it.y + it.h), 0);
+            const uid = 'custom_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5);
+            list.push({ uid, kind, num, label, x: 0, y: maxY, w: 3, h: 2 });
+            window._selectedPatrolMapItemUid = uid;
+            window.renderPatrolMap();
+        };
+
+        window.adjustPatrolMapSelectedItem = (action) => {
+            const uid = window._selectedPatrolMapItemUid;
+            if (!uid) return window.showToast('請先點選要調整的方塊', true);
+            for (const flr of ['地下', '花園仔', '一樓']) {
+                const list = window.patrolCustomMapLayouts[flr] || [];
+                const idx = list.findIndex(it => it.uid === uid);
+                if (idx === -1) continue;
+                const it = list[idx];
+                if (action === 'w+') it.w = Math.min(20, it.w + 1);
+                else if (action === 'w-') it.w = Math.max(1, it.w - 1);
+                else if (action === 'h+') it.h = Math.min(10, it.h + 1);
+                else if (action === 'h-') it.h = Math.max(1, it.h - 1);
+                else if (action === 'rename') {
+                    const nextLabel = prompt('修改顯示文字 / 檔號：', it.label);
+                    if (nextLabel && nextLabel.trim()) {
+                        it.label = nextLabel.trim();
+                        if (it.kind === 'stall') it.num = parseInt(it.label.replace(/\D/g, ''), 10) || it.num;
+                    }
+                } else if (action === 'delete') {
+                    list.splice(idx, 1);
+                    window._selectedPatrolMapItemUid = null;
+                }
+                break;
+            }
+            window.renderPatrolMap();
+        };
+
+        window.resetPatrolMapLayout = () => {
+            window.showConfirm('還原預設排版', '確定要將自定平面地圖還原為系統預設排版嗎？', () => {
+                window.patrolCustomMapLayouts = window.getDefaultPatrolMapLayouts();
+                window._selectedPatrolMapItemUid = null;
+                safeSetLocal('work_cache_patrol_map_layouts', window.patrolCustomMapLayouts);
+                syncConfig('patrol_map_layouts', { layouts: window.patrolCustomMapLayouts });
+                window.renderPatrolMap();
+                window.showToast('↩️ 已還原預設平面地圖排版');
+            });
+        };
+
+        window.startPatrolMapItemDrag = (e, flr, uid) => {
+            if (!window.isEditingPatrolMap) return;
+            e.preventDefault();
+            e.stopPropagation();
+            window._selectedPatrolMapItemUid = uid;
+            const el = e.currentTarget;
+            const gridEl = el.closest('[data-map-grid]');
+            const list = window.patrolCustomMapLayouts[flr] || [];
+            const item = list.find(it => it.uid === uid);
+            if (!gridEl || !item) return;
+
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const origX = item.x;
+            const origY = item.y;
+            let moved = false;
+
+            el.style.zIndex = '40';
+            el.style.opacity = '0.88';
+
+            const onMove = (ev) => {
+                const colW = gridEl.getBoundingClientRect().width / 40;
+                const rowH = 16;
+                const dx = Math.round((ev.clientX - startX) / colW);
+                const dy = Math.round((ev.clientY - startY) / rowH);
+                const nx = Math.max(0, Math.min(40 - item.w, origX + dx));
+                const ny = Math.max(0, Math.min(40 - item.h, origY + dy));
+                if (nx !== item.x || ny !== item.y) {
+                    moved = true;
+                    item.x = nx;
+                    item.y = ny;
+                    el.style.gridColumn = `${nx + 1} / span ${item.w}`;
+                    el.style.gridRow = `${ny + 1} / span ${item.h}`;
+                }
+            };
+
+            const onUp = () => {
+                window.removeEventListener('pointermove', onMove);
+                window.removeEventListener('pointerup', onUp);
+                window.removeEventListener('pointercancel', onUp);
+                window.renderPatrolMap();
+            };
+
+            window.addEventListener('pointermove', onMove);
+            window.addEventListener('pointerup', onUp);
+            window.addEventListener('pointercancel', onUp);
+        };
+
+        window.renderPatrolMap = () => {
+            let mapBox = $('patrolMapContainer');
+            const cardBox = $('patrolCardContainer');
+            if (!mapBox && cardBox && cardBox.parentElement) {
+                mapBox = document.createElement('div');
+                mapBox.id = 'patrolMapContainer';
+                mapBox.className = 'hidden flex-1 overflow-auto pb-20';
+                cardBox.parentElement.insertBefore(mapBox, cardBox.nextSibling);
+            }
+            if (!mapBox) return;
+
+            const isEdit = !!window.isEditingPatrolMap;
+            const selUid = window._selectedPatrolMapItemUid;
+            const floorsToShow = patrolFloor === 'ALL'
+                ? ['地下', '花園仔']
+                : [patrolFloor === '一樓' ? '一樓' : (patrolFloor === '花園仔' ? '花園仔' : '地下')];
+
+            const renderFloorCanvas = (flr) => {
+                const items = window.patrolCustomMapLayouts[flr] || [];
+                const maxRow = Math.max(6, ...items.map(it => it.y + it.h)) + (isEdit ? 3 : 0);
+                const cellsHtml = items.map(it => {
+                    const isSelected = isEdit && it.uid === selUid;
+                    const selRing = isSelected ? 'ring-2 ring-indigo-600 z-30 shadow-md' : '';
+                    const dragAttr = isEdit
+                        ? `onpointerdown="window.startPatrolMapItemDrag(event, '${flr}', '${it.uid}')" style="grid-column:${it.x + 1}/span ${it.w};grid-row:${it.y + 1}/span ${it.h};touch-action:none;"`
+                        : `style="grid-column:${it.x + 1}/span ${it.w};grid-row:${it.y + 1}/span ${it.h};"`;
+
+                    if (it.kind === 'lift' || it.kind === 'stair') {
+                        const baseCls = it.kind === 'lift' ? 'bg-slate-500 text-white' : 'bg-slate-300 text-slate-800 border border-slate-400';
+                        return `<div ${dragAttr} class="${baseCls} ${selRing} rounded text-[8.5px] font-black flex items-center justify-center leading-tight tracking-tighter text-center select-none overflow-hidden ${isEdit ? 'cursor-move' : ''}">${window.esc(it.label)}</div>`;
+                    }
+
+                    const prefix = flr === '地下' ? 'R' : (flr === '一樓' ? '1' : 'J');
+                    const id = `${prefix}-${String(it.num).padStart(3, '0')}`;
+                    const st = (patrolHistoryStore[currentPatrolDate] || {})[`${flr}-${id}`]?.[patrolSlot] || '';
+                    const cls = st === 'A'
+                        ? 'bg-emerald-500 border-emerald-500 text-white shadow-2xs'
+                        : st === '1'
+                            ? 'bg-amber-500 border-amber-500 text-white shadow-2xs'
+                            : st === '0'
+                                ? 'bg-slate-700 border-slate-700 text-white shadow-2xs'
+                                : 'bg-[#faf8f5] hover:bg-amber-50 border-slate-400 text-slate-800';
+                    const clickAttr = isEdit ? '' : `onclick="window.cyclePatrolMapStall('${flr}', ${it.num})"`;
+                    return `<div ${clickAttr} ${dragAttr} class="border rounded flex items-center justify-center select-none transition-colors overflow-hidden ${cls} ${selRing} ${isEdit ? 'cursor-move' : 'cursor-pointer active:scale-95'}"><span class="text-[9.5px] font-mono font-black leading-none tracking-tighter">${window.esc(it.label)}</span></div>`;
+                }).join('');
+
+                return `
+                    <div class="w-full">
+                        ${(patrolFloor === 'ALL' || isEdit) ? `<div class="text-[10px] font-black text-slate-600 mb-1 flex items-center justify-between"><span>📍 ${flr === '地下' ? '地下魚檔' : flr}</span>${isEdit ? '<span class="text-[9px] text-indigo-600">按住方塊可自由拖移對齊</span>' : ''}</div>` : ''}
+                        <div data-map-grid="${flr}" class="w-full rounded-xl p-1 ${isEdit ? 'bg-indigo-50/60 border-2 border-dashed border-indigo-400' : 'bg-[#e6e1d6] border border-slate-300'}"
+                            style="display:grid;grid-template-columns:repeat(40,minmax(0,1fr));grid-template-rows:repeat(${maxRow},16px);gap:1.5px;">
+                            ${cellsHtml}
+                        </div>
+                    </div>`;
+            };
+
+mapBox.innerHTML = `
+                <div class="bg-[#f3efe6] border border-slate-300 rounded-2xl p-1.5 shadow-xs w-full space-y-1.5">
+                    <!-- 頂部控制列 -->
+                    <div class="flex items-center justify-end gap-1 pb-1.5 border-b border-slate-300 text-[10px] font-black text-slate-700">
+                        ${!isEdit ? `
+                            <button type="button" onclick="window.toggleEditPatrolMap()" class="px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs active:scale-95">✏️ 編輯排版</button>
+                        ` : `
+                            <button type="button" onclick="window.resetPatrolMapLayout()" class="px-2 py-0.5 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 active:scale-95">↩️ 還原預設</button>
+                            <button type="button" onclick="window.toggleEditPatrolMap()" class="px-2.5 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs active:scale-95">💾 完成儲存</button>
+                        `}
+                    </div>
+
+                    ${isEdit ? `
+                    <!-- 自定排版工具列 -->
+                    <div class="flex flex-wrap items-center justify-between gap-1 bg-white p-1.5 rounded-xl border border-indigo-200 text-[10px] font-black">
+                        <div class="flex items-center gap-1 flex-wrap">
+                            <button type="button" onclick="window.addPatrolMapCustomItem('stall')" class="px-2 py-0.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200">+ 檔口</button>
+                            <button type="button" onclick="window.addPatrolMapCustomItem('stair')" class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300">+ 樓梯</button>
+                            <button type="button" onclick="window.addPatrolMapCustomItem('lift')" class="px-2 py-0.5 rounded bg-slate-600 hover:bg-slate-700 text-white">+ 升降機</button>
+                        </div>
+                        <div class="flex items-center gap-1 flex-wrap">
+                            <button type="button" onclick="window.adjustPatrolMapSelectedItem('w-')" class="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-300">寬-</button>
+                            <button type="button" onclick="window.adjustPatrolMapSelectedItem('w+')" class="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-300">寬+</button>
+                            <button type="button" onclick="window.adjustPatrolMapSelectedItem('h-')" class="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-300">高-</button>
+                            <button type="button" onclick="window.adjustPatrolMapSelectedItem('h+')" class="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-300">高+</button>
+                            <button type="button" onclick="window.adjustPatrolMapSelectedItem('rename')" class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300">改字</button>
+                            <button type="button" onclick="window.adjustPatrolMapSelectedItem('delete')" class="px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 border border-rose-200">🗑️ 刪除</button>
+                        </div>
+                    </div>` : ''}
+
+                    ${floorsToShow.map(flr => renderFloorCanvas(flr)).join('')}
+                </div>`;
+        };
+
+        window.setPatrolViewMode = (mode = 'card') => {
+            patrolViewMode = mode;
             window.clearFocusAutoTimer();
-            $('patrolCardContainer')?.classList.remove('hidden');
+
+            const scaleBox = $('patrolCardScaleControls');
+            if (scaleBox && scaleBox.parentElement && !$('btnTogglePatrolView')) {
+                const btn = document.createElement('button');
+                btn.id = 'btnTogglePatrolView';
+                btn.type = 'button';
+                btn.onclick = () => window.setPatrolViewMode(patrolViewMode === 'map' ? 'card' : 'map');
+                scaleBox.parentElement.insertBefore(btn, scaleBox);
+            }
+
             window.renderPatrol();
+            const isMap = patrolViewMode === 'map';
+            $('patrolCardContainer')?.classList.toggle('hidden', isMap);
+            $('patrolMapContainer')?.classList.toggle('hidden', !isMap);
             window.updatePatrolCardScaleUI();
+
+            const toggleBtn = $('btnTogglePatrolView');
+            if (toggleBtn) {
+                toggleBtn.className = isMap
+                    ? 'px-2.5 py-1 rounded-lg text-xs font-black bg-indigo-600 text-white border border-indigo-700 shadow-2xs active:scale-95 transition-all'
+                    : 'px-2.5 py-1 rounded-lg text-xs font-black bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs active:scale-95 transition-all';
+                toggleBtn.textContent = isMap ? '📋 卡片列表' : '🗺️ 平面地圖';
+            }
         };
 
         window.getFilteredPatrolStalls = () => {
@@ -5836,6 +6164,7 @@ window.openScheduleManager = () => {
                 </div>`;
             }).join('');
 
+if (patrolViewMode === 'map') window.renderPatrolMap();
             window.updatePatrolCardScaleUI();
             window.updateFloatingTempBadgeUI?.();
         };
@@ -10411,6 +10740,14 @@ bindSync('future_memos', 'work_cache_future_memos', d => {
                 }
             });
 
+bindSync('patrol_map_layouts', 'work_cache_patrol_map_layouts', d => {
+                if (d && d.layouts && typeof d.layouts === 'object') {
+                    window.patrolCustomMapLayouts = { ...window.getDefaultPatrolMapLayouts(), ...d.layouts };
+                    safeSetLocal('work_cache_patrol_map_layouts', window.patrolCustomMapLayouts);
+                    if (patrolViewMode === 'map' && !window.isEditingPatrolMap) window.renderPatrolMap();
+                }
+            });
+
             // 🌟 新增：出勤顯示模式 (duty_filter_mode) 雲端即時同步
             bindSync('duty_filter_mode', 'work_cache_duty_filter_mode', d => {
                 if (d && d.mode) {
@@ -13569,7 +13906,7 @@ if (validRows.length < 2) return window.showToast("匯入檔案內容格式不�
         };
 
 // ====== 🌗 排班「左右雙介面」核心輔助與雙向連動函式 ======
-window.scheduleViewLayout = getLocal('work_cache_sched_layout', 'split'); // 'split' | 'person' | 'station'
+window.scheduleViewLayout = getLocal('work_cache_sched_layout', 'station'); // 'split' | 'person' | 'station'
         window.activeLeftLocBrush = 'pt_7'; // 左表專用「崗位畫筆」，預設為 pt_7 (🟩 休息)
         window.dualSplitLeftPct = parseFloat(getLocal('work_cache_sched_split_pct', '53')) || 53;
 
@@ -14080,12 +14417,12 @@ const renderMemberRow = (name) => {
                         </td>`;
                     }
 
-                    // 狀態 3：🟥 上班時間內但未排班（乾淨紅框配暖粉底）
+// 狀態 3：🟥 上班時間內但未排班（柔和暖米白底配粉紅外框）
                     if (inShift) {
                         missingCount++;
                         return `<td onclick="window.togglePersonCellRest('${dStr}', '${safeNameAttr}', '${slot.start}', '${slot.end}')"
                             data-pcell="1" data-date="${dStr}" data-member="${window.escAttr(canon)}" data-start="${slot.start}" data-end="${slot.end}" data-state="unassigned" data-cur-locs=""
-                            class="p-0 border-2 border-red-300/90 bg-[#f9ecec] hover:bg-[#cbead6]/60 text-center align-middle ${colWidth} ${glowCls} cursor-pointer select-none transition-colors" title="${canon} ${slot.start}-${slot.end} 未排班">&nbsp;</td>`;
+                            class="p-0 border-2 border-red-300/90 bg-[#f8f6f0] hover:bg-[#cbead6]/60 text-center align-middle ${colWidth} ${glowCls} cursor-pointer select-none transition-colors" title="${canon} ${slot.start}-${slot.end} 未排班">&nbsp;</td>`;
                     }
 
                     // 狀態 4：⬜ 非上班時間（柔和純灰底）
@@ -14215,7 +14552,8 @@ const avatarHtml = prof.avatar
             let sortedLocs = Object.entries(mapData.points || {}).sort(([a], [b]) => (order.indexOf(a) === -1 ? 999 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 999 : order.indexOf(b)));
 
             const fiveDays = window.get5DayScheduleDates();
-            const layoutMode = window.scheduleViewLayout || 'split';
+            const layoutMode = window.scheduleViewLayout || 'station';
+            const isSplit = layoutMode === 'split';
 
             const fiveDayTablesHtml = fiveDays.map((dayInfo, dayIdx) => {
                 const dStr = dayInfo.dateStr;
@@ -14457,7 +14795,7 @@ const avatarHtml = prof.avatar
                                 <div class="flex items-center gap-1.5 text-[9px] font-bold text-slate-600 shrink-0">
                                     <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-[#cbead6] border border-[#82c59a] inline-block"></i>休</span>
                                     <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-sky-200 border border-sky-400 inline-block"></i>已排</span>
-                                    <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-[#f9ecec] border-2 border-red-300 inline-block"></i>未排</span>
+<span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-[#f8f6f0] border-2 border-red-300 inline-block"></i>未排</span>
                                     <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-[#cbd5e1] border border-slate-400 inline-block"></i>非上班</span>
                                 </div>
                             </div>
@@ -14534,10 +14872,10 @@ const avatarHtml = prof.avatar
                             <button type="button" onclick="window.toggleMapRoleMode('clean'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${isCleanRole ? 'bg-[#faf8f3] text-teal-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧹 清潔排班</button>
                         </div>
 
-                        <div class="flex bg-indigo-50/80 p-0.5 rounded-lg border border-indigo-200 shadow-inner">
-                            <button type="button" onclick="window.setScheduleViewLayout('split')" class="px-2.5 py-1 text-[10.5px] font-black rounded-md transition-all ${layoutMode === 'split' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}">🌗 左右雙介面</button>
-                            <button type="button" onclick="window.setScheduleViewLayout('person')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all ${layoutMode === 'person' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}">👤 只看人員</button>
-                            <button type="button" onclick="window.setScheduleViewLayout('station')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all ${layoutMode === 'station' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}">📍 只看崗位</button>
+<div class="flex bg-indigo-50/80 p-0.5 rounded-lg border border-indigo-200 shadow-inner">
+                            <button type="button" onclick="window.setScheduleViewLayout('split')" class="px-2.5 py-1 text-[10.5px] font-black rounded-md transition-all inline-flex items-center gap-1 ${layoutMode === 'split' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}"><i data-lucide="columns-2" class="w-3.5 h-3.5"></i>左右雙介面</button>
+                            <button type="button" onclick="window.setScheduleViewLayout('person')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all inline-flex items-center gap-1 ${layoutMode === 'person' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}"><i data-lucide="user" class="w-3.5 h-3.5"></i>只看人員</button>
+                            <button type="button" onclick="window.setScheduleViewLayout('station')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all inline-flex items-center gap-1 ${layoutMode === 'station' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}"><i data-lucide="map-pin" class="w-3.5 h-3.5"></i>只看崗位</button>
                         </div>
 
                         <button type="button" onclick="document.getElementById('sched-day-card-${getNowInputStrs().date}')?.scrollIntoView({ behavior: 'smooth', block: 'center' })" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-2.5 py-1 rounded-lg text-[10.5px] font-black active:scale-95">📍 定位今日</button>
@@ -16970,12 +17308,12 @@ const targetPage = $(pages[tab]);
             // 🌟 關鍵修正第 2 步：頁面已經移除 hidden 後，才執行對應的渲染函式
             ({
                 dashboard: window.renderDashboard, // 👈 補在 patrol 的正上方這一行
-                patrol: () => {
+patrol: () => {
                     window.autoSyncClosedStallsToPatrol(true);
                     if (typeof window.applyAutoPatrolSlot === 'function') {
                         window.applyAutoPatrolSlot(true);
                     }
-                    window.setPatrolViewMode('card');
+                    window.setPatrolViewMode(patrolViewMode || 'card');
                 },
                 hygiene: window.renderHygienePage,
                 gallery: window.renderGallery,
