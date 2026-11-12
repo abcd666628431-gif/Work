@@ -12433,8 +12433,11 @@ const subItems = Array.from(displayDiv.querySelectorAll('.sub-line-item'));
                 }
             }
 
-            if (window.syncLocTrackRows) {
+if (window.syncLocTrackRows) {
                 window.syncLocTrackRows(dateStr, locId, needRows);
+            }
+            if (window.refreshPersonTableDay) {
+                window.refreshPersonTableDay(dateStr);
             }
         };
 
@@ -13565,22 +13568,629 @@ if (validRows.length < 2) return window.showToast("匯入檔案內容格式不�
             return locId;
         };
 
-        // 🌟 6. 核心渲染：自帶全自動防彈回鎖定 + 每個崗位分類之間自動加入空白分隔列 + 智慧自動排班
+// ====== 🌗 排班「左右雙介面」核心輔助與雙向連動函式 ======
+window.scheduleViewLayout = getLocal('work_cache_sched_layout', 'split'); // 'split' | 'person' | 'station'
+        window.activeLeftLocBrush = 'pt_7'; // 左表專用「崗位畫筆」，預設為 pt_7 (🟩 休息)
+        window.dualSplitLeftPct = parseFloat(getLocal('work_cache_sched_split_pct', '53')) || 53;
+
+window.startDualPaneResize = (e) => {
+            e.preventDefault();
+            const container = e.currentTarget.closest('.dual-split-container');
+            if (!container) return;
+            const rect = container.getBoundingClientRect();
+            const startX = e.touches ? e.touches[0].clientX : e.clientX;
+            let latestX = startX;
+
+            const guide = document.createElement('div');
+            guide.style.cssText = `position:fixed;top:0;bottom:0;left:${startX}px;width:3px;background:#4f46e5;z-index:9999;pointer-events:none;box-shadow:0 0 8px rgba(79,70,229,0.5);`;
+            document.body.appendChild(guide);
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+
+            const onMove = (ev) => {
+                const cx = ev.touches ? ev.touches[0].clientX : ev.clientX;
+                const minX = rect.left + rect.width * 0.25;
+                const maxX = rect.left + rect.width * 0.75;
+                latestX = Math.min(maxX, Math.max(minX, cx));
+                guide.style.transform = `translate3d(${latestX - startX}px, 0, 0)`;
+            };
+
+            const onUp = () => {
+                guide.remove();
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                const pct = ((latestX - rect.left) / rect.width) * 100;
+                window.dualSplitLeftPct = parseFloat(Math.min(75, Math.max(25, pct)).toFixed(1));
+                document.querySelectorAll('.dual-split-container').forEach(el => {
+                    el.style.setProperty('--dual-left-pct', `${window.dualSplitLeftPct}%`);
+                });
+                safeSetLocal('work_cache_sched_split_pct', String(window.dualSplitLeftPct));
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+                window.removeEventListener('touchmove', onMove);
+                window.removeEventListener('touchend', onUp);
+            };
+
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+            window.addEventListener('touchmove', onMove, { passive: true });
+            window.addEventListener('touchend', onUp);
+        };
+
+        // 🌟 注入排班表專用「100%真全螢幕 ＋ 暖米灰護眼底色 ＋ 可見滾動條」樣式
+        window.ensureScheduleScrollbarStyle = () => {
+            let styleEl = document.getElementById('schedVisibleScrollbarCss');
+            if (!styleEl) {
+                styleEl = document.createElement('style');
+                styleEl.id = 'schedVisibleScrollbarCss';
+                document.head.appendChild(styleEl);
+            }
+            styleEl.textContent = `
+                /* 1. 徹底消除外圍紅圈黑邊，100% 真・全螢幕滿版 */
+                #scheduleManageModal {
+                    padding: 0 !important;
+                }
+                #scheduleManageModal > div {
+                    width: 100vw !important;
+                    max-width: 100vw !important;
+                    height: 100vh !important;
+                    max-height: 100vh !important;
+                    border-radius: 0 !important;
+                    border: none !important;
+                    background-color: #e8e3d9 !important;
+                }
+                /* 2. 消除刺眼純白，全面改為柔和暖米灰/燕麥紙護眼色 */
+                #scheduleManageModal > div > header,
+                #scheduleManageModal > div > div:first-child {
+                    background-color: #f2efe9 !important;
+                    border-color: #d5cfc2 !important;
+                }
+                #scheduleManageModal .sub-line-item.bg-white,
+                #scheduleManageModal td.bg-white {
+                    background-color: #f8f6f0 !important;
+                }
+                #scheduleManageModal .sub-line-item.bg-white:hover {
+                    background-color: #ede9df !important;
+                }
+/* 3. 左右雙介面可拖拉寬度比例 */
+                @media (min-width: 1024px) {
+                    .dual-left-pane { width: calc(var(--dual-left-pct, 53%) - 3px) !important; }
+                    .dual-right-pane { width: calc(100% - var(--dual-left-pct, 53%) - 3px) !important; }
+                }
+                /* 4. 可見橫向與縱向滾動條 */
+                .sched-scroll-area {
+                    scrollbar-width: thin !important;
+                    scrollbar-color: #94a3b8 #e8e3d9 !important;
+                    -ms-overflow-style: auto !important;
+                }
+                .sched-scroll-area::-webkit-scrollbar {
+                    display: block !important;
+                    height: 9px !important;
+                    width: 9px !important;
+                }
+                .sched-scroll-area::-webkit-scrollbar-track {
+                    background: #e8e3d9 !important;
+                    border-radius: 6px !important;
+                }
+                .sched-scroll-area::-webkit-scrollbar-thumb {
+                    background: #94a3b8 !important;
+                    border-radius: 6px !important;
+                    border: 2px solid #e8e3d9 !important;
+                }
+                .sched-scroll-area::-webkit-scrollbar-thumb:hover {
+                    background: #64748b !important;
+                }
+            `;
+        };
+
+        // 🌟 各崗位專屬鮮明柔和配色（左表已排格與頂部崗位畫筆共用，一眼區分不同崗位）
+        window.getLeftStationCellStyle = (locId) => {
+            const styleMap = {
+                pt_8: 'bg-[#dbeafe] hover:bg-[#bfdbfe] text-[#1e3a8a] border-[#93c5fd]', // 男廁：柔和天藍
+                pt_9: 'bg-[#ffe4e6] hover:bg-[#fecdd3] text-[#881337] border-[#fda4af]', // 女廁：柔和櫻花粉
+                pt_3: 'bg-[#ffedd5] hover:bg-[#fed7aa] text-[#7c2d12] border-[#fdba74]', // 花園仔：柔和暖橙杏
+                pt_4: 'bg-[#cffafe] hover:bg-[#a5f3fc] text-[#155e75] border-[#67e8f9]', // 魚檔：柔和湖水青藍
+                pt_1: 'bg-[#ede9fe] hover:bg-[#ddd6fe] text-[#4c1d95] border-[#c4b5fd]', // 一樓/客服室：柔和薰衣草紫
+                pt_6: 'bg-[#fef08a] hover:bg-[#fde047] text-[#713f12] border-[#facc15]', // 機動/大清：柔和暖鵝黃
+                pt_5: 'bg-[#fae8ff] hover:bg-[#f5d0fe] text-[#701a75] border-[#f0abfc]', // 整體巡邏：柔和丁香紫
+                pt_2: 'bg-[#fed7aa] hover:bg-[#fdba74] text-[#7c2d12] border-[#fb923c]'  // 一樓大清：柔和蜜桃橙
+            };
+            return styleMap[locId] || 'bg-[#e0f2fe] hover:bg-[#bae6fd] text-[#0c4a6e] border-[#7dd3fc]';
+        };
+
+window.cancelScheduleEdits = () => {
+            window._tempGridValues = {};
+            window._hasUnsavedGridEdits = false;
+            window.renderScheduleManager(true);
+            if (window.showToast) window.showToast('已取消剛剛的改動並還原');
+        };
+
+        window.setScheduleViewLayout = (mode) => {
+            window.scheduleViewLayout = mode || 'split';
+            safeSetLocal('work_cache_sched_layout', window.scheduleViewLayout);
+            window.renderScheduleManager();
+        };
+
+        // 切換左表頂部的「崗位畫筆」
+        window.selectLeftLocBrush = (locId) => {
+            window.activeLeftLocBrush = locId;
+            document.querySelectorAll('.left-loc-brush-btn').forEach(btn => {
+                const bLoc = btn.dataset.locBrush;
+                const isSel = bLoc === locId;
+                const baseCls = btn.dataset.baseCls || '';
+                const selCls = btn.dataset.selCls || '';
+                btn.className = `left-loc-brush-btn px-2 py-0.5 rounded-md text-[10px] font-black border transition-all active:scale-95 ${isSel ? selCls : baseCls}`;
+            });
+        };
+
+        // 產生左表頂部「崗位排班畫筆列」HTML（每個崗位對應專屬顏色）
+        window.buildLeftStationBrushBarHtml = () => {
+            const isCleanRole = window.currentMapRole === 'clean';
+            const cur = window.activeLeftLocBrush || 'pt_7';
+            const stationBrushes = isCleanRole
+                ? [
+                    { id: 'pt_7', label: '🟩 休息(抹綠)', base: 'bg-[#cbead6] text-[#14532d] border-[#82c59a] hover:bg-[#b5dfc4]', sel: 'bg-[#3b8a5a] text-white border-[#276741] ring-2 ring-[#82c59a] shadow-xs scale-105' },
+                    { id: 'pt_8', label: '男廁', base: 'bg-[#dbeafe] text-[#1e3a8a] border-[#93c5fd] hover:bg-[#bfdbfe]', sel: 'bg-blue-600 text-white border-blue-700 ring-2 ring-blue-300 shadow-xs scale-105' },
+                    { id: 'pt_9', label: '女廁+傷健', base: 'bg-[#ffe4e6] text-[#881337] border-[#fda4af] hover:bg-[#fecdd3]', sel: 'bg-rose-600 text-white border-rose-700 ring-2 ring-rose-300 shadow-xs scale-105' },
+                    { id: 'pt_3', label: '花園仔', base: 'bg-[#ffedd5] text-[#7c2d12] border-[#fdba74] hover:bg-[#fed7aa]', sel: 'bg-orange-600 text-white border-orange-700 ring-2 ring-orange-300 shadow-xs scale-105' },
+                    { id: 'pt_4', label: '魚檔', base: 'bg-[#cffafe] text-[#155e75] border-[#67e8f9] hover:bg-[#a5f3fc]', sel: 'bg-cyan-600 text-white border-cyan-700 ring-2 ring-cyan-300 shadow-xs scale-105' },
+                    { id: 'pt_1', label: '一樓+廁所', base: 'bg-[#ede9fe] text-[#4c1d95] border-[#c4b5fd] hover:bg-[#ddd6fe]', sel: 'bg-violet-600 text-white border-violet-700 ring-2 ring-violet-300 shadow-xs scale-105' },
+                    { id: 'pt_6', label: '機動', base: 'bg-[#fef08a] text-[#713f12] border-[#facc15] hover:bg-[#fde047]', sel: 'bg-amber-600 text-white border-amber-700 ring-2 ring-amber-300 shadow-xs scale-105' },
+                    { id: 'ERASER', label: '🧹 清除', base: 'bg-[#f8f6f0] text-pink-600 border-pink-300 hover:bg-pink-50', sel: 'bg-pink-500 text-white border-pink-600 ring-2 ring-pink-300 shadow-xs scale-105' }
+                ]
+                : [
+                    { id: 'pt_7', label: '🟩 休息(抹綠)', base: 'bg-[#cbead6] text-[#14532d] border-[#82c59a] hover:bg-[#b5dfc4]', sel: 'bg-[#3b8a5a] text-white border-[#276741] ring-2 ring-[#82c59a] shadow-xs scale-105' },
+                    { id: 'pt_3', label: '花園仔', base: 'bg-[#ffedd5] text-[#7c2d12] border-[#fdba74] hover:bg-[#fed7aa]', sel: 'bg-orange-600 text-white border-orange-700 ring-2 ring-orange-300 shadow-xs scale-105' },
+                    { id: 'pt_4', label: '魚檔', base: 'bg-[#cffafe] text-[#155e75] border-[#67e8f9] hover:bg-[#a5f3fc]', sel: 'bg-cyan-600 text-white border-cyan-700 ring-2 ring-cyan-300 shadow-xs scale-105' },
+                    { id: 'pt_5', label: '整體巡邏', base: 'bg-[#fae8ff] text-[#701a75] border-[#f0abfc] hover:bg-[#f5d0fe]', sel: 'bg-fuchsia-600 text-white border-fuchsia-700 ring-2 ring-fuchsia-300 shadow-xs scale-105' },
+                    { id: 'pt_1', label: '客服室', base: 'bg-[#ede9fe] text-[#4c1d95] border-[#c4b5fd] hover:bg-[#ddd6fe]', sel: 'bg-violet-600 text-white border-violet-700 ring-2 ring-violet-300 shadow-xs scale-105' },
+                    { id: 'pt_2', label: '一樓大清', base: 'bg-[#fed7aa] text-[#7c2d12] border-[#fb923c] hover:bg-[#fdba74]', sel: 'bg-orange-500 text-white border-orange-600 ring-2 ring-orange-300 shadow-xs scale-105' },
+                    { id: 'pt_6', label: '地面大清', base: 'bg-[#fef08a] text-[#713f12] border-[#facc15] hover:bg-[#fde047]', sel: 'bg-amber-600 text-white border-amber-700 ring-2 ring-amber-300 shadow-xs scale-105' },
+                    { id: 'ERASER', label: '🧹 清除', base: 'bg-[#f8f6f0] text-pink-600 border-pink-300 hover:bg-pink-50', sel: 'bg-pink-500 text-white border-pink-600 ring-2 ring-pink-300 shadow-xs scale-105' }
+                ];
+
+            return stationBrushes.map(b => {
+                const isSel = cur === b.id;
+                return `<button type="button" data-loc-brush="${b.id}" data-base-cls="${b.base}" data-sel-cls="${b.sel}" onclick="window.selectLeftLocBrush('${b.id}')" class="left-loc-brush-btn px-2 py-0.5 rounded-md text-[10px] font-black border transition-all active:scale-95 ${isSel ? b.sel : b.base}">${b.label}</button>`;
+            }).join('');
+        };
+
+window.syncDualTableScroll = (sourceEl, targetId) => {
+            if (window._activeDualScrollSource && window._activeDualScrollSource !== sourceEl) return;
+            const targetEl = document.getElementById(targetId);
+            if (!targetEl) return;
+            window._activeDualScrollSource = sourceEl;
+            targetEl.scrollLeft = sourceEl.scrollLeft;
+            clearTimeout(window._dualScrollUnlockTimer);
+            window._dualScrollUnlockTimer = setTimeout(() => {
+                window._activeDualScrollSource = null;
+            }, 80);
+        };
+
+        window.getShortStationLabel = (locId, fullName = '') => {
+            const shortMap = {
+                pt_8: '男廁',
+                pt_9: '女廁',
+                pt_3: '花園仔',
+                pt_4: '魚檔',
+                pt_5: '巡邏',
+                pt_1: window.currentMapRole === 'clean' ? '一樓' : '客服室',
+                pt_2: '一樓大清',
+                pt_6: window.currentMapRole === 'clean' ? '機動' : '地面大清',
+                pt_7: '休'
+            };
+            return shortMap[locId] || String(fullName || locId).slice(0, 4);
+        };
+
+        window.getMemberShiftWindowOnDate = (memberName, dStr, isCleanRole) => {
+            const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(memberName) : memberName;
+            const prof = window.getMemberProfile ? window.getMemberProfile(canon) : {};
+            const toM = (t) => {
+                const cleanT = String(t || '00:00').replace(/[^\d:：]/g, '').replace(/：/g, ':');
+                const [h, m] = cleanT.split(':').map(Number);
+                return (h || 0) * 60 + (m || 0);
+            };
+            const parsePairs = (str) => {
+                if (!str) return [];
+                const norm = String(str).replace(/[～~—–－至到]/g, '-').replace(/：/g, ':');
+                const regex = /(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g;
+                const res = [];
+                let m;
+                while ((m = regex.exec(norm)) !== null) {
+                    const s = toM(m[1]), e = toM(m[2]);
+                    if (!isNaN(s) && !isNaN(e) && e > s) res.push([s, e, `${m[1]}-${m[2]}`]);
+                }
+                return res;
+            };
+
+            const special = (prof.futureSchedules || []).find(sc => sc.date === dStr);
+            if (!isCleanRole) {
+                const dayRoster = (window.csWeeklyRosterStore && window.csWeeklyRosterStore[dStr]) || {};
+                const shiftId = dayRoster[canon] || dayRoster[memberName];
+                if (shiftId === 'OFF') {
+                    return { isOff: true, label: '🏖️ 例休', intervals: [] };
+                }
+                const presets = window.getCsShiftPresets ? window.getCsShiftPresets() : [];
+                const matchedP = presets.find(p => p.id === shiftId);
+                if (matchedP && matchedP.time) {
+                    const pairs = parsePairs(matchedP.time);
+                    if (pairs.length) return { isOff: false, label: `${matchedP.code} ${pairs[0][2]}`, intervals: pairs };
+                }
+            }
+
+            if (special && special.shiftTime) {
+                const pairs = parsePairs(special.shiftTime);
+                if (pairs.length) return { isOff: false, label: pairs.map(p => p[2]).join(','), intervals: pairs };
+            }
+            if (prof.fixedShiftTime) {
+                const pairs = parsePairs(prof.fixedShiftTime);
+                if (pairs.length) return { isOff: false, label: pairs.map(p => p[2]).join(','), intervals: pairs };
+            }
+
+            const idealRestPairs = parsePairs(prof.idealRestTime);
+            if (isCleanRole && idealRestPairs.length >= 2) {
+                return { isOff: false, label: '06:30-20:00', intervals: [[390, 1200, '06:30-20:00']] };
+            }
+
+            const defLabel = isCleanRole ? '06:30-22:00' : '07:00-22:00';
+            const defStart = isCleanRole ? 390 : 420;
+            return { isOff: false, label: defLabel, intervals: [[defStart, 1320, defLabel]] };
+        };
+
+        window.getSlotAssignedNamesLive = (dStr, locId, startStr, endStr) => {
+            const domVals = window._tempGridValues || {};
+            const cKey = `${dStr}_${locId}_${startStr}_${endStr}`;
+            if (domVals[cKey] !== undefined) {
+                return String(domVals[cKey] || '').split('\n').map(n => n.trim()).filter(Boolean).map(n => window.resolveMemberIdentity ? window.resolveMemberIdentity(n) : n);
+            }
+            const isCleanRole = window.currentMapRole === 'clean';
+            const multiStore = (isCleanRole ? cleanMultiDaySchedules : csMultiDaySchedules) || {};
+            const daySchedules = multiStore[dStr] || [];
+            const [sH, sM] = startStr.split(':').map(Number);
+            const [eH, eM] = endStr.split(':').map(Number);
+            const sNum = sH * 60 + sM, eNum = eH * 60 + eM;
+            const res = [];
+            daySchedules.forEach(s => {
+                if (s.locationId === locId) {
+                    const [sh, sm] = s.start.split(':').map(Number);
+                    const [eh, em] = s.end.split(':').map(Number);
+                    if ((sh * 60 + sm) <= sNum && (eh * 60 + em) >= eNum) {
+                        const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(s.name) : s.name;
+                        if (!res.includes(canon)) res.push(canon);
+                    }
+                }
+            });
+            return res;
+        };
+
+        window.togglePersonCellRest = (dStr, memberName, startStr, endStr, forceAction = null) => {
+            const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(memberName) : memberName;
+            window.captureAll5DayDomValues();
+            window._tempGridValues = window._tempGridValues || {};
+
+            const brushLoc = (activeGridMember === 'ERASER') ? 'ERASER' : (window.activeLeftLocBrush || 'pt_7');
+            const isCleanRole = window.currentMapRole === 'clean';
+            const rolePrefix = isCleanRole ? 'clean_' : 'cs_';
+            const checkLoc = brushLoc === 'ERASER' ? 'pt_7' : brushLoc;
+            const stateKey = `${rolePrefix}${dStr}_${checkLoc}_${startStr}`;
+            const isSplit = !isCleanRole && !!splitHoursState[stateKey];
+
+            const targetIntervals = isSplit
+                ? [[startStr, `${startStr.split(':')[0]}:30`], [`${startStr.split(':')[0]}:30`, endStr]]
+                : [[startStr, endStr]];
+
+            const curBrushNames = brushLoc === 'ERASER'
+                ? []
+                : window.getSlotAssignedNamesLive(dStr, brushLoc, targetIntervals[0][0], targetIntervals[0][1]);
+            const alreadyInBrushLoc = curBrushNames.includes(canon);
+
+            const shouldAssign = forceAction !== null
+                ? (forceAction === 'assign')
+                : (brushLoc === 'ERASER' ? false : !alreadyInBrushLoc);
+
+            const allLocIds = Object.keys(mapData.points || {});
+
+            const syncRightCellDom = (locId, s, e) => {
+                const k = `${dStr}_${locId}_${s}_${e}`;
+                const valStr = window._tempGridValues[k] || '';
+                const rightCellDisp = document.querySelector(`td[data-date="${dStr}"][data-loc="${locId}"][data-start="${s}"][data-end="${e}"] .grid-input-display, .grid-input-display[data-date="${dStr}"][data-loc="${locId}"][data-start="${s}"][data-end="${e}"]`);
+                if (rightCellDisp) {
+                    const needRows = Math.max(window.getLocMinRows(locId), valStr.split('\n').filter(Boolean).length);
+                    rightCellDisp.innerHTML = window.renderCellLinesHtml(valStr, locId, dStr, s, e, needRows);
+                    const hostTd = rightCellDisp.closest('td[data-loc][data-date]');
+                    if (isCleanRole && hostTd) {
+                        const reqMin = (locId === 'pt_4') ? 2 : ((locId === 'pt_6' || locId === 'pt_7') ? 0 : 1);
+                        const cnt = valStr.split('\n').map(x => x.trim()).filter(Boolean).length;
+                        if (cnt < reqMin) {
+                            hostTd.classList.add('border-2', 'border-red-300/90', 'bg-red-50/30');
+                            hostTd.classList.remove('bg-[#f8f6f0]');
+                        } else {
+                            hostTd.classList.remove('border-2', 'border-red-300/90', 'bg-red-50/30');
+                            hostTd.classList.add('bg-[#f8f6f0]');
+                        }
+                    }
+                    if (window.syncLocTrackRows) window.syncLocTrackRows(dStr, locId);
+                }
+            };
+
+            targetIntervals.forEach(([s, e]) => {
+                if (shouldAssign && brushLoc !== 'ERASER') {
+                    allLocIds.forEach(locId => {
+                        if (locId === brushLoc) return;
+                        const k = `${dStr}_${locId}_${s}_${e}`;
+                        const list = window.getSlotAssignedNamesLive(dStr, locId, s, e);
+                        if (list.includes(canon)) {
+                            window._tempGridValues[k] = list.filter(n => n !== canon).join('\n');
+                            syncRightCellDom(locId, s, e);
+                        }
+                    });
+                    const targetKey = `${dStr}_${brushLoc}_${s}_${e}`;
+                    const tList = window.getSlotAssignedNamesLive(dStr, brushLoc, s, e);
+                    if (!tList.includes(canon)) tList.push(canon);
+                    window._tempGridValues[targetKey] = tList.join('\n');
+                    syncRightCellDom(brushLoc, s, e);
+                } else {
+                    const locsToClear = brushLoc === 'ERASER' ? allLocIds : [brushLoc];
+                    locsToClear.forEach(locId => {
+                        const k = `${dStr}_${locId}_${s}_${e}`;
+                        const list = window.getSlotAssignedNamesLive(dStr, locId, s, e);
+                        if (list.includes(canon)) {
+                            window._tempGridValues[k] = list.filter(n => n !== canon).join('\n');
+                            syncRightCellDom(locId, s, e);
+                        }
+                    });
+                }
+            });
+
+            window._hasUnsavedGridEdits = true;
+            window.refreshPersonTableDay(dStr);
+        };
+
+        window.buildPersonTableBodyHtml = (dStr) => {
+            const isCleanRole = window.currentMapRole === 'clean';
+            const roleKey = isCleanRole ? 'clean' : 'cs';
+            const rolePrefix = isCleanRole ? 'clean_' : 'cs_';
+            const isToday = dStr === getNowInputStrs().date;
+            const curTotalMins = window.getNow().getHours() * 60 + window.getNow().getMinutes();
+
+            const rawChecked = window.getCheckedDutyList ? window.getCheckedDutyList() : (window.activeDutyMembersFilter?.[roleKey] || teamMembers);
+            const checkedList = Array.isArray(rawChecked) ? rawChecked : [...teamMembers];
+            const isFilterOn = window.dutyFilterModeEnabled?.[roleKey] !== false;
+            const visibleMembers = !isFilterOn ? [...teamMembers] : teamMembers.filter(m => checkedList.includes(m));
+
+            const maleList = visibleMembers.filter(m => (window.getMemberProfile(m)?.gender || '女') === '男');
+            const femaleList = visibleMembers.filter(m => (window.getMemberProfile(m)?.gender || '女') !== '男');
+
+            const slots = isCleanRole
+                ? (window.getCleanScheduleSlots ? window.getCleanScheduleSlots() : [])
+                : Array.from({ length: 15 }, (_, i) => ({ start: `${pad(i + 7)}:00`, end: `${pad(i + 8)}:00` }));
+
+            const allLocEntries = Object.entries(mapData.points || {});
+
+const renderMemberRow = (name) => {
+                const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(name) : name;
+                const prof = window.getMemberProfile ? window.getMemberProfile(canon) : {};
+                const isMale = (prof.gender || '女') === '男';
+                const shiftInfo = window.getMemberShiftWindowOnDate(canon, dStr, isCleanRole);
+                const isSelectedBrush = activeGridMember === canon;
+                const cardColorCls = isSelectedBrush
+                    ? (isMale ? 'bg-blue-600 text-white ring-2 ring-blue-400' : 'bg-rose-600 text-white ring-2 ring-rose-400')
+                    : (isMale ? 'bg-blue-100 hover:bg-blue-200/80 text-blue-950' : 'bg-rose-100 hover:bg-rose-200/80 text-rose-950');
+                const avatarBgCls = isMale ? 'bg-blue-600' : 'bg-rose-600';
+                const safeNameAttr = window.jsAttr(canon);
+                const rawStaffId = (prof.id || '').trim();
+                const displayStaffId = rawStaffId || (window.isStaffIdFormat(canon) ? canon.toUpperCase() : '--');
+
+                let workMins = 0, restMins = 0, missingCount = 0;
+
+                const cellsHtml = slots.map(slot => {
+                    const [sH, sM] = slot.start.split(':').map(Number);
+                    const [eH, eM] = slot.end.split(':').map(Number);
+                    const sMins = sH * 60 + sM, eMins = eH * 60 + eM;
+                    const durMins = eMins - sMins;
+                    const isCurrentSlot = isToday && curTotalMins >= sMins && curTotalMins < eMins;
+                    // 🌟 100% 還原固定半小時格寬度，絕不壓扁變形
+                    const colWidth = isCleanRole
+                        ? (slot.start === '20:00' ? 'w-[58px] min-w-[58px] max-w-[58px]' : 'w-[38px] min-w-[38px] max-w-[38px]')
+                        : 'w-[50px] min-w-[50px] max-w-[50px]';
+
+                    const inShift = !shiftInfo.isOff && shiftInfo.intervals.some(([ivS, ivE]) => sMins >= ivS && eMins <= ivE);
+
+                    let isResting = false;
+                    let restLabel = '休';
+                    const assignedLocs = [];
+                    const assignedLocIds = [];
+                    const assignedWorkLocIds = [];
+
+                    if (!isCleanRole) {
+                        const startH = slot.start.split(':')[0];
+                        const endH = slot.end.split(':')[0];
+                        const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
+
+                        allLocEntries.forEach(([locId, pt]) => {
+                            const isSplit = !!splitHoursState[`${rolePrefix}${dStr}_${locId}_${slot.start}`];
+                            if (isSplit) {
+                                const inA = window.getSlotAssignedNamesLive(dStr, locId, hA_s, hA_e).includes(canon);
+                                const inB = window.getSlotAssignedNamesLive(dStr, locId, hB_s, hB_e).includes(canon);
+                                if (inA || inB) {
+                                    assignedLocIds.push(locId);
+                                    if (locId === 'pt_7') {
+                                        isResting = true;
+                                        restLabel = (inA && inB) ? '休' : (inA ? '上休' : '下休');
+                                        restMins += (inA && inB) ? 60 : 30;
+                                    } else {
+                                        assignedWorkLocIds.push(locId);
+                                        assignedLocs.push(window.getShortStationLabel(locId, pt?.name));
+                                        workMins += (inA && inB) ? 60 : 30;
+                                    }
+                                }
+                            } else {
+                                const inFull = window.getSlotAssignedNamesLive(dStr, locId, slot.start, slot.end).includes(canon);
+                                if (inFull) {
+                                    assignedLocIds.push(locId);
+                                    if (locId === 'pt_7') {
+                                        isResting = true;
+                                        restMins += 60;
+                                    } else {
+                                        assignedWorkLocIds.push(locId);
+                                        assignedLocs.push(window.getShortStationLabel(locId, pt?.name));
+                                        workMins += 60;
+                                    }
+                                }
+                            }
+                        });
+                    } else {
+                        allLocEntries.forEach(([locId, pt]) => {
+                            const inFull = window.getSlotAssignedNamesLive(dStr, locId, slot.start, slot.end).includes(canon);
+                            if (inFull) {
+                                assignedLocIds.push(locId);
+                                if (locId === 'pt_7') {
+                                    isResting = true;
+                                    restMins += durMins;
+                                } else {
+                                    assignedWorkLocIds.push(locId);
+                                    assignedLocs.push(window.getShortStationLabel(locId, pt?.name));
+                                    workMins += durMins;
+                                }
+                            }
+                        });
+                    }
+
+                    const glowCls = isCurrentSlot ? 'now-glowing-slot' : '';
+                    const curLocStr = assignedLocIds.join(',');
+
+                    // 狀態 1：🟩 休息時間（柔和護眼抹茶綠）
+                    if (isResting) {
+                        return `<td onclick="window.togglePersonCellRest('${dStr}', '${safeNameAttr}', '${slot.start}', '${slot.end}')"
+                            data-pcell="1" data-date="${dStr}" data-member="${window.escAttr(canon)}" data-start="${slot.start}" data-end="${slot.end}" data-state="rest" data-cur-locs="${curLocStr}"
+                            class="p-0 border border-[#82c59a] bg-[#cbead6] hover:bg-[#b5dfc4] text-[#14532d] font-black text-[9.5px] text-center align-middle ${colWidth} ${glowCls} cursor-pointer select-none transition-colors" title="${canon} ${slot.start}-${slot.end} 休息中">
+                            <div class="leading-none whitespace-nowrap">${restLabel}</div>
+                        </td>`;
+                    }
+
+                    // 狀態 2：🟦 已排崗位（各崗位專屬鮮明柔和色 ＋ 8.5px 無截斷字體）
+                    if (assignedLocs.length > 0) {
+                        const locText = assignedLocs.join('+');
+                        const primaryLocId = assignedWorkLocIds[0] || 'pt_1';
+                        const stStyle = window.getLeftStationCellStyle(primaryLocId);
+                        return `<td onclick="window.togglePersonCellRest('${dStr}', '${safeNameAttr}', '${slot.start}', '${slot.end}')"
+                            data-pcell="1" data-date="${dStr}" data-member="${window.escAttr(canon)}" data-start="${slot.start}" data-end="${slot.end}" data-state="assigned" data-cur-locs="${curLocStr}"
+                            class="p-0 border ${stStyle} font-black text-[8.5px] tracking-tighter text-center align-middle ${colWidth} ${glowCls} cursor-pointer select-none transition-colors overflow-hidden" title="${canon} ${slot.start}-${slot.end} 已排：${locText}">
+                            <div class="leading-none whitespace-nowrap">${locText}</div>
+                        </td>`;
+                    }
+
+                    // 狀態 3：🟥 上班時間內但未排班（乾淨紅框配暖粉底）
+                    if (inShift) {
+                        missingCount++;
+                        return `<td onclick="window.togglePersonCellRest('${dStr}', '${safeNameAttr}', '${slot.start}', '${slot.end}')"
+                            data-pcell="1" data-date="${dStr}" data-member="${window.escAttr(canon)}" data-start="${slot.start}" data-end="${slot.end}" data-state="unassigned" data-cur-locs=""
+                            class="p-0 border-2 border-red-300/90 bg-[#f9ecec] hover:bg-[#cbead6]/60 text-center align-middle ${colWidth} ${glowCls} cursor-pointer select-none transition-colors" title="${canon} ${slot.start}-${slot.end} 未排班">&nbsp;</td>`;
+                    }
+
+                    // 狀態 4：⬜ 非上班時間（柔和純灰底）
+                    return `<td onclick="window.togglePersonCellRest('${dStr}', '${safeNameAttr}', '${slot.start}', '${slot.end}')"
+                        data-pcell="1" data-date="${dStr}" data-member="${window.escAttr(canon)}" data-start="${slot.start}" data-end="${slot.end}" data-state="off" data-cur-locs=""
+                        class="p-0 border border-slate-400/60 bg-[#cbd5e1] text-center align-middle ${colWidth} ${glowCls} cursor-pointer select-none" title="${canon} ${slot.start}-${slot.end} 非上班時間">&nbsp;</td>`;
+                }).join('');
+
+                const workH = parseFloat((workMins / 60).toFixed(1));
+                const restH = parseFloat((restMins / 60).toFixed(1));
+                const summaryBadge = shiftInfo.isOff
+                    ? `<span class="px-1 py-0.2 rounded bg-slate-200 text-slate-600 text-[8.5px] font-black leading-none inline-block">例休</span>`
+                    : (missingCount === 0 && (workH > 0 || restH > 0)
+                        ? `<span class="px-1 py-0.2 rounded bg-[#d5f0de] text-[#14532d] border border-[#86efac] text-[8.5px] font-mono font-black leading-none inline-block whitespace-nowrap">上${workH}h·休${restH}h ✔</span>`
+                        : `<span class="px-1 py-0.2 rounded bg-rose-100 text-rose-700 border border-rose-300 text-[8.5px] font-mono font-black leading-none inline-block whitespace-nowrap">漏${missingCount}格·休${restH}h</span>`);
+
+const avatarHtml = prof.avatar
+                    ? `<img src="${prof.avatar}" class="w-6 h-6 rounded-full object-cover border border-white shadow-2xs shrink-0 bg-[#fdfbf7] mt-0.5">`
+                    : `<div class="w-6 h-6 rounded-full ${avatarBgCls} text-white flex items-center justify-center text-[10px] font-black shrink-0 shadow-2xs mt-0.5">${canon.slice(0, 1)}</div>`;
+
+                // 🌟 4 行獨立結構：第1行(名稱+線條設定鍵)、第2行(編號)、第3行(上班時間)、第4行(狀態)
+                return `
+                <tr class="hover:bg-[#ede9df]/60 transition-colors">
+                    <td onclick="window.selectGridMember('${safeNameAttr}')"
+                        class="sticky left-0 z-10 px-1.5 py-1 border border-slate-300 cursor-pointer select-none shadow-[2px_0_5px_-2px_rgba(0,0,0,0.12)] w-[124px] min-w-[124px] max-w-[124px] transition-all ${cardColorCls}"
+                        title="點擊選取「${window.esc(canon)}」當右表畫筆；點右上角線條圖示可改上班/休息時間">
+                        <div class="flex items-start gap-1.5">
+                            ${avatarHtml}
+                            <div class="min-w-0 flex-1 flex flex-col text-left leading-tight space-y-0.5">
+                                <!-- 第 1 行：名稱 ＋ 線條設定鍵 -->
+                                <div class="flex items-center justify-between gap-1">
+                                    <span class="font-black text-[10.5px] truncate leading-tight">${window.esc(canon)}</span>
+                                    <button type="button" onclick="event.stopPropagation(); window.openMemberProfilePopup('${safeNameAttr}', '排班表')"
+                                        class="p-0.5 rounded hover:bg-black/10 ${isSelectedBrush ? 'text-white' : 'text-slate-600 hover:text-slate-900'} shrink-0 transition-colors" title="設定個人固定上班與休息時間">
+                                        <svg class="w-3.5 h-3.5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <circle cx="12" cy="12" r="3"></circle>
+                                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <!-- 第 2 行：員工編號 -->
+                                <div class="text-[8.5px] font-mono font-bold ${isSelectedBrush ? 'text-white/90' : 'text-slate-600'} leading-none truncate">${window.esc(displayStaffId)}</div>
+                                <!-- 第 3 行：上班時間 -->
+                                <div class="text-[8.5px] font-mono font-bold ${isSelectedBrush ? 'text-white/95' : 'text-slate-700'} leading-none truncate">${shiftInfo.label}</div>
+                                <!-- 第 4 行：排班狀態 -->
+                                <div class="pt-0.5 leading-none">${summaryBadge}</div>
+                            </div>
+                        </div>
+                    </td>
+                    ${cellsHtml}
+                </tr>`;
+            };
+
+            const totalCols = 1 + slots.length;
+            let tbodyHtml = '';
+            if (maleList.length > 0) {
+                tbodyHtml += `
+                <tr class="bg-[#e4ecf5] border-y border-blue-200">
+                    <td colspan="${totalCols}" class="sticky left-0 px-2 py-0.5 text-left text-[10px] font-black text-blue-900">
+                        👨 男性成員 (${maleList.length}人) — <span class="font-normal text-blue-700">上方選取崗位畫筆後，可直接點擊或按住滑過下方時間格排班</span>
+                    </td>
+                </tr>`;
+                tbodyHtml += maleList.map(m => renderMemberRow(m)).join('');
+            }
+            if (femaleList.length > 0) {
+                tbodyHtml += `
+                <tr class="bg-[#f5e6e8] border-y border-rose-200">
+                    <td colspan="${totalCols}" class="sticky left-0 px-2 py-0.5 text-left text-[10px] font-black text-rose-900">
+                        👩 女性成員 (${femaleList.length}人) — <span class="font-normal text-rose-700">上方選取崗位畫筆後，可直接點擊或按住滑過下方時間格排班</span>
+                    </td>
+                </tr>`;
+                tbodyHtml += femaleList.map(m => renderMemberRow(m)).join('');
+            }
+            return tbodyHtml;
+        };
+
+        window.refreshPersonTableDay = (dStr) => {
+            const tbody = document.getElementById(`person-tbody-${dStr}`);
+            if (tbody) {
+                tbody.innerHTML = window.buildPersonTableBodyHtml(dStr);
+            }
+        };
+
+        // 🌟 6. 核心渲染：100% 還原上一版半小時格數 ＋ 整體 zoom 等比縮小免拉滑桿
         window.renderScheduleManager = (skipDomCapture = false) => {
+            window.ensureScheduleScrollbarStyle();
             const list = $('scheduleManageList');
             if (!list) return;
 
-            // 🌟 防彈回鎖定步驟 A：重繪前自動記錄目前垂直捲動高度與各天表格的水平捲動位置
+            const modalEl = $('scheduleManageModal');
+            if (modalEl) modalEl.classList.add('!p-0');
+            const modalInnerCard = modalEl?.firstElementChild;
+            if (modalInnerCard) {
+                modalInnerCard.classList.add('!w-screen', '!max-w-none', '!h-screen', '!max-h-none', '!rounded-none', '!border-0');
+            }
+
             const existingScrollArea = document.getElementById('scheduleGridScrollArea');
             const savedScrollTop = existingScrollArea ? existingScrollArea.scrollTop : window._lastSchedScrollTop;
             const savedHorizScrolls = {};
             document.querySelectorAll('[id^="sched-day-card-"]').forEach(card => {
-                const hWrap = card.querySelector('.overflow-x-auto');
-                if (hWrap) savedHorizScrolls[card.id] = hWrap.scrollLeft;
+                const rWrap = card.querySelector('[id^="right-scroll-"]') || card.querySelector('[id^="left-scroll-"]') || card.querySelector('.overflow-x-auto');
+                if (rWrap) savedHorizScrolls[card.id] = rWrap.scrollLeft;
             });
 
-            // 🌟 防吃資料保護：若排班表已經在畫面上且同角色，重繪前自動把畫面上的臨時修改抓進 _tempGridValues
-const isCleanRole = window.currentMapRole === 'clean';
+            const isCleanRole = window.currentMapRole === 'clean';
             const roleKey = isCleanRole ? 'clean' : 'cs';
             if (!skipDomCapture && existingScrollArea && window._lastRenderedRoleKey === roleKey && window._tempGridValues) {
                 window.captureAll5DayDomValues();
@@ -13588,7 +14198,6 @@ const isCleanRole = window.currentMapRole === 'clean';
             window._lastRenderedRoleKey = roleKey;
 
             const rolePrefix = isCleanRole ? 'clean_' : 'cs_';
-            // 🌟 加上 || {}，防止存檔為 null 時 crash
             const multiStore = (isCleanRole ? cleanMultiDaySchedules : csMultiDaySchedules) || {};
 
             let domVals = window._tempGridValues || {};
@@ -13598,7 +14207,6 @@ const isCleanRole = window.currentMapRole === 'clean';
             const csTimeSlots = Array.from({length: 15}, (_, i) => `${pad(i + 7)}:00-${pad(i + 8)}:00`);
             const validCountSlots = ['13:00-14:00', '14:00-15:00', '19:00-20:00', '20:00-21:00', '21:00-22:00'];
 
-            // 🌟 防呆：若 mapData.points 不存在，自動抓取預設地圖點位
             if (!mapData || !mapData.points || Object.keys(mapData.points).length === 0) {
                 mapData = { points: JSON.parse(JSON.stringify(isCleanRole ? defaultCleanMapPoints : defaultMapPoints)) };
             }
@@ -13607,7 +14215,7 @@ const isCleanRole = window.currentMapRole === 'clean';
             let sortedLocs = Object.entries(mapData.points || {}).sort(([a], [b]) => (order.indexOf(a) === -1 ? 999 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 999 : order.indexOf(b)));
 
             const fiveDays = window.get5DayScheduleDates();
-            const totalColSpan = 1 + (isCleanRole ? cleanSlots.length : csTimeSlots.length);
+            const layoutMode = window.scheduleViewLayout || 'split';
 
             const fiveDayTablesHtml = fiveDays.map((dayInfo, dayIdx) => {
                 const dStr = dayInfo.dateStr;
@@ -13615,8 +14223,8 @@ const isCleanRole = window.currentMapRole === 'clean';
                 const daySchedules = multiStore[dStr] || [];
                 const prevDateStr = dayIdx > 0 ? fiveDays[dayIdx - 1].dateStr : null;
 
-                // 🌟 左側還原之前一樣（w-[68px]、p-1.5、無 pl-7）
-                let th = `<th class="sticky left-0 bg-slate-200 p-1.5 z-10 w-[68px] min-w-[68px] max-w-[68px] border border-slate-400 text-slate-900 font-black text-[10.5px] text-center align-middle whitespace-nowrap shadow-[2px_0_5px_-2px_rgba(0,0,0,0.15)]">崗位 \\ 時間</th>`;
+                let thRight = `<th class="sticky left-0 bg-[#ded8cc] p-1.5 z-10 w-[68px] min-w-[68px] max-w-[68px] border border-slate-400 text-slate-900 font-black text-[10.5px] text-center align-middle whitespace-nowrap shadow-[2px_0_5px_-2px_rgba(0,0,0,0.15)]">崗位 \\ 時間</th>`;
+                let thLeft = `<th class="sticky left-0 bg-[#ded8cc] p-1.5 z-10 w-[124px] min-w-[124px] max-w-[124px] border border-slate-400 text-slate-900 font-black text-[10.5px] text-center align-middle whitespace-nowrap shadow-[2px_0_5px_-2px_rgba(0,0,0,0.15)]">出勤人員 \\ 時間</th>`;
 
                 if (isCleanRole) {
                     cleanSlots.forEach(slot => {
@@ -13625,30 +14233,33 @@ const isCleanRole = window.currentMapRole === 'clean';
                         const isCurrentSlot = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
                         const isMajorClean = (slot.start >= '13:00' && slot.end <= '15:00') || (slot.start >= '19:00' && slot.end <= '22:00');
                         
-                        // 🌟 寬度固定：20:00 為 65px，半小時格為 40px
-                        const colWidth = slot.start === '20:00' ? 'w-[65px] min-w-[65px] max-w-[65px]' : 'w-[40px] min-w-[40px] max-w-[40px]';
+                        const colWidthRight = slot.start === '20:00' ? 'w-[65px] min-w-[65px] max-w-[65px]' : 'w-[40px] min-w-[40px] max-w-[40px]';
+                        const colWidthLeft = slot.start === '20:00' ? 'w-[58px] min-w-[58px] max-w-[58px]' : 'w-[38px] min-w-[38px] max-w-[38px]';
 
                         let headerBgClass = isCurrentSlot 
-                            ? 'now-glowing-header bg-sky-500 text-white font-black shadow-md' 
-                            : (isMajorClean ? 'bg-sky-100/90 text-sky-950 font-black border-sky-300' : 'text-slate-900 bg-slate-100');
+                            ? 'now-glowing-header bg-sky-600 text-white font-black shadow-md' 
+                            : (isMajorClean ? 'bg-[#d8e8f2] text-sky-950 font-black border-sky-300' : 'text-slate-800 bg-[#eae5db]');
 
-                        th += `<th class="p-0.5 border border-slate-300 ${colWidth} font-mono ${headerBgClass} whitespace-nowrap text-center align-middle">
+                        const thInner = `
                             ${isCurrentSlot ? '<div class="text-[8px] bg-amber-300 text-slate-950 rounded font-black leading-none mb-0.5 px-0.5 py-0.2 shadow-2xs">現在</div>' : ''}
                             <div class="text-[11px] font-black leading-tight tracking-tighter">${slot.start}</div>
-                            <div class="text-[9.5px] ${isCurrentSlot ? 'text-sky-100' : (isMajorClean ? 'text-sky-800' : 'text-slate-600')} font-bold leading-none mt-0.5">~${slot.end}</div>
-                        </th>`;
+                            <div class="text-[9.5px] ${isCurrentSlot ? 'text-sky-100' : (isMajorClean ? 'text-sky-800' : 'text-slate-600')} font-bold leading-none mt-0.5">~${slot.end}</div>`;
+
+                        thRight += `<th class="p-0.5 border border-slate-300 ${colWidthRight} font-mono ${headerBgClass} whitespace-nowrap text-center align-middle">${thInner}</th>`;
+                        thLeft += `<th class="p-0.5 border border-slate-300 ${colWidthLeft} font-mono ${headerBgClass} whitespace-nowrap text-center align-middle">${thInner}</th>`;
                     });
                 } else {
-                    // 🎧 客服員高對比清晰時間表頭
                     csTimeSlots.forEach(ts => {
                         const [tStart, tEnd] = ts.split('-');
                         const [sH, sM] = tStart.split(':').map(Number), [eH, eM] = tEnd.split(':').map(Number);
                         const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
-                        th += `<th class="p-1 border border-slate-300 w-[58px] min-w-[58px] font-mono ${isCurrentHour ? 'now-glowing-header bg-sky-500 text-white font-black shadow-md' : 'text-slate-900 bg-slate-100'} whitespace-nowrap text-center align-middle">
+                        const headerCls = isCurrentHour ? 'now-glowing-header bg-sky-600 text-white font-black shadow-md' : 'text-slate-800 bg-[#eae5db]';
+                        const thInner = `
                             ${isCurrentHour ? '<div class="flex items-center justify-center space-x-0.5 mb-0.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-300 animate-ping"></span><span class="text-[8px] bg-amber-300 text-slate-950 px-1 py-0.2 rounded font-black tracking-tight leading-none shadow-2xs">現在</span></div>' : ''}
                             <div class="text-[11px] font-black leading-tight tracking-tight">${tStart}</div>
-                            <div class="text-[9.5px] ${isCurrentHour ? 'text-sky-100' : 'text-slate-600'} font-extrabold leading-none mt-0.5">~${tEnd}</div>
-                        </th>`;
+                            <div class="text-[9.5px] ${isCurrentHour ? 'text-sky-100' : 'text-slate-600'} font-extrabold leading-none mt-0.5">~${tEnd}</div>`;
+                        thRight += `<th class="p-1 border border-slate-300 w-[58px] min-w-[58px] font-mono ${headerCls} whitespace-nowrap text-center align-middle">${thInner}</th>`;
+                        thLeft += `<th class="p-1 border border-slate-300 w-[50px] min-w-[50px] font-mono ${headerCls} whitespace-nowrap text-center align-middle">${thInner}</th>`;
                     });
                 }
 
@@ -13657,38 +14268,32 @@ const isCleanRole = window.currentMapRole === 'clean';
 
                 sortedLocs.forEach(([locId, pt], locIdx) => {
                     const isLastLoc = locIdx === sortedLocs.length - 1;
-                    // 🌟 核心修復：分隔列改為逐格渲染，讓當前時間欄位的左右藍色邊框連續貫穿不中斷！
                     const curCategoryGroup = window.getLocCategoryGroup(locId, isCleanRole);
-                if (prevCategoryGroup !== null && prevCategoryGroup !== curCategoryGroup) {
-                    let sepCells = `<td class="sticky left-0 z-10 bg-[#f0ebe1] p-0 h-[7px] border-y border-slate-300/90"></td>`;
-                    if (isCleanRole) {
-                        cleanSlots.forEach(slot => {
-                            const [sH, sM] = slot.start.split(':').map(Number);
-                            const [eH, eM] = slot.end.split(':').map(Number);
-                            const isCurrentSlot = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
-                            const isLastLoc = locIdx === sortedLocs.length - 1;
-                            const bottomClass = isCurrentSlot && isLastLoc ? 'slot-table-bottom' : '';
-
-                            sepCells += `<td class="p-0 h-[7px] border-y border-slate-300/90 ${isCurrentSlot ? `now-glowing-slot ${bottomClass} bg-sky-100/50` : 'bg-[#f0ebe1]/85'}"></td>`;
-                        });
-                    } else {
-                        csTimeSlots.forEach(ts => {
-                            const [sH, sM] = ts.split('-')[0].split(':').map(Number), [eH, eM] = ts.split('-')[1].split(':').map(Number);
-                            const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
-                            const isLastLoc = locIdx === sortedLocs.length - 1;
-                            const bottomClass = isCurrentHour && isLastLoc ? 'slot-table-bottom' : '';
-
-                            sepCells += `<td class="p-0 h-[7px] border-y border-slate-300/90 ${isCurrentHour ? `now-glowing-slot ${bottomClass} bg-sky-100/50` : 'bg-[#f0ebe1]/85'}"></td>`;
-                        });
+                    if (prevCategoryGroup !== null && prevCategoryGroup !== curCategoryGroup) {
+                        let sepCells = `<td class="sticky left-0 z-10 bg-[#e6e1d6] p-0 h-[7px] border-y border-slate-300/90"></td>`;
+                        if (isCleanRole) {
+                            cleanSlots.forEach(slot => {
+                                const [sH, sM] = slot.start.split(':').map(Number);
+                                const [eH, eM] = slot.end.split(':').map(Number);
+                                const isCurrentSlot = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
+                                const bottomClass = isCurrentSlot && isLastLoc ? 'slot-table-bottom' : '';
+                                sepCells += `<td class="p-0 h-[7px] border-y border-slate-300/90 ${isCurrentSlot ? `now-glowing-slot ${bottomClass} bg-sky-100/50` : 'bg-[#e6e1d6]'}"></td>`;
+                            });
+                        } else {
+                            csTimeSlots.forEach(ts => {
+                                const [sH, sM] = ts.split('-')[0].split(':').map(Number), [eH, eM] = ts.split('-')[1].split(':').map(Number);
+                                const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
+                                const bottomClass = isCurrentHour && isLastLoc ? 'slot-table-bottom' : '';
+                                sepCells += `<td class="p-0 h-[7px] border-y border-slate-300/90 ${isCurrentHour ? `now-glowing-slot ${bottomClass} bg-sky-100/50` : 'bg-[#e6e1d6]'}"></td>`;
+                            });
+                        }
+                        rows += `<tr class="h-[7px] pointer-events-none select-none">${sepCells}</tr>`;
                     }
-                    rows += `<tr class="h-[7px] pointer-events-none select-none">${sepCells}</tr>`;
-                }
                     prevCategoryGroup = curCategoryGroup;
 
-const minRows = window.getLocMinRows(locId);
+                    const minRows = window.getLocMinRows(locId);
                     const minH = minRows * 22;
 
-// 🌟 加上 pt?.name 保底，避免 pt.name 為空時拋出 uncaught error
                     const ptNameStr = (pt && pt.name) ? String(pt.name) : (locId || '崗位');
                     let formattedRoleName = ptNameStr;
                     if (ptNameStr.includes('花園仔') && ptNameStr.includes('男廁')) {
@@ -13701,7 +14306,6 @@ const minRows = window.getLocMinRows(locId);
                         formattedRoleName = ptNameStr.replace(/\s*大清點/, '<br>大清點');
                     }
 
-                    // 🌟 還原之前一樣：w-[64px]、p-0.5，不加 pl-7
                     rows += `<tr><td class="sticky left-0 ${getLocColorClass(locId)} border border-slate-300 font-black text-[10px] p-0.5 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center align-middle break-words leading-tight w-[64px] min-w-[64px] max-w-[64px]">${formattedRoleName}</td>`;
 
                     if (isCleanRole) {
@@ -13712,8 +14316,6 @@ const minRows = window.getLocMinRows(locId);
                             const isMajorClean = (slot.start >= '13:00' && slot.end <= '15:00') || (slot.start >= '19:00' && slot.end <= '22:00');
 
                             const cellSlotClass = isCurrentSlot ? 'now-glowing-slot bg-sky-50/30 border border-slate-300' : 'border border-slate-300';
-                            
-                            // 🌟 寬度精確鎖定：半小時格固定為 40px，20:00 格固定為 65px
                             const colWidth = slot.start === '20:00' ? 'w-[65px] min-w-[65px] max-w-[65px]' : 'w-[40px] min-w-[40px] max-w-[40px]';
 
                             const cKey = `${dStr}_${locId}_${slot.start}_${slot.end}`;
@@ -13726,9 +14328,7 @@ const minRows = window.getLocMinRows(locId);
                                     if (s.locationId === locId) {
                                         const [sh, sm] = s.start.split(':').map(Number);
                                         const [eh, em] = s.end.split(':').map(Number);
-                                        const schedStart = sh * 60 + sm;
-                                        const schedEnd = eh * 60 + em;
-                                        if (schedStart <= sNum && schedEnd >= eNum) {
+                                        if ((sh * 60 + sm) <= sNum && (eh * 60 + em) >= eNum) {
                                             names.push(s.name);
                                         }
                                     }
@@ -13736,20 +14336,14 @@ const minRows = window.getLocMinRows(locId);
                                 val = names.join('\n');
                             }
 
-                            // 🌟 重新定義各崗位缺人最低門檻：魚檔至少2人、機動至少0人(不警示)、休息0人、其餘常態崗位至少1人
                             let requiredMinStaff = 1;
-                            if (locId === 'pt_4') {
-                                requiredMinStaff = 2; // 魚檔：最少要有 2 個人
-                            } else if (locId === 'pt_6' || locId === 'pt_7') {
-                                requiredMinStaff = 0; // 機動與休息：最少可以 0 人（不亮紅框）
-                            }
+                            if (locId === 'pt_4') requiredMinStaff = 2;
+                            else if (locId === 'pt_6' || locId === 'pt_7') requiredMinStaff = 0;
 
-                            // 計算該格實際填寫的人數
                             const filledNamesCount = String(val || '').split('\n').map(n => n.trim()).filter(Boolean).length;
                             const isUnderstaffed = filledNamesCount < requiredMinStaff;
 
-                            // 🌟 柔和淺紅框樣式：border-red-300 + 微淡紅底 bg-red-50/30（視覺不刺眼）
-const defaultBg = isMajorClean ? 'bg-sky-50/60' : 'bg-white';
+                            const defaultBg = isMajorClean ? 'bg-sky-50/50' : 'bg-[#f8f6f0]';
                             const alertBorderClass = isUnderstaffed 
                                 ? 'border-2 border-red-300/90 bg-red-50/30' 
                                 : `${cellSlotClass} ${defaultBg}`;
@@ -13758,20 +14352,18 @@ const defaultBg = isMajorClean ? 'bg-sky-50/60' : 'bg-white';
                             rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${slot.start}', '${slot.end}')" class="p-0 ${alertBorderClass} relative align-top ${colWidth} cursor-pointer select-none transition-colors" data-date="${dStr}" data-loc="${locId}" data-start="${slot.start}" data-end="${slot.end}"><div class="grid-input-display w-full flex flex-col justify-start overflow-hidden pointer-events-auto">${htmlFull}</div></td>`;
                         });
                     } else {
-                        // 🎧 客服原版單元格生成 (保持 15 小時格與拆分功能)
                         csTimeSlots.forEach(ts => {
                             const [tStart, tEnd] = ts.split('-');
                             const [sH, sM] = tStart.split(':').map(Number), [eH, eM] = tEnd.split(':').map(Number);
                             const isCurrentHour = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
                             const isHalfAActive = isCurrentHour && (curTotalMins < (sH * 60 + sM) + 30);
                             const isHalfBActive = isCurrentHour && (curTotalMins >= (sH * 60 + sM) + 30);
-const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border border-slate-300' : 'border border-slate-300';
+                            const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border border-slate-300' : 'border border-slate-300';
 
                             if ((locId === 'pt_2' || locId === 'pt_6') && !validCountSlots.includes(ts)) {
-                                // 補上 data-loc、data-date 與 hidden 容器，確保 captureAll5DayDomValues 能採集既有排班不遺失
                                 const cKey = `${dStr}_${locId}_${tStart}_${tEnd}`;
                                 const existingVal = domVals[cKey] || '';
-                                rows += `<td class="p-0 border border-slate-300 bg-slate-200/60 pointer-events-none align-middle w-[52px] min-w-[52px]" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display hidden">${existingVal}</div><div class="w-full h-full" style="min-height:${minH}px"></div></td>`;
+                                rows += `<td class="p-0 border border-slate-300 bg-slate-300/60 pointer-events-none align-middle w-[52px] min-w-[52px]" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display hidden">${existingVal}</div><div class="w-full h-full" style="min-height:${minH}px"></div></td>`;
                             } else {
                                 const [startH] = tStart.split(':'), [endH] = tEnd.split(':');
                                 const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
@@ -13783,7 +14375,6 @@ const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border bord
                                 const namesHalfA = getNamesForHalf(hA_s, hA_e);
                                 const namesHalfB = getNamesForHalf(hB_s, hB_e);
                                 const stateKey = `${rolePrefix}${dStr}_${locId}_${tStart}`;
-                                // 修復：渲染時不再偷偷寫入持久狀態；沒有記錄時只在畫面上顯示拆分。
                                 const _storedSplit = splitHoursState[stateKey];
                                 const isSplit = _storedSplit !== undefined ? !!_storedSplit : (namesHalfA !== namesHalfB);
 
@@ -13796,7 +14387,7 @@ const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border bord
                                     const htmlA = window.renderCellLinesHtml(cA, locId, dStr, hA_s, hA_e);
                                     const htmlB = window.renderCellLinesHtml(cB, locId, dStr, hB_s, hB_e);
 
-                                    rows += `<td class="p-0 ${cellSlotClass} bg-white relative align-top w-[52px] min-w-[52px]">
+                                    rows += `<td class="p-0 ${cellSlotClass} bg-[#f8f6f0] relative align-top w-[52px] min-w-[52px]">
                                         <div class="flex w-full h-full">
                                             <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hA_s}', '${hA_e}')" class="grid-input-display flex-1 min-w-[26px] border-r border-slate-300 flex flex-col justify-start ${isHalfAActive ? 'now-glowing-sub ring-1 ring-sky-400' : ''} cursor-pointer select-none overflow-hidden" data-date="${dStr}" data-loc="${locId}" data-start="${hA_s}" data-end="${hA_e}">${htmlA}</div>
                                             <div onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${hB_s}', '${hB_e}')" class="grid-input-display flex-1 min-w-[26px] flex flex-col justify-start ${isHalfBActive ? 'now-glowing-sub ring-1 ring-sky-400' : ''} cursor-pointer select-none overflow-hidden" data-date="${dStr}" data-loc="${locId}" data-start="${hB_s}" data-end="${hB_e}">${htmlB}</div>
@@ -13815,7 +14406,7 @@ const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border bord
                                     }
 
                                     const htmlFull = window.renderCellLinesHtml(val, locId, dStr, tStart, tEnd);
-                                    rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} bg-white relative align-top w-[52px] min-w-[52px] cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display w-full flex flex-col justify-start overflow-hidden pointer-events-auto">${htmlFull}</div></td>`;
+                                    rows += `<td onclick="window.handleCellMobileClick(this, '${dStr}', '${locId}', '${tStart}', '${tEnd}')" class="p-0 ${cellSlotClass} bg-[#f8f6f0] relative align-top w-[52px] min-w-[52px] cursor-pointer select-none" data-date="${dStr}" data-loc="${locId}" data-start="${tStart}" data-end="${tEnd}"><div class="grid-input-display w-full flex flex-col justify-start overflow-hidden pointer-events-auto">${htmlFull}</div></td>`;
                                 }
                             }
                         });
@@ -13825,51 +14416,89 @@ const cellSlotClass = isCurrentHour ? 'now-glowing-slot bg-sky-50/30 border bord
 
                 const badgeStyle = isToday
                     ? 'bg-blue-600 text-white shadow-xs'
-                    : (dayInfo.offset < 0 ? 'bg-slate-200 text-slate-700' : 'bg-amber-500 text-white shadow-xs');
+                    : (dayInfo.offset < 0 ? 'bg-slate-300 text-slate-700' : 'bg-amber-500 text-white shadow-xs');
                 const cardBorderStyle = isToday
-                    ? 'border-2 border-blue-500 ring-2 ring-blue-200/60 shadow-md'
-                    : (dayInfo.offset < 0 ? 'border border-slate-200 opacity-95' : 'border border-amber-300 shadow-sm');
+                    ? 'border-2 border-blue-500 ring-2 ring-blue-200/50 shadow-md'
+                    : (dayInfo.offset < 0 ? 'border border-[#d5cfc2] opacity-95' : 'border border-amber-300 shadow-sm');
                 const headerBgStyle = isToday
-                    ? 'bg-blue-50/90 border-b border-blue-200'
-                    : (dayInfo.offset < 0 ? 'bg-slate-100/80 border-b border-slate-200' : 'bg-amber-50/70 border-b border-amber-200');
+                    ? 'bg-[#e3edf7] border-b border-blue-200'
+                    : (dayInfo.offset < 0 ? 'bg-[#e6e1d6] border-b border-[#d5cfc2]' : 'bg-[#f5ebd6] border-b border-amber-200');
+
+                const showPersonPane = layoutMode === 'split' || layoutMode === 'person';
+                const showStationPane = layoutMode === 'split' || layoutMode === 'station';
+                const personRowsHtml = showPersonPane ? window.buildPersonTableBodyHtml(dStr) : '';
 
                 return `
-                <div id="sched-day-card-${dStr}" class="bg-white rounded-xl mb-3 overflow-hidden flex flex-col relative w-full ${cardBorderStyle}">
+                <div id="sched-day-card-${dStr}" class="bg-[#f4f1ea] rounded-xl mb-3 overflow-hidden flex flex-col relative w-full ${cardBorderStyle}">
                     <div class="px-2.5 py-1.5 ${headerBgStyle} flex flex-wrap justify-between items-center gap-2 shrink-0">
                         <div class="flex items-center space-x-2">
                             <span class="px-2 py-0.5 rounded-md text-[11px] font-black tracking-wide ${badgeStyle}">${dayInfo.relLabel}</span>
                             <span class="text-xs font-mono font-black text-slate-800">${dayInfo.dateStr} (${dayInfo.weekDay})</span>
-                            ${isToday ? '<span class="text-[10px] font-black text-blue-600 bg-white px-1.5 py-0.2 rounded border border-blue-200">📍 地圖即時生效中</span>' : ''}
+                            ${isToday ? '<span class="text-[10px] font-black text-blue-700 bg-[#f8f6f0] px-1.5 py-0.2 rounded border border-blue-200">📍 地圖即時生效中</span>' : ''}
                         </div>
-                       <div class="flex items-center gap-1.5 flex-wrap">
-    <!-- 🌟 新增：導出全表按鈕 -->
-    <button type="button" onclick="window.exportDayFullScheduleText('${dStr}')" class="bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出整張橫向排班表文字"><i data-lucide="table" class="w-3 h-3 mr-1"></i>導出全表</button>
-    <button type="button" onclick="window.exportDayBreakScheduleText('${dStr}')" class="bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出當日同事休息時間公告"><i data-lucide="coffee" class="w-3 h-3 mr-1"></i>導出休息</button>
-    <button type="button" onclick="window.autoAssignDaySchedule('${dStr}')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="依出勤名單與每人優先級自動排班"><i data-lucide="sparkles" class="w-3 h-3 mr-1"></i>智慧排班</button>
-                            ${prevDateStr ? `<button type="button" onclick="window.copyPrevDaySchedule('${dStr}', '${prevDateStr}')" class="bg-white hover:bg-blue-50 text-blue-600 font-bold text-[10px] px-2 py-1 rounded-lg border border-blue-200 shadow-2xs transition-colors flex items-center active:scale-95" title="複製前一日排班"><i data-lucide="copy" class="w-3 h-3 mr-1"></i>複製前日</button>` : ''}
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                            <button type="button" onclick="window.exportDayFullScheduleText('${dStr}')" class="bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出整張橫向排班表文字"><i data-lucide="table" class="w-3 h-3 mr-1"></i>導出全表</button>
+                            <button type="button" onclick="window.exportDayBreakScheduleText('${dStr}')" class="bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出當日同事休息時間公告"><i data-lucide="coffee" class="w-3 h-3 mr-1"></i>導出休息</button>
+                            <button type="button" onclick="window.autoAssignDaySchedule('${dStr}')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="依出勤名單與每人優先級自動排班"><i data-lucide="sparkles" class="w-3 h-3 mr-1"></i>智慧排班</button>
+                            ${prevDateStr ? `<button type="button" onclick="window.copyPrevDaySchedule('${dStr}', '${prevDateStr}')" class="bg-[#f8f6f0] hover:bg-blue-50 text-blue-600 font-bold text-[10px] px-2 py-1 rounded-lg border border-blue-200 shadow-2xs transition-colors flex items-center active:scale-95" title="複製前一日排班"><i data-lucide="copy" class="w-3 h-3 mr-1"></i>複製前日</button>` : ''}
                             <button type="button" onclick="window.triggerDayCSVImport('${dStr}')" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[10px] px-2 py-1 rounded-lg border border-emerald-200 transition-colors flex items-center active:scale-95"><i data-lucide="file-up" class="w-3 h-3 mr-1"></i>匯入此日</button>
-                            <button type="button" onclick="window.clearSingleDaySchedule('${dStr}')" class="bg-white hover:bg-red-50 text-red-500 font-bold text-[10px] px-2 py-1 rounded-lg border border-red-200 transition-colors flex items-center active:scale-95"><i data-lucide="trash-2" class="w-3 h-3 mr-0.5"></i>清空此日</button>
+                            <button type="button" onclick="window.clearSingleDaySchedule('${dStr}')" class="bg-[#f8f6f0] hover:bg-red-50 text-red-500 font-bold text-[10px] px-2 py-1 rounded-lg border border-red-200 transition-colors flex items-center active:scale-95"><i data-lucide="trash-2" class="w-3 h-3 mr-0.5"></i>清空此日</button>
                         </div>
                     </div>
-                    <div class="overflow-x-auto w-full">
-                        <table class="w-full text-center border-collapse">
-                            <thead><tr>${th}</tr></thead>
-                            <tbody>${rows}</tbody>
-                        </table>
+
+<div class="dual-split-container flex flex-col lg:flex-row divide-y lg:divide-y-0 w-full" style="--dual-left-pct: ${window.dualSplitLeftPct || 53}%;">
+                        ${showPersonPane ? `
+                        <div class="${layoutMode === 'split' ? 'dual-left-pane' : 'w-full'} flex flex-col min-w-0 bg-[#f4f1ea]">
+                            <div class="px-2 py-1 bg-[#eae5db] border-b border-slate-300 flex flex-wrap items-center justify-between gap-1 shrink-0">
+                                <div class="flex items-center gap-1 flex-wrap">
+                                    <span class="text-[9.5px] font-black text-slate-700 mr-0.5">👈 點選崗位排入左表：</span>
+                                    ${window.buildLeftStationBrushBarHtml()}
+                                </div>
+                                <div class="flex items-center gap-1.5 text-[9px] font-bold text-slate-600 shrink-0">
+                                    <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-[#cbead6] border border-[#82c59a] inline-block"></i>休</span>
+                                    <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-sky-200 border border-sky-400 inline-block"></i>已排</span>
+                                    <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-[#f9ecec] border-2 border-red-300 inline-block"></i>未排</span>
+                                    <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-[#cbd5e1] border border-slate-400 inline-block"></i>非上班</span>
+                                </div>
+                            </div>
+<div id="left-scroll-${dStr}" onscroll="window.syncDualTableScroll(this, 'right-scroll-${dStr}')" class="sched-scroll-area overflow-x-auto w-full pb-0.5">
+                                <table class="w-full text-center border-collapse" style="${layoutMode === 'split' ? 'zoom: 0.85;' : ''}">
+                                    <thead><tr>${thLeft}</tr></thead>
+                                    <tbody id="person-tbody-${dStr}">${personRowsHtml}</tbody>
+                                </table>
+                            </div>
+                        </div>` : ''}
+
+                        ${layoutMode === 'split' ? `
+                        <div onmousedown="window.startDualPaneResize(event)" ontouchstart="window.startDualPaneResize(event)" title="按住左右拖動可調節左／右介面寬度"
+                            class="hidden lg:flex w-[6px] shrink-0 bg-slate-300 hover:bg-indigo-500 active:bg-indigo-600 cursor-col-resize items-center justify-center transition-colors select-none group">
+                            <div class="w-[2px] h-8 rounded-full bg-slate-500 group-hover:bg-white"></div>
+                        </div>` : ''}
+
+                        ${showStationPane ? `
+                        <div class="${layoutMode === 'split' ? 'dual-right-pane' : 'w-full'} flex flex-col min-w-0 bg-[#f4f1ea]">
+                            ${layoutMode === 'split' ? `
+                            <div class="px-2 py-1 bg-[#e4e8f2] border-b border-indigo-200 text-indigo-950 text-[9.5px] font-black flex items-center justify-between shrink-0">
+                                <span>📍 崗位排班表 (一崗一行 · 點左表人名當畫筆，即可點此處排班)</span>
+                            </div>` : ''}
+                            <div id="right-scroll-${dStr}" onscroll="window.syncDualTableScroll(this, 'left-scroll-${dStr}')" class="sched-scroll-area overflow-x-auto w-full pb-0.5">
+                                <table class="w-full text-center border-collapse" style="${layoutMode === 'split' ? 'zoom: 0.75;' : ''}">
+                                    <thead><tr>${thRight}</tr></thead>
+                                    <tbody>${rows}</tbody>
+                                </table>
+                            </div>
+                        </div>` : ''}
                     </div>
                 </div>`;
             }).join('');
 
-          // 計算當日出勤過濾名單（嚴格依照「🎯 僅顯示出勤 / 👁️ 顯示全部」切換鍵決定！）
-const rawChecked = window.getCheckedDutyList ? window.getCheckedDutyList() : (window.activeDutyMembersFilter?.[roleKey] || teamMembers);
-            // 🌟 強制確保 checkedList 必定為陣列
+            const rawChecked = window.getCheckedDutyList ? window.getCheckedDutyList() : (window.activeDutyMembersFilter?.[roleKey] || teamMembers);
             const checkedList = Array.isArray(rawChecked) ? rawChecked : [...teamMembers];
             const isFilterOn = window.dutyFilterModeEnabled?.[roleKey] !== false;
             const visibleMembers = !isFilterOn
                 ? [...teamMembers]
                 : teamMembers.filter(m => checkedList.includes(m));
 
-            // 🌟 區分「上男、下女」單列名單
             const maleVisible = visibleMembers.filter(m => (window.getMemberProfile(m)?.gender || '女') === '男');
             const femaleVisible = visibleMembers.filter(m => (window.getMemberProfile(m)?.gender || '女') !== '男');
 
@@ -13896,15 +14525,21 @@ const rawChecked = window.getCheckedDutyList ? window.getCheckedDutyList() : (wi
                 : null;
 
             list.innerHTML = `
-            <div class="relative flex flex-col w-full h-full overflow-hidden bg-[#fdfbf7]">
+            <div class="relative flex flex-col w-full h-full overflow-hidden bg-[#e8e3d9]">
                 
-                <!-- 🌟 1. 獨立固定頂部控制列（不會隨捲動被表格穿過） -->
-                <div class="shrink-0 z-40 px-3 py-2 bg-white border-b-2 border-slate-200 shadow-xs flex flex-wrap justify-between items-center gap-2 w-full">
-                    <div class="flex items-center gap-2 flex-wrap">
-                        <div class="flex bg-slate-200 p-0.5 rounded-lg border border-slate-300 shadow-inner">
-                            <button type="button" onclick="window.toggleMapRoleMode('cs'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${!isCleanRole ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧑‍💻 客服排班</button>
-                            <button type="button" onclick="window.toggleMapRoleMode('clean'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${isCleanRole ? 'bg-white text-teal-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧹 清潔排班</button>
+                <div class="shrink-0 z-40 px-3 py-1.5 bg-[#f2efe9] border-b border-[#d5cfc2] shadow-xs flex flex-wrap justify-between items-center gap-2 w-full">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <div class="flex bg-[#ded8cc] p-0.5 rounded-lg border border-slate-300 shadow-inner">
+                            <button type="button" onclick="window.toggleMapRoleMode('cs'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${!isCleanRole ? 'bg-[#faf8f3] text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧑‍💻 客服排班</button>
+                            <button type="button" onclick="window.toggleMapRoleMode('clean'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${isCleanRole ? 'bg-[#faf8f3] text-teal-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧹 清潔排班</button>
                         </div>
+
+                        <div class="flex bg-indigo-50/80 p-0.5 rounded-lg border border-indigo-200 shadow-inner">
+                            <button type="button" onclick="window.setScheduleViewLayout('split')" class="px-2.5 py-1 text-[10.5px] font-black rounded-md transition-all ${layoutMode === 'split' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}">🌗 左右雙介面</button>
+                            <button type="button" onclick="window.setScheduleViewLayout('person')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all ${layoutMode === 'person' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}">👤 只看人員</button>
+                            <button type="button" onclick="window.setScheduleViewLayout('station')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all ${layoutMode === 'station' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}">📍 只看崗位</button>
+                        </div>
+
                         <button type="button" onclick="document.getElementById('sched-day-card-${getNowInputStrs().date}')?.scrollIntoView({ behavior: 'smooth', block: 'center' })" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-2.5 py-1 rounded-lg text-[10.5px] font-black active:scale-95">📍 定位今日</button>
                         
                         ${!isCleanRole ? `
@@ -13913,77 +14548,64 @@ const rawChecked = window.getCheckedDutyList ? window.getCheckedDutyList() : (wi
                             <span>7日班次更表</span>
                         </button>` : ''}
                         
-                      <!-- 🌟 外地人專屬：名稱 / 員工編號 顯示轉換按鈕 -->
-                        <button type="button" id="btnToggleNonLocalDisp" onclick="window.toggleNonLocalDisplayMode()" class="px-2.5 py-1 rounded-lg text-[10.5px] font-black border transition-colors flex items-center gap-1 shadow-2xs ${window.nonLocalDisplayMode === 'id' ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300'}" title="點擊切換排班表上的外地人員顯示格式（本地人維持顯示姓名）">
+                        <button type="button" id="btnToggleNonLocalDisp" onclick="window.toggleNonLocalDisplayMode()" class="px-2.5 py-1 rounded-lg text-[10.5px] font-black border transition-colors flex items-center gap-1 shadow-2xs ${window.nonLocalDisplayMode === 'id' ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300'}" title="點擊切換排班表上的外地人員顯示格式">
                             <i data-lucide="repeat" class="w-3 h-3"></i>
                             <span>外地人：${window.nonLocalDisplayMode === 'id' ? '顯示編號' : '顯示名稱'}</span>
                         </button>
 
-                        <!-- 顯示目前選取的人員或工具（移除 animate-pulse 避免閃爍） -->
-                        <div id="activeMemberBadge" class="text-[10.5px] font-black px-2.5 py-1 rounded-lg border ${!activeGridMember ? 'bg-slate-50 text-slate-400 border-slate-200 font-bold' : (activeGridMember === 'ERASER' ? 'bg-pink-50 text-pink-600 border-pink-200' : (activeGridMember === 'SPLITTER' ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : `${curActiveCol.bg} ${curActiveCol.text}${curActiveCol.border} shadow-2xs`))}">
-                            ${!activeGridMember ? '尚未選取工具/人員 (移至左側邊緣展開選單)' : (activeGridMember === 'ERASER' ? '🧹 目前工具：橡皮擦模式' : (activeGridMember === 'SPLITTER' ? '✂️ 目前工具：拆分/合併模式' : `當前選取：${activeGridMember}`))}
+                        <button type="button" onclick="window.selectGridMember('ERASER')" class="px-2 py-1 rounded-lg text-[10.5px] font-black border transition-all ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-xs' : 'bg-pink-50 text-pink-600 border-pink-200 hover:bg-pink-100'}">🧹 橡皮擦</button>
+                        ${!isCleanRole ? `<button type="button" onclick="window.selectGridMember('SPLITTER')" class="px-2 py-1 rounded-lg text-[10.5px] font-black border transition-all ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs' : 'bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100'}">✂️ 拆半格</button>` : ''}
+
+                        <div id="activeMemberBadge" class="text-[10.5px] font-black px-2.5 py-1 rounded-lg border ${!activeGridMember ? 'bg-[#e6e1d6] text-slate-600 border-slate-300 font-bold' : (activeGridMember === 'ERASER' ? 'bg-pink-50 text-pink-600 border-pink-200' : (activeGridMember === 'SPLITTER' ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : `${curActiveCol.bg} ${curActiveCol.text} ${curActiveCol.border} shadow-2xs`))}">
+                            ${!activeGridMember ? '右表畫筆：點左表人名即可選取' : (activeGridMember === 'ERASER' ? '🧹 目前工具：橡皮擦模式' : (activeGridMember === 'SPLITTER' ? '✂️ 目前工具：拆分/合併模式' : `右表畫筆：${activeGridMember}`))}
                         </div>
                     </div>
 
                     <div class="flex items-center gap-1.5">
                         <input type="file" id="scheduleExcelImportInput" accept=".csv" class="hidden" onchange="window.importScheduleCSV(event)">
-<!-- 🌟 新增：打開看板按鈕 -->
                         <button type="button" onclick="window.openPositionPriorityModal()" class="text-[11px] font-black transition-colors px-2.5 py-1.5 rounded-lg border shadow-2xs bg-sky-50 hover:bg-sky-100 text-sky-800 border-sky-300 flex items-center active:scale-95" title="以拖曳看板調整人員崗位優先順位">
                             <i data-lucide="kanban" class="w-3.5 h-3.5 mr-1 text-sky-600"></i>優先度看板
                         </button>
                         <button type="button" onclick="window.openMemberRosterModal()" class="text-[11px] font-black transition-colors px-3 py-1.5 rounded-lg border shadow-2xs bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 flex items-center active:scale-95">
                             <i data-lucide="users" class="w-3.5 h-3.5 mr-1 text-amber-600"></i>編輯名單 (${visibleMembers.length}/${teamMembers.length})
                         </button>
-                        <button type="button" onclick="window.purgeGhostData()" class="bg-purple-50 hover:bg-purple-100 text-purple-700 font-black text-[10px] px-2.5 py-1.5 rounded-lg border border-purple-300 transition-colors flex items-center active:scale-95 shadow-2xs" title="一鍵清除不在名單內的幽靈人名與重複分身"><i data-lucide="sparkles" class="w-3 h-3 mr-1 text-purple-600"></i>👻 清幽靈</button>
-                        <button onclick="window.clearAllSchedules()" class="bg-red-50 hover:bg-red-100 text-red-600 font-bold text-[10px] px-2.5 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center"><i data-lucide="trash-2" class="w-3 h-3 mr-1"></i>5日全清</button>
+<button type="button" onclick="window.cancelScheduleEdits()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10.5px] px-2.5 py-1.5 rounded-lg border border-slate-300 transition-colors flex items-center active:scale-95" title="放棄尚未儲存的修改並還原"><i data-lucide="undo-2" class="w-3.5 h-3.5 mr-1"></i>取消</button>
                         <button onclick="window.saveGridSchedule()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg shadow-sm transition-colors active:scale-95 flex items-center"><i data-lucide="save" class="w-3.5 h-3.5 mr-1"></i>儲存 5 日排班</button>
                     </div>
                 </div>
 
-                <!-- 🌟 2. 下方主工作區：左側懸浮人員抽屜 + 右側獨立捲動表格 -->
                 <div class="relative flex-1 min-h-0 flex overflow-hidden">
-                    
-                    <!-- 👈 左方直行懸浮板塊（滑鼠移向自動展開、點擊亦可開關，絕對定位 z-50 不影響表格寬度、不用讓位） -->
                     <div id="schedLeftDrawer"
                          onmouseenter="this.classList.remove('-translate-x-[calc(100%-22px)]'); this.classList.add('translate-x-0');"
                          onmouseleave="if(!this.dataset.pinned){ this.classList.add('-translate-x-[calc(100%-22px)]'); this.classList.remove('translate-x-0'); }"
-                         class="absolute left-0 top-0 bottom-0 z-50 flex items-stretch -translate-x-[calc(100%-22px)] transition-transform duration-200 ease-out pointer-events-auto">
-                        
-                        <!-- 抽屜內容：單列直排、上男下女 -->
-                        <div class="w-[175px] bg-white/95 backdrop-blur-md border-r-2 border-slate-300 shadow-2xl flex flex-col h-full overflow-y-auto p-2 space-y-2.5 scrollbar-hide">
-                            
+                         class="${layoutMode === 'station' ? 'flex' : 'hidden'} absolute left-0 top-0 bottom-0 z-50 items-stretch -translate-x-[calc(100%-22px)] transition-transform duration-200 ease-out pointer-events-auto">
+                        <div class="w-[175px] bg-[#f4f1ea]/95 backdrop-blur-md border-r-2 border-slate-300 shadow-2xl flex flex-col h-full overflow-y-auto p-2 space-y-2.5 scrollbar-hide">
                             <div class="space-y-1 shrink-0 pb-2 border-b border-slate-200">
-                                <div class="text-[10px] font-black text-slate-400 px-1 tracking-wider">排班工具</div>
+                                <div class="text-[10px] font-black text-slate-500 px-1 tracking-wider">排班工具</div>
                                 ${!isCleanRole ? `
                                 <div class="w-full cursor-pointer member-btn-container" data-name="SPLITTER" onclick="window.selectGridMember('SPLITTER')">
-                                    <div class="w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-[1.02]' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-2xs'}">
+                                    <div class="w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-[1.02]' : 'bg-[#faf8f3] text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-2xs'}">
                                         ✂️ 拆分/合併時段
                                     </div>
                                 </div>` : ''}
-
                                 <div class="w-full cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')">
-                                    <div class="w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-[1.02]' : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-2xs'}">
+                                    <div class="w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-[1.02]' : 'bg-[#faf8f3] text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-2xs'}">
                                         <i data-lucide="eraser" class="w-3.5 h-3.5 mr-1.5"></i>橡皮擦
                                     </div>
                                 </div>
                             </div>
-
-                            <!-- 人員選擇區：上男、下女分區顯示 -->
                             <div class="space-y-2 pt-1 flex-1 overflow-y-auto pr-0.5 scrollbar-hide">
-                                <!-- 頂部：男性成員分區 -->
                                 <div class="space-y-1">
                                     <div class="flex items-center justify-between px-1 text-[10px] font-black text-blue-700 bg-blue-50/80 rounded py-0.5">
                                         <span>👨 男性成員</span>
-                                        <span class="font-mono text-[9px] text-blue-600 bg-white px-1 rounded shadow-2xs">${maleVisible.length}人</span>
+                                        <span class="font-mono text-[9px] text-blue-600 bg-[#faf8f3] px-1 rounded shadow-2xs">${maleVisible.length}人</span>
                                     </div>
                                     ${maleVisible.length > 0 ? maleVisible.map(name => renderDrawerMemberBtn(name)).join('') : '<div class="text-[9.5px] text-slate-400 text-center py-1 font-bold">無出勤男員</div>'}
                                 </div>
-
-                                <!-- 底部：女性成員分區 -->
                                 <div class="space-y-1 pt-1 border-t border-slate-200">
                                     <div class="flex items-center justify-between px-1 text-[10px] font-black text-rose-700 bg-rose-50/80 rounded py-0.5">
                                         <span>👩 女性成員</span>
-                                        <span class="font-mono text-[9px] text-rose-600 bg-white px-1 rounded shadow-2xs">${femaleVisible.length}人</span>
+                                        <span class="font-mono text-[9px] text-rose-600 bg-[#faf8f3] px-1 rounded shadow-2xs">${femaleVisible.length}人</span>
                                     </div>
                                     ${femaleVisible.length > 0 ? femaleVisible.map(name => renderDrawerMemberBtn(name)).join('') : '<div class="text-[9.5px] text-slate-400 text-center py-1 font-bold">無出勤女員</div>'}
                                 </div>
@@ -13991,15 +14613,13 @@ const rawChecked = window.getCheckedDutyList ? window.getCheckedDutyList() : (wi
                         </div>
                     </div>
 
-                   <!-- 表格滾動主區域 -->
-                    <div id="scheduleGridScrollArea" class="flex-1 overflow-auto p-1.5 sm:p-2">
+                    <div id="scheduleGridScrollArea" class="sched-scroll-area flex-1 overflow-auto p-1">
                         ${fiveDayTablesHtml}
                     </div>
                 </div>
             </div>`;
             if (window.lucide) lucide.createIcons();
 
-            // 🌟 防彈回鎖定步驟 B：在 DOM 生成的同一幀立即恢復垂直與水平捲動位置（0延遲、無閃爍）
             const newScrollArea = document.getElementById('scheduleGridScrollArea');
             if (newScrollArea && savedScrollTop !== undefined && savedScrollTop > 0) {
                 newScrollArea.style.scrollBehavior = 'auto';
@@ -14008,24 +14628,51 @@ const rawChecked = window.getCheckedDutyList ? window.getCheckedDutyList() : (wi
             }
             Object.entries(savedHorizScrolls).forEach(([cardId, sLeft]) => {
                 const card = document.getElementById(cardId);
-                const hWrap = card ? card.querySelector('.overflow-x-auto') : null;
-                if (hWrap && sLeft > 0) hWrap.scrollLeft = sLeft;
+                if (card && sLeft > 0) {
+                    const dStr = cardId.replace('sched-day-card-', '');
+                    const lWrap = document.getElementById(`left-scroll-${dStr}`);
+                    const rWrap = document.getElementById(`right-scroll-${dStr}`);
+                    if (lWrap) lWrap.scrollLeft = sLeft;
+                    if (rWrap) rWrap.scrollLeft = sLeft;
+                }
             });
-// 🌟 積木化方式 B：支援按住連續滑過格子排班（滑鼠拖曳 + 手機 Touch 滑動）
+
             if (newScrollArea && !newScrollArea._paintEventsBound) {
                 newScrollArea._paintEventsBound = true;
                 let isPainting = false;
+                let leftPaintMode = null;
 
                 const paintTarget = (targetEl) => {
+                    const pCell = targetEl?.closest ? targetEl.closest('td[data-pcell="1"]') : null;
+                    if (pCell && pCell !== window._lastPaintedPCell) {
+                        window._lastPaintedPCell = pCell;
+                        const { date, member, start, end } = pCell.dataset;
+                        const curLocs = (pCell.dataset.curLocs || '').split(',').filter(Boolean);
+                        const brushLoc = (activeGridMember === 'ERASER') ? 'ERASER' : (window.activeLeftLocBrush || 'pt_7');
+                        if (!leftPaintMode) {
+                            leftPaintMode = (brushLoc === 'ERASER' || curLocs.includes(brushLoc)) ? 'clear' : 'assign';
+                        }
+                        window.togglePersonCellRest(date, member, start, end, leftPaintMode);
+                        return;
+                    }
                     if (!activeGridMember || activeGridMember === 'SPLITTER') return;
                     const subItem = targetEl?.closest ? targetEl.closest('.sub-line-item') : null;
                     if (subItem && subItem !== window._lastPaintedSubItem) {
                         window._lastPaintedSubItem = subItem;
-                        subItem.click(); // 自動觸發該格點擊填入/清除
+                        subItem.click();
                     }
                 };
 
                 newScrollArea.addEventListener('mousedown', (e) => {
+                    const pCell = e.target?.closest ? e.target.closest('td[data-pcell="1"]') : null;
+                    if (pCell) {
+                        isPainting = true;
+                        const curLocs = (pCell.dataset.curLocs || '').split(',').filter(Boolean);
+                        const brushLoc = (activeGridMember === 'ERASER') ? 'ERASER' : (window.activeLeftLocBrush || 'pt_7');
+                        leftPaintMode = (brushLoc === 'ERASER' || curLocs.includes(brushLoc)) ? 'clear' : 'assign';
+                        window._lastPaintedPCell = pCell;
+                        return;
+                    }
                     if (activeGridMember && activeGridMember !== 'SPLITTER') {
                         isPainting = true;
                         paintTarget(e.target);
@@ -14036,7 +14683,9 @@ const rawChecked = window.getCheckedDutyList ? window.getCheckedDutyList() : (wi
                 });
                 window.addEventListener('mouseup', () => {
                     isPainting = false;
+                    leftPaintMode = null;
                     window._lastPaintedSubItem = null;
+                    window._lastPaintedPCell = null;
                 });
 
                 newScrollArea.addEventListener('touchstart', (e) => {
@@ -14057,7 +14706,9 @@ const rawChecked = window.getCheckedDutyList ? window.getCheckedDutyList() : (wi
 
                 window.addEventListener('touchend', () => {
                     isPainting = false;
+                    leftPaintMode = null;
                     window._lastPaintedSubItem = null;
+                    window._lastPaintedPCell = null;
                 });
             }
         };
