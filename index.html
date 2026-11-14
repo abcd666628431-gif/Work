@@ -2507,7 +2507,7 @@ const defaultCleanMapPoints = {
             return list || modal;
         };
 
-       // 🌟 打開名單前：精確抓取表格滾動主區域 (scheduleGridScrollArea) 的捲動位置
+// 🌟 打開名單前：精確抓取表格滾動主區域 (scheduleGridScrollArea) 的捲動位置（點擊紅框外背景不關閉）
         window.openMemberRosterModal = () => {
             const scrollArea = document.getElementById('scheduleGridScrollArea');
             if (scrollArea) {
@@ -2519,9 +2519,9 @@ const defaultCleanMapPoints = {
                 modal = document.createElement('div');
                 modal.id = 'memberRosterModal';
                 modal.className = 'fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[280] hidden flex-col items-center justify-center p-2 sm:p-4';
-                modal.onclick = (e) => { if (e.target === modal) window.closeMemberRosterModal(); };
                 document.body.appendChild(modal);
             }
+            modal.onclick = null;
             window.renderMemberRosterModal();
             modal.classList.remove('hidden');
             modal.classList.add('flex');
@@ -4180,18 +4180,11 @@ window.openMemberProfilePopup(name, window._currentPopupLocation);
             
             window.updateMapSimulation();
 
-            const modal = $('scheduleManageModal');
+const modal = $('scheduleManageModal');
             if (modal && modal.classList.contains('flex')) {
+                window._lockSchedDayCardAnchor = true;
                 requestAnimationFrame(() => {
                     window.renderScheduleManager();
-                    
-                    setTimeout(() => {
-                        const todayStr = getNowInputStrs().date;
-                        const todayCard = document.getElementById(`sched-day-card-${todayStr}`);
-                        if (todayCard) {
-                            todayCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        }
-                    }, 50);
                 });
             }
         };
@@ -13305,7 +13298,222 @@ window.toggleSplitHour = (dateStr, locId, hourStr) => {
             window.showToast(`📋 已將 ${prevDateStr.slice(5)} 的排班複製到 ${targetDateStr.slice(5)}！`);
         };
 
-// 🌟 新增：一鍵導出當日「同事本日休息時間」文字公告（支援自動合併時段、一鍵複製與下載 .txt）
+// 🌟 新增：一鍵導出「清潔崗位/時間」中英對照公告（自動區分正選與 (時間頂) 替更人員）
+        window.exportDayStationSummaryText = (targetDateStr) => {
+            window.captureAll5DayDomValues();
+            const isClean = window.currentMapRole === 'clean';
+            const slots = isClean
+                ? (window.getCleanScheduleSlots ? window.getCleanScheduleSlots() : [])
+                : Array.from({ length: 30 }, (_, i) => {
+                    const totalM = 7 * 60 + i * 30;
+                    const nextM = totalM + 30;
+                    return {
+                        start: `${pad(Math.floor(totalM / 60))}:${pad(totalM % 60)}`,
+                        end: `${pad(Math.floor(nextM / 60))}:${pad(nextM % 60)}`
+                    };
+                });
+
+            const stationConfigs = isClean
+                ? [
+                    { id: 'pt_8', title: "花園仔男廁Little garden Men's toilet" },
+                    { id: 'pt_9', title: "花園仔女廁+傷健廁所Little garden Women's & Accessible toilet" },
+                    { id: 'pt_3', title: "花園仔Little garden public area" },
+                    { id: 'pt_4', title: "街市G層地面Ground floor public area" },
+                    { id: 'pt_1', title: "街市一樓+廁所First floor public area + toilet" },
+                    { id: 'pt_6', title: "機動On standby" }
+                ]
+                : [
+                    { id: 'pt_3', title: "花園仔Little garden public area" },
+                    { id: 'pt_4', title: "魚檔Fish stalls" },
+                    { id: 'pt_5', title: "整體巡邏General patrol" },
+                    { id: 'pt_1', title: "客服室Customer service office" }
+                ];
+
+            const toMins = (t) => {
+                const [h, m] = String(t || '00:00').split(':').map(Number);
+                return (h || 0) * 60 + (m || 0);
+            };
+            const stripZeroTime = (t) => String(t || '').replace(/^0(\d:)/, '$1');
+
+            // 1. 收集每個崗位、每位人員的所有時段與總分鐘數
+            const locPersonSlots = {}; // locId -> Map(canonName -> [{start, end, dur}])
+            const personLocMins = new Map(); // canonName -> Map(locId -> totalMins)
+
+            stationConfigs.forEach(cfg => {
+                locPersonSlots[cfg.id] = new Map();
+            });
+
+            slots.forEach(slot => {
+                const dur = Math.max(30, toMins(slot.end) - toMins(slot.start));
+                stationConfigs.forEach(cfg => {
+                    let names = [];
+                    if (!isClean) {
+                        const startH = slot.start.split(':')[0];
+                        const endH = pad( parseInt(startH, 10) + 1 );
+                        const isSplit = !!splitHoursState[`cs_${targetDateStr}_${cfg.id}_${startH}:00`];
+                        if (isSplit) {
+                            names = window.getSlotAssignedNamesLive(targetDateStr, cfg.id, slot.start, slot.end);
+                        } else {
+                            names = window.getSlotAssignedNamesLive(targetDateStr, cfg.id, `${startH}:00`, `${endH}:00`);
+                        }
+                    } else {
+                        names = window.getSlotAssignedNamesLive(targetDateStr, cfg.id, slot.start, slot.end);
+                    }
+
+                    names.forEach(rawName => {
+                        const clean = (rawName || '').trim();
+                        if (!clean || clean === '休' || clean.includes('...')) return;
+                        const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(clean) : clean;
+
+                        if (!locPersonSlots[cfg.id].has(canon)) {
+                            locPersonSlots[cfg.id].set(canon, []);
+                        }
+                        locPersonSlots[cfg.id].get(canon).push({ start: slot.start, end: slot.end, dur });
+
+                        if (!personLocMins.has(canon)) personLocMins.set(canon, new Map());
+                        const pMap = personLocMins.get(canon);
+                        pMap.set(cfg.id, (pMap.get(cfg.id) || 0) + dur);
+                    });
+                });
+            });
+
+// 2. 找出每個人當天的「主崗位 (Primary Station)」
+            // 🌟 鐵律：只要當天有在「機動 (pt_6)」出現過，機動即為首要主崗位，去其他任何地方皆算「頂」！
+            const primaryLocByPerson = new Map();
+            personLocMins.forEach((locMap, canon) => {
+                if (isClean && (locMap.get('pt_6') || 0) > 0) {
+                    primaryLocByPerson.set(canon, 'pt_6');
+                    return;
+                }
+                let bestLoc = null;
+                let maxMins = -1;
+                const prof = window.getMemberProfile ? window.getMemberProfile(canon) : null;
+                const firstPref = prof?.prefs?.[0] || '';
+
+                locMap.forEach((mins, locId) => {
+                    if (mins > maxMins || (mins === maxMins && locId === firstPref)) {
+                        maxMins = mins;
+                        bestLoc = locId;
+                    }
+                });
+                if (bestLoc) primaryLocByPerson.set(canon, bestLoc);
+            });
+
+            // 顯示名稱：外地人優先顯示編號，本地人顯示中文姓名
+            const getDispName = (canon) => {
+                const prof = window.getMemberProfile ? window.getMemberProfile(canon) : null;
+                if (prof && prof.residency === '外地' && prof.id && prof.id.trim()) {
+                    return prof.id.trim();
+                }
+                return canon;
+            };
+
+            // 3. 組裝各崗位文字段落
+            let hasAnyData = false;
+            const sectionsText = stationConfigs.map(cfg => {
+                const pMap = locPersonSlots[cfg.id];
+                const mainLines = [];
+                const coverLines = [];
+
+                pMap.forEach((slotList, canon) => {
+                    if (!slotList || !slotList.length) return;
+                    hasAnyData = true;
+                    const dispName = getDispName(canon);
+                    const primaryLoc = primaryLocByPerson.get(canon);
+
+                    // 合併連續時段
+                    const sorted = [...slotList].sort((a, b) => a.start.localeCompare(b.start));
+                    const merged = [];
+                    let cur = null;
+                    sorted.forEach(s => {
+                        if (!cur) cur = { start: s.start, end: s.end };
+                        else if (cur.end >= s.start) {
+                            if (s.end > cur.end) cur.end = s.end;
+                        } else {
+                            merged.push(cur);
+                            cur = { start: s.start, end: s.end };
+                        }
+                    });
+                    if (cur) merged.push(cur);
+
+// 🌟 若該員主崗位為「機動 (pt_6)」，則只有在機動才算正選，去其他任何崗位一律列為「(時間頂)」
+                    const totalHere = slotList.reduce((acc, x) => acc + x.dur, 0);
+                    const isStandbyStaff = (primaryLoc === 'pt_6');
+                    const isMainHere = isStandbyStaff
+                        ? (cfg.id === 'pt_6')
+                        : ((primaryLoc === cfg.id) || (cfg.id === 'pt_4' && totalHere >= 210));
+
+                    if (isMainHere) {
+                        mainLines.push(`        ${dispName}`);
+                    } else {
+                        const timeRangesStr = merged.map(m => `${stripZeroTime(m.start)}-${stripZeroTime(m.end)}`).join('，');
+                        coverLines.push(`        ${dispName} (${timeRangesStr}頂)`);
+                    }
+                });
+
+                const allLines = [...mainLines, ...coverLines];
+                return `${cfg.title}\n${allLines.length ? allLines.join('\n') : '        (未排人)'}`;
+            }).join('\n\n');
+
+            if (!hasAnyData) {
+                return window.showToast(`⚠️ 【${targetDateStr}】尚無任何排班資料可導出！`, true);
+            }
+
+            const roleTitle = isClean ? '清潔崗位/時間' : '客服崗位/時間';
+            const finalOutput = `${targetDateStr}\n${roleTitle}\n\n${sectionsText}`;
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(finalOutput).then(() => {
+                    window.showToast('📋 已自動複製「崗位/時間」公告！可直接貼上群組');
+                }).catch(() => {});
+            }
+
+            document.getElementById('stationSummaryExportModal')?.remove();
+            const modalHtml = `
+            <div id="stationSummaryExportModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[10050] flex items-center justify-center p-4" onclick="if(event.target === this) this.remove()">
+                <div class="bg-white rounded-2xl p-4 w-full max-w-[400px] max-h-[85vh] shadow-2xl border border-slate-200 flex flex-col animate-pop-in" onclick="event.stopPropagation()">
+                    <div class="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-100 shrink-0">
+                        <div class="flex items-center space-x-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-teal-600"></span>
+                            <h3 class="font-black text-sm text-slate-800">${roleTitle} 預覽 (${targetDateStr})</h3>
+                        </div>
+                        <button type="button" onclick="document.getElementById('stationSummaryExportModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+
+                    <textarea id="stationSummaryExportTextarea" class="w-full flex-1 min-h-[320px] bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs font-mono font-bold text-slate-800 leading-relaxed focus:outline-none focus:border-teal-600 resize-none scrollbar-hide">${finalOutput}</textarea>
+
+                    <div class="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0">
+                        <button type="button" onclick="(() => {
+                            const txt = document.getElementById('stationSummaryExportTextarea').value;
+                            const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+                            const a = document.createElement('a');
+                            a.href = URL.createObjectURL(blob);
+                            a.download = '${roleTitle.replace('/', '_')}_${targetDateStr}.txt';
+                            a.click();
+                            window.showToast('💾 已下載 .txt 檔案');
+                        })()" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center active:scale-95 transition-all">
+                            <i data-lucide="download" class="w-3.5 h-3.5 mr-1"></i>下載檔案
+                        </button>
+
+                        <button type="button" onclick="(() => {
+                            const ta = document.getElementById('stationSummaryExportTextarea');
+                            ta.select();
+                            navigator.clipboard.writeText(ta.value);
+                            window.showToast('✅ 已複製！可直接貼上至微信/WhatsApp');
+                        })()" class="flex-1 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-black shadow-sm flex items-center justify-center active:scale-95 transition-all">
+                            <i data-lucide="copy" class="w-3.5 h-3.5 mr-1.5"></i>一鍵複製全文
+                        </button>
+                    </div>
+                </div>
+            </div>`;
+
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            if (window.lucide) lucide.createIcons({ root: document.getElementById('stationSummaryExportModal') });
+        };
+
+        // 🌟 新增：一鍵導出當日「同事本日休息時間」文字公告（支援自動合併時段、一鍵複製與下載 .txt）
         window.exportDayBreakScheduleText = (targetDateStr) => {
             window.captureAll5DayDomValues();
             const domVals = window._tempGridValues || {};
@@ -14423,9 +14631,10 @@ window.cancelScheduleEdits = () => {
             if (window.showToast) window.showToast('已取消剛剛的改動並還原');
         };
 
-        window.setScheduleViewLayout = (mode) => {
+window.setScheduleViewLayout = (mode) => {
             window.scheduleViewLayout = mode || 'split';
             safeSetLocal('work_cache_sched_layout', window.scheduleViewLayout);
+            window._lockSchedDayCardAnchor = true;
             window.renderScheduleManager();
         };
 
@@ -14812,27 +15021,27 @@ const renderMemberRow = (name) => {
                         class="p-0 border border-slate-400/60 bg-[#cbd5e1] text-center align-middle ${colWidth} ${glowCls} cursor-pointer select-none" title="${canon} ${slot.start}-${slot.end} 非上班時間">&nbsp;</td>`;
                 }).join('');
 
-                const workH = parseFloat((workMins / 60).toFixed(1));
+const workH = parseFloat((workMins / 60).toFixed(1));
                 const restH = parseFloat((restMins / 60).toFixed(1));
                 const summaryBadge = shiftInfo.isOff
-                    ? `<span class="px-1 py-0.2 rounded bg-slate-200 text-slate-600 text-[8.5px] font-black leading-none inline-block">例休</span>`
+                    ? `<span class="px-1 py-[1px] rounded bg-slate-200 text-slate-600 text-[8.5px] font-black leading-none block w-fit">例休</span>`
                     : (missingCount === 0 && (workH > 0 || restH > 0)
-                        ? `<span class="px-1 py-0.2 rounded bg-[#d5f0de] text-[#14532d] border border-[#86efac] text-[8.5px] font-mono font-black leading-none inline-block whitespace-nowrap">上${workH}h·休${restH}h ✔</span>`
-                        : `<span class="px-1 py-0.2 rounded bg-rose-100 text-rose-700 border border-rose-300 text-[8.5px] font-mono font-black leading-none inline-block whitespace-nowrap">漏${missingCount}格·休${restH}h</span>`);
+                        ? `<span class="px-1 py-[1px] rounded bg-[#d5f0de] text-[#14532d] border border-[#86efac] text-[8.5px] font-mono font-black leading-none block w-fit whitespace-nowrap">上${workH}h·休${restH}h ✔</span>`
+                        : `<span class="px-1 py-[1px] rounded bg-rose-100 text-rose-700 border border-rose-300 text-[8.5px] font-mono font-black leading-none block w-fit whitespace-nowrap">漏${missingCount}格·休${restH}h</span>`);
 
-const avatarHtml = prof.avatar
+                const avatarHtml = prof.avatar
                     ? `<img src="${prof.avatar}" class="w-6 h-6 rounded-full object-cover border border-white shadow-2xs shrink-0 bg-[#fdfbf7] mt-0.5">`
                     : `<div class="w-6 h-6 rounded-full ${avatarBgCls} text-white flex items-center justify-center text-[10px] font-black shrink-0 shadow-2xs mt-0.5">${canon.slice(0, 1)}</div>`;
 
-// 🌟 4 行緊湊結構：第1行(名稱+線條設定鍵)、第2行(微底色編號標籤)、第3行(高亮粗體上班時間)、第4行(緊貼狀態)
+                // 🌟 4 行零空隙結構：消除 inline-block 基線留白，讓第 4 行狀態緊貼第 3 行上班時間
                 return `
                 <tr class="hover:bg-[#ede9df]/60 transition-colors">
                     <td onclick="window.selectGridMember('${safeNameAttr}')"
-                        class="sticky left-0 z-20 overflow-hidden px-1.5 py-1 border border-slate-300 cursor-pointer select-none shadow-[2px_0_5px_-2px_rgba(0,0,0,0.12)] w-[124px] min-w-[124px] max-w-[124px] transition-all ${cardColorCls}"
+                        class="sticky left-0 z-20 overflow-hidden px-1.5 py-0.5 border border-slate-300 cursor-pointer select-none shadow-[2px_0_5px_-2px_rgba(0,0,0,0.12)] w-[124px] min-w-[124px] max-w-[124px] transition-all ${cardColorCls}"
                         title="點擊選取「${window.esc(canon)}」當右表畫筆；點右上角線條圖示可改上班/休息時間">
                         <div class="flex items-start gap-1.5">
                             ${avatarHtml}
-                            <div class="min-w-0 flex-1 flex flex-col text-left leading-none gap-[2px]">
+                            <div class="min-w-0 flex-1 flex flex-col text-left leading-none">
                                 <!-- 第 1 行：名稱 ＋ 線條設定鍵 -->
                                 <div class="flex items-center justify-between gap-1">
                                     <span class="font-black text-[10.5px] truncate leading-tight">${window.esc(canon)}</span>
@@ -14845,11 +15054,11 @@ const avatarHtml = prof.avatar
                                     </button>
                                 </div>
                                 <!-- 第 2 行：員工編號（微底色小標籤） -->
-                                <div class="w-fit max-w-full px-1 py-[1px] rounded text-[8px] font-mono font-semibold tracking-wider leading-none truncate ${isSelectedBrush ? 'bg-white/20 text-white/90' : 'bg-slate-900/10 text-slate-600'}">${window.esc(displayStaffId)}</div>
-                                <!-- 第 3 行：上班時間（放大粗體深靛藍字色，與編號明顯區隔） -->
-                                <div class="text-[9.5px] font-mono font-black tracking-tight leading-none truncate ${isSelectedBrush ? 'text-amber-200' : 'text-indigo-800'}">${shiftInfo.label}</div>
-                                <!-- 第 4 行：排班狀態（緊貼時間下方） -->
-                                <div class="leading-none">${summaryBadge}</div>
+                                <div class="w-fit max-w-full px-1 py-[1px] mt-[1px] rounded text-[8px] font-mono font-semibold tracking-wider leading-none truncate ${isSelectedBrush ? 'bg-white/20 text-white/90' : 'bg-slate-900/10 text-slate-600'}">${window.esc(displayStaffId)}</div>
+                                <!-- 第 3 行：上班時間（放大粗體深靛藍字色） -->
+                                <div class="text-[9.5px] font-mono font-black tracking-tight leading-none truncate mt-[1px] ${isSelectedBrush ? 'text-amber-200' : 'text-indigo-800'}">${shiftInfo.label}</div>
+                                <!-- 第 4 行：排班狀態（消除基線空白，緊貼時間正下方） -->
+                                <div class="flex items-center mt-[1px]">${summaryBadge}</div>
                             </div>
                         </div>
                     </td>
@@ -14900,8 +15109,24 @@ const totalCols = 1 + slots.length;
                 modalInnerCard.classList.add('!w-screen', '!max-w-none', '!h-screen', '!max-h-none', '!rounded-none', '!border-0');
             }
 
-            const existingScrollArea = document.getElementById('scheduleGridScrollArea');
+const existingScrollArea = document.getElementById('scheduleGridScrollArea');
             const savedScrollTop = existingScrollArea ? existingScrollArea.scrollTop : window._lastSchedScrollTop;
+
+            // 🌟 記錄當前畫面正在觀看的「日期卡片錨點」，防止切換模式高度改變時跳去其他日子
+            let anchorDayCardId = null;
+            let anchorDayOffset = 0;
+            if (existingScrollArea) {
+                const areaTop = existingScrollArea.getBoundingClientRect().top;
+                const dayCards = Array.from(existingScrollArea.querySelectorAll('[id^="sched-day-card-"]'));
+                for (const c of dayCards) {
+                    const r = c.getBoundingClientRect();
+                    if (r.bottom > areaTop + 40) {
+                        anchorDayCardId = c.id;
+                        anchorDayOffset = r.top - areaTop;
+                        break;
+                    }
+                }
+            }
             const savedHorizScrolls = {};
             document.querySelectorAll('[id^="sched-day-card-"]').forEach(card => {
                 const rWrap = card.querySelector('[id^="right-scroll-"]') || card.querySelector('[id^="left-scroll-"]') || card.querySelector('.overflow-x-auto');
@@ -15155,7 +15380,8 @@ let thRight = `<th class="sticky left-0 bg-[#ded8cc] p-1.5 z-30 w-[68px] min-w-[
                             <span class="text-xs font-mono font-black text-slate-800">${dayInfo.dateStr} (${dayInfo.weekDay})</span>
                             ${isToday ? '<span class="text-[10px] font-black text-blue-700 bg-[#f8f6f0] px-1.5 py-0.2 rounded border border-blue-200">📍 地圖即時生效中</span>' : ''}
                         </div>
-                        <div class="flex items-center gap-1.5 flex-wrap">
+<div class="flex items-center gap-1.5 flex-wrap">
+                            <button type="button" onclick="window.exportDayStationSummaryText('${dStr}')" class="bg-teal-600 hover:bg-teal-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出清潔崗位/時間中英對照文字"><i data-lucide="clipboard-list" class="w-3 h-3 mr-1"></i>導出崗位</button>
                             <button type="button" onclick="window.exportDayFullScheduleText('${dStr}')" class="bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出整張橫向排班表文字"><i data-lucide="table" class="w-3 h-3 mr-1"></i>導出全表</button>
                             <button type="button" onclick="window.exportDayBreakScheduleText('${dStr}')" class="bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出當日同事休息時間公告"><i data-lucide="coffee" class="w-3 h-3 mr-1"></i>導出休息</button>
                             <button type="button" onclick="window.autoAssignDaySchedule('${dStr}')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="依出勤名單與每人優先級自動排班"><i data-lucide="sparkles" class="w-3 h-3 mr-1"></i>智慧排班</button>
@@ -15339,12 +15565,27 @@ let thRight = `<th class="sticky left-0 bg-[#ded8cc] p-1.5 z-30 w-[68px] min-w-[
             </div>`;
             if (window.lucide) lucide.createIcons();
 
-            const newScrollArea = document.getElementById('scheduleGridScrollArea');
-            if (newScrollArea && savedScrollTop !== undefined && savedScrollTop > 0) {
+const newScrollArea = document.getElementById('scheduleGridScrollArea');
+            if (newScrollArea) {
                 newScrollArea.style.scrollBehavior = 'auto';
-                newScrollArea.scrollTop = savedScrollTop;
-                window._lastSchedScrollTop = savedScrollTop;
+                const targetAnchorEl = anchorDayCardId ? document.getElementById(anchorDayCardId) : null;
+                if (window._lockSchedDayCardAnchor && targetAnchorEl) {
+                    // 切換模式後，精準對齊原本正在看的那一天卡片頂部，絕不跳往其他日子
+                    const areaTop = newScrollArea.getBoundingClientRect().top;
+                    const cardTop = targetAnchorEl.getBoundingClientRect().top;
+                    newScrollArea.scrollTop += (cardTop - areaTop) - 6;
+                    window._lastSchedScrollTop = newScrollArea.scrollTop;
+                } else if (targetAnchorEl && savedScrollTop !== undefined) {
+                    const areaTop = newScrollArea.getBoundingClientRect().top;
+                    const cardTop = targetAnchorEl.getBoundingClientRect().top;
+                    newScrollArea.scrollTop += (cardTop - areaTop) - anchorDayOffset;
+                    window._lastSchedScrollTop = newScrollArea.scrollTop;
+                } else if (savedScrollTop !== undefined && savedScrollTop > 0) {
+                    newScrollArea.scrollTop = savedScrollTop;
+                    window._lastSchedScrollTop = savedScrollTop;
+                }
             }
+            window._lockSchedDayCardAnchor = false;
             Object.entries(savedHorizScrolls).forEach(([cardId, sLeft]) => {
                 const card = document.getElementById(cardId);
                 if (card && sLeft > 0) {
