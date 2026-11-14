@@ -442,9 +442,20 @@ tr[class*="pref-row-highlight-"] .sub-line-item[data-name=""] {
             }
         } catch (e) {}
 
-        // 🌟 1. 取得或建立每台設備絕對唯一的 Device ID（優先從 localStorage -> Cookie 救援）
+// 🌟 0. 支援從網址列參數 (?u=名字&c=顏色&cid=設備碼) 讀取身分，重整網頁 100% 不失憶
+        const _initUrlParams = new URLSearchParams(window.location.search);
+        const _urlUserName = (_initUrlParams.get('u') || '').trim();
+        const _urlUserColor = (_initUrlParams.get('c') || '').trim();
+        const _urlDeviceId = (_initUrlParams.get('cid') || '').trim();
+
+        // 🌟 1. 取得或建立每台設備絕對唯一的 Device ID（優先順序：網址 -> localStorage -> Cookie -> window.name）
+        let _winNameObj = {};
+        try { if (window.name && window.name.startsWith('{')) _winNameObj = JSON.parse(window.name); } catch (e) {}
+
         let clientDeviceId = '';
-        try { clientDeviceId = localStorage.getItem('work_client_device_id') || window.getIdentityCookie('work_cid') || ''; } catch (e) {}
+        try {
+            clientDeviceId = _urlDeviceId || localStorage.getItem('work_client_device_id') || window.getIdentityCookie('work_cid') || _winNameObj.cid || '';
+        } catch (e) {}
         if (!clientDeviceId) {
             clientDeviceId = 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
         }
@@ -454,11 +465,14 @@ tr[class*="pref-row-highlight-"] .sub-line-item[data-name=""] {
         const clientSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
         window.clientDeviceId = clientDeviceId;
         window.clientSessionId = clientSessionId;
-        window.deviceFingerprint = clientDeviceId; // 改為綁定唯一設備碼，徹底停用會撞號的硬體螢幕/GPU特徵碼
+        window.deviceFingerprint = clientDeviceId;
 
-        // 🌟 2. 讀取本機專屬用戶名（localStorage -> Cookie -> 隨機成員名）
+        // 🌟 2. 讀取本機專屬用戶名（優先順序：網址 -> localStorage -> Cookie -> window.name -> 暫時隨機名）
         let sysUserName = '';
-        try { sysUserName = localStorage.getItem('gallery_user_name') || window.getIdentityCookie('work_uname') || ''; } catch (e) {}
+        try {
+            sysUserName = _urlUserName || localStorage.getItem('gallery_user_name') || window.getIdentityCookie('work_uname') || _winNameObj.uname || '';
+        } catch (e) {}
+        const _isTempRandomName = !sysUserName || /^成員_\d{3}$/.test(sysUserName);
         if (!sysUserName) {
             sysUserName = '成員_' + Math.floor(Math.random() * 900 + 100);
         }
@@ -466,41 +480,97 @@ tr[class*="pref-row-highlight-"] .sub-line-item[data-name=""] {
         window.setIdentityCookie('work_uname', sysUserName);
 
         let sysUserColor = '';
-        try { sysUserColor = localStorage.getItem('gallery_user_color') || window.getIdentityCookie('work_ucol') || ''; } catch (e) {}
+        try {
+            sysUserColor = _urlUserColor || localStorage.getItem('gallery_user_color') || window.getIdentityCookie('work_ucol') || _winNameObj.ucol || '';
+        } catch (e) {}
         if (!sysUserColor) {
             sysUserColor = '#38bdf8';
         }
         try { localStorage.setItem('gallery_user_color', sysUserColor); } catch (e) {}
         window.setIdentityCookie('work_ucol', sysUserColor);
 
-        // 🌟 統一將本機身分同步至 localStorage + Cookie + IndexedDB + 雲端唯一設備表
-        window.persistMyIdentityEverywhere = (name, color) => {
+        // 🌟 統一將本機身分同步寫入 6 個地方：localStorage + Cookie + window.name + URL網址 + IndexedDB + 雲端唯一設備表
+        window.persistMyIdentityEverywhere = (name, color, customDeviceId = null) => {
+            if (!name) return;
+            const oldRandomName = sysUserName;
             sysUserName = name;
-            sysUserColor = color;
+            if (color) sysUserColor = color;
+            if (customDeviceId) {
+                clientDeviceId = customDeviceId;
+                window.clientDeviceId = customDeviceId;
+                window.deviceFingerprint = customDeviceId;
+            }
             try {
-                localStorage.setItem('gallery_user_name', name);
-                localStorage.setItem('gallery_user_color', color);
+                localStorage.setItem('gallery_user_name', sysUserName);
+                localStorage.setItem('gallery_user_color', sysUserColor);
+                localStorage.setItem('work_client_device_id', window.clientDeviceId);
                 localStorage.setItem('work_identity_v3_clean', '1');
             } catch (e) {}
-            window.setIdentityCookie('work_uname', name);
-            window.setIdentityCookie('work_ucol', color);
+            window.setIdentityCookie('work_uname', sysUserName);
+            window.setIdentityCookie('work_ucol', sysUserColor);
             window.setIdentityCookie('work_cid', window.clientDeviceId);
+
+            // 寫入 window.name（同一分頁重整 100% 保留，不受無痕或 file:// 限制）
+            try {
+                if (window.name !== 'WorkRecordPopup') {
+                    window.name = JSON.stringify({ cid: window.clientDeviceId, uname: sysUserName, ucol: sysUserColor });
+                }
+            } catch (e) {}
+
+            // 寫入網址列參數（加入書籤或按 F5 重整時 100% 不會變回隨機名）
+            try {
+                const u = new URL(window.location.href);
+                u.searchParams.set('u', sysUserName);
+                u.searchParams.set('cid', window.clientDeviceId);
+                window.history.replaceState({}, '', u.toString());
+            } catch (e) {}
+
+            // 更新畫面上的當前用戶標籤
+            const userTag = document.getElementById('currentLogUserDisplay');
+            if (userTag) {
+                userTag.innerText = sysUserName;
+                userTag.style.color = sysUserColor;
+            }
+
             if (typeof idbSet === 'function') {
                 idbSet('_local_user_identity_v3', {
                     deviceId: window.clientDeviceId,
-                    name: name,
-                    color: color,
+                    name: sysUserName,
+                    color: sysUserColor,
                     updatedAt: Date.now()
                 }).catch(() => {});
             }
             if (db && currentUser) {
                 const devPatch = {
-                    [window.clientDeviceId]: { name, color, uid: currentUser.uid, updatedAt: Date.now() },
-                    [currentUser.uid]: { name, color, deviceId: window.clientDeviceId, updatedAt: Date.now() }
+                    [window.clientDeviceId]: { name: sysUserName, color: sysUserColor, uid: currentUser.uid, updatedAt: Date.now() },
+                    [currentUser.uid]: { name: sysUserName, color: sysUserColor, deviceId: window.clientDeviceId, updatedAt: Date.now() }
                 };
                 setDoc(cfgDoc('device_identities'), { devices: devPatch }, { merge: true }).catch(() => {});
             }
+
+            // 若剛才載入時先用了臨時隨機名，找回真名後自動把本機剛產生的日誌改回真名
+            if (oldRandomName && /^成員_\d{3}$/.test(oldRandomName) && oldRandomName !== sysUserName && Array.isArray(galleryLogsStore)) {
+                galleryLogsStore.forEach(l => {
+                    if (l.sessionId === window.clientSessionId || l.deviceId === window.clientDeviceId) {
+                        l.user = sysUserName;
+                        l.color = sysUserColor;
+                    }
+                });
+            }
         };
+
+        // 🌟 3. 網頁啟動時，立即從 IndexedDB 與雲端救援真實用戶名（解決只寫不讀的問題！）
+        window.restoreMyIdentityOnBoot = async () => {
+            try {
+                if (typeof idbGet === 'function') {
+                    const idbIdent = await idbGet('_local_user_identity_v3');
+                    if (idbIdent && idbIdent.name && (!/^成員_\d{3}$/.test(idbIdent.name) || /^成員_\d{3}$/.test(sysUserName))) {
+                        window.persistMyIdentityEverywhere(idbIdent.name, idbIdent.color || sysUserColor, idbIdent.deviceId || window.clientDeviceId);
+                    }
+                }
+            } catch (e) {}
+        };
+        setTimeout(() => window.restoreMyIdentityOnBoot(), 50);
         let galleryLogsStore = [];
         window.expandedLogGroups = new Set(); // 記錄使用者展開的群組 ID
 
@@ -10599,8 +10669,33 @@ checkAndResetDailySchedule();
         function setupPureRealtimeSync() {
             if (!currentUser) return;
             // 修復：onAuthStateChanged 在 Token 刷新／斷線重連時會再觸發，重複綁定會造成重複渲染與重複寫入。
-            if (window._syncBound) return;
+if (window._syncBound) return;
             window._syncBound = true;
+
+            // 🌟 連上雲端時，自動根據這台設備的 Firebase UID 或 Device ID 認回改過的名字！
+            onSnapshot(cfgDoc('device_identities'), (snap) => {
+                if (!snap.exists()) return;
+                const devices = snap.data()?.devices || {};
+                const matchByDev = devices[window.clientDeviceId];
+                const matchByUid = currentUser ? devices[currentUser.uid] : null;
+                const matched = (matchByDev && !/^成員_\d{3}$/.test(matchByDev.name))
+                    ? matchByDev
+                    : ((matchByUid && !/^成員_\d{3}$/.test(matchByUid.name)) ? matchByUid : (matchByDev || matchByUid));
+
+                if (matched && matched.name) {
+                    const isCurRandom = /^成員_\d{3}$/.test(sysUserName);
+                    // 如果目前被重置成了隨機「成員_XXX」，而雲端記住你改過名字，立刻自動恢復！
+                    if (isCurRandom && !/^成員_\d{3}$/.test(matched.name)) {
+                        window.persistMyIdentityEverywhere(matched.name, matched.color || sysUserColor, matched.deviceId || window.clientDeviceId);
+                        if (typeof window.renderGalleryLogs === 'function') window.renderGalleryLogs();
+                        if (typeof window.scheduleDashboardUpdate === 'function') window.scheduleDashboardUpdate();
+                    }
+                } else if (!/^成員_\d{3}$/.test(sysUserName)) {
+                    // 若本機已有改好的真名，主動備份上雲端綁定 UID
+                    window.persistMyIdentityEverywhere(sysUserName, sysUserColor);
+                }
+            }, () => {});
+
             onSnapshot(cfgDoc('admin_auth'), (snap) => {
                 if (snap.exists()) {
                     const d = snap.data() || {};
