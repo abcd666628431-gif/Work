@@ -6429,13 +6429,14 @@ window.renderPatrolSearchResults = (queryStr) => {
             }
         };
 
-                        window.exportPatrolExcelCSV = () => {
-            const currentRecords = patrolHistoryStore[currentPatrolDate] || {};
-            const dayTemps = patrolTempRecords[currentPatrolDate] || {};
+// 🌟 單日匯出（保留原有單日格式，可在彈窗內一鍵呼叫）
+        window.exportSingleDayPatrolExcel = (targetDate) => {
+            const dateStr = targetDate || currentPatrolDate || getTodayDateStr();
+            const currentRecords = patrolHistoryStore[dateStr] || {};
+            const dayTemps = patrolTempRecords[dateStr] || {};
 
-            // 📄 分頁 1：剔檔表
             const patrolRows = [
-                ['巡查日期', currentPatrolDate],
+                ['巡查日期', dateStr],
                 ['樓層', '攤位編號', '售賣種類', '承租人姓名', '性別', '上午9點', '上午11點', '下午4點', '下午6點']
             ];
             RAW_PATROL_STALLS.forEach(s => {
@@ -6450,48 +6451,272 @@ window.renderPatrolSearchResults = (queryStr) => {
                 ]);
             });
 
-            // 🌡️ 分頁 2：溫度（橫版：上方為 12 個測溫點 + 記錄者姓名，左側為 4 個時段）
             const tempHeader = ['時段', ...RAW_TEMPERATURE_POINTS.map(pt => pt.name), '記錄者姓名'];
             const tempRows = [
-                ['巡查日期', currentPatrolDate],
+                ['巡查日期', dateStr],
                 tempHeader
             ];
             PATROL_TIME_SLOTS.forEach(slot => {
                 const slotData = dayTemps[slot] || {};
-                const row = [
+                tempRows.push([
                     slot,
                     ...RAW_TEMPERATURE_POINTS.map(pt => slotData[pt.id] || ''),
                     slotData.recorder || ''
-                ];
-                tempRows.push(row);
+                ]);
             });
 
-            // 使用 SheetJS 匯出雙分頁 Excel (.xlsx)
             if (typeof XLSX !== 'undefined') {
                 const wb = XLSX.utils.book_new();
                 const wsPatrol = XLSX.utils.aoa_to_sheet(patrolRows);
                 const wsTemp = XLSX.utils.aoa_to_sheet(tempRows);
-
-                // 設定欄位寬度與橫向列印屬性
                 wsPatrol['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 6 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }];
-                wsTemp['!cols'] = [
-                    { wch: 12 },
-                    ...RAW_TEMPERATURE_POINTS.map(pt => ({ wch: Math.max(10, pt.name.length * 2 + 2) })),
-                    { wch: 14 }
-                ];
-                wsTemp['!pageSetup'] = { orientation: 'landscape' }; // 預設橫向版面設定
-
+                wsTemp['!cols'] = [{ wch: 12 }, ...RAW_TEMPERATURE_POINTS.map(pt => ({ wch: Math.max(10, pt.name.length * 2 + 2) })), { wch: 14 }];
+                wsTemp['!pageSetup'] = { orientation: 'landscape' };
                 XLSX.utils.book_append_sheet(wb, wsPatrol, '剔檔表');
                 XLSX.utils.book_append_sheet(wb, wsTemp, '溫度');
-                XLSX.writeFile(wb, `${currentPatrolDate} 剔檔與溫度.xlsx`);
-
-                // 🌟 記錄導出巡查 Excel 報表操作日誌
-                window.writeGalleryLog('導出巡查報表', `日期: ${currentPatrolDate}`, '剔檔與溫度雙分頁 Excel 報表');
-
-                window.showToast(`✅ 已匯出報表 (${currentPatrolDate})！`);
+                XLSX.writeFile(wb, `${dateStr} 剔檔與溫度.xlsx`);
+                window.writeGalleryLog('導出巡查報表', `單日: ${dateStr}`, '剔檔與溫度雙分頁 Excel 報表');
+                window.showToast(`✅ 已匯出單日報表 (${dateStr})！`);
             } else {
                 window.showToast('匯出模組尚未載入，請稍候再試', true);
             }
+        };
+
+        // 🌟 整月匯出（支援 10月、11月、12月 等任意月份，自動從雲端抓齊整月每一天資料）
+        window.exportMonthlyPatrolExcel = async (yearNum, monthNum) => {
+            if (typeof XLSX === 'undefined') {
+                return window.showToast('匯出模組尚未載入，請稍候再試', true);
+            }
+            const yStr = String(yearNum);
+            const mStr = pad(monthNum);
+            const monthPrefix = `${yStr}-${mStr}`;
+            const daysInMonth = new Date(yearNum, monthNum, 0).getDate();
+            const weekNames = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+
+            document.getElementById('patrolExportModal')?.remove();
+            window.showToast(`⏳ 正在讀取並彙整 ${yearNum}年${monthNum}月 全月資料...`);
+
+            // 1. 若有連線，自動向雲端拉取該月所有日期的剔檔與溫度紀錄（補齊本機被瘦身的 7 天以前資料）
+            const monthPatrolData = {};
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dKey = `${monthPrefix}-${pad(d)}`;
+                if (patrolHistoryStore[dKey] && Object.keys(patrolHistoryStore[dKey]).length > 0) {
+                    monthPatrolData[dKey] = patrolHistoryStore[dKey];
+                }
+            }
+
+            if (currentUser && db && navigator.onLine) {
+                try {
+                    const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'config');
+                    const snap = await getDocs(colRef);
+                    snap.forEach(docSnap => {
+                        const docId = docSnap.id || '';
+                        if (docId.startsWith(`patrol_history_${monthPrefix}-`)) {
+                            const dKey = docId.replace('patrol_history_', '');
+                            const docData = docSnap.data() || {};
+                            const rawRemote = docData[dKey] !== undefined ? docData[dKey] : (docData.stalls || docData);
+                            if (rawRemote && typeof rawRemote === 'object') {
+                                monthPatrolData[dKey] = { ...( rawRemote || {} ), ...(monthPatrolData[dKey] || {}) };
+                            }
+                        } else if (docId === 'patrol_temp_records') {
+                            const remoteTemps = docSnap.data()?.records || {};
+                            Object.keys(remoteTemps).forEach(tk => {
+                                if (tk.startsWith(monthPrefix)) {
+                                    patrolTempRecords[tk] = { ...(remoteTemps[tk] || {}), ...(patrolTempRecords[tk] || {}) };
+                                }
+                            });
+                        }
+                    });
+                } catch (e) {
+                    console.warn('整月雲端資料拉取部分略過，使用本機資料:', e);
+                }
+            }
+
+            // 📄 分頁 1：整月剔檔橫表（每檔一行，橫向展開 1號～月底 每日4時段 + 全月 A/1/0 統計）
+            const matrixHeader1 = ['樓層', '攤位編號', '售賣種類', '承租人姓名', '性別', '全月A(檔主)', '全月1(協作)', '全月0(無人)'];
+            const matrixHeader2 = ['', '', '', '', '', '', '', ''];
+
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dKey = `${monthPrefix}-${pad(d)}`;
+                const wName = weekNames[new Date(yearNum, monthNum - 1, d).getDay()];
+                matrixHeader1.push(`${monthNum}/${d}(${wName})`, '', '', '');
+                matrixHeader2.push('上9', '上11', '下4', '下6');
+            }
+
+            const matrixRows = [
+                [`${yearNum}年${monthNum}月 剔檔整月統計總表`],
+                matrixHeader1,
+                matrixHeader2
+            ];
+
+            RAW_PATROL_STALLS.forEach(s => {
+                const k = window.getPatrolKey(s);
+                let cntA = 0, cnt1 = 0, cnt0 = 0;
+                const dailyCells = [];
+
+                for (let d = 1; d <= daysInMonth; d++) {
+                    const dKey = `${monthPrefix}-${pad(d)}`;
+                    const rec = (monthPatrolData[dKey] || {})[k] || {};
+                    PATROL_TIME_SLOTS.forEach(slot => {
+                        const val = rec[slot] || '';
+                        if (val === 'A') cntA++;
+                        else if (val === '1') cnt1++;
+                        else if (val === '0') cnt0++;
+                        dailyCells.push(val);
+                    });
+                }
+
+                matrixRows.push([
+                    s.floor, s.id, s.type, s.name, s.gender,
+                    cntA, cnt1, cnt0,
+                    ...dailyCells
+                ]);
+            });
+
+            // 📄 分頁 2：整月剔檔直向明細表（按日期 1號～月底 排列）
+            const listRows = [
+                [`${yearNum}年${monthNum}月 剔檔每日明細表`],
+                ['日期', '星期', '樓層', '攤位編號', '售賣種類', '承租人姓名', '性別', '上午9點', '上午11點', '下午4點', '下午6點']
+            ];
+
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dKey = `${monthPrefix}-${pad(d)}`;
+                const wName = weekNames[new Date(yearNum, monthNum - 1, d).getDay()];
+                const dayRecs = monthPatrolData[dKey] || {};
+                const hasAny = Object.keys(dayRecs).some(k => k !== '_clearedAt' && k !== '_ts');
+                if (!hasAny) continue;
+
+                RAW_PATROL_STALLS.forEach(s => {
+                    const k = window.getPatrolKey(s);
+                    const rec = dayRecs[k] || {};
+                    listRows.push([
+                        dKey, wName, s.floor, s.id, s.type, s.name, s.gender,
+                        rec['上午9點'] || '',
+                        rec['上午11點'] || '',
+                        rec['下午4點'] || '',
+                        rec['下午6點'] || ''
+                    ]);
+                });
+            }
+
+            // 🌡️ 分頁 3：整月溫度統計表
+            const tempHeader = ['日期', '星期', '時段', ...RAW_TEMPERATURE_POINTS.map(pt => pt.name), '記錄者姓名'];
+            const tempRows = [
+                [`${yearNum}年${monthNum}月 紅街市溫度整月統計表`],
+                tempHeader
+            ];
+
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dKey = `${monthPrefix}-${pad(d)}`;
+                const wName = weekNames[new Date(yearNum, monthNum - 1, d).getDay()];
+                const dayTemps = patrolTempRecords[dKey] || {};
+                PATROL_TIME_SLOTS.forEach(slot => {
+                    const slotData = dayTemps[slot] || {};
+                    tempRows.push([
+                        dKey,
+                        wName,
+                        slot,
+                        ...RAW_TEMPERATURE_POINTS.map(pt => slotData[pt.id] || ''),
+                        slotData.recorder || ''
+                    ]);
+                });
+            }
+
+            const wb = XLSX.utils.book_new();
+            const wsMatrix = XLSX.utils.aoa_to_sheet(matrixRows);
+            const wsList = XLSX.utils.aoa_to_sheet(listRows);
+            const wsTemp = XLSX.utils.aoa_to_sheet(tempRows);
+
+            wsMatrix['!cols'] = [
+                { wch: 8 }, { wch: 9 }, { wch: 10 }, { wch: 10 }, { wch: 5 },
+                { wch: 11 }, { wch: 11 }, { wch: 11 },
+                ...Array(daysInMonth * 4).fill({ wch: 5 })
+            ];
+            wsList['!cols'] = [{ wch: 12 }, { wch: 6 }, { wch: 8 }, { wch: 9 }, { wch: 10 }, { wch: 10 }, { wch: 6 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }];
+            wsTemp['!cols'] = [{ wch: 12 }, { wch: 6 }, { wch: 10 }, ...RAW_TEMPERATURE_POINTS.map(pt => ({ wch: Math.max(10, pt.name.length * 2 + 2) })), { wch: 12 }];
+            wsTemp['!pageSetup'] = { orientation: 'landscape' };
+
+            XLSX.utils.book_append_sheet(wb, wsMatrix, `${monthNum}月剔檔總表(橫表)`);
+            XLSX.utils.book_append_sheet(wb, wsList, `${monthNum}月剔檔明細(直表)`);
+            XLSX.utils.book_append_sheet(wb, wsTemp, `${monthNum}月溫度統計`);
+
+            XLSX.writeFile(wb, `${yearNum}年${mStr}月_剔檔與溫度整月報表.xlsx`);
+            window.writeGalleryLog('導出巡查報表', `整月: ${yearNum}年${mStr}月`, '整月剔檔與溫度 Excel 報表');
+            window.showToast(`✅ 已成功匯出【${yearNum}年${monthNum}月】整月剔檔與溫度報表！`);
+        };
+
+        // 🌟 點擊「匯出」時彈出月份選擇視窗（可選 1～12月 如 10月、11月、12月，或單日匯出）
+        window.exportPatrolExcelCSV = () => {
+            document.getElementById('patrolExportModal')?.remove();
+            const baseDate = currentPatrolDate || getTodayDateStr();
+            const [initY, initM] = baseDate.split('-').map(Number);
+            window._patrolExportYear = window._patrolExportYear || initY || new Date().getFullYear();
+
+            const renderModalContent = () => {
+                const y = window._patrolExportYear;
+                const monthsHtml = Array.from({ length: 12 }, (_, idx) => {
+                    const m = idx + 1;
+                    const isCurMonth = (y === initY && m === initM);
+                    return `
+                        <button type="button" onclick="window.exportMonthlyPatrolExcel(${y}, ${m})"
+                            class="py-2.5 px-2 rounded-xl border text-xs font-black transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 ${
+                                isCurMonth
+                                    ? 'bg-emerald-600 text-white border-emerald-700 shadow-md ring-2 ring-emerald-300'
+                                    : 'bg-slate-50 hover:bg-emerald-50 text-slate-800 border-slate-200 hover:border-emerald-300'
+                            }">
+                            <span class="text-sm font-mono">${m}月</span>
+                            <span class="text-[9.5px] ${isCurMonth ? 'text-emerald-100' : 'text-slate-400'}">整月匯出</span>
+                        </button>`;
+                }).join('');
+
+                const modalEl = document.getElementById('patrolExportModal');
+                if (!modalEl) return;
+                modalEl.innerHTML = `
+                    <div class="bg-white rounded-2xl p-4 w-full max-w-[340px] shadow-2xl border border-slate-200 animate-pop-in select-none" onclick="event.stopPropagation()">
+                        <div class="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-100">
+                            <div class="flex items-center gap-1.5">
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                                <h3 class="font-black text-sm text-slate-800">匯出剔檔與溫度 Excel</h3>
+                            </div>
+                            <button type="button" onclick="document.getElementById('patrolExportModal')?.remove()" class="text-slate-400 hover:text-slate-600 px-1.5 py-0.5 text-sm font-black">✕</button>
+                        </div>
+
+                        <!-- 年份切換 -->
+                        <div class="flex items-center justify-between bg-slate-100 rounded-xl p-1.5 mb-3">
+                            <button type="button" onclick="window._patrolExportYear--; window._refreshPatrolExportModal();" class="px-3 py-1 bg-white hover:bg-slate-50 rounded-lg text-xs font-black text-slate-700 shadow-2xs active:scale-95">◀ 上一年</button>
+                            <span class="font-mono font-black text-sm text-slate-800">${y} 年</span>
+                            <button type="button" onclick="window._patrolExportYear++; window._refreshPatrolExportModal();" class="px-3 py-1 bg-white hover:bg-slate-50 rounded-lg text-xs font-black text-slate-700 shadow-2xs active:scale-95">下一年 ▶</button>
+                        </div>
+
+                        <div class="text-[11px] font-bold text-slate-500 mb-2 text-center">👇 點擊月份直接匯出【該月整月】報表：</div>
+
+                        <!-- 1~12月按鈕網格 -->
+                        <div class="grid grid-cols-3 gap-2 mb-3">
+                            ${monthsHtml}
+                        </div>
+
+                        <!-- 單日匯出備用按鈕 -->
+                        <div class="pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
+                            <button type="button" onclick="document.getElementById('patrolExportModal')?.remove(); window.exportSingleDayPatrolExcel('${baseDate}');"
+                                class="flex-1 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-black active:scale-95 transition-all">
+                                📄 僅匯出單日 (${baseDate})
+                            </button>
+                            <button type="button" onclick="document.getElementById('patrolExportModal')?.remove()"
+                                class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold active:scale-95">
+                                取消
+                            </button>
+                        </div>
+                    </div>`;
+            };
+
+            window._refreshPatrolExportModal = renderModalContent;
+
+            const wrapper = document.createElement('div');
+            wrapper.id = 'patrolExportModal';
+            wrapper.className = 'fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[9999] flex items-center justify-center p-4';
+            wrapper.onclick = (e) => { if (e.target === wrapper) wrapper.remove(); };
+            document.body.appendChild(wrapper);
+            renderModalContent();
         };
 
         // 已移除：demoFillCurrentPatrolSlot（測試用的隨機快填）。
@@ -8520,16 +8745,33 @@ $('galleryItemEditModal')?.remove();
                 const amSelfRun = hasAmPatrol ? ((s9 === 'A' || s11 === 'A') ? 'Y' : 'N') : 'Y';
 
                 // 🌟 下午經營判定：
-                // 1. 若為上午收工（13:00 前收工），下午時段已關門未營業，維持標準標示 '--'
-                // 2. 若為下午收工（13:00 及之後收工）：有剔檔看是否有 A；若該時段完全未剔檔，預設為 Y
+                // 1. 若為上午收工（13:00 前收工），下午未營業標示 '--'
+                // 2. 若為下午收工（13:00 及之後收工）：
+                //    - 若未到 4 點收工（或 4 點尚無人工剔檔 / 僅因拍照自動填 0），且上午是 Y，則下午維持 Y（跟隨上午結果）
+                //    - 若 4 點（或 6 點）剔檔為 A 則為 Y；若 4 點剔檔為 N（如填 '1' 協作人或手動非 A），那才是 N
                 const [ch, cm] = timeStr.split(':').map(Number);
                 const closeMins = (isNaN(ch) ? 12 : ch) * 60 + (isNaN(cm) ? 0 : cm);
                 let pmSelfRun = '--';
                 if (closeMins >= 13 * 60) {
                     const s16 = stallPatrol['下午4點'] || '';
+                    const s16Auto = !!stallPatrol['下午4點_reason'];
                     const s18 = stallPatrol['下午6點'] || '';
-                    const hasPmPatrol = !!(s16 || s18);
-                    pmSelfRun = hasPmPatrol ? ((s16 === 'A' || s18 === 'A') ? 'Y' : 'N') : 'Y';
+                    const s18Auto = !!stallPatrol['下午6點_reason'];
+
+                    // 排除因「提早收工拍照」而由系統自動帶入的 '0'，只看實際人工巡查結果
+                    const realS16 = (s16 === '0' && s16Auto) ? '' : s16;
+                    const realS18 = (s18 === '0' && s18Auto) ? '' : s18;
+
+                    if (closeMins < 16 * 60 && !realS16 && !realS18) {
+                        // 下午未到 4 點剔檔，直接沿用上午結果（上午是 Y 則下午也是 Y）
+                        pmSelfRun = amSelfRun;
+                    } else if (realS16 || realS18) {
+                        // 4 點（或 6 點）有剔檔：有 A 為 Y，否則為 N
+                        pmSelfRun = (realS16 === 'A' || realS18 === 'A') ? 'Y' : 'N';
+                    } else {
+                        // 尚未剔檔時預設跟隨上午（上午是 Y 則為 Y）
+                        pmSelfRun = amSelfRun;
+                    }
                 }
 
 // 🌟 2. 寫入資料：「檔主 (ownerName)」移至最後一項
@@ -17246,13 +17488,89 @@ window.clearCurrentHygieneDay = (e) => {
             </div>`;
         };
 
-window.exportHygieneExcel = () => {
-            const baseDate = currentHygieneDate || getTodayDateStr();
-            const [yStr, mStr] = baseDate.split('-');
-            const yearNum = parseInt(yStr, 10);
-            const monthNum = parseInt(mStr, 10);
+// 🌟 衛生巡查：單日匯出
+        window.exportSingleDayHygieneExcel = (targetDate) => {
+            if (typeof XLSX === 'undefined') {
+                return window.showToast('匯出模組尚未載入，請稍候再試', true);
+            }
+            const dateKey = targetDate || currentHygieneDate || getTodayDateStr();
+            const { weekLabel, stalls } = window.getHygieneDayStalls(dateKey);
+            const dayData = hygieneRecordsStore[dateKey] || {};
+            const dayStaff = window.getHygieneDayStaff(dateKey);
+
+            let inspectCnt = 0, needImpCnt = 0, doneImpCnt = 0;
+            const rows = [
+                ['巡查日期', `${dateKey} (${weekLabel})`, '負責客服', dayStaff || ''],
+                [],
+                ['檔號', '承租人', '選單1(清潔/更換)', '選單2(牆身/枱面/地面)', '選單3(青苔/污跡)', '備註', '是否完成通知', '巡查(V/X)', '負責客服']
+            ];
+
+            stalls.forEach(sId => {
+                const stallObj = RAW_PATROL_STALLS.find(x => x.id === sId);
+                const r = dayData[sId] || {};
+                const checkText = r.checkVal || (r.checked ? 'V' : '');
+                if (checkText === 'V') inspectCnt++;
+                const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
+                if (hasProblem) {
+                    needImpCnt++;
+                    if (r.notified) doneImpCnt++;
+                }
+                rows.push([
+                    sId,
+                    stallObj?.name || '',
+                    r.opt1 || '',
+                    r.opt2 || '',
+                    r.opt3 || '',
+                    r.remark || '',
+                    r.notified ? '已完成通知' : (hasProblem ? '未通知' : ''),
+                    checkText || '',
+                    dayStaff || r.staff || ''
+                ]);
+            });
+
+            rows[1] = ['單日統計', `已巡(V): ${inspectCnt}/${stalls.length}`, `問題個案數: ${needImpCnt}`, `已完成通知: ${doneImpCnt}`];
+
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.aoa_to_sheet(rows);
+            ws['!cols'] = [{ wch: 10 }, { wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 14 }, { wch: 10 }, { wch: 12 }];
+            XLSX.utils.book_append_sheet(wb, ws, '單日衛生巡查');
+            XLSX.writeFile(wb, `${dateKey} 衛生巡查單日報表.xlsx`);
+            window.writeGalleryLog('導出巡查報表', `衛生單日: ${dateKey}`, `巡查:${inspectCnt} · 問題個案:${needImpCnt}`);
+            window.showToast(`✅ 已匯出單日衛生巡查表 (${dateKey})！`);
+        };
+
+        // 🌟 衛生巡查：指定月份整月匯出（支援 1～12月 如 10月、11月、12月）
+        window.exportMonthlyHygieneExcel = async (yearNum, monthNum) => {
+            if (typeof XLSX === 'undefined') {
+                return window.showToast('匯出模組尚未載入，請稍候再試', true);
+            }
+            const yStr = String(yearNum);
+            const mStr = pad(monthNum);
             const monthPrefix = `${yStr}-${mStr}`;
             const daysInMonth = new Date(yearNum, monthNum, 0).getDate();
+
+            document.getElementById('hygieneExportModal')?.remove();
+            window.showToast(`⏳ 正在讀取並彙整 ${yearNum}年${monthNum}月 衛生巡查資料...`);
+
+            // 若有連線，自動從雲端拉取最新衛生巡查紀錄合併，確保整月資料完整不漏
+            if (currentUser && db && navigator.onLine) {
+                try {
+                    const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'config');
+                    const snap = await getDocs(colRef);
+                    snap.forEach(docSnap => {
+                        if (docSnap.id === 'hygiene_records') {
+                            const remoteRecords = docSnap.data()?.records || {};
+                            Object.keys(remoteRecords).forEach(dKey => {
+                                if (dKey.startsWith(monthPrefix)) {
+                                    hygieneRecordsStore[dKey] = { ...(remoteRecords[dKey] || {}), ...(hygieneRecordsStore[dKey] || {}) };
+                                }
+                            });
+                        }
+                    });
+                } catch (e) {
+                    console.warn('雲端衛生巡查紀錄同步略過，使用本機資料:', e);
+                }
+            }
 
             let monthInspectTotal = 0;
             let monthNeedImproveTotal = 0;
@@ -17280,7 +17598,8 @@ window.exportHygieneExcel = () => {
                     const checkText = r.checkVal || (r.checked ? 'V' : '');
                     if (checkText === 'V') dayInspect++;
 
-const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
+                    // 🌟 (X) 代表沒有查，不列入問題個案；只有選單1/2/3或備註有內容才算問題個案
+                    const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
                     if (hasProblem) {
                         dayNeedImp++;
                         totalCasesCount++;
@@ -17292,7 +17611,7 @@ const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
                             weekLabel,
                             sId,
                             stallObj?.name || '',
-                            issueParts || (checkText === 'X' ? '巡查不合格(X)' : '其他問題'),
+                            issueParts || '其他問題',
                             r.remark || '',
                             r.notified ? '已完成通知' : '未通知',
                             dayStaff || r.staff || ''
@@ -17324,26 +17643,95 @@ const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
                 ['全月合計', '', dailySummaryRows.reduce((s, r) => s + r[2], 0), monthInspectTotal, monthNeedImproveTotal, monthImprovedTotal, '']
             ];
 
-            // Insert total case count at top of caseDetailRows
             caseDetailRows.splice(1, 0, ['問題個案總數 (總共多少個)', totalCasesCount]);
             caseDetailRows.splice(2, 0, []);
 
-            if (typeof XLSX !== 'undefined') {
-                const wb = XLSX.utils.book_new();
-                const wsSummary = XLSX.utils.aoa_to_sheet(summarySheetRows);
-                const wsDetail = XLSX.utils.aoa_to_sheet(caseDetailRows);
+            const wb = XLSX.utils.book_new();
+            const wsSummary = XLSX.utils.aoa_to_sheet(summarySheetRows);
+            const wsDetail = XLSX.utils.aoa_to_sheet(caseDetailRows);
 
-                wsSummary['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 14 }];
-                wsDetail['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 9 }, { wch: 10 }, { wch: 24 }, { wch: 20 }, { wch: 14 }, { wch: 12 }];
+            wsSummary['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 14 }];
+            wsDetail['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 9 }, { wch: 10 }, { wch: 24 }, { wch: 20 }, { wch: 14 }, { wch: 12 }];
 
-                XLSX.utils.book_append_sheet(wb, wsSummary, '整月統計總表');
-                XLSX.utils.book_append_sheet(wb, wsDetail, '問題個案明細');
-                XLSX.writeFile(wb, `${monthPrefix} 衛生巡查整月統計及個案明細.xlsx`);
-                window.writeGalleryLog('導出巡查報表', `${monthPrefix} 衛生巡查整月統計`, `巡查:${monthInspectTotal} · 問題個案:${monthNeedImproveTotal}`);
-                window.showToast(`✅ 已匯出 ${yearNum}年${monthNum}月 統計表與個案明細（總共 ${totalCasesCount} 個案）！`);
-            } else {
-                window.showToast('匯出模組尚未載入', true);
-            }
+            XLSX.utils.book_append_sheet(wb, wsSummary, `${monthNum}月統計總表`);
+            XLSX.utils.book_append_sheet(wb, wsDetail, `${monthNum}月問題個案明細`);
+            XLSX.writeFile(wb, `${yearNum}年${mStr}月_衛生巡查整月統計及個案明細.xlsx`);
+            window.writeGalleryLog('導出巡查報表', `衛生整月: ${yearNum}年${mStr}月`, `巡查:${monthInspectTotal} · 問題個案:${monthNeedImproveTotal}`);
+            window.showToast(`✅ 已匯出【${yearNum}年${monthNum}月】統計表與個案明細（共 ${totalCasesCount} 個案）！`);
+        };
+
+        // 🌟 點擊衛生巡查「匯出」時彈出月份選擇視窗（1～12月 + 單日匯出）
+        window.exportHygieneExcel = () => {
+            document.getElementById('hygieneExportModal')?.remove();
+            const baseDate = currentHygieneDate || getTodayDateStr();
+            const [initY, initM] = baseDate.split('-').map(Number);
+            window._hygieneExportYear = window._hygieneExportYear || initY || new Date().getFullYear();
+
+            const renderModalContent = () => {
+                const y = window._hygieneExportYear;
+                const monthsHtml = Array.from({ length: 12 }, (_, idx) => {
+                    const m = idx + 1;
+                    const isCurMonth = (y === initY && m === initM);
+                    return `
+                        <button type="button" onclick="window.exportMonthlyHygieneExcel(${y}, ${m})"
+                            class="py-2.5 px-2 rounded-xl border text-xs font-black transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 ${
+                                isCurMonth
+                                    ? 'bg-emerald-600 text-white border-emerald-700 shadow-md ring-2 ring-emerald-300'
+                                    : 'bg-slate-50 hover:bg-emerald-50 text-slate-800 border-slate-200 hover:border-emerald-300'
+                            }">
+                            <span class="text-sm font-mono">${m}月</span>
+                            <span class="text-[9.5px] ${isCurMonth ? 'text-emerald-100' : 'text-slate-400'}">整月匯出</span>
+                        </button>`;
+                }).join('');
+
+                const modalEl = document.getElementById('hygieneExportModal');
+                if (!modalEl) return;
+                modalEl.innerHTML = `
+                    <div class="bg-white rounded-2xl p-4 w-full max-w-[340px] shadow-2xl border border-slate-200 animate-pop-in select-none" onclick="event.stopPropagation()">
+                        <div class="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-100">
+                            <div class="flex items-center gap-1.5">
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                                <h3 class="font-black text-sm text-slate-800">匯出衛生巡查統計與個案明細</h3>
+                            </div>
+                            <button type="button" onclick="document.getElementById('hygieneExportModal')?.remove()" class="text-slate-400 hover:text-slate-600 px-1.5 py-0.5 text-sm font-black">✕</button>
+                        </div>
+
+                        <!-- 年份切換 -->
+                        <div class="flex items-center justify-between bg-slate-100 rounded-xl p-1.5 mb-3">
+                            <button type="button" onclick="window._hygieneExportYear--; window._refreshHygieneExportModal();" class="px-3 py-1 bg-white hover:bg-slate-50 rounded-lg text-xs font-black text-slate-700 shadow-2xs active:scale-95">◀ 上一年</button>
+                            <span class="font-mono font-black text-sm text-slate-800">${y} 年</span>
+                            <button type="button" onclick="window._hygieneExportYear++; window._refreshHygieneExportModal();" class="px-3 py-1 bg-white hover:bg-slate-50 rounded-lg text-xs font-black text-slate-700 shadow-2xs active:scale-95">下一年 ▶</button>
+                        </div>
+
+                        <div class="text-[11px] font-bold text-slate-500 mb-2 text-center">👇 點擊月份直接匯出【該月整月統計＋個案明細】：</div>
+
+                        <!-- 1~12月按鈕網格 -->
+                        <div class="grid grid-cols-3 gap-2 mb-3">
+                            ${monthsHtml}
+                        </div>
+
+                        <!-- 單日匯出備用按鈕 -->
+                        <div class="pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
+                            <button type="button" onclick="document.getElementById('hygieneExportModal')?.remove(); window.exportSingleDayHygieneExcel('${baseDate}');"
+                                class="flex-1 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-black active:scale-95 transition-all">
+                                📄 僅匯出單日 (${baseDate})
+                            </button>
+                            <button type="button" onclick="document.getElementById('hygieneExportModal')?.remove()"
+                                class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold active:scale-95">
+                                取消
+                            </button>
+                        </div>
+                    </div>`;
+            };
+
+            window._refreshHygieneExportModal = renderModalContent;
+
+            const wrapper = document.createElement('div');
+            wrapper.id = 'hygieneExportModal';
+            wrapper.className = 'fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[9999] flex items-center justify-center p-4';
+            wrapper.onclick = (e) => { if (e.target === wrapper) wrapper.remove(); };
+            document.body.appendChild(wrapper);
+            renderModalContent();
         };
 
 window.updateHygieneStatsBar = () => {
