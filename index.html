@@ -5730,10 +5730,11 @@ window.isEditingPatrolMap = false;
             return '地下';
         };
 
-        window.addPatrolMapCustomItem = (kind) => {
+window.addPatrolMapCustomItem = (kind) => {
             const flr = window.getActiveEditFloorName();
             const list = window.patrolCustomMapLayouts[flr] = window.patrolCustomMapLayouts[flr] || [];
-            let num = 0, label = kind === 'lift' ? '升降機' : '樓梯';
+            let num = 0;
+            let label = kind === 'lift' ? '升降機' : (kind === 'stair' ? '樓梯' : '空置');
             if (kind === 'stall') {
                 const raw = prompt(`請輸入【${flr}】新檔口編號（例如 88）：`);
                 if (!raw || !raw.trim()) return;
@@ -5787,8 +5788,9 @@ window.isEditingPatrolMap = false;
 
         window.startPatrolMapItemDrag = (e, flr, uid) => {
             if (!window.isEditingPatrolMap) return;
-            e.preventDefault();
+            if (e.cancelable) e.preventDefault();
             e.stopPropagation();
+
             window._selectedPatrolMapItemUid = uid;
             const el = e.currentTarget;
             const gridEl = el.closest('[data-map-grid]');
@@ -5796,24 +5798,34 @@ window.isEditingPatrolMap = false;
             const item = list.find(it => it.uid === uid);
             if (!gridEl || !item) return;
 
-            const startX = e.clientX;
-            const startY = e.clientY;
-            const origX = item.x;
-            const origY = item.y;
-            let moved = false;
+            if (e.pointerId !== undefined && el.setPointerCapture) {
+                try { el.setPointerCapture(e.pointerId); } catch (err) {}
+            }
 
-            el.style.zIndex = '40';
-            el.style.opacity = '0.88';
+            const getPt = (ev) => {
+                const t = (ev.touches && ev.touches[0]) || (ev.changedTouches && ev.changedTouches[0]) || ev;
+                return { x: t.clientX || 0, y: t.clientY || 0 };
+            };
+
+            const startPt = getPt(e);
+            const origX = Number(item.x) || 0;
+            const origY = Number(item.y) || 0;
+
+            el.style.zIndex = '50';
+            el.style.opacity = '0.9';
+            el.classList.add('ring-2', 'ring-indigo-600', 'shadow-lg');
 
             const onMove = (ev) => {
-                const colW = gridEl.getBoundingClientRect().width / 40;
+                if (ev.cancelable) ev.preventDefault();
+                const pt = getPt(ev);
+                const rect = gridEl.getBoundingClientRect();
+                const colW = (rect.width || 360) / 40;
                 const rowH = 16;
-                const dx = Math.round((ev.clientX - startX) / colW);
-                const dy = Math.round((ev.clientY - startY) / rowH);
+                const dx = Math.round((pt.x - startPt.x) / colW);
+                const dy = Math.round((pt.y - startPt.y) / rowH);
                 const nx = Math.max(0, Math.min(40 - item.w, origX + dx));
-                const ny = Math.max(0, Math.min(40 - item.h, origY + dy));
+                const ny = Math.max(0, Math.min(60 - item.h, origY + dy));
                 if (nx !== item.x || ny !== item.y) {
-                    moved = true;
                     item.x = nx;
                     item.y = ny;
                     el.style.gridColumn = `${nx + 1} / span ${item.w}`;
@@ -5825,12 +5837,23 @@ window.isEditingPatrolMap = false;
                 window.removeEventListener('pointermove', onMove);
                 window.removeEventListener('pointerup', onUp);
                 window.removeEventListener('pointercancel', onUp);
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+                window.removeEventListener('touchmove', onMove);
+                window.removeEventListener('touchend', onUp);
                 window.renderPatrolMap();
             };
 
-            window.addEventListener('pointermove', onMove);
-            window.addEventListener('pointerup', onUp);
-            window.addEventListener('pointercancel', onUp);
+            if (window.PointerEvent) {
+                window.addEventListener('pointermove', onMove, { passive: false });
+                window.addEventListener('pointerup', onUp);
+                window.addEventListener('pointercancel', onUp);
+            } else {
+                window.addEventListener('mousemove', onMove);
+                window.addEventListener('mouseup', onUp);
+                window.addEventListener('touchmove', onMove, { passive: false });
+                window.addEventListener('touchend', onUp);
+            }
         };
 
         window.renderPatrolMap = () => {
@@ -5852,17 +5875,22 @@ window.isEditingPatrolMap = false;
 
             const renderFloorCanvas = (flr) => {
                 const items = window.patrolCustomMapLayouts[flr] || [];
-                const maxRow = Math.max(6, ...items.map(it => it.y + it.h)) + (isEdit ? 3 : 0);
+                const maxRow = Math.max(6, ...items.map(it => (Number(it.y) || 0) + (Number(it.h) || 2))) + (isEdit ? 4 : 0);
                 const cellsHtml = items.map(it => {
                     const isSelected = isEdit && it.uid === selUid;
                     const selRing = isSelected ? 'ring-2 ring-indigo-600 z-30 shadow-md' : '';
+                    const posStyle = `grid-column:${(Number(it.x) || 0) + 1}/span ${Number(it.w) || 2};grid-row:${(Number(it.y) || 0) + 1}/span ${Number(it.h) || 2};`;
                     const dragAttr = isEdit
-                        ? `onpointerdown="window.startPatrolMapItemDrag(event, '${flr}', '${it.uid}')" style="grid-column:${it.x + 1}/span ${it.w};grid-row:${it.y + 1}/span ${it.h};touch-action:none;"`
-                        : `style="grid-column:${it.x + 1}/span ${it.w};grid-row:${it.y + 1}/span ${it.h};"`;
+                        ? `onpointerdown="window.startPatrolMapItemDrag(event, '${flr}', '${it.uid}')" style="${posStyle}touch-action:none;"`
+                        : `style="${posStyle}"`;
 
-                    if (it.kind === 'lift' || it.kind === 'stair') {
-                        const baseCls = it.kind === 'lift' ? 'bg-slate-500 text-white' : 'bg-slate-300 text-slate-800 border border-slate-400';
-                        return `<div ${dragAttr} class="${baseCls} ${selRing} rounded text-[8.5px] font-black flex items-center justify-center leading-tight tracking-tighter text-center select-none overflow-hidden ${isEdit ? 'cursor-move' : ''}">${window.esc(it.label)}</div>`;
+                    if (it.kind === 'lift' || it.kind === 'stair' || it.kind === 'empty') {
+                        const baseCls = it.kind === 'lift'
+                            ? 'bg-slate-500 text-white border border-slate-600'
+                            : (it.kind === 'empty'
+                                ? 'bg-[#faf8f5] text-slate-800 border border-slate-400'
+                                : 'bg-slate-300 text-slate-800 border border-slate-400');
+                        return `<div ${dragAttr} class="${baseCls} ${selRing} rounded text-[9.5px] font-black flex items-center justify-center leading-tight tracking-tighter text-center select-none overflow-hidden ${isEdit ? 'cursor-move' : ''}"><span class="pointer-events-none">${window.esc(it.label)}</span></div>`;
                     }
 
                     const prefix = flr === '地下' ? 'R' : (flr === '一樓' ? '1' : 'J');
@@ -5876,7 +5904,7 @@ window.isEditingPatrolMap = false;
                                 ? 'bg-slate-700 border-slate-700 text-white shadow-2xs'
                                 : 'bg-[#faf8f5] hover:bg-amber-50 border-slate-400 text-slate-800';
                     const clickAttr = isEdit ? '' : `onclick="window.cyclePatrolMapStall('${flr}', ${it.num})"`;
-                    return `<div ${clickAttr} ${dragAttr} class="border rounded flex items-center justify-center select-none transition-colors overflow-hidden ${cls} ${selRing} ${isEdit ? 'cursor-move' : 'cursor-pointer active:scale-95'}"><span class="text-[9.5px] font-mono font-black leading-none tracking-tighter">${window.esc(it.label)}</span></div>`;
+                    return `<div ${clickAttr} ${dragAttr} class="border rounded flex items-center justify-center select-none transition-colors overflow-hidden ${cls} ${selRing} ${isEdit ? 'cursor-move' : 'cursor-pointer active:scale-95'}"><span class="text-[9.5px] font-mono font-black leading-none tracking-tighter pointer-events-none">${window.esc(it.label)}</span></div>`;
                 }).join('');
 
                 return `
@@ -5889,9 +5917,8 @@ window.isEditingPatrolMap = false;
                     </div>`;
             };
 
-mapBox.innerHTML = `
+            mapBox.innerHTML = `
                 <div class="bg-[#f3efe6] border border-slate-300 rounded-2xl p-1.5 shadow-xs w-full space-y-1.5">
-                    <!-- 頂部控制列 -->
                     <div class="flex items-center justify-end gap-1 pb-1.5 border-b border-slate-300 text-[10px] font-black text-slate-700">
                         ${!isEdit ? `
                             <button type="button" onclick="window.toggleEditPatrolMap()" class="px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs active:scale-95">✏️ 編輯排版</button>
@@ -5902,10 +5929,10 @@ mapBox.innerHTML = `
                     </div>
 
                     ${isEdit ? `
-                    <!-- 自定排版工具列 -->
                     <div class="flex flex-wrap items-center justify-between gap-1 bg-white p-1.5 rounded-xl border border-indigo-200 text-[10px] font-black">
                         <div class="flex items-center gap-1 flex-wrap">
                             <button type="button" onclick="window.addPatrolMapCustomItem('stall')" class="px-2 py-0.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200">+ 檔口</button>
+                            <button type="button" onclick="window.addPatrolMapCustomItem('empty')" class="px-2 py-0.5 rounded bg-[#faf8f5] hover:bg-amber-50 text-slate-800 border border-slate-400">+ 空置</button>
                             <button type="button" onclick="window.addPatrolMapCustomItem('stair')" class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300">+ 樓梯</button>
                             <button type="button" onclick="window.addPatrolMapCustomItem('lift')" class="px-2 py-0.5 rounded bg-slate-600 hover:bg-slate-700 text-white">+ 升降機</button>
                         </div>
@@ -16969,9 +16996,25 @@ window.setHygieneCheck = (stallId, checkType) => {
                 }, { merge: true }).catch(e => console.warn('衛生紀錄雲端同步失敗:', e));
             }
 
-            if (field !== 'remark') {
-                window.renderHygienePage();
+if (field === 'remark') {
+                const card = document.getElementById(`hyg-card-${stallId}`);
+                if (card) {
+                    const curCheck = rec.checkVal || (rec.checked ? 'V' : '');
+                    const hasProblem = Boolean(rec.opt1 || rec.opt2 || rec.opt3 || rec.remark);
+                    const rowBgCls = rec.notified
+                        ? 'bg-emerald-50/90 border-emerald-500 ring-1 ring-emerald-300'
+                        : (hasProblem
+                            ? 'bg-rose-50/90 border-rose-400 ring-1 ring-rose-300'
+                            : (curCheck === 'V'
+                                ? 'bg-emerald-50/75 border-emerald-400'
+                                : (curCheck === 'X' ? 'bg-rose-50/60 border-rose-300' : 'bg-white border-slate-200')));
+                    card.className = `w-full px-1.5 py-1 rounded-xl border ${rowBgCls} shadow-2xs flex items-center gap-1 whitespace-nowrap overflow-hidden transition-all`;
+                }
+                window.updateHygieneStatsBar?.();
+                return;
             }
+
+            window.renderHygienePage();
         };
 
 window.hygieneCalOpen = false;
@@ -17237,10 +17280,14 @@ const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
             `;
         };
 
-        window.renderHygienePage = () => {
+window.renderHygienePage = () => {
             window.ensureHygienePageMounted();
             const page = $('hygienePage');
             if (!page) return;
+
+            // 🌟 1. 重繪前先記住目前的滾動高度，防止點選下拉選單或按鍵後畫面彈回頂部
+            const oldScrollEl = document.getElementById('hygieneListScrollArea');
+            const savedScrollTop = oldScrollEl ? oldScrollEl.scrollTop : (window._hygieneSavedScrollTop || 0);
 
             const dateKey = currentHygieneDate || getTodayDateStr();
             const { weekLabel, stalls } = window.getHygieneDayStalls(dateKey);
@@ -17255,13 +17302,14 @@ const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
                 .concat(csList.map(m => `<option value="${window.esc(m)}" ${dayStaff === m ? 'selected' : ''}>👤 ${window.esc(m)} ▾</option>`))
                 .join('');
 
+            // 🌟 2. 所有控制項統一鎖定高度 h-[26px] 與固定寬度，手機版垂直與水平 100% 整齊對齊
             const rowsHtml = stalls.map(sId => {
                 const r = dayData[sId] || {};
                 const stallInfo = RAW_PATROL_STALLS.find(x => x.id === sId);
                 const ownerName = stallInfo?.name || '';
                 const curCheck = r.checkVal || (r.checked ? 'V' : '');
                 const isNotified = !!r.notified;
-const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
+                const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
 
                 const rowBgCls = isNotified
                     ? 'bg-emerald-50/90 border-emerald-500 ring-1 ring-emerald-300'
@@ -17277,46 +17325,49 @@ const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
 
                 return `
                 <div id="hyg-card-${sId}" class="w-full px-1.5 py-1 rounded-xl border ${rowBgCls} shadow-2xs flex items-center gap-1 whitespace-nowrap overflow-hidden transition-all">
-                    <!-- [檔號] -->
-                    <span class="w-[42px] text-center bg-slate-900 text-white font-mono font-black text-[11px] py-1 rounded-md shrink-0 leading-none" title="${window.esc(ownerName)}">${sId}</span>
+                    <!-- [檔號] 固定寬 40px、高 26px -->
+                    <span class="w-[40px] h-[26px] flex items-center justify-center bg-slate-900 text-white font-mono font-black text-[10.5px] rounded-md shrink-0 leading-none" title="${window.esc(ownerName)}">${sId}</span>
 
-                    <!-- 選單1 -->
+                    <!-- 選單1 固定寬 34px、高 26px、手機強制置中 -->
                     <select onchange="window.updateHygieneField('${sId}', 'opt1', this.value)"
-                        class="w-[38px] appearance-none text-center bg-slate-50 border ${r.opt1 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md py-1 text-[11px] font-black shrink-0 cursor-pointer focus:border-blue-500 focus:outline-none">
+                        style="text-align-last: center;"
+                        class="w-[34px] h-[26px] appearance-none text-center bg-slate-50 border ${r.opt1 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md p-0 text-[10.5px] font-black shrink-0 cursor-pointer leading-none focus:border-blue-500 focus:outline-none">
                         <option value="">--</option>
                         ${HYGIENE_OPT1_LIST.map(o => `<option value="${o}" ${r.opt1 === o ? 'selected' : ''}>${o}</option>`).join('')}
                     </select>
 
-                    <!-- 選單2 -->
+                    <!-- 選單2 固定寬 34px、高 26px -->
                     <select onchange="window.updateHygieneField('${sId}', 'opt2', this.value)"
-                        class="w-[38px] appearance-none text-center bg-slate-50 border ${r.opt2 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md py-1 text-[11px] font-black shrink-0 cursor-pointer focus:border-blue-500 focus:outline-none">
+                        style="text-align-last: center;"
+                        class="w-[34px] h-[26px] appearance-none text-center bg-slate-50 border ${r.opt2 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md p-0 text-[10.5px] font-black shrink-0 cursor-pointer leading-none focus:border-blue-500 focus:outline-none">
                         <option value="">--</option>
                         ${HYGIENE_OPT2_LIST.map(o => `<option value="${o}" ${r.opt2 === o ? 'selected' : ''}>${o}</option>`).join('')}
                     </select>
 
-                    <!-- 選單3 -->
+                    <!-- 選單3 固定寬 34px、高 26px -->
                     <select onchange="window.updateHygieneField('${sId}', 'opt3', this.value)"
-                        class="w-[38px] appearance-none text-center bg-slate-50 border ${r.opt3 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md py-1 text-[11px] font-black shrink-0 cursor-pointer focus:border-blue-500 focus:outline-none">
+                        style="text-align-last: center;"
+                        class="w-[34px] h-[26px] appearance-none text-center bg-slate-50 border ${r.opt3 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md p-0 text-[10.5px] font-black shrink-0 cursor-pointer leading-none focus:border-blue-500 focus:outline-none">
                         <option value="">--</option>
                         ${HYGIENE_OPT3_LIST.map(o => `<option value="${o}" ${r.opt3 === o ? 'selected' : ''}>${o}</option>`).join('')}
                     </select>
 
-                    <!-- 備註 -->
+                    <!-- 備註 彈性寬度、高 26px -->
                     <input type="text" value="${window.esc(r.remark || '')}" placeholder="備註"
                         oninput="window.updateHygieneField('${sId}', 'remark', this.value)"
-                        class="flex-1 min-w-[44px] w-0 bg-slate-50 border border-slate-300 rounded-md px-1.5 py-1 text-[11px] font-bold text-slate-800 transition-all focus:bg-white focus:border-blue-500 focus:outline-none">
+                        class="flex-1 min-w-[36px] w-0 h-[26px] bg-slate-50 border border-slate-300 rounded-md px-1.5 py-0 text-[11px] font-bold text-slate-800 leading-none transition-all focus:bg-white focus:border-blue-500 focus:outline-none">
 
-                    <!-- 巡查 V/X -->
-                    <div class="flex items-center gap-0.5 shrink-0">
-                        <span class="text-[10px] font-black text-slate-600 select-none">巡查</span>
+                    <!-- 巡查 V/X 固定高 26px -->
+                    <div class="flex items-center gap-0.5 shrink-0 h-[26px]">
+                        <span class="hidden sm:inline text-[10px] font-black text-slate-600 select-none mr-0.5">巡查</span>
                         <button type="button" onclick="window.setHygieneCheck('${sId}', 'V')" title="正常 / 合格"
-                            class="w-[23px] h-[24px] flex items-center justify-center rounded-md border shrink-0 active:scale-90 transition-all ${curCheck === 'V' ? 'bg-emerald-500 text-white border-emerald-600 shadow-2xs' : 'bg-white text-slate-400 border-slate-300 hover:text-emerald-600 hover:bg-emerald-50/50'}">
+                            class="w-[24px] h-[26px] flex items-center justify-center rounded-md border shrink-0 active:scale-90 transition-all ${curCheck === 'V' ? 'bg-emerald-500 text-white border-emerald-600 shadow-2xs' : 'bg-white text-slate-400 border-slate-300 hover:text-emerald-600 hover:bg-emerald-50/50'}">
                             <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
                                 <polyline points="20 6 9 17 4 12"></polyline>
                             </svg>
                         </button>
-                        <button type="button" onclick="window.setHygieneCheck('${sId}', 'X')" title="不合格 / 異常"
-                            class="w-[23px] h-[24px] flex items-center justify-center rounded-md border shrink-0 active:scale-90 transition-all ${curCheck === 'X' ? 'bg-rose-500 text-white border-rose-600 shadow-2xs' : 'bg-white text-slate-400 border-slate-300 hover:text-rose-600 hover:bg-rose-50/50'}">
+                        <button type="button" onclick="window.setHygieneCheck('${sId}', 'X')" title="沒有查"
+                            class="w-[24px] h-[26px] flex items-center justify-center rounded-md border shrink-0 active:scale-90 transition-all ${curCheck === 'X' ? 'bg-rose-500 text-white border-rose-600 shadow-2xs' : 'bg-white text-slate-400 border-slate-300 hover:text-rose-600 hover:bg-rose-50/50'}">
                             <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
                                 <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -17324,10 +17375,10 @@ const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
                         </button>
                     </div>
 
-                    <!-- 完成通知按鈕 (取代重做) -->
+                    <!-- 完成通知按鈕 固定寬 52px、高 26px（字數改變也不會推擠左方欄位） -->
                     <button type="button" onclick="window.updateHygieneField('${sId}', 'notified')"
-                        class="px-2 py-1 rounded-md text-[10.5px] font-black border shrink-0 active:scale-95 transition-all ${notifyBtnCls}">
-                        ${isNotified ? '✔ 已通知' : '完成通知'}
+                        class="w-[52px] h-[26px] flex items-center justify-center rounded-md text-[10px] font-black border shrink-0 leading-none active:scale-95 transition-all ${notifyBtnCls}">
+                        ${isNotified ? '✔已通知' : '完成通知'}
                     </button>
                 </div>`;
             }).join('');
@@ -17352,7 +17403,7 @@ const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
                     ${window.buildHygieneCalendarHtml()}
                 </div>
 
-                <div class="flex-1 overflow-y-auto space-y-1.5 pb-20 pr-0.5">
+                <div id="hygieneListScrollArea" onscroll="window._hygieneSavedScrollTop = this.scrollTop;" class="flex-1 overflow-y-auto space-y-1.5 pb-20 pr-0.5">
                     ${rowsHtml}
                 </div>
 
@@ -17364,6 +17415,12 @@ const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
                 </div>
             `;
             window.updateHygieneStatsBar();
+
+            // 🌟 3. 重繪後立即無縫還原滾動高度
+            const newScrollEl = document.getElementById('hygieneListScrollArea');
+            if (newScrollEl && savedScrollTop > 0) {
+                newScrollEl.scrollTop = savedScrollTop;
+            }
         };
 
 window.switchTab = (tab) => {
