@@ -16945,14 +16945,12 @@ window.setHygieneCheck = (stallId, checkType) => {
             const dateKey = currentHygieneDate || getTodayDateStr();
             if (!hygieneRecordsStore[dateKey]) hygieneRecordsStore[dateKey] = {};
             if (!hygieneRecordsStore[dateKey][stallId]) {
-                hygieneRecordsStore[dateKey][stallId] = { opt1: '', opt2: '', opt3: '', remark: '', improveNote: '', notified: false, checked: false, checkVal: '', redo: false, ts: 0 };
+                hygieneRecordsStore[dateKey][stallId] = { opt1: '', opt2: '', opt3: '', remark: '', notified: false, checked: false, checkVal: '', ts: 0 };
             }
             const rec = hygieneRecordsStore[dateKey][stallId];
             const nowTs = Date.now();
 
-            if (field === 'redo') {
-                rec.redo = !rec.redo;
-            } else if (field === 'notified') {
+            if (field === 'notified') {
                 rec.notified = !rec.notified;
             } else {
                 rec[field] = val;
@@ -16969,21 +16967,6 @@ window.setHygieneCheck = (stallId, checkType) => {
                 setDoc(cfgDoc('hygiene_records'), {
                     records: { [dateKey]: payload }
                 }, { merge: true }).catch(e => console.warn('衛生紀錄雲端同步失敗:', e));
-            }
-
-            if (field === 'improveNote') {
-                const inp = document.getElementById(`hyg-imp-inp-${stallId}`);
-                const hasImp = String(val || '').trim() !== '';
-                if (inp) {
-                    inp.className = `flex-1 min-w-0 rounded-md px-2 py-1 text-[11px] font-bold border transition-all focus:outline-none ${hasImp ? 'bg-rose-100/90 border-rose-500 text-rose-900 placeholder-rose-400' : 'bg-slate-50 border-slate-300 text-slate-800 focus:bg-white focus:border-blue-500'}`;
-                }
-                const card = document.getElementById(`hyg-card-${stallId}`);
-                if (card) {
-                    const curCheck = rec.checkVal || (rec.checked ? 'V' : '');
-                    card.className = `w-full px-1.5 py-1.5 rounded-xl border shadow-2xs flex flex-col gap-1 overflow-hidden transition-all ${rec.notified ? 'bg-emerald-50/90 border-emerald-500 ring-1 ring-emerald-300' : (hasImp || rec.redo ? 'bg-rose-50/90 border-rose-400 ring-1 ring-rose-300' : (curCheck === 'V' ? 'bg-emerald-50/75 border-emerald-400' : (curCheck === 'X' ? 'bg-rose-50/60 border-rose-300' : 'bg-white border-slate-200')))}`;
-                }
-                window.updateHygieneStatsBar?.();
-                return;
             }
 
             if (field !== 'remark') {
@@ -17048,7 +17031,7 @@ window.clearCurrentHygieneDay = (e) => {
             const nowTs = Date.now();
             const clearedDay = { _meta: { staff: '', ts: nowTs } };
             stalls.forEach(sId => {
-                clearedDay[sId] = { opt1: '', opt2: '', opt3: '', remark: '', improveNote: '', notified: false, checked: false, checkVal: '', redo: false, ts: nowTs };
+                clearedDay[sId] = { opt1: '', opt2: '', opt3: '', remark: '', notified: false, checked: false, checkVal: '', ts: nowTs };
             });
             hygieneRecordsStore[dateKey] = clearedDay;
             safeSetLocal('work_cache_hygiene_records', hygieneRecordsStore);
@@ -17136,13 +17119,14 @@ window.exportHygieneExcel = () => {
             let monthInspectTotal = 0;
             let monthNeedImproveTotal = 0;
             let monthImprovedTotal = 0;
-            let monthRedoTotal = 0;
 
             const dailySummaryRows = [];
-            const detailRows = [
-                [`${yearNum}年${monthNum}月 衛生巡查全月明細表`],
-                ['日期', '星期', '檔號', '承租人', '選單1(清潔/更換)', '選單2(牆身/枱面/地面)', '選單3(青苔/污跡)', '備註', '改善內容', '是否完成通知', '巡查(V/X)', '是否重做', '負責客服']
+            const caseDetailRows = [
+                [`${yearNum}年${monthNum}月 衛生巡查問題個案明細表`],
+                ['日期', '星期', '檔號', '承租人', '問題項目 (選單1/2/3)', '備註', '是否完成通知', '負責客服']
             ];
+
+            let totalCasesCount = 0;
 
             for (let d = 1; d <= daysInMonth; d++) {
                 const dKey = `${monthPrefix}-${pad(d)}`;
@@ -17150,41 +17134,37 @@ window.exportHygieneExcel = () => {
                 const dayData = hygieneRecordsStore[dKey] || {};
                 const dayStaff = window.getHygieneDayStaff(dKey);
 
-                let dayInspect = 0, dayNeedImp = 0, dayDoneImp = 0, dayRedo = 0;
+                let dayInspect = 0, dayNeedImp = 0, dayDoneImp = 0;
 
                 stalls.forEach(sId => {
                     const stallObj = RAW_PATROL_STALLS.find(x => x.id === sId);
                     const r = dayData[sId] || {};
                     const checkText = r.checkVal || (r.checked ? 'V' : '');
-                    const hasImp = String(r.improveNote || '').trim() !== '';
-
-                    // 🌟 巡查有 X 的不算，只有 V 才計入巡查完成次數
                     if (checkText === 'V') dayInspect++;
-                    if (hasImp) dayNeedImp++;
-                    if (r.notified) dayDoneImp++;
-                    if (r.redo) dayRedo++;
 
-                    detailRows.push([
-                        dKey,
-                        weekLabel,
-                        sId,
-                        stallObj?.name || '',
-                        r.opt1 || '',
-                        r.opt2 || '',
-                        r.opt3 || '',
-                        r.remark || '',
-                        r.improveNote || '',
-                        r.notified ? '已完成通知' : (hasImp ? '未通知' : ''),
-                        checkText || '',
-                        r.redo ? '需重做' : '',
-                        dayStaff || r.staff || ''
-                    ]);
+const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
+                    if (hasProblem) {
+                        dayNeedImp++;
+                        totalCasesCount++;
+                        if (r.notified) dayDoneImp++;
+
+                        const issueParts = [r.opt1, r.opt2, r.opt3].filter(Boolean).join(' / ');
+                        caseDetailRows.push([
+                            dKey,
+                            weekLabel,
+                            sId,
+                            stallObj?.name || '',
+                            issueParts || (checkText === 'X' ? '巡查不合格(X)' : '其他問題'),
+                            r.remark || '',
+                            r.notified ? '已完成通知' : '未通知',
+                            dayStaff || r.staff || ''
+                        ]);
+                    }
                 });
 
                 monthInspectTotal += dayInspect;
                 monthNeedImproveTotal += dayNeedImp;
                 monthImprovedTotal += dayDoneImp;
-                monthRedoTotal += dayRedo;
 
                 dailySummaryRows.push([
                     dKey,
@@ -17193,39 +17173,42 @@ window.exportHygieneExcel = () => {
                     dayInspect,
                     dayNeedImp,
                     dayDoneImp,
-                    dayRedo,
                     dayStaff || ''
                 ]);
             }
 
             const summarySheetRows = [
                 [`${yearNum}年${monthNum}月 衛生巡查整月統計總表`],
-                ['全月巡查總次數', monthInspectTotal, '全月需改善次數', monthNeedImproveTotal, '全月已改善(完成通知)次數', monthImprovedTotal, '全月重做次數', monthRedoTotal],
+                ['全月巡查總次數', monthInspectTotal, '問題個案總數', monthNeedImproveTotal, '已完成通知個案數', monthImprovedTotal],
                 [],
-                ['日期', '星期', '應巡檔數', '巡查次數', '需改善次數', '已改善次數', '重做次數', '負責客服'],
+                ['日期', '星期', '應巡檔數', '巡查次數', '問題個案數', '已完成通知數', '負責客服'],
                 ...dailySummaryRows,
-                ['全月合計', '', dailySummaryRows.reduce((s, r) => s + r[2], 0), monthInspectTotal, monthNeedImproveTotal, monthImprovedTotal, monthRedoTotal, '']
+                ['全月合計', '', dailySummaryRows.reduce((s, r) => s + r[2], 0), monthInspectTotal, monthNeedImproveTotal, monthImprovedTotal, '']
             ];
+
+            // Insert total case count at top of caseDetailRows
+            caseDetailRows.splice(1, 0, ['問題個案總數 (總共多少個)', totalCasesCount]);
+            caseDetailRows.splice(2, 0, []);
 
             if (typeof XLSX !== 'undefined') {
                 const wb = XLSX.utils.book_new();
                 const wsSummary = XLSX.utils.aoa_to_sheet(summarySheetRows);
-                const wsDetail = XLSX.utils.aoa_to_sheet(detailRows);
+                const wsDetail = XLSX.utils.aoa_to_sheet(caseDetailRows);
 
-                wsSummary['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }];
-                wsDetail['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 9 }, { wch: 10 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 20 }, { wch: 24 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 12 }];
+                wsSummary['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 14 }];
+                wsDetail['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 9 }, { wch: 10 }, { wch: 24 }, { wch: 20 }, { wch: 14 }, { wch: 12 }];
 
                 XLSX.utils.book_append_sheet(wb, wsSummary, '整月統計總表');
-                XLSX.utils.book_append_sheet(wb, wsDetail, '全月巡查明細');
-                XLSX.writeFile(wb, `${monthPrefix} 衛生巡查整月統計.xlsx`);
-                window.writeGalleryLog('導出巡查報表', `${monthPrefix} 衛生巡查整月統計`, `巡查:${monthInspectTotal} · 需改善:${monthNeedImproveTotal} · 已改善:${monthImprovedTotal}`);
-                window.showToast(`✅ 已匯出 ${yearNum}年${monthNum}月 整月統計表！`);
+                XLSX.utils.book_append_sheet(wb, wsDetail, '問題個案明細');
+                XLSX.writeFile(wb, `${monthPrefix} 衛生巡查整月統計及個案明細.xlsx`);
+                window.writeGalleryLog('導出巡查報表', `${monthPrefix} 衛生巡查整月統計`, `巡查:${monthInspectTotal} · 問題個案:${monthNeedImproveTotal}`);
+                window.showToast(`✅ 已匯出 ${yearNum}年${monthNum}月 統計表與個案明細（總共 ${totalCasesCount} 個案）！`);
             } else {
                 window.showToast('匯出模組尚未載入', true);
             }
         };
 
-        window.updateHygieneStatsBar = () => {
+window.updateHygieneStatsBar = () => {
             const bar = document.getElementById('hygieneStatsSummaryBar');
             if (!bar) return;
             const dateKey = currentHygieneDate || getTodayDateStr();
@@ -17235,22 +17218,22 @@ window.exportHygieneExcel = () => {
             let inspectedCount = 0;
             let needImproveCount = 0;
             let improvedCount = 0;
-            let redoCount = 0;
 
             stalls.forEach(sId => {
                 const r = dayData[sId] || {};
                 const cur = r.checkVal || (r.checked ? 'V' : '');
-                if (cur === 'V') inspectedCount++; // 🌟 巡查有 X 的不算
-                if (String(r.improveNote || '').trim()) needImproveCount++;
-                if (r.notified) improvedCount++;
-                if (r.redo) redoCount++;
+                if (cur === 'V') inspectedCount++;
+const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
+                if (hasProblem) {
+                    needImproveCount++;
+                    if (r.notified) improvedCount++;
+                }
             });
 
             bar.innerHTML = `
                 <span class="text-[10.5px] font-black px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">巡查 ${inspectedCount}/${stalls.length}</span>
                 <span class="text-[10.5px] font-black px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-300">需改善 ${needImproveCount}</span>
                 <span class="text-[10.5px] font-black px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-300">已改善 ${improvedCount}</span>
-                ${redoCount > 0 ? `<span class="text-[10.5px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">重做 ${redoCount}</span>` : ''}
             `;
         };
 
@@ -17277,86 +17260,75 @@ window.exportHygieneExcel = () => {
                 const stallInfo = RAW_PATROL_STALLS.find(x => x.id === sId);
                 const ownerName = stallInfo?.name || '';
                 const curCheck = r.checkVal || (r.checked ? 'V' : '');
-                const hasImprove = String(r.improveNote || '').trim() !== '';
                 const isNotified = !!r.notified;
+const hasProblem = Boolean(r.opt1 || r.opt2 || r.opt3 || r.remark);
 
                 const rowBgCls = isNotified
                     ? 'bg-emerald-50/90 border-emerald-500 ring-1 ring-emerald-300'
-                    : (hasImprove || r.redo
+                    : (hasProblem
                         ? 'bg-rose-50/90 border-rose-400 ring-1 ring-rose-300'
                         : (curCheck === 'V'
                             ? 'bg-emerald-50/75 border-emerald-400'
                             : (curCheck === 'X' ? 'bg-rose-50/60 border-rose-300' : 'bg-white border-slate-200')));
-
-                const improveInpCls = hasImprove
-                    ? 'bg-rose-100/90 border-rose-500 text-rose-900 placeholder-rose-400'
-                    : 'bg-slate-50 border-slate-300 text-slate-800 focus:bg-white focus:border-blue-500';
 
                 const notifyBtnCls = isNotified
                     ? 'bg-emerald-600 text-white border-emerald-700 shadow-2xs'
                     : 'bg-white text-slate-600 border-slate-300 hover:bg-emerald-50 hover:text-emerald-700';
 
                 return `
-                <div id="hyg-card-${sId}" class="w-full px-1.5 py-1.5 rounded-xl border ${rowBgCls} shadow-2xs flex flex-col gap-1 overflow-hidden transition-all">
-                    <!-- 第 1 行：檔號 + 3下拉選單 + 備註 + 巡查 + 重做 -->
-                    <div class="w-full flex items-center gap-1 whitespace-nowrap overflow-hidden">
-                        <span class="w-[42px] text-center bg-slate-900 text-white font-mono font-black text-[11px] py-1 rounded-md shrink-0 leading-none" title="${window.esc(ownerName)}">${sId}</span>
+                <div id="hyg-card-${sId}" class="w-full px-1.5 py-1 rounded-xl border ${rowBgCls} shadow-2xs flex items-center gap-1 whitespace-nowrap overflow-hidden transition-all">
+                    <!-- [檔號] -->
+                    <span class="w-[42px] text-center bg-slate-900 text-white font-mono font-black text-[11px] py-1 rounded-md shrink-0 leading-none" title="${window.esc(ownerName)}">${sId}</span>
 
-                        <select onchange="window.updateHygieneField('${sId}', 'opt1', this.value)"
-                            class="w-[38px] appearance-none text-center bg-slate-50 border ${r.opt1 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md py-1 text-[11px] font-black shrink-0 cursor-pointer focus:border-blue-500 focus:outline-none">
-                            <option value="">--</option>
-                            ${HYGIENE_OPT1_LIST.map(o => `<option value="${o}" ${r.opt1 === o ? 'selected' : ''}>${o}</option>`).join('')}
-                        </select>
+                    <!-- 選單1 -->
+                    <select onchange="window.updateHygieneField('${sId}', 'opt1', this.value)"
+                        class="w-[38px] appearance-none text-center bg-slate-50 border ${r.opt1 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md py-1 text-[11px] font-black shrink-0 cursor-pointer focus:border-blue-500 focus:outline-none">
+                        <option value="">--</option>
+                        ${HYGIENE_OPT1_LIST.map(o => `<option value="${o}" ${r.opt1 === o ? 'selected' : ''}>${o}</option>`).join('')}
+                    </select>
 
-                        <select onchange="window.updateHygieneField('${sId}', 'opt2', this.value)"
-                            class="w-[38px] appearance-none text-center bg-slate-50 border ${r.opt2 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md py-1 text-[11px] font-black shrink-0 cursor-pointer focus:border-blue-500 focus:outline-none">
-                            <option value="">--</option>
-                            ${HYGIENE_OPT2_LIST.map(o => `<option value="${o}" ${r.opt2 === o ? 'selected' : ''}>${o}</option>`).join('')}
-                        </select>
+                    <!-- 選單2 -->
+                    <select onchange="window.updateHygieneField('${sId}', 'opt2', this.value)"
+                        class="w-[38px] appearance-none text-center bg-slate-50 border ${r.opt2 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md py-1 text-[11px] font-black shrink-0 cursor-pointer focus:border-blue-500 focus:outline-none">
+                        <option value="">--</option>
+                        ${HYGIENE_OPT2_LIST.map(o => `<option value="${o}" ${r.opt2 === o ? 'selected' : ''}>${o}</option>`).join('')}
+                    </select>
 
-                        <select onchange="window.updateHygieneField('${sId}', 'opt3', this.value)"
-                            class="w-[38px] appearance-none text-center bg-slate-50 border ${r.opt3 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md py-1 text-[11px] font-black shrink-0 cursor-pointer focus:border-blue-500 focus:outline-none">
-                            <option value="">--</option>
-                            ${HYGIENE_OPT3_LIST.map(o => `<option value="${o}" ${r.opt3 === o ? 'selected' : ''}>${o}</option>`).join('')}
-                        </select>
+                    <!-- 選單3 -->
+                    <select onchange="window.updateHygieneField('${sId}', 'opt3', this.value)"
+                        class="w-[38px] appearance-none text-center bg-slate-50 border ${r.opt3 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md py-1 text-[11px] font-black shrink-0 cursor-pointer focus:border-blue-500 focus:outline-none">
+                        <option value="">--</option>
+                        ${HYGIENE_OPT3_LIST.map(o => `<option value="${o}" ${r.opt3 === o ? 'selected' : ''}>${o}</option>`).join('')}
+                    </select>
 
-                        <input type="text" value="${window.esc(r.remark || '')}" placeholder="備註"
-                            oninput="window.updateHygieneField('${sId}', 'remark', this.value)"
-                            class="flex-1 min-w-[44px] w-0 bg-slate-50 border border-slate-300 rounded-md px-1.5 py-1 text-[11px] font-bold text-slate-800 transition-all focus:bg-white focus:border-blue-500 focus:outline-none">
+                    <!-- 備註 -->
+                    <input type="text" value="${window.esc(r.remark || '')}" placeholder="備註"
+                        oninput="window.updateHygieneField('${sId}', 'remark', this.value)"
+                        class="flex-1 min-w-[44px] w-0 bg-slate-50 border border-slate-300 rounded-md px-1.5 py-1 text-[11px] font-bold text-slate-800 transition-all focus:bg-white focus:border-blue-500 focus:outline-none">
 
-                        <div class="flex items-center gap-0.5 shrink-0">
-                            <span class="text-[10px] font-black text-slate-600 select-none">巡查</span>
-                            <button type="button" onclick="window.setHygieneCheck('${sId}', 'V')" title="正常 / 合格"
-                                class="w-[23px] h-[24px] flex items-center justify-center rounded-md border shrink-0 active:scale-90 transition-all ${curCheck === 'V' ? 'bg-emerald-500 text-white border-emerald-600 shadow-2xs' : 'bg-white text-slate-400 border-slate-300 hover:text-emerald-600 hover:bg-emerald-50/50'}">
-                                <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
-                                    <polyline points="20 6 9 17 4 12"></polyline>
-                                </svg>
-                            </button>
-                            <button type="button" onclick="window.setHygieneCheck('${sId}', 'X')" title="不合格 / 異常"
-                                class="w-[23px] h-[24px] flex items-center justify-center rounded-md border shrink-0 active:scale-90 transition-all ${curCheck === 'X' ? 'bg-rose-500 text-white border-rose-600 shadow-2xs' : 'bg-white text-slate-400 border-slate-300 hover:text-rose-600 hover:bg-rose-50/50'}">
-                                <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
-                                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                                </svg>
-                            </button>
-                        </div>
-
-                        <button type="button" onclick="window.updateHygieneField('${sId}', 'redo')"
-                            class="px-1.5 py-1 rounded-md text-[10.5px] font-black border shrink-0 active:scale-95 transition-all ${r.redo ? 'bg-rose-500 text-white border-rose-600 shadow-2xs' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}">
-                            🔄重做
+                    <!-- 巡查 V/X -->
+                    <div class="flex items-center gap-0.5 shrink-0">
+                        <span class="text-[10px] font-black text-slate-600 select-none">巡查</span>
+                        <button type="button" onclick="window.setHygieneCheck('${sId}', 'V')" title="正常 / 合格"
+                            class="w-[23px] h-[24px] flex items-center justify-center rounded-md border shrink-0 active:scale-90 transition-all ${curCheck === 'V' ? 'bg-emerald-500 text-white border-emerald-600 shadow-2xs' : 'bg-white text-slate-400 border-slate-300 hover:text-emerald-600 hover:bg-emerald-50/50'}">
+                            <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                        </button>
+                        <button type="button" onclick="window.setHygieneCheck('${sId}', 'X')" title="不合格 / 異常"
+                            class="w-[23px] h-[24px] flex items-center justify-center rounded-md border shrink-0 active:scale-90 transition-all ${curCheck === 'X' ? 'bg-rose-500 text-white border-rose-600 shadow-2xs' : 'bg-white text-slate-400 border-slate-300 hover:text-rose-600 hover:bg-rose-50/50'}">
+                            <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
                         </button>
                     </div>
 
-                    <!-- 第 2 行：改善內容（有內容變紅）＋ 是否完成通知（點擊變綠） -->
-                    <div class="w-full flex items-center gap-1.5 pt-1 border-t border-slate-200/70">
-                        <input id="hyg-imp-inp-${sId}" type="text" value="${window.esc(r.improveNote || '')}" placeholder="改善內容（填寫即列入個案並標紅）..."
-                            oninput="window.updateHygieneField('${sId}', 'improveNote', this.value)"
-                            class="flex-1 min-w-0 rounded-md px-2 py-1 text-[11px] font-bold border transition-all focus:outline-none ${improveInpCls}">
-                        <button type="button" onclick="window.updateHygieneField('${sId}', 'notified')"
-                            class="px-2.5 py-1 rounded-md text-[11px] font-black border shrink-0 active:scale-95 transition-all ${notifyBtnCls}">
-                            ${isNotified ? '✔ 完成通知' : '完成通知'}
-                        </button>
-                    </div>
+                    <!-- 完成通知按鈕 (取代重做) -->
+                    <button type="button" onclick="window.updateHygieneField('${sId}', 'notified')"
+                        class="px-2 py-1 rounded-md text-[10.5px] font-black border shrink-0 active:scale-95 transition-all ${notifyBtnCls}">
+                        ${isNotified ? '✔ 已通知' : '完成通知'}
+                    </button>
                 </div>`;
             }).join('');
 
