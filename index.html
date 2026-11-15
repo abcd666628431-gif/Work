@@ -13176,6 +13176,10 @@ window.removeTeamMember = (idx) => {
             });
         };
 window.selectGridMember = (name) => {
+            window.excelRestBrushActive = false;
+            document.querySelectorAll('.excel-rest-brush-btn').forEach(b => {
+                b.className = 'excel-rest-brush-btn px-2 py-0.5 rounded-md text-[10px] font-black border transition-all inline-flex items-center gap-1 active:scale-95 bg-[#cbead6] text-[#14532d] border-[#82c59a] hover:bg-[#b5dfc4]';
+            });
             activeGridMember = (activeGridMember === name) ? null : name;
 
             // 1A. 即時同步更新「左表人員名單卡片」的選取顏色與狀態標籤
@@ -13531,6 +13535,9 @@ if (window.syncLocTrackRows) {
             }
             if (window.refreshPersonTableDay) {
                 window.refreshPersonTableDay(dateStr);
+            }
+            if (window.refreshRightExcelStationPane) {
+                window.refreshRightExcelStationPane(dateStr);
             }
         };
 
@@ -14304,8 +14311,8 @@ window.toggleSplitHour = (dateStr, locId, hourStr) => {
         window.clearSingleDaySchedule = (targetDateStr) => {
             if (!confirm(`確定要清空【${targetDateStr}】當天的排班內容嗎？\n（其他日子不受影響）`)) return;
 
-            window.captureAll5DayDomValues();
-            window._tempGridValues = window._tempGridValues || {};
+window.captureAll5DayDomValues();
+            window.ensureDateSeededInTempGrid(dStr);
 
             // 1. 徹底清空當日所有暫存格子
             Object.keys(window._tempGridValues).forEach(k => {
@@ -14393,25 +14400,125 @@ window.saveGridSchedule = async () => {
         });
     };
 
-    // DOM 提取
-    document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
-        const { date, loc, start, end } = td.dataset;
-        const disps = td.querySelectorAll('.grid-input-display');
-        if (disps.length !== 1) return;
-        addSlotRecord(date, loc, start, end, window.extractCellText(disps[0]));
-    });
+const hasClassicDomCells = document.querySelectorAll('td[data-loc][data-date], .grid-input-display[data-loc][data-date], .grid-input').length > 0;
 
-    document.querySelectorAll('.grid-input-display[data-loc][data-date]').forEach(div => {
-        const { date, loc, start, end } = div.dataset;
-        const text = window.extractCellText(div);
-        addSlotRecord(date, loc, start, end, text);
-    });
+    if (hasClassicDomCells) {
+const hasClassicDomCells = document.querySelectorAll('td[data-loc][data-date], .grid-input-display[data-loc][data-date], .grid-input').length > 0;
 
-    document.querySelectorAll('.grid-input').forEach(i => {
-        const { date, loc, start, end } = i.dataset;
-        const text = (i.value || '').trim();
-        addSlotRecord(date, loc, start, end, text);
-    });
+    if (hasClassicDomCells) {
+const hasClassicDomCells = document.querySelectorAll('td[data-loc][data-date], .grid-input-display[data-loc][data-date], .grid-input').length > 0;
+
+    if (hasClassicDomCells) {
+const hasClassicDomCells = document.querySelectorAll('td[data-loc][data-date], .grid-input-display[data-loc][data-date], .grid-input').length > 0;
+
+    if (hasClassicDomCells) {
+        // DOM 提取（原本樣式 / 只看崗位模式）
+        document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
+            const { date, loc, start, end } = td.dataset;
+            const disps = td.querySelectorAll('.grid-input-display');
+            if (disps.length !== 1) return;
+            addSlotRecord(date, loc, start, end, window.extractCellText(disps[0]));
+        });
+
+        document.querySelectorAll('.grid-input-display[data-loc][data-date]').forEach(div => {
+            const { date, loc, start, end } = div.dataset;
+            const text = window.extractCellText(div);
+            addSlotRecord(date, loc, start, end, text);
+        });
+
+        document.querySelectorAll('.grid-input').forEach(i => {
+            const { date, loc, start, end } = i.dataset;
+            const text = (i.value || '').trim();
+            addSlotRecord(date, loc, start, end, text);
+        });
+    } else {
+        // 記憶體暫存提取（Excel總覽 / 只看人員模式）
+        const tempMap = window._tempGridValues || {};
+        const seededMap = window._seededTempDates || {};
+        fiveDays.forEach(dObj => {
+            const dStr = dObj.dateStr;
+            if (!seededMap[dStr]) {
+                rawByDate[dStr] = [...(multiStore[dStr] || [])];
+                return;
+            }
+            const prefix = `${dStr}_`;
+            Object.keys(tempMap).forEach(k => {
+                if (!k.startsWith(prefix)) return;
+                const rest = k.slice(prefix.length);
+                const m = rest.match(/^(.+)_(\d{2}:\d{2})_(\d{2}:\d{2})$/);
+                if (m) {
+                    addSlotRecord(dStr, m[1], m[2], m[3], tempMap[k]);
+                }
+            });
+        });
+    }
+    window._seededTempDates = {};
+    } else {
+        // 記憶體暫存提取（Excel總覽 / 只看人員模式）
+        const tempMap = window._tempGridValues || {};
+        const seededMap = window._seededTempDates || {};
+        fiveDays.forEach(dObj => {
+            const dStr = dObj.dateStr;
+            if (!seededMap[dStr]) {
+                rawByDate[dStr] = [...(multiStore[dStr] || [])];
+                return;
+            }
+            const prefix = `${dStr}_`;
+            Object.keys(tempMap).forEach(k => {
+                if (!k.startsWith(prefix)) return;
+                const rest = k.slice(prefix.length);
+                const m = rest.match(/^(.+)_(\d{2}:\d{2})_(\d{2}:\d{2})$/);
+                if (m) {
+                    addSlotRecord(dStr, m[1], m[2], m[3], tempMap[k]);
+                }
+            });
+        });
+    }
+    window._seededTempDates = {};
+    } else {
+        // 記憶體暫存提取（Excel總覽 / 只看人員模式）
+        const tempMap = window._tempGridValues || {};
+        const seededMap = window._seededTempDates || {};
+        fiveDays.forEach(dObj => {
+            const dStr = dObj.dateStr;
+            if (!seededMap[dStr]) {
+                rawByDate[dStr] = [...(multiStore[dStr] || [])];
+                return;
+            }
+            const prefix = `${dStr}_`;
+            Object.keys(tempMap).forEach(k => {
+                if (!k.startsWith(prefix)) return;
+                const rest = k.slice(prefix.length);
+                const m = rest.match(/^(.+)_(\d{2}:\d{2})_(\d{2}:\d{2})$/);
+                if (m) {
+                    addSlotRecord(dStr, m[1], m[2], m[3], tempMap[k]);
+                }
+            });
+        });
+    }
+    window._seededTempDates = {};
+    } else {
+        // 記憶體暫存提取（Excel總覽 / 只看人員模式）
+        const tempMap = window._tempGridValues || {};
+        const seededMap = window._seededTempDates || {};
+        fiveDays.forEach(dObj => {
+            const dStr = dObj.dateStr;
+            if (!seededMap[dStr]) {
+                rawByDate[dStr] = [...(multiStore[dStr] || [])];
+                return;
+            }
+            const prefix = `${dStr}_`;
+            Object.keys(tempMap).forEach(k => {
+                if (!k.startsWith(prefix)) return;
+                const rest = k.slice(prefix.length);
+                const m = rest.match(/^(.+)_(\d{2}:\d{2})_(\d{2}:\d{2})$/);
+                if (m) {
+                    addSlotRecord(dStr, m[1], m[2], m[3], tempMap[k]);
+                }
+            });
+        });
+    }
+    window._seededTempDates = {};
 
     let totalSavedSlots = 0;
     Object.keys(rawByDate).forEach(dStr => {
@@ -15004,6 +15111,7 @@ window.startDualPaneResize = (e) => {
 
 window.cancelScheduleEdits = () => {
             window._tempGridValues = {};
+            window._seededTempDates = {};
             window._hasUnsavedGridEdits = false;
             window.renderScheduleManager(true);
             if (window.showToast) window.showToast('已取消剛剛的改動並還原');
@@ -15245,9 +15353,9 @@ window.syncDualTableScroll = (sourceEl, targetId) => {
         };
 
         window.togglePersonCellRest = (dStr, memberName, startStr, endStr, forceAction = null) => {
-            const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(memberName) : memberName;
+const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(memberName) : memberName;
             window.captureAll5DayDomValues();
-            window._tempGridValues = window._tempGridValues || {};
+            window.ensureDateSeededInTempGrid(dStr);
 
             const brushLoc = (activeGridMember === 'ERASER') ? 'ERASER' : (window.activeLeftLocBrush || 'pt_7');
             const isCleanRole = window.currentMapRole === 'clean';
@@ -15323,8 +15431,11 @@ window.syncDualTableScroll = (sourceEl, targetId) => {
                 }
             });
 
-            window._hasUnsavedGridEdits = true;
+window._hasUnsavedGridEdits = true;
             window.refreshPersonTableDay(dStr);
+            if (typeof window.refreshRightExcelStationPane === 'function') {
+                window.refreshRightExcelStationPane(dStr);
+            }
         };
 
         window.buildPersonTableBodyHtml = (dStr) => {
@@ -15543,11 +15654,576 @@ const totalCols = 1 + slots.length;
             return tbodyHtml;
         };
 
-        window.refreshPersonTableDay = (dStr) => {
-            const tbody = document.getElementById(`person-tbody-${dStr}`);
-            if (tbody) {
+window.refreshPersonTableDay = (dStr) => {
+            document.querySelectorAll(`[data-person-tbody="${dStr}"]`).forEach(tbody => {
                 tbody.innerHTML = window.buildPersonTableBodyHtml(dStr);
+            });
+        };
+
+window.handleExcelRightCellClick = (dStr, locId, startStr, endStr, forcedMode = null, cellEl = null) => {
+            if (forcedMode === null && window._lastExcelPaintTs && (Date.now() - window._lastExcelPaintTs) < 400) {
+                return;
             }
+            if (activeGridMember === 'SPLITTER') {
+                window.toggleSplitHour(dStr, locId, startStr);
+                return;
+            }
+
+            // 🌟 Excel總覽「抹休息」模式：點擊或連拖人員列，直接塗抹／還原休息 (pt_7)
+            if (window.excelRestBrushActive) {
+                const targetPerson = cellEl?.dataset?.cellCanon || cellEl?.dataset?.trackCanon || '';
+                if (!targetPerson) {
+                    if (forcedMode === null) window.showToast('👉 請點擊或拖曳「有排班人員」的那一列來抹休息！', true);
+                    return;
+                }
+                window.captureAll5DayDomValues();
+                window.ensureDateSeededInTempGrid(dStr);
+                const isCleanRole = window.currentMapRole === 'clean';
+                const rolePrefix = isCleanRole ? 'clean_' : 'cs_';
+                let targetIntervals = [[startStr, endStr]];
+                if (!isCleanRole) {
+                    const startH = startStr.split(':')[0];
+                    const endH = endStr.split(':')[0];
+                    if (splitHoursState[`${rolePrefix}${dStr}_pt_7_${startStr}`]) {
+                        targetIntervals = [[`${startH}:00`, `${startH}:30`], [`${startH}:30`, `${endH}:00`]];
+                    }
+                }
+                const curRest = window.getSlotAssignedNamesLive(dStr, 'pt_7', targetIntervals[0][0], targetIntervals[0][1]).includes(targetPerson);
+                const setRest = forcedMode !== null ? (forcedMode === 'assign') : !curRest;
+                const homeLoc = cellEl?.dataset?.homeLoc || locId;
+
+                targetIntervals.forEach(([s, e]) => {
+                    const restKey = `${dStr}_pt_7_${s}_${e}`;
+                    const restList = window.getSlotAssignedNamesLive(dStr, 'pt_7', s, e);
+                    if (setRest) {
+                        Object.keys(mapData.points || {}).forEach(lid => {
+                            if (lid === 'pt_7') return;
+                            const lk = `${dStr}_${lid}_${s}_${e}`;
+                            const lList = window.getSlotAssignedNamesLive(dStr, lid, s, e);
+                            if (lList.includes(targetPerson)) {
+                                window._tempGridValues[lk] = lList.filter(n => n !== targetPerson).join('\n');
+                            }
+                        });
+                        if (!restList.includes(targetPerson)) {
+                            window._tempGridValues[restKey] = [...restList, targetPerson].join('\n');
+                        }
+                    } else {
+                        window._tempGridValues[restKey] = restList.filter(n => n !== targetPerson).join('\n');
+                        const hKey = `${dStr}_${homeLoc}_${s}_${e}`;
+                        const hList = window.getSlotAssignedNamesLive(dStr, homeLoc, s, e);
+                        if (!hList.includes(targetPerson)) {
+                            window._tempGridValues[hKey] = [...hList, targetPerson].join('\n');
+                        }
+                    }
+                });
+
+                window._hasUnsavedGridEdits = true;
+                window.refreshRightExcelStationPane(dStr);
+                window.refreshPersonTableDay(dStr);
+                return;
+            }
+
+            if (!activeGridMember) {
+                window.showToast('👉 請先點選左表人名、「抹休息」或「橡皮擦」當畫筆，再點擊此處排班！', true);
+                return;
+            }
+
+            window.captureAll5DayDomValues();
+            window.ensureDateSeededInTempGrid(dStr);
+            const isCleanRole = window.currentMapRole === 'clean';
+            const rolePrefix = isCleanRole ? 'clean_' : 'cs_';
+
+            let targetIntervals = [[startStr, endStr]];
+            if (!isCleanRole) {
+                const startH = startStr.split(':')[0];
+                const endH = endStr.split(':')[0];
+                const isSplit = !!splitHoursState[`${rolePrefix}${dStr}_${locId}_${startStr}`];
+                if (isSplit) {
+                    targetIntervals = [[`${startH}:00`, `${startH}:30`], [`${startH}:30`, `${endH}:00`]];
+                }
+            }
+
+            const canon = activeGridMember === 'ERASER'
+                ? 'ERASER'
+                : (window.resolveMemberIdentity ? window.resolveMemberIdentity(activeGridMember) : activeGridMember);
+
+            const curFirstList = window.getSlotAssignedNamesLive(dStr, locId, targetIntervals[0][0], targetIntervals[0][1]);
+            const shouldAssign = forcedMode !== null
+                ? (forcedMode === 'assign')
+                : (canon !== 'ERASER' && !curFirstList.includes(canon));
+
+            const cellCanon = cellEl?.dataset?.cellCanon || '';
+            const actualLoc = cellEl?.dataset?.actualLoc || locId;
+
+            targetIntervals.forEach(([s, e]) => {
+                const k = `${dStr}_${locId}_${s}_${e}`;
+                const curList = window.getSlotAssignedNamesLive(dStr, locId, s, e);
+                if (canon === 'ERASER') {
+                    if (cellCanon && actualLoc && actualLoc !== locId) {
+                        const aKey = `${dStr}_${actualLoc}_${s}_${e}`;
+                        const aList = window.getSlotAssignedNamesLive(dStr, actualLoc, s, e);
+                        window._tempGridValues[aKey] = aList.filter(n => n !== cellCanon).join('\n');
+                    } else if (cellCanon) {
+                        window._tempGridValues[k] = curList.filter(n => n !== cellCanon).join('\n');
+                    } else {
+                        window._tempGridValues[k] = '';
+                    }
+                } else if (!shouldAssign) {
+                    window._tempGridValues[k] = curList.filter(n => n !== canon).join('\n');
+                } else {
+                    // 同時清除該員在同時段其他崗位的重複指派
+                    Object.keys(mapData.points || {}).forEach(otherLoc => {
+                        if (otherLoc === locId) return;
+                        const oKey = `${dStr}_${otherLoc}_${s}_${e}`;
+                        const oList = window.getSlotAssignedNamesLive(dStr, otherLoc, s, e);
+                        if (oList.includes(canon)) {
+                            window._tempGridValues[oKey] = oList.filter(n => n !== canon).join('\n');
+                        }
+                    });
+                    if (!curList.includes(canon)) {
+                        window._tempGridValues[k] = [...curList, canon].join('\n');
+                    }
+                }
+            });
+
+            window._hasUnsavedGridEdits = true;
+            window.refreshRightExcelStationPane(dStr);
+            window.refreshPersonTableDay(dStr);
+        };
+
+window.splitLeftPaneMode = getLocal('work_cache_sched_left_mode', 'person'); // 'person' | 'station' | 'excel'
+        window.splitRightPaneMode = getLocal('work_cache_sched_right_mode', (getLocal('work_cache_right_station_style', 'excel') === 'classic' ? 'station' : 'excel'));
+        window.excelRestBrushActive = false;
+        window._seededTempDates = window._seededTempDates || {};
+
+        // 🌟 左右雙介面模式時，左右兩側各自獨立切換 3 種模式之一
+        window.setSplitPaneMode = (side, mode) => {
+            const validModes = ['person', 'station', 'excel'];
+            const nextMode = validModes.includes(mode) ? mode : 'station';
+            if (side === 'left' && window.splitLeftPaneMode === nextMode) return;
+            if (side === 'right' && window.splitRightPaneMode === nextMode) return;
+
+            window.captureAll5DayDomValues();
+            window.get5DayScheduleDates().forEach(d => window.ensureDateSeededInTempGrid(d.dateStr));
+
+            if (side === 'left') {
+                window.splitLeftPaneMode = nextMode;
+                safeSetLocal('work_cache_sched_left_mode', nextMode);
+            } else {
+                window.splitRightPaneMode = nextMode;
+                safeSetLocal('work_cache_sched_right_mode', nextMode);
+            }
+            window._pendingSchedAnchor = window.captureScheduleViewportAnchor();
+            window.renderScheduleManager(true);
+        };
+
+        // 🌟 Excel總覽上方「抹休息」畫筆開關
+        window.toggleExcelRestBrush = () => {
+            window.excelRestBrushActive = !window.excelRestBrushActive;
+            if (window.excelRestBrushActive) {
+                activeGridMember = null;
+                const badge = $('activeMemberBadge');
+                if (badge) {
+                    badge.className = 'text-[10.5px] font-black px-2.5 py-1 rounded-lg border bg-emerald-50 text-emerald-700 border-emerald-300 shadow-2xs';
+                    badge.innerHTML = '🟩 目前工具：Excel總覽抹休息模式（點擊或拖曳人員列）';
+                }
+            } else {
+                const badge = $('activeMemberBadge');
+                if (badge) {
+                    badge.className = 'text-[10.5px] font-bold px-2.5 py-1 rounded-lg border bg-[#e6e1d6] text-slate-600 border-slate-300';
+                    badge.innerHTML = '右表畫筆：點人名即可選取';
+                }
+            }
+            document.querySelectorAll('.excel-rest-brush-btn').forEach(b => {
+                b.className = window.excelRestBrushActive
+                    ? 'excel-rest-brush-btn px-2 py-0.5 rounded-md text-[10px] font-black border transition-all inline-flex items-center gap-1 active:scale-95 bg-emerald-600 text-white border-emerald-700 ring-2 ring-emerald-300 shadow-xs'
+                    : 'excel-rest-brush-btn px-2 py-0.5 rounded-md text-[10px] font-black border transition-all inline-flex items-center gap-1 active:scale-95 bg-[#cbead6] text-[#14532d] border-[#82c59a] hover:bg-[#b5dfc4]';
+            });
+        };
+
+        // 🌟 確保切換模式時，該日所有時段資料皆已完整載入 _tempGridValues，儲存時不漏格
+        window.ensureDateSeededInTempGrid = (dStr) => {
+            window._tempGridValues = window._tempGridValues || {};
+            window._seededTempDates = window._seededTempDates || {};
+            if (window._seededTempDates[dStr]) return;
+            window._seededTempDates[dStr] = true;
+
+            const isCleanRole = window.currentMapRole === 'clean';
+            const rolePrefix = isCleanRole ? 'clean_' : 'cs_';
+            const multiStore = (isCleanRole ? cleanMultiDaySchedules : csMultiDaySchedules) || {};
+            const daySchedules = multiStore[dStr] || [];
+            const slots = isCleanRole
+                ? (window.getCleanScheduleSlots ? window.getCleanScheduleSlots() : [])
+                : Array.from({ length: 15 }, (_, i) => ({ start: `${pad(i + 7)}:00`, end: `${pad(i + 8)}:00` }));
+
+            Object.keys(mapData.points || {}).forEach(locId => {
+                slots.forEach(slot => {
+                    const [sH, sM] = slot.start.split(':').map(Number);
+                    const [eH, eM] = slot.end.split(':').map(Number);
+                    const isSplit = !isCleanRole && !!splitHoursState[`${rolePrefix}${dStr}_${locId}_${slot.start}`];
+                    const subIntervals = isSplit
+                        ? [[`${pad(sH)}:00`, `${pad(sH)}:30`], [`${pad(sH)}:30`, `${pad(eH)}:00`]]
+                        : [[slot.start, slot.end]];
+
+                    subIntervals.forEach(([subS, subE]) => {
+                        const k = `${dStr}_${locId}_${subS}_${subE}`;
+                        if (window._tempGridValues[k] !== undefined) return;
+                        const [subSH, subSM] = subS.split(':').map(Number);
+                        const [subEH, subEM] = subE.split(':').map(Number);
+                        const sNum = subSH * 60 + subSM;
+                        const eNum = subEH * 60 + subEM;
+                        const names = [];
+                        daySchedules.forEach(s => {
+                            if (s.locationId === locId) {
+                                const [sh, sm] = s.start.split(':').map(Number);
+                                const [eh, em] = s.end.split(':').map(Number);
+                                if ((sh * 60 + sm) <= sNum && (eh * 60 + em) >= eNum) {
+                                    const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(s.name) : s.name;
+                                    if (!names.includes(canon)) names.push(canon);
+                                }
+                            }
+                        });
+                        window._tempGridValues[k] = names.join('\n');
+                    });
+                });
+            });
+        };
+
+        window.refreshRightExcelStationPane = (dStr) => {
+            document.querySelectorAll(`[data-excel-pane="${dStr}"]`).forEach(host => {
+                host.innerHTML = window.buildExcelStyleStationTableHtml(dStr);
+            });
+        };
+
+        window.buildExcelStyleStationTableHtml = (dStr) => {
+            const isCleanRole = window.currentMapRole === 'clean';
+            const rolePrefix = isCleanRole ? 'clean_' : 'cs_';
+            const isToday = dStr === getNowInputStrs().date;
+            const curTotalMins = window.getNow().getHours() * 60 + window.getNow().getMinutes();
+
+            const slots = isCleanRole
+                ? (window.getCleanScheduleSlots ? window.getCleanScheduleSlots() : [])
+                : Array.from({ length: 15 }, (_, i) => ({ start: `${pad(i + 7)}:00`, end: `${pad(i + 8)}:00` }));
+
+            const stationConfigs = isCleanRole
+                ? [
+                    { id: 'pt_8', label: "花園仔男廁Little garden Men's toilet", short: '花園仔男廁', minTracks: 1 },
+                    { id: 'pt_9', label: "花園仔女廁+傷健廁所Little garden Women's & Accessible toilet", short: '花園仔女廁+傷健', minTracks: 1 },
+                    { id: 'pt_3', label: "花園仔Little garden public area", short: '花園仔', minTracks: 1 },
+                    { id: 'pt_4', label: "街市G層地面Ground floor public area", short: '街市G層地面', minTracks: 4 },
+                    { id: 'pt_1', label: "街市一樓+廁所First floor public area + toilet", short: '街市一樓+廁所', minTracks: 1 },
+                    { id: 'pt_6', label: "機動On standby", short: '機動', minTracks: 4 }
+                ]
+                : [
+                    { id: 'pt_3', label: "花園仔Little garden public area", short: '花園仔', minTracks: 1 },
+                    { id: 'pt_4', label: "魚檔Fish stalls", short: '魚檔', minTracks: 1 },
+                    { id: 'pt_5', label: "整體巡邏General patrol", short: '整體巡邏', minTracks: 1 },
+                    { id: 'pt_1', label: "客服室Customer service office", short: '客服室', minTracks: 3 }
+                ];
+
+            const stationIds = stationConfigs.map(s => s.id);
+            const allQueryLocs = [...stationIds, 'pt_7'];
+            const shortNameMap = {};
+            stationConfigs.forEach(s => { shortNameMap[s.id] = s.short; });
+
+            const toMins = (t) => {
+                const [h, m] = String(t || '00:00').split(':').map(Number);
+                return (h || 0) * 60 + (m || 0);
+            };
+            const stripZero = (t) => String(t || '').replace(/^0(\d:)/, '$1');
+            const getDispLabel = (canon) => {
+                const prof = window.getMemberProfile ? window.getMemberProfile(canon) : null;
+                if (prof && prof.residency === '外地' && prof.id && prof.id.trim()) return prof.id.trim();
+                return canon;
+            };
+
+            // 1. 收集每位人員在每個時間格的狀態 (locId 或 'pt_7')
+            const personTimeline = new Map(); // canon -> Array(slots.length)
+            slots.forEach((slot, sIdx) => {
+                allQueryLocs.forEach(locId => {
+                    let names = [];
+                    if (!isCleanRole) {
+                        const startH = slot.start.split(':')[0];
+                        const endH = slot.end.split(':')[0];
+                        const isSplit = !!splitHoursState[`${rolePrefix}${dStr}_${locId}_${slot.start}`];
+                        if (isSplit) {
+                            names = Array.from(new Set([
+                                ...window.getSlotAssignedNamesLive(dStr, locId, `${startH}:00`, `${startH}:30`),
+                                ...window.getSlotAssignedNamesLive(dStr, locId, `${startH}:30`, `${endH}:00`)
+                            ]));
+                        } else {
+                            names = window.getSlotAssignedNamesLive(dStr, locId, slot.start, slot.end);
+                        }
+                    } else {
+                        names = window.getSlotAssignedNamesLive(dStr, locId, slot.start, slot.end);
+                    }
+
+                    names.forEach(raw => {
+                        const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(raw) : raw;
+                        if (!canon || canon === '休') return;
+                        if (!personTimeline.has(canon)) personTimeline.set(canon, Array(slots.length).fill(null));
+                        const arr = personTimeline.get(canon);
+                        if (arr[sIdx] !== 'pt_7') arr[sIdx] = locId;
+                    });
+                });
+            });
+
+            // 2. 將每人連續時段切分為區段，並歸入對應崗位軌道
+            const blocksByStation = {};
+            stationIds.forEach(id => { blocksByStation[id] = []; });
+
+            personTimeline.forEach((arr, canon) => {
+                const disp = getDispLabel(canon);
+                const segments = [];
+                let cur = null;
+
+                arr.forEach((locId, idx) => {
+                    if (!locId) {
+                        if (cur) { segments.push(cur); cur = null; }
+                        return;
+                    }
+                    const dur = Math.max(30, toMins(slots[idx].end) - toMins(slots[idx].start));
+                    if (cur && cur.locId === locId) {
+                        cur.endIdx = idx;
+                        cur.endTime = slots[idx].end;
+                        cur.mins += dur;
+                    } else {
+                        if (cur) segments.push(cur);
+                        cur = { locId, startIdx: idx, endIdx: idx, startTime: slots[idx].start, endTime: slots[idx].end, mins: dur };
+                    }
+                });
+                if (cur) segments.push(cur);
+
+                // 計算該員主崗位 (時數最長的非休息崗位；若有機動且時數達半天以上則優先以機動為主崗)
+                const minsByLoc = {};
+                segments.forEach(seg => {
+                    if (seg.locId !== 'pt_7') minsByLoc[seg.locId] = (minsByLoc[seg.locId] || 0) + seg.mins;
+                });
+                let homeLoc = null, maxM = -1;
+                if (isCleanRole && (minsByLoc['pt_6'] || 0) >= 240) {
+                    homeLoc = 'pt_6';
+                } else {
+                    Object.entries(minsByLoc).forEach(([lid, m]) => {
+                        if (m > maxM) { maxM = m; homeLoc = lid; }
+                    });
+                }
+                if (!homeLoc) homeLoc = stationIds[stationIds.length - 1];
+
+                // 將該員每個區段映射到各崗位軌道
+                const stationPieces = {}; // locId -> Array of { startIdx, endIdx, kind, disp, restRange, coverTarget }
+                const pushPiece = (targetLoc, piece) => {
+                    if (!stationPieces[targetLoc]) stationPieces[targetLoc] = [];
+                    stationPieces[targetLoc].push(piece);
+                };
+
+                segments.forEach((seg, segIdx) => {
+                    if (seg.locId === 'pt_7') {
+                        // 休息：留在相鄰工作崗位軌道並顯示亮綠色 + (休息時間)
+                        const prevWork = segments.slice(0, segIdx).reverse().find(x => x.locId !== 'pt_7');
+                        const nextWork = segments.slice(segIdx + 1).find(x => x.locId !== 'pt_7');
+                        const hostLoc = (prevWork && prevWork.locId === homeLoc) || (nextWork && nextWork.locId === homeLoc)
+                            ? homeLoc
+                            : (prevWork?.locId || nextWork?.locId || homeLoc);
+pushPiece(hostLoc, {
+                            startIdx: seg.startIdx,
+                            endIdx: seg.endIdx,
+                            kind: 'rest',
+                            canon,
+                            actualLoc: 'pt_7',
+                            disp,
+                            restRange: `(${stripZero(seg.startTime)}-<br>${stripZero(seg.endTime)})`
+                        });
+                    } else if (seg.locId !== homeLoc && seg.mins <= 120 && blocksByStation[homeLoc]) {
+                        // 短時支援 (頂位 <= 2小時)：留在主崗位軌道，下方細列紅字標註支援去向
+                        pushPiece(homeLoc, {
+                            startIdx: seg.startIdx,
+                            endIdx: seg.endIdx,
+                            kind: 'cover',
+                            canon,
+                            actualLoc: seg.locId,
+                            disp,
+                            coverTarget: shortNameMap[seg.locId] || ''
+                        });
+                    } else {
+                        // 正常駐守該崗位
+                        pushPiece(seg.locId, {
+                            startIdx: seg.startIdx,
+                            endIdx: seg.endIdx,
+                            kind: 'work',
+                            canon,
+                            actualLoc: seg.locId,
+                            disp
+                        });
+                    }
+                });
+
+                Object.entries(stationPieces).forEach(([locId, pieces]) => {
+                    if (!blocksByStation[locId]) return;
+                    pieces.sort((a, b) => a.startIdx - b.startIdx);
+                    // 判斷每個區段是否為該員在此崗位連續上工的第一格 (粉紅底)
+                    pieces.forEach((p, pIdx) => {
+                        const prevP = pieces[pIdx - 1];
+                        p.isFirstSlotPink = (p.kind !== 'rest') && (!prevP || prevP.endIdx + 1 < p.startIdx);
+                    });
+                    blocksByStation[locId].push({
+                        canon,
+                        disp,
+                        firstSlot: pieces[0].startIdx,
+                        pieces
+                    });
+                });
+            });
+
+            // 3. 表頭（大清時段 13:30~15:30 與 19:30~22:00 紅字粗體）
+            const headerCellsHtml = slots.map(slot => {
+                const [sH, sM] = slot.start.split(':').map(Number);
+                const [eH, eM] = slot.end.split(':').map(Number);
+                const isCur = isToday && curTotalMins >= (sH * 60 + sM) && curTotalMins < (eH * 60 + eM);
+                const isMajorClean = isCleanRole
+                    ? ((slot.start >= '13:30' && slot.end <= '15:30') || (slot.start >= '19:30' && slot.end <= '22:00'))
+                    : ((slot.start >= '13:00' && slot.end <= '15:00') || (slot.start >= '19:00' && slot.end <= '22:00'));
+
+                const colW = isCleanRole
+                    ? (slot.start === '20:00' ? 'w-[56px] min-w-[56px]' : 'w-[44px] min-w-[44px]')
+                    : 'w-[52px] min-w-[52px]';
+                const textCls = isCur
+                    ? 'bg-sky-600 text-white'
+                    : (isMajorClean ? 'bg-white text-red-600 font-black' : 'bg-white text-slate-800 font-bold');
+
+                return `<th class="border border-slate-500 p-0.5 text-center align-middle font-mono text-[9.5px] leading-tight ${colW} ${textCls}">
+                    <div>${slot.start}</div>
+                    <div>${slot.end}</div>
+                </th>`;
+            }).join('');
+
+            // 4. 逐一渲染各崗位粗黑框區塊
+            const stationBlocksHtml = stationConfigs.map((cfg, cfgIdx) => {
+                const blocks = (blocksByStation[cfg.id] || []).sort((a, b) => a.firstSlot - b.firstSlot);
+                const tracks = []; // 每個 track 為 Array(slots.length)
+
+                blocks.forEach(blk => {
+                    let targetTrack = tracks.find(tr =>
+                        blk.pieces.every(p => {
+                            for (let i = p.startIdx; i <= p.endIdx; i++) {
+                                if (tr[i]) return false;
+                            }
+                            return true;
+                        })
+                    );
+                    if (!targetTrack) {
+                        targetTrack = Array(slots.length).fill(null);
+                        tracks.push(targetTrack);
+                    }
+if (!targetTrack._ownerCanon) {
+                        targetTrack._ownerCanon = blk.canon;
+                        targetTrack._homeLoc = cfg.id;
+                    }
+                    blk.pieces.forEach(p => {
+                        for (let i = p.startIdx; i <= p.endIdx; i++) {
+                            targetTrack[i] = {
+                                ...p,
+                                isSegStart: i === p.startIdx,
+                                segSpan: p.endIdx - p.startIdx + 1
+                            };
+                        }
+                    });
+                });
+
+                while (tracks.length < cfg.minTracks) {
+                    tracks.push(Array(slots.length).fill(null));
+                }
+
+                const isMultiTrack = tracks.length > 1;
+                const totalSubRows = tracks.length * 2;
+                let blockHtml = '';
+
+                // 崗位之間插入空白間隔列
+                if (cfgIdx > 0) {
+                    blockHtml += `<tr class="h-[6px] bg-white"><td colspan="${slots.length + 1}" class="p-0 border-0 bg-white"></td></tr>`;
+                }
+
+                tracks.forEach((trSlots, trIdx) => {
+                    const isFirstTrack = trIdx === 0;
+                    const isLastTrack = trIdx === tracks.length - 1;
+
+                    // A. 人員主列
+                    let personCellsHtml = '';
+                    trSlots.forEach((cell, sIdx) => {
+                        const slot = slots[sIdx];
+                        const isLastCol = sIdx === slots.length - 1;
+                        const rightBorder = isLastCol ? 'border-r-2 border-r-black' : 'border-r border-r-slate-400';
+                        const topBorder = isFirstTrack ? 'border-t-2 border-t-black' : 'border-t border-t-slate-400';
+
+                        let bgCls = 'bg-white hover:bg-amber-50/60';
+                        let contentHtml = '&nbsp;';
+
+if (cell) {
+                            if (cell.kind === 'rest') {
+                                // 亮綠色休息格，首格附帶換行時間 (8:00-\n9:00)
+                                bgCls = 'bg-[#7cb342] text-slate-950 font-black';
+                                contentHtml = cell.isSegStart
+                                    ? `<div class="leading-[1.05] text-[8.5px] whitespace-nowrap">${window.esc(cell.disp)}<br><span class="font-mono text-[8px] leading-[1.05]">${cell.restRange}</span></div>`
+                                    : `<div class="leading-tight text-[9px] truncate">${window.esc(cell.disp)}</div>`;
+                            } else {
+                                // 上工首格粉紅底；多軌崗位淡藍底、單軌崗位白底
+                                bgCls = cell.isSegStart && cell.isFirstSlotPink
+                                    ? 'bg-[#f9d6d5] text-slate-900 font-bold'
+                                    : (isMultiTrack ? 'bg-[#e3f2fd] text-slate-900 font-bold' : 'bg-white text-slate-900 font-bold');
+                                contentHtml = `<div class="leading-tight text-[9px] truncate">${window.esc(cell.disp)}</div>`;
+                            }
+                        }
+
+const trackCanon = cell?.canon || trSlots._ownerCanon || '';
+                        const trackHomeLoc = trSlots._homeLoc || cfg.id;
+                        personCellsHtml += `<td data-excel-cell="1" data-date="${dStr}" data-loc="${cfg.id}" data-start="${slot.start}" data-end="${slot.end}" data-cell-canon="${cell ? window.escAttr(cell.canon || '') : ''}" data-track-canon="${window.escAttr(trackCanon)}" data-home-loc="${trackHomeLoc}" data-actual-loc="${cell ? (cell.actualLoc || cfg.id) : cfg.id}"
+                            onclick="window.handleExcelRightCellClick('${dStr}', '${cfg.id}', '${slot.start}', '${slot.end}', null, this)"
+                            class="${topBorder} ${rightBorder} border-b border-b-slate-400 ${bgCls} h-[32px] px-0.5 text-center align-middle cursor-pointer select-none transition-colors overflow-hidden"
+                            title="${cfg.short} ${slot.start}-${slot.end}${cell ? '：' + cell.disp : ' (點擊或拖曳排入)'}">${contentHtml}</td>`;
+                    });
+
+                    blockHtml += `<tr>
+                        ${isFirstTrack ? `<td rowspan="${totalSubRows}" class="sticky left-0 z-20 bg-white border-2 border-black p-1 text-center align-middle font-bold text-[9.5px] leading-snug text-slate-900 w-[86px] min-w-[86px] max-w-[86px] break-words">${window.esc(cfg.label)}</td>` : ''}
+                        ${personCellsHtml}
+                    </tr>`;
+
+                    // B. 下方細備註列（外出支援時自動合併格並顯示紅字崗位名）
+                    let subCellsHtml = '';
+                    const bottomBorder = isLastTrack ? 'border-b-2 border-b-black' : 'border-b border-b-slate-500';
+                    let sIdx = 0;
+                    while (sIdx < slots.length) {
+                        const cell = trSlots[sIdx];
+                        if (cell && cell.kind === 'cover' && cell.isSegStart) {
+                            const span = cell.segSpan || 1;
+                            const isEndBlock = (sIdx + span) >= slots.length;
+                            const rBorder = isEndBlock ? 'border-r-2 border-r-black' : 'border-r border-r-slate-400';
+                            subCellsHtml += `<td colspan="${span}" class="${bottomBorder} ${rBorder} bg-white h-[12px] px-0.5 text-center align-middle text-[8.5px] font-black text-red-600 leading-none whitespace-nowrap">${window.esc(cell.coverTarget)}</td>`;
+                            sIdx += span;
+                        } else {
+                            const isLastCol = sIdx === slots.length - 1;
+                            const rBorder = isLastCol ? 'border-r-2 border-r-black' : 'border-r border-r-slate-400';
+                            subCellsHtml += `<td class="${bottomBorder} ${rBorder} bg-white h-[12px] p-0"></td>`;
+                            sIdx++;
+                        }
+                    }
+
+                    blockHtml += `<tr>${subCellsHtml}</tr>`;
+                });
+
+                return blockHtml;
+            }).join('');
+
+            return `
+                <table class="w-full text-center border-collapse bg-white" style="zoom: 0.78;">
+                    <thead>
+                        <tr>
+                            <th class="sticky left-0 z-30 bg-white border-2 border-black p-1 text-center align-middle font-black text-[9.5px] text-slate-900 w-[86px] min-w-[86px] max-w-[86px]">
+                                ${isCleanRole ? '清潔崗位/時間' : '客服崗位/時間'}
+                            </th>
+                            ${headerCellsHtml}
+                        </tr>
+                    </thead>
+                    <tbody>${stationBlocksHtml}</tbody>
+                </table>`;
         };
 
         // 🌟 6. 核心渲染：100% 還原上一版半小時格數 ＋ 整體 zoom 等比縮小免拉滑桿
@@ -15810,9 +16486,82 @@ let thRight = `<th class="sticky left-0 bg-[#ded8cc] p-1.5 z-30 w-[68px] min-w-[
                     ? 'bg-[#e3edf7] border-b border-blue-200'
                     : (dayInfo.offset < 0 ? 'bg-[#e6e1d6] border-b border-[#d5cfc2]' : 'bg-[#f5ebd6] border-b border-amber-200');
 
-                const showPersonPane = layoutMode === 'split' || layoutMode === 'person';
-                const showStationPane = layoutMode === 'split' || layoutMode === 'station';
-                const personRowsHtml = showPersonPane ? window.buildPersonTableBodyHtml(dStr) : '';
+const leftPaneMode = window.splitLeftPaneMode || 'person';
+                const rightPaneMode = window.splitRightPaneMode || 'excel';
+                const needPersonRows = (layoutMode === 'person') || (layoutMode === 'split' && (leftPaneMode === 'person' || rightPaneMode === 'person'));
+                const personRowsHtml = needPersonRows ? window.buildPersonTableBodyHtml(dStr) : '';
+
+                const buildPaneSwitcherHtml = (side, curMode) => `
+                    <div class="flex bg-white/85 p-0.5 rounded-md border border-indigo-200 shrink-0">
+                        <button type="button" onclick="window.setSplitPaneMode('${side}', 'person')" class="px-1.5 py-0.5 rounded text-[9.5px] font-black transition-all inline-flex items-center gap-0.5 ${curMode === 'person' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-indigo-700 hover:bg-indigo-50'}"><i data-lucide="user" class="w-3 h-3"></i><span>人員</span></button>
+                        <button type="button" onclick="window.setSplitPaneMode('${side}', 'station')" class="px-1.5 py-0.5 rounded text-[9.5px] font-black transition-all inline-flex items-center gap-0.5 ${curMode === 'station' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-indigo-700 hover:bg-indigo-50'}"><i data-lucide="map-pin" class="w-3 h-3"></i><span>崗位</span></button>
+                        <button type="button" onclick="window.setSplitPaneMode('${side}', 'excel')" class="px-1.5 py-0.5 rounded text-[9.5px] font-black transition-all inline-flex items-center gap-0.5 ${curMode === 'excel' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-indigo-700 hover:bg-indigo-50'}"><i data-lucide="table" class="w-3 h-3"></i><span>Excel總覽</span></button>
+                    </div>`;
+
+                const renderSinglePaneContent = (paneMode, sidePrefix, isInSplit) => {
+                    const scrollId = `${sidePrefix}-scroll-${dStr}`;
+                    const otherScrollId = sidePrefix === 'left' ? `right-scroll-${dStr}` : `left-scroll-${dStr}`;
+                    const syncAttr = isInSplit ? `onscroll="window.syncDualTableScroll(this, '${otherScrollId}')"` : '';
+                    const switcherHtml = isInSplit ? buildPaneSwitcherHtml(sidePrefix, paneMode) : '';
+
+                    if (paneMode === 'person') {
+                        return `
+                            <div class="px-2 py-1 bg-[#eae5db] border-b border-slate-300 flex flex-wrap items-center justify-between gap-1 shrink-0">
+                                <div class="flex items-center gap-1 flex-wrap">
+                                    ${switcherHtml}
+                                    <span class="text-[9.5px] font-black text-slate-700 mr-0.5">點選崗位排入：</span>
+                                    ${window.buildLeftStationBrushBarHtml()}
+                                </div>
+                                <div class="flex items-center gap-1.5 text-[9px] font-bold text-slate-600 shrink-0">
+                                    <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-[#cbead6] border border-[#82c59a] inline-block"></i>休</span>
+                                    <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-sky-200 border border-sky-400 inline-block"></i>已排</span>
+                                    <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-[#f8f6f0] border-2 border-red-300 inline-block"></i>未排</span>
+                                    <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-[#cbd5e1] border border-slate-400 inline-block"></i>非上班</span>
+                                </div>
+                            </div>
+                            <div id="${scrollId}" ${syncAttr} class="sched-scroll-area overflow-x-auto w-full pb-0.5">
+                                <table class="w-full text-center border-collapse" style="${isInSplit ? 'zoom: 0.85;' : ''}">
+                                    <thead><tr>${thLeft}</tr></thead>
+                                    <tbody data-person-tbody="${dStr}">${personRowsHtml}</tbody>
+                                </table>
+                            </div>`;
+                    }
+
+                    if (paneMode === 'excel') {
+                        const restBtnCls = window.excelRestBrushActive
+                            ? 'excel-rest-brush-btn px-2 py-0.5 rounded-md text-[10px] font-black border transition-all inline-flex items-center gap-1 active:scale-95 bg-emerald-600 text-white border-emerald-700 ring-2 ring-emerald-300 shadow-xs'
+                            : 'excel-rest-brush-btn px-2 py-0.5 rounded-md text-[10px] font-black border transition-all inline-flex items-center gap-1 active:scale-95 bg-[#cbead6] text-[#14532d] border-[#82c59a] hover:bg-[#b5dfc4]';
+                        return `
+                            <div class="px-2 py-1 bg-[#e4e8f2] border-b border-indigo-200 text-indigo-950 text-[9.5px] font-black flex items-center justify-between gap-1.5 flex-wrap shrink-0">
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                    ${switcherHtml}
+                                    <button type="button" onclick="window.toggleExcelRestBrush()" class="${restBtnCls}" title="開啟後點擊或連拖人員列即可抹上/取消休息">
+                                        <i data-lucide="coffee" class="w-3 h-3"></i><span>抹休息</span>
+                                    </button>
+                                    <span class="truncate text-[9px] text-indigo-800/80">粉紅首格上工 · 亮綠休息 · 紅字外出頂位</span>
+                                </div>
+                            </div>
+                            <div id="${scrollId}" ${syncAttr} class="sched-scroll-area overflow-x-auto w-full pb-0.5">
+                                <div data-excel-pane="${dStr}" class="p-1 bg-white">${window.buildExcelStyleStationTableHtml(dStr)}</div>
+                            </div>`;
+                    }
+
+                    // 預設：'station' (崗位排班表)
+                    return `
+                        ${isInSplit ? `
+                        <div class="px-2 py-1 bg-[#e4e8f2] border-b border-indigo-200 text-indigo-950 text-[9.5px] font-black flex items-center justify-between gap-1.5 shrink-0">
+                            <div class="flex items-center gap-1.5 min-w-0">
+                                ${switcherHtml}
+                                <span class="truncate">崗位排班表 (點人名當畫筆，即可點/拖排班)</span>
+                            </div>
+                        </div>` : ''}
+                        <div id="${scrollId}" ${syncAttr} class="sched-scroll-area overflow-x-auto w-full pb-0.5">
+                            <table class="w-full text-center border-collapse" style="${isInSplit ? 'zoom: 0.75;' : ''}">
+                                <thead><tr>${thRight}</tr></thead>
+                                <tbody>${rows}</tbody>
+                            </table>
+                        </div>`;
+                };
 
                 return `
                 <div id="sched-day-card-${dStr}" class="bg-[#f4f1ea] rounded-xl mb-3 overflow-hidden flex flex-col relative w-full ${cardBorderStyle}">
@@ -15822,7 +16571,7 @@ let thRight = `<th class="sticky left-0 bg-[#ded8cc] p-1.5 z-30 w-[68px] min-w-[
                             <span class="text-xs font-mono font-black text-slate-800">${dayInfo.dateStr} (${dayInfo.weekDay})</span>
                             ${isToday ? '<span class="text-[10px] font-black text-blue-700 bg-[#f8f6f0] px-1.5 py-0.2 rounded border border-blue-200">📍 地圖即時生效中</span>' : ''}
                         </div>
-<div class="flex items-center gap-1.5 flex-wrap">
+                        <div class="flex items-center gap-1.5 flex-wrap">
                             <div class="relative inline-block">
                                 <button type="button" onclick="window.toggleDayCardActionMenu('${dStr}', event)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center gap-1 active:scale-95" title="導出崗位、導出全表、導出休息、智慧排班、匯入此日">
                                     <i data-lucide="sliders-horizontal" class="w-3 h-3"></i>
@@ -15831,54 +16580,26 @@ let thRight = `<th class="sticky left-0 bg-[#ded8cc] p-1.5 z-30 w-[68px] min-w-[
                                 </button>
                             </div>
 
-                            ${prevDateStr ? `<button type="button" onclick="window.copyPrevDaySchedule('${dStr}', '${prevDateStr}')" class="bg-[#f8f6f0] hover:bg-blue-50 text-blue-600 font-bold text-[10px] px-2 py-1 rounded-lg border border-blue-200 shadow-2xs transition-colors flex items-center active:scale-95" title="複製前一日排班"><i data-lucide="copy" class="w-3 h-3 mr-1"></i>複製前日</button>` : ''}
                             <button type="button" onclick="window.clearSingleDaySchedule('${dStr}')" class="bg-[#f8f6f0] hover:bg-red-50 text-red-500 font-bold text-[10px] px-2 py-1 rounded-lg border border-red-200 transition-colors flex items-center active:scale-95"><i data-lucide="trash-2" class="w-3 h-3 mr-0.5"></i>清空此日</button>
                         </div>
                     </div>
 
-<div class="dual-split-container flex flex-col lg:flex-row divide-y lg:divide-y-0 w-full" style="--dual-left-pct: ${window.dualSplitLeftPct || 53}%;">
-                        ${showPersonPane ? `
-                        <div class="${layoutMode === 'split' ? 'dual-left-pane' : 'w-full'} flex flex-col min-w-0 bg-[#f4f1ea]">
-                            <div class="px-2 py-1 bg-[#eae5db] border-b border-slate-300 flex flex-wrap items-center justify-between gap-1 shrink-0">
-                                <div class="flex items-center gap-1 flex-wrap">
-                                    <span class="text-[9.5px] font-black text-slate-700 mr-0.5">👈 點選崗位排入左表：</span>
-                                    ${window.buildLeftStationBrushBarHtml()}
-                                </div>
-                                <div class="flex items-center gap-1.5 text-[9px] font-bold text-slate-600 shrink-0">
-                                    <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-[#cbead6] border border-[#82c59a] inline-block"></i>休</span>
-                                    <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-sky-200 border border-sky-400 inline-block"></i>已排</span>
-<span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-[#f8f6f0] border-2 border-red-300 inline-block"></i>未排</span>
-                                    <span class="inline-flex items-center gap-0.5"><i class="w-2.5 h-2.5 rounded-xs bg-[#cbd5e1] border border-slate-400 inline-block"></i>非上班</span>
-                                </div>
-                            </div>
-<div id="left-scroll-${dStr}" onscroll="window.syncDualTableScroll(this, 'right-scroll-${dStr}')" class="sched-scroll-area overflow-x-auto w-full pb-0.5">
-                                <table class="w-full text-center border-collapse" style="${layoutMode === 'split' ? 'zoom: 0.85;' : ''}">
-                                    <thead><tr>${thLeft}</tr></thead>
-                                    <tbody id="person-tbody-${dStr}">${personRowsHtml}</tbody>
-                                </table>
-                            </div>
-                        </div>` : ''}
-
-                        ${layoutMode === 'split' ? `
+                    ${layoutMode === 'split' ? `
+                    <div class="dual-split-container flex flex-col lg:flex-row divide-y lg:divide-y-0 w-full" style="--dual-left-pct: ${window.dualSplitLeftPct || 53}%;">
+                        <div class="dual-left-pane flex flex-col min-w-0 ${leftPaneMode === 'excel' ? 'bg-white' : 'bg-[#f4f1ea]'}">
+                            ${renderSinglePaneContent(leftPaneMode, 'left', true)}
+                        </div>
                         <div onmousedown="window.startDualPaneResize(event)" ontouchstart="window.startDualPaneResize(event)" title="按住左右拖動可調節左／右介面寬度"
                             class="hidden lg:flex w-[6px] shrink-0 bg-slate-300 hover:bg-indigo-500 active:bg-indigo-600 cursor-col-resize items-center justify-center transition-colors select-none group">
                             <div class="w-[2px] h-8 rounded-full bg-slate-500 group-hover:bg-white"></div>
-                        </div>` : ''}
-
-                        ${showStationPane ? `
-                        <div class="${layoutMode === 'split' ? 'dual-right-pane' : 'w-full'} flex flex-col min-w-0 bg-[#f4f1ea]">
-                            ${layoutMode === 'split' ? `
-                            <div class="px-2 py-1 bg-[#e4e8f2] border-b border-indigo-200 text-indigo-950 text-[9.5px] font-black flex items-center justify-between shrink-0">
-                                <span>📍 崗位排班表 (一崗一行 · 點左表人名當畫筆，即可點此處排班)</span>
-                            </div>` : ''}
-                            <div id="right-scroll-${dStr}" onscroll="window.syncDualTableScroll(this, 'left-scroll-${dStr}')" class="sched-scroll-area overflow-x-auto w-full pb-0.5">
-                                <table class="w-full text-center border-collapse" style="${layoutMode === 'split' ? 'zoom: 0.75;' : ''}">
-                                    <thead><tr>${thRight}</tr></thead>
-                                    <tbody>${rows}</tbody>
-                                </table>
-                            </div>
-                        </div>` : ''}
-                    </div>
+                        </div>
+                        <div class="dual-right-pane flex flex-col min-w-0 ${rightPaneMode === 'excel' ? 'bg-white' : 'bg-[#f4f1ea]'}">
+                            ${renderSinglePaneContent(rightPaneMode, 'right', true)}
+                        </div>
+                    </div>` : `
+                    <div class="flex flex-col w-full ${layoutMode === 'excel' ? 'bg-white' : 'bg-[#f4f1ea]'}">
+                        ${renderSinglePaneContent(layoutMode, 'single', false)}
+                    </div>`}
                 </div>`;
             }).join('');
 
@@ -15926,8 +16647,9 @@ let thRight = `<th class="sticky left-0 bg-[#ded8cc] p-1.5 z-30 w-[68px] min-w-[
 
 <div class="flex bg-indigo-50/80 p-0.5 rounded-lg border border-indigo-200 shadow-inner">
                             <button type="button" onclick="window.setScheduleViewLayout('split')" class="px-2.5 py-1 text-[10.5px] font-black rounded-md transition-all inline-flex items-center gap-1 ${layoutMode === 'split' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}"><i data-lucide="columns-2" class="w-3.5 h-3.5"></i>左右雙介面</button>
-                            <button type="button" onclick="window.setScheduleViewLayout('person')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all inline-flex items-center gap-1 ${layoutMode === 'person' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}"><i data-lucide="user" class="w-3.5 h-3.5"></i>只看人員</button>
-                            <button type="button" onclick="window.setScheduleViewLayout('station')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all inline-flex items-center gap-1 ${layoutMode === 'station' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}"><i data-lucide="map-pin" class="w-3.5 h-3.5"></i>只看崗位</button>
+                            <button type="button" onclick="window.setScheduleViewLayout('person')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all inline-flex items-center gap-1 ${layoutMode === 'person' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}"><i data-lucide="user" class="w-3.5 h-3.5"></i>人員介面</button>
+                            <button type="button" onclick="window.setScheduleViewLayout('station')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all inline-flex items-center gap-1 ${layoutMode === 'station' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}"><i data-lucide="map-pin" class="w-3.5 h-3.5"></i>崗位介面</button>
+                            <button type="button" onclick="window.setScheduleViewLayout('excel')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all inline-flex items-center gap-1 ${layoutMode === 'excel' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}"><i data-lucide="table" class="w-3.5 h-3.5"></i>Excel總覽</button>
                         </div>
 
                         <button type="button" onclick="document.getElementById('sched-day-card-${getNowInputStrs().date}')?.scrollIntoView({ behavior: 'smooth', block: 'center' })" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-2.5 py-1 rounded-lg text-[10.5px] font-black active:scale-95">📍 定位今日</button>
@@ -15968,7 +16690,7 @@ let thRight = `<th class="sticky left-0 bg-[#ded8cc] p-1.5 z-30 w-[68px] min-w-[
                     <div id="schedLeftDrawer"
                          onmouseenter="this.classList.remove('-translate-x-[calc(100%-22px)]'); this.classList.add('translate-x-0');"
                          onmouseleave="if(!this.dataset.pinned){ this.classList.add('-translate-x-[calc(100%-22px)]'); this.classList.remove('translate-x-0'); }"
-                         class="${layoutMode === 'station' ? 'flex' : 'hidden'} absolute left-0 top-0 bottom-0 z-50 items-stretch -translate-x-[calc(100%-22px)] transition-transform duration-200 ease-out pointer-events-auto">
+class="${(layoutMode === 'station' || layoutMode === 'excel') ? 'flex' : 'hidden'} absolute left-0 top-0 bottom-0 z-50 items-stretch -translate-x-[calc(100%-22px)] transition-transform duration-200 ease-out pointer-events-auto">
                         <div class="w-[175px] bg-[#f4f1ea]/95 backdrop-blur-md border-r-2 border-slate-300 shadow-2xl flex flex-col h-full overflow-y-auto p-2 space-y-2.5 scrollbar-hide">
                             <div class="space-y-1 shrink-0 pb-2 border-b border-slate-200">
                                 <div class="text-[10px] font-black text-slate-500 px-1 tracking-wider">排班工具</div>
@@ -16052,10 +16774,25 @@ const newScrollArea = document.getElementById('scheduleGridScrollArea');
                 }
             });
 
-            if (newScrollArea && !newScrollArea._paintEventsBound) {
+if (newScrollArea && !newScrollArea._paintEventsBound) {
                 newScrollArea._paintEventsBound = true;
                 let isPainting = false;
                 let leftPaintMode = null;
+                let excelPaintMode = null;
+
+const getExcelActionForCell = (cellEl) => {
+                    if (window.excelRestBrushActive) {
+                        const targetPerson = cellEl.dataset.cellCanon || cellEl.dataset.trackCanon || '';
+                        if (!targetPerson) return 'assign';
+                        const { date, start, end } = cellEl.dataset;
+                        return window.getSlotAssignedNamesLive(date, 'pt_7', start, end).includes(targetPerson) ? 'clear' : 'assign';
+                    }
+                    if (!activeGridMember || activeGridMember === 'ERASER') return 'clear';
+                    const { date, loc, start, end } = cellEl.dataset;
+                    const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(activeGridMember) : activeGridMember;
+                    const curList = window.getSlotAssignedNamesLive(date, loc, start, end);
+                    return curList.includes(canon) ? 'clear' : 'assign';
+                };
 
                 const paintTarget = (targetEl) => {
                     const pCell = targetEl?.closest ? targetEl.closest('td[data-pcell="1"]') : null;
@@ -16070,6 +16807,23 @@ const newScrollArea = document.getElementById('scheduleGridScrollArea');
                         window.togglePersonCellRest(date, member, start, end, leftPaintMode);
                         return;
                     }
+                    if (!window.excelRestBrushActive && (!activeGridMember || activeGridMember === 'SPLITTER')) return;
+
+                    const excelCell = targetEl?.closest ? targetEl.closest('td[data-excel-cell="1"]') : null;
+                    if (excelCell) {
+                        const { date, loc, start, end, trackCanon } = excelCell.dataset;
+                        const cellKey = `${date}_${loc}_${trackCanon}_${start}_${end}`;
+                        if (cellKey !== window._lastPaintedExcelKey) {
+                            window._lastPaintedExcelKey = cellKey;
+                            window._lastExcelPaintTs = Date.now();
+                            if (!excelPaintMode) {
+                                excelPaintMode = getExcelActionForCell(excelCell);
+                            }
+                            window.handleExcelRightCellClick(date, loc, start, end, excelPaintMode, excelCell);
+                        }
+                        return;
+                    }
+
                     if (!activeGridMember || activeGridMember === 'SPLITTER') return;
                     const subItem = targetEl?.closest ? targetEl.closest('.sub-line-item') : null;
                     if (subItem && subItem !== window._lastPaintedSubItem) {
@@ -16088,6 +16842,13 @@ const newScrollArea = document.getElementById('scheduleGridScrollArea');
                         window._lastPaintedPCell = pCell;
                         return;
                     }
+const excelCell = e.target?.closest ? e.target.closest('td[data-excel-cell="1"]') : null;
+                    if (excelCell && (window.excelRestBrushActive || (activeGridMember && activeGridMember !== 'SPLITTER'))) {
+                        isPainting = true;
+                        excelPaintMode = getExcelActionForCell(excelCell);
+                        paintTarget(excelCell);
+                        return;
+                    }
                     if (activeGridMember && activeGridMember !== 'SPLITTER') {
                         isPainting = true;
                         paintTarget(e.target);
@@ -16099,15 +16860,24 @@ const newScrollArea = document.getElementById('scheduleGridScrollArea');
                 window.addEventListener('mouseup', () => {
                     isPainting = false;
                     leftPaintMode = null;
+                    excelPaintMode = null;
                     window._lastPaintedSubItem = null;
                     window._lastPaintedPCell = null;
+                    window._lastPaintedExcelKey = null;
                 });
 
-                newScrollArea.addEventListener('touchstart', (e) => {
-                    if (activeGridMember && activeGridMember !== 'SPLITTER') {
-                        isPainting = true;
+newScrollArea.addEventListener('touchstart', (e) => {
+                    if (window.excelRestBrushActive || (activeGridMember && activeGridMember !== 'SPLITTER')) {
                         const touch = e.touches[0];
                         const el = document.elementFromPoint(touch.clientX, touch.clientY);
+                        const excelCell = el?.closest ? el.closest('td[data-excel-cell="1"]') : null;
+                        if (excelCell) {
+                            isPainting = true;
+                            excelPaintMode = getExcelActionForCell(excelCell);
+                            paintTarget(excelCell);
+                            return;
+                        }
+                        isPainting = true;
                         paintTarget(el);
                     }
                 }, { passive: true });
@@ -16116,14 +16886,19 @@ const newScrollArea = document.getElementById('scheduleGridScrollArea');
                     if (!isPainting || !activeGridMember || activeGridMember === 'SPLITTER') return;
                     const touch = e.touches[0];
                     const el = document.elementFromPoint(touch.clientX, touch.clientY);
+                    if (el?.closest && el.closest('td[data-excel-cell="1"]') && e.cancelable) {
+                        e.preventDefault();
+                    }
                     paintTarget(el);
-                }, { passive: true });
+                }, { passive: false });
 
                 window.addEventListener('touchend', () => {
                     isPainting = false;
                     leftPaintMode = null;
+                    excelPaintMode = null;
                     window._lastPaintedSubItem = null;
                     window._lastPaintedPCell = null;
+                    window._lastPaintedExcelKey = null;
                 });
             }
         };
