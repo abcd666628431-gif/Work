@@ -11887,11 +11887,11 @@ if (marker.parentNode !== container) container.appendChild(marker);
                             </div>`;
 
 if (marker.parentNode !== container) container.appendChild(marker);
-                        const step = (locId === 'pt_4') ? 80 : 65;
+const step = (locId === 'pt_4') ? 80 : 65;
                         const centerShift = (locId === 'pt_4' && names.length > 1) ? -4 : 0;
                         const off = names.length > 1 ? (idx - (names.length - 1) / 2) * step + centerShift : 0;
                         marker.style.left = `calc(${loc.x}% + ${off}px)`; 
-                        marker.style.top = `calc(${loc.y}% + 8px)`;
+                        marker.style.top = locId === 'pt_1' ? `calc(${loc.y}% + 22px)` : `calc(${loc.y}% + 8px)`;
                         marker.className = `member-dynamic-marker absolute flex flex-col items-center justify-end transform -translate-x-1/2 -translate-y-full pointer-events-auto cursor-pointer z-40 drop-shadow-md transition-transform active:scale-95 group`;
                         marker.style.animationDelay = '0s';
                         marker.onclick = (e) => {
@@ -11903,26 +11903,40 @@ if (marker.parentNode !== container) container.appendChild(marker);
                     marker.dataset.active = "true";
                 });
 
-                // 若某個點位目前「完全沒有人當值」，但 15 分鐘內有人準備進入，才單獨顯示「待:人名」
+// 若某個點位目前「完全沒有人當值」，但 15 分鐘內有人準備進入，才單獨顯示「頂-人名」
                 if (names.length === 0 && incoming.length > 0) {
+                    const isCleanMap = window.currentMapRole === 'clean';
                     incoming.forEach((name, idx) => {
                         let marker = $(`dyn-marker-${name}-${locId}-incoming`) || document.createElement('div');
                         marker.id = `dyn-marker-${name}-${locId}-incoming`;
-                        // 清潔模式主要點位
-                        marker.innerHTML = `
-                            <div class="flex flex-col items-center -space-y-[1px] mb-1">
-                                ${topStackHtml}
-                                <div class="bg-slate-900/90 text-white px-2 py-0.5 rounded-md shadow-md whitespace-nowrap tracking-wider border border-white/80 flex flex-col items-center justify-center text-center">
-                                    <span class="text-[11px] font-black leading-tight">${window.esc(name)}</span>
-                                    ${hasUniqueId ? `<span class="text-amber-300 font-mono text-[8.5px] font-bold leading-none mt-0.5">${window.esc(profile.id.trim())}</span>` : ''}
+
+                        if (!isCleanMap) {
+                            marker.innerHTML = `
+                                <div class="bg-white border-2 border-orange-500 text-orange-500 text-xs font-black px-2 py-0.5 rounded-md shadow-lg whitespace-nowrap mb-1 tracking-wider">頂-${window.esc(name)}</div>
+                                <div class="w-5 h-5 bg-amber-500 rounded-full border-[2px] border-white shadow-md flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div>`;
+                        } else {
+                            const profile = window.getMemberProfile(name);
+                            const col = window.getMemberColorClass(name);
+                            const avatarHtml = profile.avatar
+                                ? `<img src="${profile.avatar}" class="w-full h-full object-cover rounded-full bg-[#fdfbf7]">`
+                                : `<i data-lucide="user" class="w-3.5 h-3.5 text-white"></i>`;
+                            const hasUniqueId = profile.id && profile.id.trim() !== '' && profile.id.trim().toUpperCase() !== name.trim().toUpperCase();
+
+                            marker.innerHTML = `
+                                <div class="flex flex-col items-center -space-y-[1px] mb-1">
+                                    <div class="bg-white border-2 border-orange-500 text-orange-500 px-2 py-0.5 rounded-md shadow-md whitespace-nowrap tracking-wider flex flex-col items-center justify-center text-center">
+                                        <span class="text-[11px] font-black leading-tight">頂-${window.esc(name)}</span>
+                                        ${hasUniqueId ? `<span class="text-orange-400 font-mono text-[8.5px] font-bold leading-none mt-0.5">${window.esc(profile.id.trim())}</span>` : ''}
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="relative flex items-center justify-center group-hover:scale-110 transition-transform">
-                                <div class="w-9 h-9 ${col.activeBg} rounded-full border-2 border-white shadow-md z-10 flex items-center justify-center overflow-hidden">
-                                    ${avatarHtml}
-                                </div>
-                                <div class="absolute w-10 h-10 bg-sky-400/30 rounded-full radar-slow z-0"></div>
-                            </div>`;
+                                <div class="relative flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <div class="w-9 h-9 ${col.activeBg} rounded-full border-2 border-white shadow-md z-10 flex items-center justify-center overflow-hidden">
+                                        ${avatarHtml}
+                                    </div>
+                                    <div class="absolute w-10 h-10 bg-sky-400/30 rounded-full radar-slow z-0"></div>
+                                </div>`;
+                        }
+
                         if (marker.parentNode !== container) container.appendChild(marker);
                         const off = incoming.length > 1 ? (idx - (incoming.length - 1) / 2) * 55 : 0;
                         marker.style.left = `calc(${loc.x}% + ${off}px)`;
@@ -12823,7 +12837,34 @@ window.removeTeamMember = (idx) => {
 window.selectGridMember = (name) => {
             activeGridMember = (activeGridMember === name) ? null : name;
 
-            // 1. 左側抽屜按鈕外觀切換
+            // 1A. 即時同步更新「左表人員名單卡片」的選取顏色與狀態標籤
+            document.querySelectorAll('tr[data-person-row]').forEach(tr => {
+                const rowCanon = tr.dataset.personRow;
+                const isMale = tr.dataset.gender === '男';
+                const isSel = activeGridMember === rowCanon;
+                const td = tr.querySelector('td[data-person-card]');
+                if (td) {
+                    td.className = `sticky left-0 z-20 overflow-hidden px-1.5 py-0.5 border border-slate-300 cursor-pointer select-none shadow-[2px_0_5px_-2px_rgba(0,0,0,0.12)] w-[124px] min-w-[124px] max-w-[124px] transition-all ${
+                        isSel
+                            ? (isMale ? 'bg-blue-600 text-white ring-2 ring-inset ring-amber-300' : 'bg-rose-600 text-white ring-2 ring-inset ring-amber-300')
+                            : (isMale ? 'bg-blue-100 hover:bg-blue-200/80 text-blue-950' : 'bg-rose-100 hover:bg-rose-200/80 text-rose-950')
+                    }`;
+                }
+                const gearBtn = tr.querySelector('[data-person-gear]');
+                if (gearBtn) {
+                    gearBtn.className = `p-0.5 rounded hover:bg-black/10 ${isSel ? 'text-white' : 'text-slate-600 hover:text-slate-900'} shrink-0 transition-colors`;
+                }
+                const idBadge = tr.querySelector('[data-person-id]');
+                if (idBadge) {
+                    idBadge.className = `w-fit max-w-full px-1 py-[1px] mt-[1px] rounded text-[8px] font-mono font-semibold tracking-wider leading-none truncate ${isSel ? 'bg-white/25 text-white' : 'bg-slate-900/10 text-slate-600'}`;
+                }
+                const shiftEl = tr.querySelector('[data-person-shift]');
+                if (shiftEl) {
+                    shiftEl.className = `text-[9.5px] font-mono font-black tracking-tight leading-none truncate mt-[1px] ${isSel ? 'text-amber-200' : 'text-indigo-800'}`;
+                }
+            });
+
+            // 1B. 左側抽屜按鈕外觀切換
             document.querySelectorAll('.member-btn-container').forEach(c => {
                 const cName = c.dataset.name, sel = cName === activeGridMember, isEraser = cName === 'ERASER', isSplitter = cName === 'SPLITTER', div = c.querySelector('div');
                 if (!div) return;
@@ -13436,12 +13477,8 @@ window.toggleSplitHour = (dateStr, locId, hourStr) => {
                     });
                     if (cur) merged.push(cur);
 
-// 🌟 若該員主崗位為「機動 (pt_6)」，則只有在機動才算正選，去其他任何崗位一律列為「(時間頂)」
-                    const totalHere = slotList.reduce((acc, x) => acc + x.dur, 0);
-                    const isStandbyStaff = (primaryLoc === 'pt_6');
-                    const isMainHere = isStandbyStaff
-                        ? (cfg.id === 'pt_6')
-                        : ((primaryLoc === cfg.id) || (cfg.id === 'pt_4' && totalHere >= 210));
+// 🌟 嚴格判定：只有該員的「首要主崗位」(機動優先，否則為當天時數最長的崗位) 才列為正選，其餘支援崗位一律列為「(時間頂)」
+                    const isMainHere = (primaryLoc === cfg.id);
 
                     if (isMainHere) {
                         mainLines.push(`        ${dispName}`);
@@ -14631,10 +14668,86 @@ window.cancelScheduleEdits = () => {
             if (window.showToast) window.showToast('已取消剛剛的改動並還原');
         };
 
-window.setScheduleViewLayout = (mode) => {
+window.closeDayCardActionMenu = () => {
+            document.getElementById('dayCardActionFloatingMenu')?.remove();
+        };
+
+        window.toggleDayCardActionMenu = (dStr, e) => {
+            if (e) e.stopPropagation();
+            const existing = document.getElementById('dayCardActionFloatingMenu');
+            if (existing) {
+                const isSame = existing.dataset.dateStr === dStr;
+                existing.remove();
+                if (isSame) return;
+            }
+
+            const btn = e?.currentTarget;
+            const rect = btn ? btn.getBoundingClientRect() : { bottom: 80, right: window.innerWidth - 16 };
+
+            const menu = document.createElement('div');
+            menu.id = 'dayCardActionFloatingMenu';
+            menu.dataset.dateStr = dStr;
+            menu.style.top = `${Math.round(rect.bottom + 5)}px`;
+            menu.style.right = `${Math.max(8, Math.round(window.innerWidth - rect.right))}px`;
+            menu.className = 'fixed z-[10060] bg-white rounded-xl shadow-2xl border border-slate-200 p-1.5 min-w-[138px] space-y-1 animate-pop-in select-none';
+            menu.onclick = (ev) => ev.stopPropagation();
+
+menu.innerHTML = `
+                <button type="button" onclick="window.closeDayCardActionMenu(); window.exportDayStationSummaryText('${dStr}');"
+                    class="w-full px-2.5 py-1.5 rounded-lg text-[11px] font-black text-teal-700 hover:bg-teal-50 flex items-center gap-2 transition-colors text-left">
+                    <i data-lucide="clipboard-list" class="w-3.5 h-3.5 text-teal-600 shrink-0"></i><span>導出崗位</span>
+                </button>
+                <button type="button" onclick="window.closeDayCardActionMenu(); window.exportDayFullScheduleText('${dStr}');"
+                    class="w-full px-2.5 py-1.5 rounded-lg text-[11px] font-black text-blue-700 hover:bg-blue-50 flex items-center gap-2 transition-colors text-left">
+                    <i data-lucide="table" class="w-3.5 h-3.5 text-blue-600 shrink-0"></i><span>導出全表</span>
+                </button>
+                <button type="button" onclick="window.closeDayCardActionMenu(); window.exportDayBreakScheduleText('${dStr}');"
+                    class="w-full px-2.5 py-1.5 rounded-lg text-[11px] font-black text-amber-700 hover:bg-amber-50 flex items-center gap-2 transition-colors text-left">
+                    <i data-lucide="coffee" class="w-3.5 h-3.5 text-amber-600 shrink-0"></i><span>導出休息</span>
+                </button>
+                <button type="button" onclick="window.closeDayCardActionMenu(); window.autoAssignDaySchedule('${dStr}');"
+                    class="w-full px-2.5 py-1.5 rounded-lg text-[11px] font-black text-indigo-700 hover:bg-indigo-50 flex items-center gap-2 transition-colors text-left border-t border-slate-100 pt-1.5">
+                    <i data-lucide="sparkles" class="w-3.5 h-3.5 text-indigo-600 shrink-0"></i><span>智慧排班</span>
+                </button>
+                <button type="button" onclick="window.closeDayCardActionMenu(); window.triggerDayCSVImport('${dStr}');"
+                    class="w-full px-2.5 py-1.5 rounded-lg text-[11px] font-black text-emerald-700 hover:bg-emerald-50 flex items-center gap-2 transition-colors text-left">
+                    <i data-lucide="file-up" class="w-3.5 h-3.5 text-emerald-600 shrink-0"></i><span>匯入此日</span>
+                </button>
+            `;
+
+            document.body.appendChild(menu);
+            if (window.lucide) lucide.createIcons({ root: menu });
+        };
+
+        document.addEventListener('click', () => window.closeDayCardActionMenu?.());
+
+window.captureScheduleViewportAnchor = () => {
+            const scroller = document.getElementById('scheduleGridScrollArea');
+            if (!scroller) return null;
+            if (scroller.scrollTop <= 5) return { atTop: true };
+
+            const areaRect = scroller.getBoundingClientRect();
+            const focalY = areaRect.top + Math.min(160, areaRect.height * 0.35);
+            const cards = Array.from(scroller.querySelectorAll('[id^="sched-day-card-"]'));
+            if (!cards.length) return null;
+
+            let targetCard = cards.find(c => {
+                const r = c.getBoundingClientRect();
+                return r.top <= focalY && r.bottom >= focalY;
+            });
+            if (!targetCard) {
+                targetCard = cards.find(c => c.getBoundingClientRect().bottom >= focalY) || cards[cards.length - 1];
+            }
+
+            const rect = targetCard.getBoundingClientRect();
+            const ratio = Math.max(0, Math.min(1, (focalY - rect.top) / Math.max(1, rect.height)));
+            return { cardId: targetCard.id, ratio };
+        };
+
+        window.setScheduleViewLayout = (mode) => {
+            window._pendingSchedAnchor = window.captureScheduleViewportAnchor();
             window.scheduleViewLayout = mode || 'split';
             safeSetLocal('work_cache_sched_layout', window.scheduleViewLayout);
-            window._lockSchedDayCardAnchor = true;
             window.renderScheduleManager();
         };
 
@@ -14900,8 +15013,8 @@ const renderMemberRow = (name) => {
                 const isMale = (prof.gender || '女') === '男';
                 const shiftInfo = window.getMemberShiftWindowOnDate(canon, dStr, isCleanRole);
                 const isSelectedBrush = activeGridMember === canon;
-                const cardColorCls = isSelectedBrush
-                    ? (isMale ? 'bg-blue-600 text-white ring-2 ring-blue-400' : 'bg-rose-600 text-white ring-2 ring-rose-400')
+const cardColorCls = isSelectedBrush
+                    ? (isMale ? 'bg-blue-600 text-white ring-2 ring-inset ring-amber-300' : 'bg-rose-600 text-white ring-2 ring-inset ring-amber-300')
                     : (isMale ? 'bg-blue-100 hover:bg-blue-200/80 text-blue-950' : 'bg-rose-100 hover:bg-rose-200/80 text-rose-950');
                 const avatarBgCls = isMale ? 'bg-blue-600' : 'bg-rose-600';
                 const safeNameAttr = window.jsAttr(canon);
@@ -15034,9 +15147,9 @@ const workH = parseFloat((workMins / 60).toFixed(1));
                     : `<div class="w-6 h-6 rounded-full ${avatarBgCls} text-white flex items-center justify-center text-[10px] font-black shrink-0 shadow-2xs mt-0.5">${canon.slice(0, 1)}</div>`;
 
                 // 🌟 4 行零空隙結構：消除 inline-block 基線留白，讓第 4 行狀態緊貼第 3 行上班時間
-                return `
-                <tr class="hover:bg-[#ede9df]/60 transition-colors">
-                    <td onclick="window.selectGridMember('${safeNameAttr}')"
+return `
+                <tr data-person-row="${window.escAttr(canon)}" data-gender="${isMale ? '男' : '女'}" class="hover:bg-[#ede9df]/60 transition-colors">
+                    <td data-person-card="1" onclick="window.selectGridMember('${safeNameAttr}')"
                         class="sticky left-0 z-20 overflow-hidden px-1.5 py-0.5 border border-slate-300 cursor-pointer select-none shadow-[2px_0_5px_-2px_rgba(0,0,0,0.12)] w-[124px] min-w-[124px] max-w-[124px] transition-all ${cardColorCls}"
                         title="點擊選取「${window.esc(canon)}」當右表畫筆；點右上角線條圖示可改上班/休息時間">
                         <div class="flex items-start gap-1.5">
@@ -15045,7 +15158,7 @@ const workH = parseFloat((workMins / 60).toFixed(1));
                                 <!-- 第 1 行：名稱 ＋ 線條設定鍵 -->
                                 <div class="flex items-center justify-between gap-1">
                                     <span class="font-black text-[10.5px] truncate leading-tight">${window.esc(canon)}</span>
-                                    <button type="button" onclick="event.stopPropagation(); window.openMemberProfilePopup('${safeNameAttr}', '排班表')"
+                                    <button data-person-gear="1" type="button" onclick="event.stopPropagation(); window.openMemberProfilePopup('${safeNameAttr}', '排班表')"
                                         class="p-0.5 rounded hover:bg-black/10 ${isSelectedBrush ? 'text-white' : 'text-slate-600 hover:text-slate-900'} shrink-0 transition-colors" title="設定個人固定上班與休息時間">
                                         <svg class="w-3.5 h-3.5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                             <circle cx="12" cy="12" r="3"></circle>
@@ -15054,9 +15167,9 @@ const workH = parseFloat((workMins / 60).toFixed(1));
                                     </button>
                                 </div>
                                 <!-- 第 2 行：員工編號（微底色小標籤） -->
-                                <div class="w-fit max-w-full px-1 py-[1px] mt-[1px] rounded text-[8px] font-mono font-semibold tracking-wider leading-none truncate ${isSelectedBrush ? 'bg-white/20 text-white/90' : 'bg-slate-900/10 text-slate-600'}">${window.esc(displayStaffId)}</div>
+                                <div data-person-id="1" class="w-fit max-w-full px-1 py-[1px] mt-[1px] rounded text-[8px] font-mono font-semibold tracking-wider leading-none truncate ${isSelectedBrush ? 'bg-white/25 text-white' : 'bg-slate-900/10 text-slate-600'}">${window.esc(displayStaffId)}</div>
                                 <!-- 第 3 行：上班時間（放大粗體深靛藍字色） -->
-                                <div class="text-[9.5px] font-mono font-black tracking-tight leading-none truncate mt-[1px] ${isSelectedBrush ? 'text-amber-200' : 'text-indigo-800'}">${shiftInfo.label}</div>
+                                <div data-person-shift="1" class="text-[9.5px] font-mono font-black tracking-tight leading-none truncate mt-[1px] ${isSelectedBrush ? 'text-amber-200' : 'text-indigo-800'}">${shiftInfo.label}</div>
                                 <!-- 第 4 行：排班狀態（消除基線空白，緊貼時間正下方） -->
                                 <div class="flex items-center mt-[1px]">${summaryBadge}</div>
                             </div>
@@ -15110,23 +15223,11 @@ const totalCols = 1 + slots.length;
             }
 
 const existingScrollArea = document.getElementById('scheduleGridScrollArea');
-            const savedScrollTop = existingScrollArea ? existingScrollArea.scrollTop : window._lastSchedScrollTop;
-
-            // 🌟 記錄當前畫面正在觀看的「日期卡片錨點」，防止切換模式高度改變時跳去其他日子
-            let anchorDayCardId = null;
-            let anchorDayOffset = 0;
-            if (existingScrollArea) {
-                const areaTop = existingScrollArea.getBoundingClientRect().top;
-                const dayCards = Array.from(existingScrollArea.querySelectorAll('[id^="sched-day-card-"]'));
-                for (const c of dayCards) {
-                    const r = c.getBoundingClientRect();
-                    if (r.bottom > areaTop + 40) {
-                        anchorDayCardId = c.id;
-                        anchorDayOffset = r.top - areaTop;
-                        break;
-                    }
-                }
-            }
+            const viewportAnchor = window._pendingSchedAnchor || window.captureScheduleViewportAnchor();
+            window._pendingSchedAnchor = null;
+            const savedScrollTop = (existingScrollArea && existingScrollArea.scrollTop > 0)
+                ? existingScrollArea.scrollTop
+                : (window._lastSchedScrollTop || 0);
             const savedHorizScrolls = {};
             document.querySelectorAll('[id^="sched-day-card-"]').forEach(card => {
                 const rWrap = card.querySelector('[id^="right-scroll-"]') || card.querySelector('[id^="left-scroll-"]') || card.querySelector('.overflow-x-auto');
@@ -15381,12 +15482,15 @@ let thRight = `<th class="sticky left-0 bg-[#ded8cc] p-1.5 z-30 w-[68px] min-w-[
                             ${isToday ? '<span class="text-[10px] font-black text-blue-700 bg-[#f8f6f0] px-1.5 py-0.2 rounded border border-blue-200">📍 地圖即時生效中</span>' : ''}
                         </div>
 <div class="flex items-center gap-1.5 flex-wrap">
-                            <button type="button" onclick="window.exportDayStationSummaryText('${dStr}')" class="bg-teal-600 hover:bg-teal-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出清潔崗位/時間中英對照文字"><i data-lucide="clipboard-list" class="w-3 h-3 mr-1"></i>導出崗位</button>
-                            <button type="button" onclick="window.exportDayFullScheduleText('${dStr}')" class="bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出整張橫向排班表文字"><i data-lucide="table" class="w-3 h-3 mr-1"></i>導出全表</button>
-                            <button type="button" onclick="window.exportDayBreakScheduleText('${dStr}')" class="bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="導出當日同事休息時間公告"><i data-lucide="coffee" class="w-3 h-3 mr-1"></i>導出休息</button>
-                            <button type="button" onclick="window.autoAssignDaySchedule('${dStr}')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center active:scale-95" title="依出勤名單與每人優先級自動排班"><i data-lucide="sparkles" class="w-3 h-3 mr-1"></i>智慧排班</button>
+                            <div class="relative inline-block">
+                                <button type="button" onclick="window.toggleDayCardActionMenu('${dStr}', event)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center gap-1 active:scale-95" title="導出崗位、導出全表、導出休息、智慧排班、匯入此日">
+                                    <i data-lucide="sliders-horizontal" class="w-3 h-3"></i>
+                                    <span>排班工具</span>
+                                    <i data-lucide="chevron-down" class="w-3 h-3"></i>
+                                </button>
+                            </div>
+
                             ${prevDateStr ? `<button type="button" onclick="window.copyPrevDaySchedule('${dStr}', '${prevDateStr}')" class="bg-[#f8f6f0] hover:bg-blue-50 text-blue-600 font-bold text-[10px] px-2 py-1 rounded-lg border border-blue-200 shadow-2xs transition-colors flex items-center active:scale-95" title="複製前一日排班"><i data-lucide="copy" class="w-3 h-3 mr-1"></i>複製前日</button>` : ''}
-                            <button type="button" onclick="window.triggerDayCSVImport('${dStr}')" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[10px] px-2 py-1 rounded-lg border border-emerald-200 transition-colors flex items-center active:scale-95"><i data-lucide="file-up" class="w-3 h-3 mr-1"></i>匯入此日</button>
                             <button type="button" onclick="window.clearSingleDaySchedule('${dStr}')" class="bg-[#f8f6f0] hover:bg-red-50 text-red-500 font-bold text-[10px] px-2 py-1 rounded-lg border border-red-200 transition-colors flex items-center active:scale-95"><i data-lucide="trash-2" class="w-3 h-3 mr-0.5"></i>清空此日</button>
                         </div>
                     </div>
@@ -15567,25 +15671,35 @@ let thRight = `<th class="sticky left-0 bg-[#ded8cc] p-1.5 z-30 w-[68px] min-w-[
 
 const newScrollArea = document.getElementById('scheduleGridScrollArea');
             if (newScrollArea) {
-                newScrollArea.style.scrollBehavior = 'auto';
-                const targetAnchorEl = anchorDayCardId ? document.getElementById(anchorDayCardId) : null;
-                if (window._lockSchedDayCardAnchor && targetAnchorEl) {
-                    // 切換模式後，精準對齊原本正在看的那一天卡片頂部，絕不跳往其他日子
-                    const areaTop = newScrollArea.getBoundingClientRect().top;
-                    const cardTop = targetAnchorEl.getBoundingClientRect().top;
-                    newScrollArea.scrollTop += (cardTop - areaTop) - 6;
+                const applyAnchoredScroll = () => {
+                    newScrollArea.style.scrollBehavior = 'auto';
+                    if (viewportAnchor && viewportAnchor.atTop) {
+                        newScrollArea.scrollTop = 0;
+                    } else if (viewportAnchor && viewportAnchor.cardId) {
+                        const targetCard = document.getElementById(viewportAnchor.cardId);
+                        if (targetCard) {
+                            const areaRect = newScrollArea.getBoundingClientRect();
+                            const cardRect = targetCard.getBoundingClientRect();
+                            const focalY = areaRect.top + Math.min(160, areaRect.height * 0.35);
+                            const desiredCardTop = focalY - (viewportAnchor.ratio * cardRect.height);
+                            newScrollArea.scrollTop += (cardRect.top - desiredCardTop);
+                        }
+                    } else if (savedScrollTop > 0) {
+                        newScrollArea.scrollTop = savedScrollTop;
+                    }
                     window._lastSchedScrollTop = newScrollArea.scrollTop;
-                } else if (targetAnchorEl && savedScrollTop !== undefined) {
-                    const areaTop = newScrollArea.getBoundingClientRect().top;
-                    const cardTop = targetAnchorEl.getBoundingClientRect().top;
-                    newScrollArea.scrollTop += (cardTop - areaTop) - anchorDayOffset;
-                    window._lastSchedScrollTop = newScrollArea.scrollTop;
-                } else if (savedScrollTop !== undefined && savedScrollTop > 0) {
-                    newScrollArea.scrollTop = savedScrollTop;
-                    window._lastSchedScrollTop = savedScrollTop;
+                };
+
+                applyAnchoredScroll();
+                requestAnimationFrame(applyAnchoredScroll);
+
+                if (!newScrollArea._scrollTrackBound) {
+                    newScrollArea._scrollTrackBound = true;
+                    newScrollArea.addEventListener('scroll', () => {
+                        window._lastSchedScrollTop = newScrollArea.scrollTop;
+                    }, { passive: true });
                 }
             }
-            window._lockSchedDayCardAnchor = false;
             Object.entries(savedHorizScrolls).forEach(([cardId, sLeft]) => {
                 const card = document.getElementById(cardId);
                 if (card && sLeft > 0) {
