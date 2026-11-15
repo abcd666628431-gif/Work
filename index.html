@@ -654,7 +654,7 @@ tr[class*="pref-row-highlight-"] .sub-line-item[data-name=""] {
             }
         };
 
-        // 🌟 4. 網頁啟動時，立即從 IndexedDB 救援真實用戶名
+// 🌟 4. 網頁啟動時，立即從 IndexedDB 救援真實用戶名
         window.restoreMyIdentityOnBoot = async () => {
             try {
                 if (typeof idbGet === 'function') {
@@ -666,6 +666,202 @@ tr[class*="pref-row-highlight-"] .sub-line-item[data-name=""] {
             } catch (e) {}
         };
         setTimeout(() => window.restoreMyIdentityOnBoot(), 30);
+
+        // 🌟 5. 操作日誌「設備用戶名單」彈窗（查看所有已識別手機/電腦、即時改名同步雲端、刪除舊紀錄）
+        window.openDeviceIdentityListModal = () => {
+            document.getElementById('deviceIdentityListModal')?.remove();
+
+            const wrapper = document.createElement('div');
+            wrapper.id = 'deviceIdentityListModal';
+            wrapper.className = 'fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[10080] flex items-center justify-center p-3 sm:p-4';
+            wrapper.onclick = (e) => { if (e.target === wrapper) wrapper.remove(); };
+            document.body.appendChild(wrapper);
+
+            window.renderDeviceIdentityListModal();
+        };
+
+window.renderDeviceIdentityListModal = () => {
+            const wrapper = document.getElementById('deviceIdentityListModal');
+            if (!wrapper) return;
+
+            const nowMs = Date.now();
+            const rawMap = { ...(window._latestCloudDevicesMap || {}) };
+            // 確保當前本機一定出現在名單內，並標記為最新上線
+            if (window.deviceHwKey) {
+                rawMap[window.deviceHwKey] = {
+                    ...(rawMap[window.deviceHwKey] || {}),
+                    name: sysUserName,
+                    color: sysUserColor,
+                    hwKey: window.deviceHwKey,
+                    lastSeenAt: nowMs,
+                    updatedAt: rawMap[window.deviceHwKey]?.updatedAt || nowMs
+                };
+            }
+
+            // 依硬體指紋 (hwKey) 歸併去重，取最新上線時間與最新名稱
+            const grouped = new Map();
+            Object.entries(rawMap).forEach(([key, info]) => {
+                if (!info || typeof info !== 'object' || !info.name) return;
+                const groupKey = info.hwKey || key;
+                const existing = grouped.get(groupKey);
+                const infoLastSeen = Math.max(Number(info.lastSeenAt) || 0, Number(info.updatedAt) || 0);
+                const existLastSeen = existing ? existing.lastSeenAt : 0;
+
+                if (!existing || infoLastSeen >= existLastSeen) {
+                    grouped.set(groupKey, {
+                        groupKey,
+                        keys: existing ? [...new Set([...existing.keys, key])] : [key],
+                        name: info.name,
+                        color: info.color || '#38bdf8',
+                        hwKey: info.hwKey || key,
+                        lastSeenAt: Math.max(infoLastSeen, existLastSeen)
+                    });
+                } else {
+                    existing.keys.push(key);
+                }
+            });
+
+            // 排序：本機排最前 -> 最近上線時間由新到舊
+            const list = Array.from(grouped.values()).sort((a, b) => {
+                const aIsMe = (a.hwKey === window.deviceHwKey || a.keys.includes(window.clientDeviceId)) ? 1 : 0;
+                const bIsMe = (b.hwKey === window.deviceHwKey || b.keys.includes(window.clientDeviceId)) ? 1 : 0;
+                if (aIsMe !== bIsMe) return bIsMe - aIsMe;
+                return (b.lastSeenAt || 0) - (a.lastSeenAt || 0);
+            });
+
+            const fmtLastOnline = (ts, isMe) => {
+                if (isMe) return '<span class="text-emerald-600 font-black">● 剛剛在線</span>';
+                if (!ts) return '<span class="text-slate-400">尚無紀錄</span>';
+                const diffMins = Math.floor((nowMs - ts) / 60000);
+                if (diffMins < 3) return '<span class="text-emerald-600 font-black">● 剛剛在線</span>';
+                const d = new Date(ts);
+                const dateStr = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+                return `<span class="text-slate-500">最後上線: ${dateStr}</span>`;
+            };
+
+            const rowsHtml = list.length ? list.map((item, idx) => {
+                const isMe = (item.hwKey === window.deviceHwKey || item.keys.includes(window.clientDeviceId));
+                const shortHw = String(item.hwKey).replace(/^hw_/, '').slice(0, 6);
+                const safeGroupKey = window.jsAttr ? window.jsAttr(item.groupKey) : item.groupKey.replace(/'/g, "\\'");
+
+                return `
+                <div class="p-2.5 rounded-xl border ${isMe ? 'bg-sky-50/90 border-sky-300' : 'bg-[#fdfbf7] border-slate-200'} flex items-center justify-between gap-2 shadow-2xs">
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-1.5 mb-1">
+                            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${item.color}"></span>
+                            <input id="dev-name-input-${idx}" type="text" value="${window.esc(item.name)}"
+                                onkeydown="if(event.key==='Enter') window.saveDeviceIdentityName('${safeGroupKey}', ${idx})"
+                                class="w-full max-w-[145px] px-2 py-1 text-xs font-black text-slate-800 bg-white border border-slate-300 rounded-lg focus:border-blue-500 focus:outline-none">
+                            ${isMe ? '<span class="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 border border-sky-300 text-[9.5px] font-black shrink-0">本機</span>' : ''}
+                        </div>
+                        <div class="text-[10px] font-mono flex items-center gap-1.5 pl-4 flex-wrap">
+                            ${fmtLastOnline(item.lastSeenAt, isMe)}
+                            <span class="text-slate-300">|</span>
+                            <span class="text-slate-400">ID:${window.esc(shortHw)}</span>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-1 shrink-0">
+                        <button type="button" onclick="window.saveDeviceIdentityName('${safeGroupKey}', ${idx})"
+                            class="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-300 rounded-lg text-[11px] font-black active:scale-95 transition-all">
+                            儲存
+                        </button>
+                        ${!isMe ? `
+                        <button type="button" onclick="window.deleteDeviceIdentityEntry('${safeGroupKey}')"
+                            class="p-1.5 bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 rounded-lg transition-colors" title="刪除此設備紀錄">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        </button>` : ''}
+                    </div>
+                </div>`;
+            }).join('') : `<div class="text-center text-xs text-slate-400 py-8 font-bold">目前尚無雲端設備名單紀錄</div>`;
+
+            wrapper.innerHTML = `
+                <div class="bg-white rounded-2xl p-4 w-full max-w-[400px] max-h-[82vh] shadow-2xl border border-slate-200 flex flex-col animate-pop-in" onclick="event.stopPropagation()">
+                    <div class="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-100 shrink-0">
+                        <div class="flex items-center gap-1.5">
+                            <i data-lucide="users" class="w-4 h-4 text-amber-600"></i>
+                            <h3 class="font-black text-sm text-slate-800">設備用戶名單 (${list.length} 部設備)</h3>
+                        </div>
+                        <button type="button" onclick="document.getElementById('deviceIdentityListModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+
+                    <div class="text-[11px] text-slate-500 font-bold mb-2 shrink-0">
+                        可直接修改任何手機／電腦的顯示名稱，對方重整或連線即自動套用：
+                    </div>
+
+                    <div class="flex-1 overflow-y-auto space-y-2 pr-0.5">
+                        ${rowsHtml}
+                    </div>
+
+                    <div class="mt-3 pt-2.5 border-t border-slate-100 flex justify-end shrink-0">
+                        <button type="button" onclick="document.getElementById('deviceIdentityListModal')?.remove()"
+                            class="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black active:scale-95">
+                            關閉
+                        </button>
+                    </div>
+                </div>`;
+
+            if (window.lucide) lucide.createIcons({ root: wrapper });
+        };
+
+        // 🌟 儲存修改後的設備名稱（同步更新雲端所有關聯指紋鍵，若是本機則同步更新本機快取）
+        window.saveDeviceIdentityName = async (groupKey, idx) => {
+            const inputEl = document.getElementById(`dev-name-input-${idx}`);
+            const newName = (inputEl?.value || '').trim();
+            if (!newName) return window.showToast('⚠️ 名稱不能為空', true);
+
+            const isMe = (groupKey === window.deviceHwKey || groupKey === window.clientDeviceId);
+            if (isMe) {
+                window.persistMyIdentityEverywhere(newName, sysUserColor);
+                window.showToast(`✅ 本機名稱已更新為「${newName}」`);
+                window.renderDeviceIdentityListModal();
+                return;
+            }
+
+            const curMap = { ...(window._latestCloudDevicesMap || {}) };
+            const devPatch = {};
+            let matchedColor = '#38bdf8';
+
+            Object.entries(curMap).forEach(([k, v]) => {
+                if (v && (v.hwKey === groupKey || k === groupKey)) {
+                    matchedColor = v.color || matchedColor;
+                    devPatch[k] = { ...v, name: newName, updatedAt: Date.now() };
+                }
+            });
+            if (!Object.keys(devPatch).length) {
+                devPatch[groupKey] = { name: newName, color: matchedColor, hwKey: groupKey, updatedAt: Date.now() };
+            }
+
+            window._latestCloudDevicesMap = { ...curMap, ...devPatch };
+            if (db && currentUser) {
+                try {
+                    await setDoc(cfgDoc('device_identities'), { devices: devPatch }, { merge: true });
+                } catch (e) {}
+            }
+            window.showToast(`✅ 已將該設備名稱改為「${newName}」`);
+            window.renderDeviceIdentityListModal();
+        };
+
+        // 🌟 刪除舊的／無效的設備紀錄
+        window.deleteDeviceIdentityEntry = async (groupKey) => {
+            const curMap = { ...(window._latestCloudDevicesMap || {}) };
+            const cleanedMap = {};
+            Object.entries(curMap).forEach(([k, v]) => {
+                if (!v || v.hwKey === groupKey || k === groupKey) return;
+                cleanedMap[k] = v;
+            });
+
+            window._latestCloudDevicesMap = cleanedMap;
+            if (db && currentUser) {
+                try {
+                    await setDoc(cfgDoc('device_identities'), { devices: cleanedMap });
+                } catch (e) {}
+            }
+            window.showToast('🗑️ 已移除該設備紀錄');
+            window.renderDeviceIdentityListModal();
+        };
         let galleryLogsStore = [];
         window.expandedLogGroups = new Set(); // 記錄使用者展開的群組 ID
 
@@ -739,7 +935,21 @@ const _saveLogQueue = () => {
             }
         };
 
-        window.openLogsModal = () => {
+window.openLogsModal = () => {
+            // 🌟 自動在「當前用戶」與「鎖匙」按鈕之間插入「名單」按鈕
+            const userSpan = $('currentLogUserDisplay');
+            const userBtn = userSpan?.closest('button');
+if (userBtn && userBtn.parentElement && !document.getElementById('btnOpenDeviceIdentityList')) {
+                const listBtn = document.createElement('button');
+                listBtn.id = 'btnOpenDeviceIdentityList';
+                listBtn.type = 'button';
+                listBtn.onclick = () => window.openDeviceIdentityListModal();
+                listBtn.className = 'px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-[11px] font-black flex items-center gap-1 shadow-2xs active:scale-95 transition-all';
+                listBtn.title = '查看與修改所有設備綁定的用戶名單';
+                listBtn.innerHTML = '<i data-lucide="users" class="w-3.5 h-3.5 text-amber-600"></i><span>名單</span>';
+                userBtn.insertAdjacentElement('afterend', listBtn);
+            }
+
             window.renderGalleryLogs();
             $('galleryLogsModal')?.classList.replace('hidden', 'flex');
             if (window.lucide) lucide.createIcons();
@@ -11002,7 +11212,31 @@ checkAndResetDailySchedule();
 if (window._syncBound) return;
             window._syncBound = true;
 
-// 🌟 連上雲端時，透過「容量分級硬體指紋 -> 12項硬體指紋 -> 設備碼 -> UID」自動認回手機主人
+// 🌟 自動回報本機「最後上線時間」至雲端（每 2 分鐘節流一次，避免頻繁寫入）
+            window.pingDeviceLastOnline = (force = false) => {
+                if (!db || !currentUser || !window.deviceHwKey) return;
+                const now = Date.now();
+                if (!force && window._lastDeviceOnlinePingTs && (now - window._lastDeviceOnlinePingTs) < 120000) return;
+                window._lastDeviceOnlinePingTs = now;
+
+                const onlinePayload = {
+                    name: sysUserName,
+                    color: sysUserColor,
+                    hwKey: window.deviceHwKey,
+                    uid: currentUser.uid,
+                    lastSeenAt: now
+                };
+                const devPatch = {
+                    [window.deviceHwKey]: onlinePayload,
+                    [window.clientDeviceId]: onlinePayload
+                };
+                if (window.deviceStorageQuotaTag) {
+                    devPatch[window.deviceStorageQuotaTag] = onlinePayload;
+                }
+                setDoc(cfgDoc('device_identities'), { devices: devPatch }, { merge: true }).catch(() => {});
+            };
+
+            // 🌟 連上雲端時，透過「容量分級硬體指紋 -> 12項硬體指紋 -> 設備碼 -> UID」自動認回手機主人
             window._latestCloudDevicesMap = {};
             window._tryCloudAutoClaimIdentity = () => {
                 const devices = window._latestCloudDevicesMap || {};
@@ -11021,18 +11255,21 @@ if (window._syncBound) return;
                         if (typeof window.scheduleDashboardUpdate === 'function') window.scheduleDashboardUpdate();
                     }
                 } else if (!/^成員_\d{3}$/.test(sysUserName)) {
-                    // 本機已有改好的真名，主動將 12 項硬體指紋綁定到雲端
                     window.persistMyIdentityEverywhere(sysUserName, sysUserColor);
                 }
+                window.pingDeviceLastOnline(false);
             };
 
             onSnapshot(cfgDoc('device_identities'), (snap) => {
                 if (!snap.exists()) {
-                    if (!/^成員_\d{3}$/.test(sysUserName)) window.persistMyIdentityEverywhere(sysUserName, sysUserColor);
+                    window.pingDeviceLastOnline(true);
                     return;
                 }
                 window._latestCloudDevicesMap = snap.data()?.devices || {};
                 window._tryCloudAutoClaimIdentity();
+                if (document.getElementById('deviceIdentityListModal')) {
+                    window.renderDeviceIdentityListModal?.();
+                }
             }, () => {});
 
             onSnapshot(cfgDoc('admin_auth'), (snap) => {
