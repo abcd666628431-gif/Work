@@ -13825,10 +13825,11 @@ window.onGridTouchMove = (e) => {
         window.stopGridDrag = () => { isGridDragging = false; gridDragAction = null; window.lastTouchedEl = null; };
         document.addEventListener('mouseup', window.stopGridDrag); document.addEventListener('touchend', window.stopGridDrag);
 
-        // 🌟 捕捉當下 5 日所有 DOM 格子內容（支援多行 sub-line-item 解析）
+// 🌟 捕捉當下 5 日所有 DOM 格子內容（支援多行 sub-line-item 解析，並排除 Excel 總覽格子干擾）
         window.captureAll5DayDomValues = () => {
             window._tempGridValues = window._tempGridValues || {};
-                                    const normCellText = (txt) => {
+            window._seededTempDates = window._seededTempDates || {};
+            const normCellText = (txt) => {
                 if (!txt) return '';
                 // 保留空行（上面空白、下面有人）
                 return String(txt).split('\n').map(n => {
@@ -13838,15 +13839,20 @@ window.onGridTouchMove = (e) => {
                 }).join('\n');
             };
             document.querySelectorAll('.grid-input').forEach(i => {
-                if (i.dataset.date) window._tempGridValues[`${i.dataset.date}_${i.dataset.loc}_${i.dataset.start}_${i.dataset.end}`] = normCellText(i.value);
+                if (i.dataset.date) {
+                    window._seededTempDates[i.dataset.date] = true;
+                    window._tempGridValues[`${i.dataset.date}_${i.dataset.loc}_${i.dataset.start}_${i.dataset.end}`] = normCellText(i.value);
+                }
             });
-            document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
+            document.querySelectorAll('td[data-loc][data-date]:not([data-excel-cell])').forEach(td => {
                 const disps = td.querySelectorAll('.grid-input-display');
-                // 修復：拆半小時的格子內有兩個 display，舊版只抓第一個卻用整點 key 寫入，
-                // 會把前半小時的人記成整小時。這裡只處理「單一 display」的格子。
-                if (disps.length === 1) window._tempGridValues[`${td.dataset.date}_${td.dataset.loc}_${td.dataset.start}_${td.dataset.end}`] = normCellText(window.extractCellText(disps[0]));
+                if (disps.length === 1) {
+                    window._seededTempDates[td.dataset.date] = true;
+                    window._tempGridValues[`${td.dataset.date}_${td.dataset.loc}_${td.dataset.start}_${td.dataset.end}`] = normCellText(window.extractCellText(disps[0]));
+                }
             });
             document.querySelectorAll('.grid-input-display[data-loc][data-date]').forEach(div => {
+                if (div.dataset.date) window._seededTempDates[div.dataset.date] = true;
                 window._tempGridValues[`${div.dataset.date}_${div.dataset.loc}_${div.dataset.start}_${div.dataset.end}`] = normCellText(window.extractCellText(div));
             });
         };
@@ -14570,7 +14576,7 @@ window.toggleSplitHour = (dateStr, locId, hourStr) => {
         };
 
 
-        // 🌟 1. 注意這裡一定要加上 async！
+// 🌟 1. 注意這裡一定要加上 async！
 window.saveGridSchedule = async () => {
     window.captureAll5DayDomValues();
 
@@ -14613,11 +14619,12 @@ window.saveGridSchedule = async () => {
         });
     };
 
-const hasClassicDomCells = document.querySelectorAll('td[data-loc][data-date], .grid-input-display[data-loc][data-date], .grid-input').length > 0;
+    // 🌟 核心修復：排除 [data-excel-cell]，只有當畫面真正存在傳統「崗位介面 (.grid-input-display)」時才走 DOM 提取！
+    const hasClassicDomCells = document.querySelectorAll('.grid-input-display, .grid-input').length > 0;
 
     if (hasClassicDomCells) {
-        // DOM 提取（原本樣式 / 只看崗位模式）
-        document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
+        // DOM 提取（傳統崗位介面）
+        document.querySelectorAll('td[data-loc][data-date]:not([data-excel-cell])').forEach(td => {
             const { date, loc, start, end } = td.dataset;
             const disps = td.querySelectorAll('.grid-input-display');
             if (disps.length !== 1) return;
@@ -14636,16 +14643,19 @@ const hasClassicDomCells = document.querySelectorAll('td[data-loc][data-date], .
             addSlotRecord(date, loc, start, end, text);
         });
     } else {
-        // 記憶體暫存提取（Excel總覽 / 只看人員模式）
+        // 記憶體暫存提取（Excel總覽 / 人員介面 / 左右雙介面無傳統崗位表時）
         const tempMap = window._tempGridValues || {};
         const seededMap = window._seededTempDates || {};
         fiveDays.forEach(dObj => {
             const dStr = dObj.dateStr;
-            if (!seededMap[dStr]) {
+            const prefix = `${dStr}_`;
+            const hasTempKeysForDate = Object.keys(tempMap).some(k => k.startsWith(prefix));
+
+            // 若該日未曾在暫存中被展開或編輯過，直接保留原本 multiStore 內的班表，絕不清空！
+            if (!seededMap[dStr] && !hasTempKeysForDate) {
                 rawByDate[dStr] = [...(multiStore[dStr] || [])];
                 return;
             }
-            const prefix = `${dStr}_`;
             Object.keys(tempMap).forEach(k => {
                 if (!k.startsWith(prefix)) return;
                 const rest = k.slice(prefix.length);
@@ -15331,11 +15341,13 @@ window.captureScheduleViewportAnchor = () => {
             return { cardId: targetCard.id, ratio };
         };
 
-        window.setScheduleViewLayout = (mode) => {
+window.setScheduleViewLayout = (mode) => {
+            window.captureAll5DayDomValues();
+            window.get5DayScheduleDates().forEach(d => window.ensureDateSeededInTempGrid(d.dateStr));
             window._pendingSchedAnchor = window.captureScheduleViewportAnchor();
             window.scheduleViewLayout = mode || 'split';
             safeSetLocal('work_cache_sched_layout', window.scheduleViewLayout);
-            window.renderScheduleManager();
+            window.renderScheduleManager(true);
         };
 
         // 切換左表頂部的「崗位畫筆」
