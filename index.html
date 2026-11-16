@@ -806,42 +806,164 @@ window.renderDeviceIdentityListModal = () => {
             if (window.lucide) lucide.createIcons({ root: wrapper });
         };
 
-        // 🌟 儲存修改後的設備名稱（同步更新雲端所有關聯指紋鍵，若是本機則同步更新本機快取）
+// 🌟 輔助：自動根據「設備用戶名單」解析每筆日誌的最新人名與顏色（解決成員_191、成員_777 不同步問題）
+        window.resolveLogUserDisplay = (log) => {
+            if (!log) return { user: '未知', color: '#38bdf8' };
+            const rawUser = String(log.user || '未知').trim();
+            const rawColor = log.color || '#38bdf8';
+            if (rawUser === '系統自動' || log.deviceId === 'system') {
+                return { user: rawUser, color: rawColor };
+            }
+
+            const devMap = window._latestCloudDevicesMap || {};
+            const devId = log.deviceId || '';
+
+            // 1. 先用日誌內的 deviceId 直接對照設備名單
+            if (devId && devMap[devId] && devMap[devId].name) {
+                return { user: devMap[devId].name, color: devMap[devId].color || rawColor };
+            }
+
+            // 2. 再搜尋設備名單內是否有相同 hwKey、deviceId 或曾用過此舊名字 (oldNames) 的設備
+            let bestMatch = null;
+            let bestTs = -1;
+            Object.entries(devMap).forEach(([k, v]) => {
+                if (!v || typeof v !== 'object' || !v.name) return;
+                const isSameDev = devId && (k === devId || v.hwKey === devId || v.deviceId === devId || v.uid === devId);
+                const isOldNameMatch = Array.isArray(v.oldNames) && v.oldNames.includes(rawUser);
+                if (isSameDev || isOldNameMatch) {
+                    const ts = Math.max(Number(v.updatedAt) || 0, Number(v.lastSeenAt) || 0);
+                    if (ts >= bestTs) {
+                        bestTs = ts;
+                        bestMatch = v;
+                    }
+                }
+            });
+
+            if (bestMatch && bestMatch.name) {
+                return { user: bestMatch.name, color: bestMatch.color || rawColor };
+            }
+            return { user: rawUser, color: rawColor };
+        };
+
+        // 🌟 儲存修改後的設備名稱（同步更新雲端設備表 + 批次更新歷史操作日誌 + 立即重繪操作日誌畫面）
         window.saveDeviceIdentityName = async (groupKey, idx) => {
             const inputEl = document.getElementById(`dev-name-input-${idx}`);
-            const newName = (inputEl?.value || '').trim();
+            const newName = (inputEl?.value || '').trim().replace(/[<>]/g, '');
             if (!newName) return window.showToast('⚠️ 名稱不能為空', true);
+
+            const nowTs = Date.now();
+            const curMap = { ...(window._latestCloudDevicesMap || {}) };
+            const devPatch = {};
+            const relatedKeys = new Set([groupKey]);
+            const oldNames = new Set();
+            let matchedColor = '#38bdf8';
 
             const isMe = (groupKey === window.deviceHwKey || groupKey === window.clientDeviceId);
             if (isMe) {
-                window.persistMyIdentityEverywhere(newName, sysUserColor);
-                window.showToast(`✅ 本機名稱已更新為「${newName}」`);
-                window.renderDeviceIdentityListModal();
-                return;
+                if (sysUserName && sysUserName !== newName && sysUserName !== '系統自動') {
+                    oldNames.add(sysUserName);
+                }
+                if (window.deviceHwKey) relatedKeys.add(window.deviceHwKey);
+                if (window.clientDeviceId) relatedKeys.add(window.clientDeviceId);
+                if (window.deviceStorageQuotaTag) relatedKeys.add(window.deviceStorageQuotaTag);
+                if (currentUser?.uid) relatedKeys.add(currentUser.uid);
+                matchedColor = sysUserColor || matchedColor;
             }
 
-            const curMap = { ...(window._latestCloudDevicesMap || {}) };
-            const devPatch = {};
-            let matchedColor = '#38bdf8';
-
+            // 找出該設備關聯的所有金鑰與改名前的舊名字（如 成員_191、成員_777）
             Object.entries(curMap).forEach(([k, v]) => {
-                if (v && (v.hwKey === groupKey || k === groupKey)) {
+                if (v && (v.hwKey === groupKey || k === groupKey || (isMe && relatedKeys.has(k)))) {
+                    relatedKeys.add(k);
+                    if (v.hwKey) relatedKeys.add(v.hwKey);
+                    if (v.deviceId) relatedKeys.add(v.deviceId);
+                    if (v.uid) relatedKeys.add(v.uid);
+                    if (v.name && v.name !== newName && v.name !== '系統自動') {
+                        oldNames.add(v.name);
+                    }
+                    if (Array.isArray(v.oldNames)) {
+                        v.oldNames.forEach(on => { if (on && on !== newName) oldNames.add(on); });
+                    }
                     matchedColor = v.color || matchedColor;
-                    devPatch[k] = { ...v, name: newName, updatedAt: Date.now() };
                 }
             });
+
+            const oldNamesArr = Array.from(oldNames);
+
+            Object.entries(curMap).forEach(([k, v]) => {
+                if (v && (relatedKeys.has(k) || relatedKeys.has(v.hwKey))) {
+                    const mergedOld = Array.from(new Set([...(v.oldNames || []), ...oldNamesArr])).filter(n => n && n !== newName);
+                    devPatch[k] = {
+                        ...v,
+                        name: newName,
+                        color: v.color || matchedColor,
+                        oldNames: mergedOld,
+                        updatedAt: nowTs,
+                        renamedByListAt: nowTs
+                    };
+                }
+            });
+
             if (!Object.keys(devPatch).length) {
-                devPatch[groupKey] = { name: newName, color: matchedColor, hwKey: groupKey, updatedAt: Date.now() };
+                devPatch[groupKey] = {
+                    name: newName,
+                    color: matchedColor,
+                    hwKey: groupKey,
+                    oldNames: oldNamesArr,
+                    updatedAt: nowTs,
+                    renamedByListAt: nowTs
+                };
             }
 
             window._latestCloudDevicesMap = { ...curMap, ...devPatch };
+
+            if (isMe) {
+                window._lastLocalIdentitySaveTs = nowTs;
+                window.persistMyIdentityEverywhere(newName, sysUserColor);
+            }
+
+            // 🌟 同步將操作日誌 (galleryLogsStore) 內屬於該設備或該舊名字的紀錄全部改為新名字
+            const logsToUpdate = (galleryLogsStore || []).filter(l => {
+                if (!l || l.deviceId === 'system' || l.user === '系統自動') return false;
+                const matchDev = l.deviceId && relatedKeys.has(l.deviceId);
+                const matchOld = l.user && oldNames.has(l.user);
+                return matchDev || matchOld;
+            });
+
+            logsToUpdate.forEach(l => {
+                l.user = newName;
+                l.color = matchedColor;
+            });
+
+            // 立即刷新「設備用戶名單」、「操作日誌」與「儀表板」畫面
+            window.renderDeviceIdentityListModal();
+            if (typeof window.renderGalleryLogs === 'function') window.renderGalleryLogs();
+            if (typeof window.scheduleDashboardUpdate === 'function') window.scheduleDashboardUpdate();
+
             if (db && currentUser) {
                 try {
                     await setDoc(cfgDoc('device_identities'), { devices: devPatch }, { merge: true });
                 } catch (e) {}
+
+                if (logsToUpdate.length > 0) {
+                    try {
+                        for (let i = 0; i < logsToUpdate.length; i += 450) {
+                            const chunk = logsToUpdate.slice(i, i + 450);
+                            const batch = writeBatch(db);
+                            chunk.forEach(l => {
+                                if (l.id) {
+                                    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'gallery_logs', l.id);
+                                    batch.update(ref, { user: newName, color: matchedColor });
+                                }
+                            });
+                            await batch.commit();
+                        }
+                    } catch (e) {
+                        console.error('批次同步歷史日誌名稱失敗:', e);
+                    }
+                }
             }
-            window.showToast(`✅ 已將該設備名稱改為「${newName}」`);
-            window.renderDeviceIdentityListModal();
+
+            window.showToast(isMe ? `✅ 本機與操作日誌已同步更新為「${newName}」` : `✅ 已將該設備與操作日誌同步改為「${newName}」`);
         };
 
         // 🌟 刪除舊的／無效的設備紀錄
@@ -1096,12 +1218,15 @@ window.getClearLogAction = (action) => {
                 dayBuckets.get(dateKey).rawLogs.push(log);
             });
 
-// 3. 在每一天內部，按使用者獨立聚合 20 分鐘時間桶（不再受其他人插隊打斷）
+// 3. 在每一天內部，按使用者獨立聚合 20 分鐘時間桶（不再受其他人插隊打斷，並即時對照設備名單最新名稱）
             const TWENTY_MINS = 20 * 60 * 1000;
             dayBuckets.forEach(bucket => {
                 const userBuckets = new Map();
 
                 bucket.rawLogs.forEach(log => {
+                    const resolved = window.resolveLogUserDisplay ? window.resolveLogUserDisplay(log) : { user: log.user || '未知', color: log.color || '#38bdf8' };
+                    log.user = resolved.user;
+                    log.color = resolved.color;
                     const uName = log.user || '未知';
                     if (!userBuckets.has(uName)) {
                         userBuckets.set(uName, []);
@@ -1339,7 +1464,7 @@ window.getClearLogAction = (action) => {
             );
         };
 
-        window.saveUserName = async () => {
+window.saveUserName = async () => {
             const name = document.getElementById('newUserNameInput')?.value.trim().replace(/[<>]/g, '');
             const color = document.getElementById('newUserColorInput')?.value || '#38bdf8';
             if (!name) return window.showToast("請輸入姓名/暱稱", true);
@@ -1372,14 +1497,60 @@ window.getClearLogAction = (action) => {
             }
 
             if (!isEditingOtherUser) {
+                window._lastLocalIdentitySaveTs = Date.now();
                 window.persistMyIdentityEverywhere(name, color);
+            } else {
+                // 🌟 當管理員在操作日誌點擊別人名字改名時，同步更新「設備用戶名單 (device_identities)」
+                const nowTs = Date.now();
+                const targetDevIds = new Set(logsToUpdate.map(l => l.deviceId).filter(d => d && d !== 'system'));
+                const curMap = { ...(window._latestCloudDevicesMap || {}) };
+                const devPatch = {};
+
+                Object.entries(curMap).forEach(([k, v]) => {
+                    if (!v || typeof v !== 'object') return;
+                    if (targetDevIds.has(k) || targetDevIds.has(v.hwKey) || v.name === oldName) {
+                        const mergedOld = Array.from(new Set([...(v.oldNames || []), oldName])).filter(n => n && n !== name);
+                        devPatch[k] = {
+                            ...v,
+                            name: name,
+                            color: color,
+                            oldNames: mergedOld,
+                            updatedAt: nowTs,
+                            renamedByListAt: nowTs
+                        };
+                    }
+                });
+
+                if (!Object.keys(devPatch).length && targetDevIds.size > 0) {
+                    targetDevIds.forEach(dId => {
+                        devPatch[dId] = {
+                            name: name,
+                            color: color,
+                            hwKey: dId,
+                            oldNames: [oldName],
+                            updatedAt: nowTs,
+                            renamedByListAt: nowTs
+                        };
+                    });
+                }
+
+                if (Object.keys(devPatch).length > 0) {
+                    window._latestCloudDevicesMap = { ...curMap, ...devPatch };
+                    if (db && currentUser) {
+                        setDoc(cfgDoc('device_identities'), { devices: devPatch }, { merge: true }).catch(() => {});
+                    }
+                }
             }
 
             window.closeUserNameModal();
             window.renderGalleryLogs();
+            if (document.getElementById('deviceIdentityListModal')) {
+                window.renderDeviceIdentityListModal?.();
+            }
+            if (typeof window.scheduleDashboardUpdate === 'function') window.scheduleDashboardUpdate();
             window.showToast(
                 isEditingOtherUser
-                    ? `✅ 已將「${oldName}」改為「${name}」（您的身分維持「${sysUserName}」不變）`
+                    ? `✅ 已將「${oldName}」同步改為「${name}」（名單與日誌已同步）`
                     : `✅ 已將您的身分儲存為「${name}」！`
             );
         };
@@ -11033,7 +11204,7 @@ if (window._syncBound) return;
                 setDoc(cfgDoc('device_identities'), { devices: devPatch }, { merge: true }).catch(() => {});
             };
 
-            // 🌟 連上雲端時，透過「容量分級硬體指紋 -> 12項硬體指紋 -> 設備碼 -> UID」自動認回手機主人
+// 🌟 連上雲端時，透過「容量分級硬體指紋 -> 12項硬體指紋 -> 設備碼 -> UID」自動認回手機主人（並支援遠端改名即時套用）
             window._latestCloudDevicesMap = {};
             window._tryCloudAutoClaimIdentity = () => {
                 const devices = window._latestCloudDevicesMap || {};
@@ -11044,12 +11215,15 @@ if (window._syncBound) return;
                     currentUser ? devices[currentUser.uid] : null
                 ].filter(Boolean);
 
+                // 按最新修改時間 (updatedAt) 排序，確保在「設備用戶名單」剛改過的新名字永遠最優先
+                candidates.sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+
                 const matched = candidates.find(c => c.name && !/^成員_\d{3}$/.test(c.name)) || candidates[0];
                 if (matched && matched.name && !/^成員_\d{3}$/.test(matched.name)) {
-                    if (/^成員_\d{3}$/.test(sysUserName)) {
+                    const isRemoteAdminRenamed = (Number(matched.renamedByListAt) || 0) > (window._lastLocalIdentitySaveTs || 0);
+                    if (/^成員_\d{3}$/.test(sysUserName) || (isRemoteAdminRenamed && matched.name !== sysUserName)) {
+                        window._lastLocalIdentitySaveTs = Number(matched.renamedByListAt) || Date.now();
                         window.persistMyIdentityEverywhere(matched.name, matched.color || sysUserColor, matched.deviceId || window.clientDeviceId);
-                        if (typeof window.renderGalleryLogs === 'function') window.renderGalleryLogs();
-                        if (typeof window.scheduleDashboardUpdate === 'function') window.scheduleDashboardUpdate();
                     }
                 } else if (!/^成員_\d{3}$/.test(sysUserName)) {
                     window.persistMyIdentityEverywhere(sysUserName, sysUserColor);
@@ -11067,6 +11241,11 @@ if (window._syncBound) return;
                 if (document.getElementById('deviceIdentityListModal')) {
                     window.renderDeviceIdentityListModal?.();
                 }
+                // 🌟 當名單有更新時，若操作日誌或儀表板開啟中，立即重繪以顯示最新改名結果
+                if ($('galleryLogsModal') && !$('galleryLogsModal').classList.contains('hidden')) {
+                    window.renderGalleryLogs?.();
+                }
+                window.scheduleDashboardUpdate?.();
             }, () => {});
 
             onSnapshot(cfgDoc('admin_auth'), (snap) => {
