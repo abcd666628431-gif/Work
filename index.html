@@ -3058,8 +3058,8 @@ ${isClean ? `
             return slots;
         };
 
-// 🌟 一鍵智慧自動排班（清潔模式內建官方休息時間與替更頂位規則）
-       window.autoAssignDaySchedule = (targetDateStr) => {
+// 🌟 一鍵智慧自動排班（動態規則演算法：依出勤名單、性別限制、看板優先度與個人理想休息自動配對補位）
+        window.autoAssignDaySchedule = (targetDateStr, silent = false) => {
             window.captureAll5DayDomValues();
             const isClean = window.currentMapRole === 'clean';
             const roleKey = isClean ? 'clean' : 'cs';
@@ -3068,14 +3068,18 @@ ${isClean ? `
             const dutyMembers = isFilterOn ? teamMembers.filter(m => filterList.includes(m)) : [...teamMembers];
 
             if (dutyMembers.length === 0) {
-                return window.showToast("⚠️ 請先在「編輯名單」勾選今日出勤人員！", true);
+                if (!silent) window.showToast("⚠️ 請先在「編輯名單」勾選今日出勤人員！", true);
+                return;
             }
 
-            window.showConfirm('✨ 智慧自動排班', `確定要將【${targetDateStr}】自動排入班表嗎？\n（系統將依人員性別與志願優先級進行配對，並排入休息時間）`, () => {
+            const executeAutoAssign = () => {
+                if (typeof window.ensureDateSeededInTempGrid === 'function') {
+                    window.ensureDateSeededInTempGrid(targetDateStr);
+                }
                 const rolePrefix = isClean ? 'clean_' : 'cs_';
                 window._tempGridValues = window._tempGridValues || {};
 
-              // 1. 徹底清空目標日的舊排班與暫存格（設為空字串 '' 防止自動抓回舊存檔幽靈）
+                // 1. 徹底清空目標日的舊排班與暫存格（設為空字串 '' 防止自動抓回舊存檔幽靈）
                 const multiStore = isClean ? cleanMultiDaySchedules : csMultiDaySchedules;
                 if (isClean) {
                     multiStore[targetDateStr] = [];
@@ -3101,476 +3105,270 @@ ${isClean ? `
                     }
                 });
 
-                if (isClean) {
-                    // ==========================================
-                    // 🧹 清潔員專屬：做法 B (性別 + 志願加權智慧配對)
-                    // ==========================================
-                    const cleanSlots = window.getCleanScheduleSlots();
-
-                    // 13 個標準更次：定義「主崗位 prefLoc」與「性別限制 prefGender」
-                    const cleanRosterTemplates = [
-                        // 1. 花園仔男廁長班：限男性，主崗位 pt_8
-                        {
-                            matchKey: 'EH0011-2',
-                            prefLoc: 'pt_8',
-                            prefGender: '男',
-                            title: '花園仔男廁長班',
-                            getLoc: (s, e) => {
-                                if (s >= '10:00' && e <= '12:00') return 'pt_7'; // 休息
-                                if (s >= '17:00' && e <= '19:00') return 'pt_7'; // 休息
-                                return 'pt_8';
-                            }
-                        },
-                        // 2. 花園仔女廁+傷健 早班：限女性，主崗位 pt_9
-                        {
-                            matchKey: '余秋瑩',
-                            prefLoc: 'pt_9',
-                            prefGender: '女',
-                            title: '女廁+傷健早班',
-                            getLoc: (s, e) => {
-                                if (s >= '06:30' && e <= '15:30') {
-                                    if (s >= '11:00' && e <= '12:00') return 'pt_7'; // 休息
-                                    return 'pt_9';
-                                }
-                                return null;
-                            }
-                        },
-                        // 3. 花園仔女廁+傷健 晚班：限女性，主崗位 pt_9
-                        {
-                            matchKey: 'EH0147-1',
-                            prefLoc: 'pt_9',
-                            prefGender: '女',
-                            title: '女廁+傷健晚班',
-                            getLoc: (s, e) => {
-                                if (s >= '15:30' && e <= '22:00') return 'pt_9';
-                                return null;
-                            }
-                        },
-                        // 4. 花園仔公共區 白班：主崗位 pt_3
-                        {
-                            matchKey: '梁桂明',
-                            prefLoc: 'pt_3',
-                            prefGender: '',
-                            title: '花園仔白班',
-                            getLoc: (s, e) => {
-                                if (s >= '08:00' && e <= '19:00') {
-                                    if (s >= '11:00' && e <= '12:00') return 'pt_7'; // 休息
-                                    return 'pt_3';
-                                }
-                                return null;
-                            }
-                        },
-                        // 5. 地面G層/魚檔 早班1：主崗位 pt_4
-                        {
-                            matchKey: 'EH0132',
-                            prefLoc: 'pt_4',
-                            prefGender: '',
-                            title: '地面早班1',
-                            getLoc: (s, e) => {
-                                if (s >= '06:30' && e <= '13:00') {
-                                    if (s >= '10:00' && e <= '11:00') return 'pt_7'; // 休息
-                                    return 'pt_4';
-                                }
-                                return null;
-                            }
-                        },
-                        // 6. 地面G層/魚檔 晚班1：主崗位 pt_4
-                        {
-                            matchKey: '歐陽球',
-                            prefLoc: 'pt_4',
-                            prefGender: '',
-                            title: '地面晚班1',
-                            getLoc: (s, e) => {
-                                if (s >= '13:00' && e <= '22:00') {
-                                    if (s >= '18:00' && e <= '19:00') return 'pt_7'; // 休息
-                                    return 'pt_4';
-                                }
-                                return null;
-                            }
-                        },
-                        // 7. 地面G層/魚檔 長班：主崗位 pt_4
-                        {
-                            matchKey: 'EH0136',
-                            prefLoc: 'pt_4',
-                            prefGender: '',
-                            title: '地面長班',
-                            getLoc: (s, e) => {
-                                if (s >= '06:30' && e <= '20:00') {
-                                    if (s >= '11:00' && e <= '13:00') return 'pt_7'; // 休息
-                                    if (s >= '16:30' && e <= '17:30') return 'pt_7'; // 休息
-                                    return 'pt_4';
-                                }
-                                return null;
-                            }
-                        },
-                        // 8. 地面G層/魚檔 早班2：主崗位 pt_4
-                        {
-                            matchKey: 'EH0045-2',
-                            prefLoc: 'pt_4',
-                            prefGender: '',
-                            title: '地面早班2',
-                            getLoc: (s, e) => {
-                                if (s >= '06:30' && e <= '13:00') {
-                                    if (s >= '08:00' && e <= '09:30') return 'pt_7'; // 休息
-                                    return 'pt_4';
-                                }
-                                return null;
-                            }
-                        },
-                        // 9. 地面G層/魚檔 晚班2：主崗位 pt_4
-                        {
-                            matchKey: '鄭玉英',
-                            prefLoc: 'pt_4',
-                            prefGender: '',
-                            title: '地面晚班2',
-                            getLoc: (s, e) => {
-                                if (s >= '13:00' && e <= '22:00') {
-                                    if (s >= '17:30' && e <= '18:30') return 'pt_7'; // 休息
-                                    return 'pt_4';
-                                }
-                                return null;
-                            }
-                        },
-                        // 10. 街市一樓+廁所 長班：主崗位 pt_1
-                        {
-                            matchKey: 'EH0072',
-                            prefLoc: 'pt_1',
-                            prefGender: '',
-                            title: '一樓長班',
-                            getLoc: (s, e) => {
-                                if (s >= '08:00' && e <= '10:00') return 'pt_7'; // 休息
-                                if (s >= '15:00' && e <= '17:00') return 'pt_7'; // 休息
-                                return 'pt_1';
-                            }
-                        },
-                        // 11. 機動長班1 (頂男廁)：限男性，主崗位 pt_6 (當男廁正選在休息時才頂位)
-                        {
-                            matchKey: 'EH0044',
-                            prefLoc: 'pt_6',
-                            prefGender: '男',
-                            title: '機動1(頂男廁)',
-                            getLoc: (s, e) => {
-                                if (s >= '08:00' && e <= '10:00') return 'pt_7'; // 休息
-                                if (s >= '15:00' && e <= '17:00') return 'pt_7'; // 休息
-                                // 🌟 檢查男廁正選是否正在休息；如果正選沒休，機動就留在 pt_6 機動崗位，絕不強行擠入男廁
-                                const tmpl1 = cleanRosterTemplates[0];
-                                const mainPerson = memberRoleMap.get(tmpl1);
-                                if (mainPerson && (s >= '10:00' && e <= '12:00' || s >= '17:00' && e <= '19:00')) {
-                                    // 只有當正選不在男廁上班時，才過來頂男廁
-                                    return 'pt_8';
-                                }
-                                return 'pt_6';
-                            }
-                        },
-                        // 13. 機動日班 (頂女廁與一樓)：限女性，主崗位 pt_6 (兼頂 pt_9、pt_1)
-                        {
-                            matchKey: '黃金妹',
-                            prefLoc: 'pt_6',
-                            prefGender: '女',
-                            title: '機動3(頂一樓及女廁)',
-                            getLoc: (s, e) => {
-                                if (s >= '08:00' && e <= '19:00') {
-                                    if (s >= '08:00' && e <= '10:00') return 'pt_1'; // 頂位：一樓
-                                    if (s >= '11:00' && e <= '12:00') return 'pt_9'; // 頂位：女廁+傷健
-                                    if (s >= '12:00' && e <= '13:00') return 'pt_7'; // 休息
-                                    if (s >= '15:00' && e <= '17:00') return 'pt_1'; // 頂位：一樓
-                                    return 'pt_6';
-                                }
-                                return null;
-                            }
-                        }
-                    ];
-
-                   const memberRoleMap = new Map();
-                    const availableMembers = [...dutyMembers];
-
-                    // 輔助檢查：嚴格確認性別是否符合該班次要求（男廁絕不排女、女廁絕不排男）
-                    const isGenderAllowed = (memberName, tmpl) => {
-                        if (!tmpl.prefGender) return true;
-                        const g = window.getMemberProfile(memberName).gender || '女';
-                        return g === tmpl.prefGender;
-                    };
-
-                    // 🌟 階段 1：嚴格按照全體人員的「第 1 優先 ➔ 第 2 優先 ➔ 第 3 優先」三輪全域最佳配對
-                    for (let rank = 0; rank < 3; rank++) {
-                        let candidatesPairs = [];
-
-                        cleanRosterTemplates.forEach((tmpl, tIdx) => {
-                            if (memberRoleMap.has(tmpl)) return;
-
-                            availableMembers.forEach((m, mIdx) => {
-                                if (!isGenderAllowed(m, tmpl)) return; // 性別不符直接淘汰
-
-                                const prof = window.getMemberProfile(m);
-                                const prefs = Array.isArray(prof.prefs) ? prof.prefs : [];
-
-// 檢查該員在當前順位 (第 rank+1 志願) 是否選擇了此崗位
-                                if (prefs[rank] === tmpl.prefLoc) {
-                                    let score = (3 - rank) * 1000; // 第1志願3000分、第2志願2000分、第3志願1000分
-
-                                    // 🌟 核心連動：讀取拖曳看板中的優先排名（排在最上面的 index 越小，分數越高）
-                                    const boardList = window.locPriorityMatrix?.[roleKey]?.[tmpl.prefLoc] || [];
-                                    const boardRankIndex = boardList.indexOf(m);
-                                    if (boardRankIndex !== -1) {
-                                        score += Math.max(0, (50 - boardRankIndex)) * 400;
-                                    }
-
-                                    // 加分項 A：限定性別的專屬崗位（男廁/女廁）優先鎖定對應性別人員
-                                    if (tmpl.prefGender) score += 200;
-
-                                    // 加分項 B：若此人沒有填後續其他志願，優先滿足他唯一的志願
-                                    const validPrefCount = prefs.filter(Boolean).length;
-                                    score += (4 - validPrefCount) * 30;
-
-                                    // 加分項 C：若姓名或工號剛好吻合預設班底，同分時優先配對
-                                    const idStr = (prof.id || '').toUpperCase();
-                                    const target = (tmpl.matchKey || '').toUpperCase();
-                                    if (target && (idStr.includes(target) || m.toUpperCase().includes(target))) {
-                                        score += 50;
-                                    }
-
-                                    candidatesPairs.push({ tmpl, m, score, tIdx, mIdx });
-                                }
-                            });
-                        });
-
-                        // 依總分由高到低排序，確保最高優先度的人與崗位優先成交
-                        candidatesPairs.sort((a, b) => b.score - a.score || a.tIdx - b.tIdx || a.mIdx - b.mIdx);
-
-                        candidatesPairs.forEach(pair => {
-                            if (!memberRoleMap.has(pair.tmpl) && availableMembers.includes(pair.m)) {
-                                memberRoleMap.set(pair.tmpl, pair.m);
-                                availableMembers.splice(availableMembers.indexOf(pair.m), 1);
-                            }
-                        });
-                    }
-
-                    // 🌟 階段 2：尚未配對的崗位，優先匹配預設習慣班底（仍須符合性別限制）
-                    cleanRosterTemplates.forEach(tmpl => {
-                        if (memberRoleMap.has(tmpl) || availableMembers.length === 0) return;
-                        const matchedIdx = availableMembers.findIndex(m => {
-                            if (!isGenderAllowed(m, tmpl)) return false;
-                            const prof = window.getMemberProfile(m);
-                            const idStr = (prof.id || '').toUpperCase();
-                            const target = (tmpl.matchKey || '').toUpperCase();
-                            return target && (idStr.includes(target) || m.toUpperCase().includes(target));
-                        });
-                        if (matchedIdx !== -1) {
-                            memberRoleMap.set(tmpl, availableMembers[matchedIdx]);
-                            availableMembers.splice(matchedIdx, 1);
-                        }
-                    });
-
-                    // 🌟 階段 3：剩餘空缺崗位安全補位（先排有性別限制的廁所/替更，再排一般崗位）
-                    const remainingTemplates = cleanRosterTemplates
-                        .filter(tmpl => !memberRoleMap.has(tmpl))
-                        .sort((a, b) => (b.prefGender ? 1 : 0) - (a.prefGender ? 1 : 0));
-
-                    remainingTemplates.forEach(tmpl => {
-                        if (availableMembers.length === 0) return;
-                        const validIdx = availableMembers.findIndex(m => isGenderAllowed(m, tmpl));
-                        if (validIdx !== -1) {
-                            memberRoleMap.set(tmpl, availableMembers[validIdx]);
-                            availableMembers.splice(validIdx, 1);
-                        }
-                    });
-
-                 // 🌟 通用輔助：超強容錯時間解析（自動過濾括號 ()、全半型符號與空白，精準提取多段時間）
-                    const toMins = (t) => {
-                        const cleanT = String(t || '00:00').replace(/[^\d:：]/g, '').replace(/：/g, ':');
-                        const [h, m] = cleanT.split(':').map(Number);
-                        return (h || 0) * 60 + (m || 0);
-                    };
-
-                    const parseIdealIntervals = (idealStr) => {
-                        if (!idealStr) return [];
-                        // 直接用正則抓取所有「HH:MM - HH:MM」格式，無視外圍的 ()、逗號或空格
-                        const norm = String(idealStr).replace(/[～~—–－至到]/g, '-').replace(/：/g, ':');
-                        const regex = /(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g;
-                        const results = [];
-                        let match;
-                        while ((match = regex.exec(norm)) !== null) {
-                            const sm = toMins(match[1]);
-                            const em = toMins(match[2]);
-                            if (!isNaN(sm) && !isNaN(em) && em > sm) {
-                                results.push([sm, em]);
-                            }
-                        }
-                        return results;
-                    };
-
-                    const isSlotInRest = (sStartM, sEndM, intervals) => {
-                        return intervals.some(([rS, rE]) => sStartM < rE && sEndM > rS);
-                    };
-
-                    // 🌟 步驟 4：將配對完成的人員班次與休息時段填入表格暫存字典
-                    // （規則：理想休息時段 > 模板固定休息時間，且 2 段休息者自動保障全天班次不中斷）
-                    cleanSlots.forEach(slot => {
-                        const slotStartM = toMins(slot.start);
-                        const slotEndM = toMins(slot.end);
-
-                        cleanRosterTemplates.forEach(tmpl => {
-                            const personName = memberRoleMap.get(tmpl);
-                            if (!personName) return;
-
-                            const prof = window.getMemberProfile(personName);
-const specialSched = (prof.fixedShiftTime ? { shiftTime: prof.fixedShiftTime } : null) || (prof.futureSchedules || []).find(sc => sc.date === targetDateStr);
-                            
-                            // 1. 先解析該員工常態的「理想休息時段」（支援 1~2 段，如 (08:00-10:00),(15:00-17:00)）
-                            let idealIntervals = parseIdealIntervals(prof.idealRestTime);
-
-                            // 2. 決定該員工當日的上班起訖時間
-                            let shStartM = 6 * 60 + 30, shEndM = 22 * 60;
-                            let hasCustomShiftTime = false;
-                            if (specialSched && specialSched.shiftTime) {
-                                const shiftPairs = parseIdealIntervals(specialSched.shiftTime);
-                                if (shiftPairs.length > 0) {
-                                    shStartM = shiftPairs[0][0];
-                                    shEndM = shiftPairs[0][1];
-                                    hasCustomShiftTime = true;
-                                }
-                            } else if (idealIntervals.length >= 2) {
-                                // 🌟 關鍵修正：如果員工設定了 2 段休息時間（例如 08:00-10:00 與 15:00-17:00），
-                                // 代表他必定是上全天長班（06:30~20:00），不能被半天班模板切斷工作時間！
-                                shStartM = 6 * 60 + 30;
-                                shEndM = Math.max(20 * 60, idealIntervals[idealIntervals.length - 1][1]);
-                                hasCustomShiftTime = true;
-                            }
-
-                            // 3. 若當日有特殊排程且只指定了休息時數（但員工本身沒設 2 段理想休息），才推算單段特殊休息
-                            if (specialSched && idealIntervals.length === 0) {
-                                const restDurHours = specialSched.restDurationNum || parseFloat(specialSched.restHours) || 0;
-                                if (restDurHours > 0) {
-                                    const restDurMins = Math.round(restDurHours * 60);
-                                    let rStartM = Math.floor(((shStartM + (shEndM - shStartM) * 0.45)) / 30) * 30;
-                                    idealIntervals = [[rStartM, rStartM + restDurMins]];
-                                }
-                            }
-
-                            // 4. 🌟【最高鐵律：理想休息時段 > 固定休息時間】
-                            let locId = null;
-                            if (idealIntervals.length > 0 && isSlotInRest(slotStartM, slotEndM, idealIntervals)) {
-                                // 只要時間落在員工的「理想休息時段」內 -> 100% 絕對強制排入 pt_7 (休息中)！
-                                locId = 'pt_7';
-                            } else if (slotStartM >= shStartM && slotEndM <= shEndM) {
-                                // 不在理想休息時段內，則依模板取得崗位
-                                locId = tmpl.getLoc(slot.start, slot.end);
-
-                                if (idealIntervals.length > 0) {
-                                    // 🌟 覆蓋固定休息：因為員工已經有自己的「理想休息時段」，
-                                    // 所以模板原本寫死的「固定休息時間 (pt_7)」一律作廢，強制還原回他的主崗位上班！
-                                    if (locId === 'pt_7') {
-                                        locId = tmpl.prefLoc || 'pt_6';
-                                    }
-                                    // 🌟 防止半天班模板吃掉長班時段：若為 2 段休息長班人員且在 06:30~20:00 內，模板回傳 null 時自動補回主崗位
-                                    if (!locId && hasCustomShiftTime && slotEndM <= 20 * 60) {
-                                        locId = tmpl.prefLoc || 'pt_6';
-                                    }
-                                }
-                            }
-
-                            if (locId) {
-                                const gridKey = `${targetDateStr}_${locId}_${slot.start}_${slot.end}`;
-                                const curText = window._tempGridValues[gridKey] || '';
-                                const namesList = curText ? curText.split('\n') : [];
-                                
-                                // 男廁 (pt_8) 上限鎖定為 1 人，若撞期自動轉回機動 (pt_6)
-                                if (locId === 'pt_8' && namesList.length >= 1 && !namesList.includes(personName)) {
-                                    const fallbackKey = `${targetDateStr}_pt_6_${slot.start}_${slot.end}`;
-                                    const fbText = window._tempGridValues[fallbackKey] || '';
-                                    const fbList = fbText ? fbText.split('\n') : [];
-                                    if (!fbList.includes(personName)) {
-                                        fbList.push(personName);
-                                        window._tempGridValues[fallbackKey] = fbList.join('\n');
-                                    }
-                                } else if (!namesList.includes(personName)) {
-                                    namesList.push(personName);
-                                    window._tempGridValues[gridKey] = namesList.join('\n');
-                                }
-                            }
-                        });
-
-                        // 🌟 超額人員（第 14 人以後）同樣嚴格遵守：理想休息時段 > 預設 12:00-13:00 固定休息
-                        availableMembers.forEach(extraPerson => {
-                            const prof = window.getMemberProfile(extraPerson);
-                            const specialSched = (prof.futureSchedules || []).find(sc => sc.date === targetDateStr);
-                            const idealIntervals = parseIdealIntervals(prof.idealRestTime);
-
-                            let shStartM = idealIntervals.length >= 2 ? (6 * 60 + 30) : (8 * 60);
-                            let shEndM = idealIntervals.length >= 2 ? (20 * 60) : (19 * 60);
-
-                            if (specialSched && specialSched.shiftTime) {
-                                const shiftPairs = parseIdealIntervals(specialSched.shiftTime);
-                                if (shiftPairs.length > 0) {
-                                    shStartM = shiftPairs[0][0];
-                                    shEndM = shiftPairs[0][1];
-                                }
-                            }
-
-                            let targetLoc = null;
-                            if (idealIntervals.length > 0 && isSlotInRest(slotStartM, slotEndM, idealIntervals)) {
-                                // 絕對優先排入理想休息
-                                targetLoc = 'pt_7';
-                            } else if (slotStartM >= shStartM && slotEndM <= shEndM) {
-                                const prefs = (prof.prefs || []).filter(Boolean);
-                                targetLoc = prefs.find(p => p !== 'pt_8' && p !== 'pt_9') || 'pt_6';
-                                // 只有在「完全沒設定理想休息」時，才套用預設 12:00-13:00 固定休息
-                                if (idealIntervals.length === 0 && slot.start >= '12:00' && slot.end <= '13:00') {
-                                    targetLoc = 'pt_7';
-                                }
-                            }
-
-                            if (targetLoc) {
-                                const gKey = `${targetDateStr}_${targetLoc}_${slot.start}_${slot.end}`;
-                                const nList = window._tempGridValues[gKey] ? window._tempGridValues[gKey].split('\n') : [];
-                                if (!nList.includes(extraPerson)) {
-                                    nList.push(extraPerson);
-                                    window._tempGridValues[gKey] = nList.join('\n');
-                                }
-                            }
-                        });
-                    });
-
-             } else {
-                // ==========================================
-                // 🎧 客服人員排班模型 (連動「7日班次更表」+ 0.5h/1h 錯開休息 + 崗位自動互補頂位)
-                // ==========================================
-
-                // 🌟【排除周靜儀】：不參與自動排班計算
-                const activeCsDutyMembers = dutyMembers.filter(m => {
-                    const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(m) : m;
-                    return canon !== '周靜儀' && m !== '周靜儀';
-                });
-
                 const toMins = (t) => {
                     const cleanT = String(t || '00:00').replace(/[^\d:：]/g, '').replace(/：/g, ':');
                     const [h, m] = cleanT.split(':').map(Number);
                     return (h || 0) * 60 + (m || 0);
                 };
-                    const minsToStr = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
-                    const parseIdealIntervals = (idealStr) => {
-                        if (!idealStr) return [];
-                        const norm = String(idealStr).replace(/[～~—–－至到]/g, '-').replace(/：/g, ':');
-                        const regex = /(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g;
-                        const results = [];
-                        let match;
-                        while ((match = regex.exec(norm)) !== null) {
-                            const sm = toMins(match[1]), em = toMins(match[2]);
-                            if (!isNaN(sm) && !isNaN(em) && em > sm) results.push([sm, em]);
+
+                const parseIdealIntervals = (idealStr) => {
+                    if (!idealStr) return [];
+                    const norm = String(idealStr).replace(/[～~—–－至到]/g, '-').replace(/：/g, ':');
+                    const regex = /(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g;
+                    const results = [];
+                    let match;
+                    while ((match = regex.exec(norm)) !== null) {
+                        const sm = toMins(match[1]);
+                        const em = toMins(match[2]);
+                        if (!isNaN(sm) && !isNaN(em) && em > sm) {
+                            results.push([sm, em]);
                         }
-                        return results;
+                    }
+                    return results;
+                };
+
+                const isSlotInRest = (sStartM, sEndM, intervals) => {
+                    return intervals.some(([rS, rE]) => sStartM < rE && sEndM > rS);
+                };
+
+                if (isClean) {
+                    // ==========================================
+                    // 🧹 清潔員專屬：全動態智慧排班演算法（無固定人名模板）
+                    // ==========================================
+                    const cleanSlots = window.getCleanScheduleSlots();
+                    const restLoadMap = {};
+                    const memberSchedulePlan = new Map();
+
+                    // 輔助：檢查人員性別是否允許進入指定崗位（pt_8 男廁限男、pt_9 女廁+傷健限女）
+                    const isLocGenderAllowed = (memberName, locId) => {
+                        const g = window.getMemberProfile(memberName).gender || '女';
+                        if (locId === 'pt_8') return g === '男';
+                        if (locId === 'pt_9') return g === '女';
+                        return true;
                     };
+
+                    // 輔助：計算人員對特定崗位的優先權分數（整合第1~3志願與優先度看板排序）
+                    const getMemberLocScore = (memberName, locId, rankLimit = 3) => {
+                        if (!isLocGenderAllowed(memberName, locId)) return -99999;
+                        const prof = window.getMemberProfile(memberName);
+                        const prefs = Array.isArray(prof.prefs) ? prof.prefs : [];
+                        let score = 0;
+
+                        for (let r = 0; r < rankLimit; r++) {
+                            if (prefs[r] === locId) {
+                                score += (3 - r) * 1000;
+                                break;
+                            }
+                        }
+
+                        const rank0List = window.locPriorityMatrix?.clean?.rank0?.[locId] || window.locPriorityMatrix?.clean?.[locId] || [];
+                        const bIdx = rank0List.indexOf(memberName);
+                        if (bIdx !== -1) {
+                            score += Math.max(0, (50 - bIdx)) * 300;
+                        }
+                        if (locId === 'pt_8' || locId === 'pt_9') score += 150;
+                        return score;
+                    };
+
+                    // 階段 1：解析每位出勤清潔人員的當日上班時段與休息區間
+                    dutyMembers.forEach((rawM, mIdx) => {
+                        const m = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawM) : rawM;
+                        const prof = window.getMemberProfile(m);
+                        const specialSched = (prof.futureSchedules || []).find(sc => sc.date === targetDateStr);
+                        let idealIntervals = parseIdealIntervals(prof.idealRestTime);
+
+                        let shStartM = 6 * 60 + 30;
+                        let shEndM = 22 * 60;
+
+                        if (specialSched && specialSched.shiftTime) {
+                            const pairs = parseIdealIntervals(specialSched.shiftTime);
+                            if (pairs.length > 0) {
+                                shStartM = pairs[0][0];
+                                shEndM = pairs[0][1];
+                            }
+                        } else if (prof.fixedShiftTime) {
+                            const pairs = parseIdealIntervals(prof.fixedShiftTime);
+                            if (pairs.length > 0) {
+                                shStartM = pairs[0][0];
+                                shEndM = pairs[0][1];
+                            }
+                        } else if (idealIntervals.length >= 2) {
+                            shStartM = 6 * 60 + 30;
+                            shEndM = Math.max(20 * 60, idealIntervals[idealIntervals.length - 1][1]);
+                        }
+
+                        // 若無設定理想休息時段，依班次長度動態錯開分配休息時間
+                        if (idealIntervals.length === 0) {
+                            const shiftSpanMins = shEndM - shStartM;
+                            let targetRestMins = 60;
+                            if ( specialSched && (specialSched.restDurationNum || parseFloat(specialSched.restHours)) ) {
+                                targetRestMins = Math.round((specialSched.restDurationNum || parseFloat(specialSched.restHours)) * 60);
+                            } else if (shiftSpanMins >= 13 * 60) {
+                                targetRestMins = 240; // 06:30-22:00 長班預設休 4h (2h+2h)
+                            } else if (shiftSpanMins >= 11 * 60) {
+                                targetRestMins = 180; // 06:30-20:00 長班預設休 3h (2h+1h)
+                            } else if (shiftSpanMins >= 6 * 60) {
+                                targetRestMins = 60;  // 半天或日班預設休 1h
+                            } else {
+                                targetRestMins = 0;
+                            }
+
+                            if (targetRestMins > 0) {
+                                const segments = targetRestMins >= 180
+                                    ? [120, targetRestMins - 120]
+                                    : (targetRestMins >= 120 ? [60, targetRestMins - 60] : [targetRestMins]);
+                                let searchAfter = shStartM + 90;
+
+                                segments.forEach((segMins, segIdx) => {
+                                    const winStart = Math.max(searchAfter, shStartM + (segIdx === 0 ? 90 : 300));
+                                    const winEnd = Math.min(shEndM - 60 - segMins, shStartM + Math.floor(shiftSpanMins * (segIdx === 0 ? 0.55 : 0.85)));
+                                    let bestStart = Math.max(shStartM + 60, Math.min(winStart, shEndM - segMins - 30));
+                                    let minLoad = 999999;
+
+                                    for (let cand = winStart; cand <= winEnd; cand += 30) {
+                                        let load = 0;
+                                        for (let t = cand; t < cand + segMins; t += 30) {
+                                            load += (restLoadMap[t] || 0) * 10;
+                                        }
+                                        load += ((cand / 30 + mIdx) % 3);
+                                        if (load < minLoad) {
+                                            minLoad = load;
+                                            bestStart = cand;
+                                        }
+                                    }
+                                    idealIntervals.push([bestStart, bestStart + segMins]);
+                                    searchAfter = bestStart + segMins + 150;
+                                });
+                            }
+                        }
+
+                        idealIntervals.forEach(([rs, re]) => {
+                            for (let t = rs; t < re; t += 30) {
+                                restLoadMap[t] = (restLoadMap[t] || 0) + 1;
+                            }
+                        });
+
+                        // 決定該員的主崗位志願（若未設定志願則預設為 pt_6 機動）
+                        const prefs = (prof.prefs || []).filter(Boolean);
+                        const validPrimary = prefs.find(loc => isLocGenderAllowed(m, loc) && loc !== 'pt_7') || 'pt_6';
+
+                        memberSchedulePlan.set(m, {
+                            name: m,
+                            shStartM,
+                            shEndM,
+                            restIntervals: idealIntervals,
+                            primaryLoc: validPrimary,
+                            prefs: prefs.filter(loc => isLocGenderAllowed(m, loc) && loc !== 'pt_7')
+                        });
+                    });
+
+                    // 階段 2：逐 30 分鐘時段動態分配崗位與自動頂位
+                    const coreStations = [
+                        { id: 'pt_8', min: 1, max: 1 }, // 花園仔男廁 (限男 1人)
+                        { id: 'pt_9', min: 1, max: 1 }, // 女廁+傷健 (限女 1人)
+                        { id: 'pt_3', min: 1, max: 1 }, // 花園仔 (1人)
+                        { id: 'pt_1', min: 1, max: 1 }, // 一樓+廁所 (1人)
+                        { id: 'pt_4', min: 2, max: 3 }  // 魚檔/地面層 (2~3人)
+                    ];
+
+                    cleanSlots.forEach(slot => {
+                        const sM = toMins(slot.start);
+                        const eM = toMins(slot.end);
+
+                        const slotAssigned = {};
+                        Object.keys(mapData.points).forEach(k => slotAssigned[k] = []);
+                        const placedMembers = new Set();
+
+                        // 1. 在班人員篩選與休息時段 (pt_7) 絕對優先排入
+                        const workingNow = [];
+                        memberSchedulePlan.forEach((plan, m) => {
+                            if (sM < plan.shStartM || eM > plan.shEndM) return;
+                            if (isSlotInRest(sM, eM, plan.restIntervals)) {
+                                slotAssigned['pt_7'].push(m);
+                                placedMembers.add(m);
+                            } else {
+                                workingNow.push(m);
+                            }
+                        });
+
+                        // 2. 按志願順位與看板優先度，將非機動主崗位人員排入各自主崗位
+                        coreStations.forEach(st => {
+                            const candidates = workingNow
+                                .filter(m => !placedMembers.has(m) && isLocGenderAllowed(m, st.id))
+                                .filter(m => {
+                                    const plan = memberSchedulePlan.get(m);
+                                    return plan.primaryLoc === st.id;
+                                })
+                                .sort((a, b) => getMemberLocScore(b, st.id, 3) - getMemberLocScore(a, st.id, 3));
+
+                            candidates.forEach(m => {
+                                if (slotAssigned[st.id].length < st.max) {
+                                    slotAssigned[st.id].push(m);
+                                    placedMembers.add(m);
+                                }
+                            });
+                        });
+
+                        // 3. 自動頂位機制：若核心崗位（男廁、女廁、花園仔、一樓、魚檔）因正選休息或未上班而人數不足，由機動或次志願人員自動補位
+                        coreStations.forEach(st => {
+                            while (slotAssigned[st.id].length < st.min) {
+                                const backupCandidates = workingNow
+                                    .filter(m => !placedMembers.has(m) && isLocGenderAllowed(m, st.id))
+                                    .sort((a, b) => {
+                                        const planA = memberSchedulePlan.get(a);
+                                        const planB = memberSchedulePlan.get(b);
+                                        // 優先派主崗位為「機動 (pt_6)」或志願包含該崗位的人員頂位
+                                        const aIsStandby = planA.primaryLoc === 'pt_6' ? 1 : 0;
+                                        const bIsStandby = planB.primaryLoc === 'pt_6' ? 1 : 0;
+                                        if (aIsStandby !== bIsStandby) return bIsStandby - aIsStandby;
+                                        return getMemberLocScore(b, st.id, 3) - getMemberLocScore(a, st.id, 3);
+                                    });
+
+                                if (backupCandidates.length === 0) break;
+                                const chosen = backupCandidates[0];
+                                slotAssigned[st.id].push(chosen);
+                                placedMembers.add(chosen);
+                            }
+                        });
+
+                        // 4. 剩餘在班人員：若其主崗位（例如魚檔）尚未達上限則排入，否則歸入 pt_6 (機動)
+                        workingNow.forEach(m => {
+                            if (placedMembers.has(m)) return;
+                            const plan = memberSchedulePlan.get(m);
+                            const pLoc = plan.primaryLoc;
+                            const stObj = coreStations.find(x => x.id === pLoc);
+                            if (stObj && slotAssigned[pLoc].length < stObj.max && isLocGenderAllowed(m, pLoc)) {
+                                slotAssigned[pLoc].push(m);
+                            } else {
+                                slotAssigned['pt_6'].push(m);
+                            }
+                            placedMembers.add(m);
+                        });
+
+                        // 寫入 _tempGridValues
+                        Object.keys(slotAssigned).forEach(locId => {
+                            const gKey = `${targetDateStr}_${locId}_${slot.start}_${slot.end}`;
+                            window._tempGridValues[gKey] = slotAssigned[locId].join('\n');
+                        });
+                    });
+
+                } else {
+                    // ==========================================
+                    // 🎧 客服人員排班模型 (連動「7日班次更表」+ 0.5h/1h 錯開休息 + 崗位自動互補頂位)
+                    // ==========================================
+                    const activeCsDutyMembers = dutyMembers.filter(m => {
+                        const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(m) : m;
+                        return canon !== '周靜儀' && m !== '周靜儀';
+                    });
 
                     const memberShiftConfig = new Map();
                     const dayRosterMap = (window.csWeeklyRosterStore && window.csWeeklyRosterStore[targetDateStr]) || {};
                     const presetsList = window.getCsShiftPresets ? window.getCsShiftPresets() : [];
+                    const restLoadMap = {};
 
-                    // 記錄每個 30 分鐘時段已經有多少人休息，確保休息錯開以利互補
-                const restLoadMap = {};
-
-                activeCsDutyMembers.forEach((m, mIdx) => {
-                    const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(m) : m;
-                    const prof = window.getMemberProfile(canon);
+                    activeCsDutyMembers.forEach((m, mIdx) => {
+                        const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(m) : m;
+                        const prof = window.getMemberProfile(canon);
                         const rosterShiftId = dayRosterMap[canon] || dayRosterMap[m];
 
                         if (rosterShiftId === 'OFF') {
@@ -3604,12 +3402,11 @@ const specialSched = (prof.fixedShiftTime ? { shiftTime: prof.fixedShiftTime } :
                             if (spRest > 0) restDurHours = spRest;
                         }
 
-                        // 🌟【新增保底邏輯】：若尚未在更表設定班次，依序分配早班(07:00-15:00)、中班(10:00-18:00)、晚班(14:00-22:00)
                         if (!matchedPreset && !specialSched) {
                             const defaultShifts = [
-                                { s: 7 * 60,  e: 15 * 60, r: 1 }, // 早班
-                                { s: 10 * 60, e: 18 * 60, r: 1 }, // 中班
-                                { s: 14 * 60, e: 22 * 60, r: 1 }  // 晚班
+                                { s: 7 * 60,  e: 15 * 60, r: 1 },
+                                { s: 10 * 60, e: 18 * 60, r: 1 },
+                                { s: 14 * 60, e: 22 * 60, r: 1 }
                             ];
                             const def = defaultShifts[mIdx % defaultShifts.length];
                             shStartM = def.s;
@@ -3617,7 +3414,6 @@ const specialSched = (prof.fixedShiftTime ? { shiftTime: prof.fixedShiftTime } :
                             restDurHours = def.r;
                         }
 
-                        // 優先讀取個人理想休息；若無則自動尋找「最少人同時休」的時段錯開排休（支援 0.5h、1h、1.5h、2h）
                         let restIntervals = parseIdealIntervals(prof.idealRestTime).filter(([rS, rE]) => rS >= shStartM && rE <= shEndM);
                         if (restIntervals.length === 0 && restDurHours > 0) {
                             const totalRestMins = Math.round(restDurHours * 60);
@@ -3635,7 +3431,6 @@ const specialSched = (prof.fixedShiftTime ? { shiftTime: prof.fixedShiftTime } :
                                     for (let t = cand; t < cand + segMins; t += 30) {
                                         load += (restLoadMap[t] || 0) * 10;
                                     }
-                                    // 微幅偏移讓不同成員自然交錯
                                     load += ((cand / 30 + mIdx) % 3);
                                     if (load < minOverlap) {
                                         minOverlap = load;
@@ -3661,13 +3456,12 @@ const specialSched = (prof.fixedShiftTime ? { shiftTime: prof.fixedShiftTime } :
                         });
                     });
 
-                    // 以 30 分鐘為粒度進行互補排班：外場崗位優先維持有人，當有人去休息時自動由客服室或替補人員頂位
-                    const halfHourResults = {}; // key: `${locId}_${sM}_${eM}` -> names[]
+                    const halfHourResults = {};
                     const locTargets = [
-                        { id: 'pt_3', min: 1, max: 1 }, // 花園仔
-                        { id: 'pt_4', min: 1, max: 1 }, // 魚檔
-                        { id: 'pt_5', min: 1, max: 1 }, // 整體巡邏
-                        { id: 'pt_1', min: 1, max: 3 }  // 客服室 (機動互補池)
+                        { id: 'pt_3', min: 1, max: 1 },
+                        { id: 'pt_4', min: 1, max: 1 },
+                        { id: 'pt_5', min: 1, max: 1 },
+                        { id: 'pt_1', min: 1, max: 3 }
                     ];
 
                     for (let h = 7; h < 22; h++) {
@@ -3680,12 +3474,11 @@ const specialSched = (prof.fixedShiftTime ? { shiftTime: prof.fixedShiftTime } :
                             const locAssigned = {};
                             Object.keys(mapData.points).forEach(k => locAssigned[k] = []);
 
-                           const activeInHalf = activeCsDutyMembers.filter(m => {
-                            const cfg = memberShiftConfig.get(m);
-                            return cfg && !cfg.isOff && sM >= cfg.shStartM && eM <= cfg.shEndM;
-                        });
+                            const activeInHalf = activeCsDutyMembers.filter(m => {
+                                const cfg = memberShiftConfig.get(m);
+                                return cfg && !cfg.isOff && sM >= cfg.shStartM && eM <= cfg.shEndM;
+                            });
 
-                            // 1. 處於休息區間的人員排入 pt_7 (休息中)
                             activeInHalf.forEach(m => {
                                 const cfg = memberShiftConfig.get(m);
                                 if (cfg.restIntervals.some(([rS, rE]) => sM < rE && eM > rS)) {
@@ -3696,7 +3489,6 @@ const specialSched = (prof.fixedShiftTime ? { shiftTime: prof.fixedShiftTime } :
 
                             const workingInHalf = activeInHalf.filter(m => !assignedInHalf.has(m));
 
-                            // 2. 依員工志願與輪替順序，優先填滿花園仔、魚檔、整體巡邏，確保有人去休息時立刻有人互補頂上
                             for (let prefRank = 0; prefRank < 3; prefRank++) {
                                 const rotated = workingInHalf.map((_, i) => workingInHalf[(i + Math.floor(slotIdx / 2)) % workingInHalf.length]);
                                 rotated.forEach(m => {
@@ -3713,10 +3505,8 @@ const specialSched = (prof.fixedShiftTime ? { shiftTime: prof.fixedShiftTime } :
                                 });
                             }
 
-                            // 🟢 修改後（補上空格）：
-// 3. 強制互補檢查：若外場崗位 (pt_3, pt_4, pt_5) 因原人員休息而空缺，從剩餘在班人員自動派員頂位
-const rotatedRemain = workingInHalf.filter(m => !assignedInHalf.has(m));
-rotatedRemain.forEach(m => {
+                            const rotatedRemain = workingInHalf.filter(m => !assignedInHalf.has(m));
+                            rotatedRemain.forEach(m => {
                                 let placed = false;
                                 for (const tObj of locTargets) {
                                     if (locAssigned[tObj.id] && locAssigned[tObj.id].length < tObj.min) {
@@ -3737,7 +3527,6 @@ rotatedRemain.forEach(m => {
                             });
                         });
 
-                        // 4. 檢查該小時前後半格是否一致：若相同則合併為整小時格，若因 0.5h 休息或換班導致不同則自動開啟半格拆分
                         const hStr = pad(h), nextHStr = pad(h + 1);
                         const sA = h * 60, eA = sA + 30, sB = eA, eB = (h + 1) * 60;
 
@@ -3761,10 +3550,18 @@ rotatedRemain.forEach(m => {
                     safeSetLocal('work_cache_split_hours', splitHoursState);
                 }
 
-               window._hasUnsavedGridEdits = true; // 標記為未儲存的暫存編輯，讓渲染函式強制從 _tempGridValues 讀取
-window.renderScheduleManager(true); // 傳入 true 強制重新整理 DOM 畫面
-window.showToast(`✨ 已完成【${targetDateStr}】自動排班！性別、志願與休息已排妥。`);
-            });
+                window._hasUnsavedGridEdits = true;
+                window.renderScheduleManager(true);
+                if (!silent) {
+                    window.showToast(`✨ 已完成【${targetDateStr}】自動排班！性別、志願與休息已排妥。`);
+                }
+            };
+
+            if (silent) {
+                executeAutoAssign();
+            } else {
+                window.showConfirm('✨ 智慧自動排班', `確定要將【${targetDateStr}】自動排入班表嗎？\n（系統將依人員性別與志願優先級進行配對，並排入休息時間）`, executeAutoAssign);
+            }
         };
         // 🌟 處理人員頭像上傳、自動縮圖壓縮與儲存
         window.handleUploadMemberAvatar = async (name, input) => {
@@ -11440,6 +11237,17 @@ bindSync('future_memos', 'work_cache_future_memos', d => {
                 }
             });
 
+// 🌟 新增：優先度看板排位 (loc_priority) 雲端即時同步
+            bindSync('loc_priority', 'work_cache_loc_priority', d => {
+                if (d && d.matrix) {
+                    window.locPriorityMatrix = d.matrix;
+                    safeSetLocal('work_cache_loc_priority', window.locPriorityMatrix);
+                    if ($('positionPriorityModal') && !$('positionPriorityModal').classList.contains('hidden')) {
+                        window.renderPositionPriorityBoard();
+                    }
+                }
+            });
+
             // 🌟 新增：出勤剔選名單 (duty_filter) 雲端即時同步
             bindSync('duty_filter', 'work_cache_duty_filter', d => {
                 if (d && d.filter) {
@@ -12810,12 +12618,136 @@ window.clearCurrentWeekCsRoster = () => {
         };
 
 // ==========================================
-        // 📊 高顏值優先度看板核心邏輯 (支援「全部顯示」與「單一優先」切換)
+// ==========================================
+        // 📊 高顏值優先度看板核心邏輯 (支援「全部顯示」與「單一優先」切換 + 完整儲存同步)
         // ==========================================
         window.locPriorityMatrix = getLocal('work_cache_loc_priority', { cs: {}, clean: {} });
         window.currentPriorityRankIndex = 'ALL'; // 預設為合併全部顯示 ('ALL' 或 0, 1, 2)
 
+        // 🌟 即時讀取看板 DOM 上的卡片位置與上下順序，同步寫入矩陣與成員志願 (prefs)
+        window.capturePriorityBoardDomState = () => {
+            const board = $('positionPriorityBoard');
+            if (!board) return false;
+            const dropzones = board.querySelectorAll('.priority-col-dropzone[data-col-id]');
+            if (!dropzones.length) return false;
+
+            const isClean = window.currentMapRole === 'clean';
+            const roleKey = isClean ? 'clean' : 'cs';
+            if (!window.locPriorityMatrix[roleKey]) {
+                window.locPriorityMatrix[roleKey] = { rank0: {}, rank1: {}, rank2: {}, allOrder: {} };
+            }
+            const roleMatrix = window.locPriorityMatrix[roleKey];
+            if (!roleMatrix.rank0) roleMatrix.rank0 = {};
+            if (!roleMatrix.rank1) roleMatrix.rank1 = {};
+            if (!roleMatrix.rank2) roleMatrix.rank2 = {};
+            if (!roleMatrix.allOrder) roleMatrix.allOrder = {};
+
+            let totalAssigned = 0;
+            let prefsChanged = false;
+
+            dropzones.forEach(zone => {
+                const colId = zone.dataset.colId;
+                const cards = Array.from(zone.querySelectorAll('.priority-person-card'));
+
+                // 更新該欄位右上角的人數統計徽章
+                const colWrapper = zone.parentElement;
+                const countBadge = colWrapper ? colWrapper.querySelector('[data-col-count]') : null;
+                if (countBadge) countBadge.textContent = cards.length;
+                if (colId !== 'unassigned') totalAssigned += cards.length;
+
+                // 更新該欄每張卡片左上角的順位數字 (1, 2, 3...)
+                cards.forEach((card, idx) => {
+                    const numBadge = card.querySelector('[data-idx-badge]');
+                    if (numBadge) numBadge.textContent = idx + 1;
+                });
+
+                if (window.currentPriorityRankIndex === 'ALL') {
+                    const allOrderKeys = [];
+                    const uniqueNamesInCol = [];
+
+                    cards.forEach(card => {
+                        const mName = card.dataset.member;
+                        let rNum = parseInt(card.dataset.rank, 10) || 1;
+                        const prevCol = card.dataset.col;
+
+                        // 若卡片被跨欄拖曳到新崗位，同步更新該員對應志願的崗位
+                        if (prevCol && prevCol !== colId) {
+                            const prof = window.getMemberProfile(mName);
+                            const prefs = Array.isArray(prof.prefs) ? [...prof.prefs] : ['', '', ''];
+                            while (prefs.length < 3) prefs.push('');
+                            const targetIdx = (rNum >= 1 && rNum <= 3) ? (rNum - 1) : 0;
+                            const nextLocVal = colId === 'unassigned' ? '' : colId;
+                            if (prefs[targetIdx] !== nextLocVal) {
+                                prefs[targetIdx] = nextLocVal;
+                                memberProfilesStore[mName] = Object.assign({ id: '', avatar: '', gender: '女', prefs: [] }, memberProfilesStore[mName] || {}, { prefs });
+                                prefsChanged = true;
+                            }
+                            if (colId !== 'unassigned' && ! card.dataset.rank) {
+                                rNum = 1;
+                                card.dataset.rank = '1';
+                            }
+                            card.dataset.col = colId;
+                        }
+
+                        allOrderKeys.push(`${mName}::${rNum}`);
+                        if (!uniqueNamesInCol.includes(mName)) {
+                            uniqueNamesInCol.push(mName);
+                        }
+                    });
+
+                    roleMatrix.allOrder[colId] = allOrderKeys;
+                    roleMatrix[colId] = uniqueNamesInCol;
+
+                    // 同步依上下順序更新 rank0, rank1, rank2
+                    [0, 1, 2].forEach(rIdx => {
+                        const rNum = rIdx + 1;
+                        const namesForRank = cards
+                            .filter(c => (parseInt(c.dataset.rank, 10) || 1) === rNum)
+                            .map(c => c.dataset.member);
+                        if (namesForRank.length > 0 || !roleMatrix[`rank${rIdx}`][colId]) {
+                            roleMatrix[`rank${rIdx}`][colId] = namesForRank;
+                        }
+                    });
+                } else {
+                    const rIdx = Number(window.currentPriorityRankIndex) || 0;
+                    const rankKey = `rank${rIdx}`;
+                    const namesInCol = [];
+
+                    cards.forEach(card => {
+                        const mName = card.dataset.member;
+                        if (!namesInCol.includes(mName)) namesInCol.push(mName);
+
+                        const prof = window.getMemberProfile(mName);
+                        const prefs = Array.isArray(prof.prefs) ? [...prof.prefs] : ['', '', ''];
+                        while (prefs.length < 3) prefs.push('');
+                        const nextLocVal = colId === 'unassigned' ? '' : colId;
+                        if (prefs[rIdx] !== nextLocVal) {
+                            prefs[rIdx] = nextLocVal;
+                            memberProfilesStore[mName] = Object.assign({ id: '', avatar: '', gender: '女', prefs: [] }, memberProfilesStore[mName] || {}, { prefs });
+                            prefsChanged = true;
+                        }
+                        card.dataset.col = colId;
+                    });
+
+                    roleMatrix[rankKey][colId] = namesInCol;
+                    if (rIdx === 0) {
+                        roleMatrix[colId] = [...namesInCol];
+                    }
+                }
+            });
+
+            const totalBadge = $('priorityTotalAssignedCount');
+            if (totalBadge) {
+                const modeStr = window.currentPriorityRankIndex === 'ALL' ? '1~3志願三合一' : `第${window.currentPriorityRankIndex + 1}優先`;
+                totalBadge.textContent = `已配置: ${totalAssigned} 人 (${modeStr})`;
+            }
+
+            return prefsChanged;
+        };
+
         window.setPriorityPrefRank = (rankVal) => {
+            // 切換分頁前先捕捉目前畫面上的拖曳順序，避免切換分頁時遺失
+            window.capturePriorityBoardDomState();
             window.currentPriorityRankIndex = rankVal; // 'ALL' 或是 0, 1, 2
             window.renderPositionPriorityBoard();
         };
@@ -12848,7 +12780,7 @@ window.clearCurrentWeekCsRoster = () => {
             const memberList = isClean ? cleanMembersStore : csMembersStore;
             
             if (!window.locPriorityMatrix[roleKey]) {
-                window.locPriorityMatrix[roleKey] = { rank0: {}, rank1: {}, rank2: {} };
+                window.locPriorityMatrix[roleKey] = { rank0: {}, rank1: {}, rank2: {}, allOrder: {} };
             }
 
             const order = isClean
@@ -12870,9 +12802,16 @@ window.clearCurrentWeekCsRoster = () => {
                     }
                 });
                 window.locPriorityMatrix[roleKey][rankKey] = subMatrix;
+                if (rIdx === 0) {
+                    order.forEach(k => {
+                        window.locPriorityMatrix[roleKey][k] = [...subMatrix[k]];
+                    });
+                }
             });
 
+            window.locPriorityMatrix[roleKey].allOrder = {};
             safeSetLocal('work_cache_loc_priority', window.locPriorityMatrix);
+            syncConfig('loc_priority', { matrix: window.locPriorityMatrix });
             window.renderPositionPriorityBoard();
             if (shouldToast) window.showToast('🔄 已依成員各志願重整優先度矩陣');
         };
@@ -12889,6 +12828,7 @@ window.clearCurrentWeekCsRoster = () => {
                 window.autoSyncPriorityMatrixFromPrefs(false);
             }
 
+            const roleMatrix = window.locPriorityMatrix[roleKey] || {};
             const order = isClean
                 ? ['pt_8', 'pt_9', 'pt_3', 'pt_4', 'pt_1', 'pt_6', 'unassigned']
                 : ['pt_3', 'pt_4', 'pt_5', 'pt_1', 'pt_2', 'pt_6', 'unassigned'];
@@ -12917,8 +12857,34 @@ window.clearCurrentWeekCsRoster = () => {
                         }
                     }
                 });
+
+                // 🌟 嚴格按照已儲存的看板排位順序 (allOrder / rank0~2) 排序
+                order.forEach(colId => {
+                    const savedAllOrder = roleMatrix.allOrder?.[colId] || [];
+                    const savedTopOrder = roleMatrix[colId] || roleMatrix.rank0?.[colId] || [];
+                    matrix[colId].sort((a, b) => {
+                        const keyA = `${a.name}::${a.rank}`;
+                        const keyB = `${b.name}::${b.rank}`;
+                        const idxA = savedAllOrder.indexOf(keyA);
+                        const idxB = savedAllOrder.indexOf(keyB);
+                        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+                        if (idxA !== -1) return -1;
+                        if (idxB !== -1) return 1;
+
+                        // 若無 allOrder，則先比對志願等級 (🥇1 -> 🥈2 -> 🥉3)，同等級再比對已存順序
+                        if (a.rank !== b.rank) return (a.rank || 9) - (b.rank || 9);
+                        const rankList = roleMatrix[`rank${(a.rank || 1) - 1}`]?.[colId] || savedTopOrder;
+                        const rA = rankList.indexOf(a.name);
+                        const rB = rankList.indexOf(b.name);
+                        if (rA !== -1 && rB !== -1) return rA - rB;
+                        if (rA !== -1) return -1;
+                        if (rB !== -1) return 1;
+                        return 0;
+                    });
+                });
             } else {
                 const rIdx = window.currentPriorityRankIndex;
+                const rankKey = `rank${rIdx}`;
                 memberList.forEach(m => {
                     const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(m) : m;
                     const prof = window.getMemberProfile ? window.getMemberProfile(canon) : null;
@@ -12929,6 +12895,19 @@ window.clearCurrentWeekCsRoster = () => {
                     if (!exists) {
                         matrix[targetCol].push({ name: canon, rank: rIdx + 1, id: prof.id || '', gender: prof.gender || '女' });
                     }
+                });
+
+                // 🌟 嚴格按照該優先級已儲存的順序排序
+                order.forEach(colId => {
+                    const savedRankOrder = roleMatrix[rankKey]?.[colId] || [];
+                    matrix[colId].sort((a, b) => {
+                        const idxA = savedRankOrder.indexOf(a.name);
+                        const idxB = savedRankOrder.indexOf(b.name);
+                        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+                        if (idxA !== -1) return -1;
+                        if (idxB !== -1) return 1;
+                        return 0;
+                    });
                 });
             }
 
@@ -12992,10 +12971,10 @@ window.clearCurrentWeekCsRoster = () => {
                     const rankIcon = rankNum === 1 ? '🥇' : (rankNum === 2 ? '🥈' : '🥉');
 
                     return `
-                    <div id="p-card-${col.id}-${name}-${rankNum}" draggable="true" data-member="${name}" data-col="${col.id}"
+                    <div id="p-card-${col.id}-${name}-${rankNum}" draggable="true" data-member="${name}" data-col="${col.id}" data-rank="${rankNum}"
                          class="priority-person-card rounded-xl px-2 py-[7px] border ${colStyle.bg} ${colStyle.border} shadow-2xs hover:shadow-xs flex items-center justify-between gap-1 cursor-grab active:cursor-grabbing mb-1.5 ${isOnDuty ? '' : 'opacity-50'}">
                         <div class="flex items-center space-x-1.5 min-w-0 flex-1">
-                            <span class="w-4.5 h-4.5 rounded-full bg-slate-800 text-white font-mono text-[9px] font-black flex items-center justify-center shrink-0 leading-none shadow-2xs">${pIdx + 1}</span>
+                            <span data-idx-badge="1" class="w-4.5 h-4.5 rounded-full bg-slate-800 text-white font-mono text-[9px] font-black flex items-center justify-center shrink-0 leading-none shadow-2xs">${pIdx + 1}</span>
                             <div class="min-w-0 flex-1">
                                 <div class="text-[11.5px] font-black text-slate-900 truncate leading-tight">${window.esc(name)}</div>
                                 <div class="flex items-center gap-0.5 mt-0.5">
@@ -13015,7 +12994,7 @@ window.clearCurrentWeekCsRoster = () => {
                             <span class="w-1.5 h-1.5 rounded-full ${col.tagBg} shrink-0"></span>
                             <span class="font-black text-[11px] text-slate-800 truncate">${col.name}</span>
                         </div>
-                        <span class="text-[9.5px] font-mono font-black text-slate-600 bg-slate-200/80 px-1 rounded-full shrink-0">${members.length}</span>
+                        <span data-col-count="1" class="text-[9.5px] font-mono font-black text-slate-600 bg-slate-200/80 px-1 rounded-full shrink-0">${members.length}</span>
                     </div>
                     <div data-col-id="${col.id}" class="priority-col-dropzone flex-1 p-1.5 overflow-y-auto scrollbar-hide">
                         ${personCardsHtml}
@@ -13037,6 +13016,7 @@ window.clearCurrentWeekCsRoster = () => {
             let draggedCard = null;
 
             document.querySelectorAll('.priority-person-card').forEach(card => {
+                // 1. 電腦滑鼠拖曳支援
                 card.addEventListener('dragstart', (e) => {
                     draggedCard = card;
                     card.classList.add('dragging');
@@ -13047,6 +13027,35 @@ window.clearCurrentWeekCsRoster = () => {
                     if (draggedCard) draggedCard.classList.remove('dragging');
                     draggedCard = null;
                     dropzones.forEach(dz => dz.classList.remove('drag-over'));
+                    window.capturePriorityBoardDomState();
+                });
+
+                // 2. 手機/平板觸控拖曳支援
+                card.addEventListener('touchstart', () => {
+                    draggedCard = card;
+                    card.classList.add('dragging');
+                }, { passive: true });
+
+                card.addEventListener('touchmove', (e) => {
+                    if (!draggedCard) return;
+                    const touch = e.touches[0];
+                    if (!touch) return;
+                    if (e.cancelable) e.preventDefault();
+                    const elUnder = document.elementFromPoint(touch.clientX, touch.clientY);
+                    const zone = elUnder ? elUnder.closest('.priority-col-dropzone') : null;
+                    dropzones.forEach(dz => dz.classList.toggle('drag-over', dz === zone));
+                    if (zone) {
+                        const afterElement = getDragAfterElement(zone, touch.clientY);
+                        if (afterElement == null) zone.appendChild(draggedCard);
+                        else zone.insertBefore(draggedCard, afterElement);
+                    }
+                }, { passive: false });
+
+                card.addEventListener('touchend', () => {
+                    if (draggedCard) draggedCard.classList.remove('dragging');
+                    draggedCard = null;
+                    dropzones.forEach(dz => dz.classList.remove('drag-over'));
+                    window.capturePriorityBoardDomState();
                 });
             });
 
@@ -13064,6 +13073,7 @@ window.clearCurrentWeekCsRoster = () => {
                 zone.addEventListener('drop', (e) => {
                     e.preventDefault();
                     zone.classList.remove('drag-over');
+                    window.capturePriorityBoardDomState();
                 });
             });
 
@@ -13079,9 +13089,33 @@ window.clearCurrentWeekCsRoster = () => {
         };
 
         window.savePositionPriorityMatrix = async () => {
-            window.showToast('✅ 看板排位設定已儲存！');
+            // 1. 先從畫面 DOM 擷取最新的卡片排位與跨欄志願變動
+            window.capturePriorityBoardDomState();
+
+            // 2. 儲存優先度矩陣與個人志願檔案至本機快取
+            safeSetLocal('work_cache_loc_priority', window.locPriorityMatrix);
+            safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+
+            // 3. 同步至 Firebase 雲端
+            if (currentUser && db) {
+                syncConfig('loc_priority', { matrix: window.locPriorityMatrix });
+                syncConfig('member_profiles', { profiles: memberProfilesStore });
+            }
+
+            // 4. 若背後排班表或人員名單開啟中，同步更新顯示
+            if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
+                window.renderMemberRosterListsOnly?.();
+            }
+            if ($('scheduleManageModal')?.classList.contains('flex')) {
+                window.renderScheduleManager(true);
+            }
+
+            window.showToast('✅ 看板排位與志願設定已儲存並同步！');
             window.closePositionPriorityModal();
         };
+        // 防呆別名：確保下半部 HTML 按鈕不論綁定哪個名稱都能正常觸發
+        window.savePositionPriority = window.savePositionPriorityMatrix;
+        window.savePriorityBoard = window.savePositionPriorityMatrix;
 
 window.openScheduleManager = () => {
             try {
@@ -14307,17 +14341,17 @@ window.toggleSplitHour = (dateStr, locId, hourStr) => {
             if (window.lucide) lucide.createIcons({ root: document.getElementById('fullScheduleExportModal') });
         };
 
-        // 🌟 4. 單獨清空某一天排班（立即清空暫存、存檔並強制刷新畫面）
+// 🌟 4. 單獨清空某一天排班（立即清空暫存、存檔並強制刷新畫面）
         window.clearSingleDaySchedule = (targetDateStr) => {
             if (!confirm(`確定要清空【${targetDateStr}】當天的排班內容嗎？\n（其他日子不受影響）`)) return;
 
-window.captureAll5DayDomValues();
-            window.ensureDateSeededInTempGrid(dStr);
+            window.captureAll5DayDomValues();
+            window.ensureDateSeededInTempGrid(targetDateStr);
 
-            // 1. 徹底清空當日所有暫存格子
+            // 1. 徹底清空當日所有暫存格子（設為空字串 '' 避免重繪時從舊快取回填）
             Object.keys(window._tempGridValues).forEach(k => {
                 if (k.startsWith(`${targetDateStr}_`)) {
-                    delete window._tempGridValues[k];
+                    window._tempGridValues[k] = '';
                 }
             });
 
@@ -14403,15 +14437,6 @@ window.saveGridSchedule = async () => {
 const hasClassicDomCells = document.querySelectorAll('td[data-loc][data-date], .grid-input-display[data-loc][data-date], .grid-input').length > 0;
 
     if (hasClassicDomCells) {
-const hasClassicDomCells = document.querySelectorAll('td[data-loc][data-date], .grid-input-display[data-loc][data-date], .grid-input').length > 0;
-
-    if (hasClassicDomCells) {
-const hasClassicDomCells = document.querySelectorAll('td[data-loc][data-date], .grid-input-display[data-loc][data-date], .grid-input').length > 0;
-
-    if (hasClassicDomCells) {
-const hasClassicDomCells = document.querySelectorAll('td[data-loc][data-date], .grid-input-display[data-loc][data-date], .grid-input').length > 0;
-
-    if (hasClassicDomCells) {
         // DOM 提取（原本樣式 / 只看崗位模式）
         document.querySelectorAll('td[data-loc][data-date]').forEach(td => {
             const { date, loc, start, end } = td.dataset;
@@ -14431,72 +14456,6 @@ const hasClassicDomCells = document.querySelectorAll('td[data-loc][data-date], .
             const text = (i.value || '').trim();
             addSlotRecord(date, loc, start, end, text);
         });
-    } else {
-        // 記憶體暫存提取（Excel總覽 / 只看人員模式）
-        const tempMap = window._tempGridValues || {};
-        const seededMap = window._seededTempDates || {};
-        fiveDays.forEach(dObj => {
-            const dStr = dObj.dateStr;
-            if (!seededMap[dStr]) {
-                rawByDate[dStr] = [...(multiStore[dStr] || [])];
-                return;
-            }
-            const prefix = `${dStr}_`;
-            Object.keys(tempMap).forEach(k => {
-                if (!k.startsWith(prefix)) return;
-                const rest = k.slice(prefix.length);
-                const m = rest.match(/^(.+)_(\d{2}:\d{2})_(\d{2}:\d{2})$/);
-                if (m) {
-                    addSlotRecord(dStr, m[1], m[2], m[3], tempMap[k]);
-                }
-            });
-        });
-    }
-    window._seededTempDates = {};
-    } else {
-        // 記憶體暫存提取（Excel總覽 / 只看人員模式）
-        const tempMap = window._tempGridValues || {};
-        const seededMap = window._seededTempDates || {};
-        fiveDays.forEach(dObj => {
-            const dStr = dObj.dateStr;
-            if (!seededMap[dStr]) {
-                rawByDate[dStr] = [...(multiStore[dStr] || [])];
-                return;
-            }
-            const prefix = `${dStr}_`;
-            Object.keys(tempMap).forEach(k => {
-                if (!k.startsWith(prefix)) return;
-                const rest = k.slice(prefix.length);
-                const m = rest.match(/^(.+)_(\d{2}:\d{2})_(\d{2}:\d{2})$/);
-                if (m) {
-                    addSlotRecord(dStr, m[1], m[2], m[3], tempMap[k]);
-                }
-            });
-        });
-    }
-    window._seededTempDates = {};
-    } else {
-        // 記憶體暫存提取（Excel總覽 / 只看人員模式）
-        const tempMap = window._tempGridValues || {};
-        const seededMap = window._seededTempDates || {};
-        fiveDays.forEach(dObj => {
-            const dStr = dObj.dateStr;
-            if (!seededMap[dStr]) {
-                rawByDate[dStr] = [...(multiStore[dStr] || [])];
-                return;
-            }
-            const prefix = `${dStr}_`;
-            Object.keys(tempMap).forEach(k => {
-                if (!k.startsWith(prefix)) return;
-                const rest = k.slice(prefix.length);
-                const m = rest.match(/^(.+)_(\d{2}:\d{2})_(\d{2}:\d{2})$/);
-                if (m) {
-                    addSlotRecord(dStr, m[1], m[2], m[3], tempMap[k]);
-                }
-            });
-        });
-    }
-    window._seededTempDates = {};
     } else {
         // 記憶體暫存提取（Excel總覽 / 只看人員模式）
         const tempMap = window._tempGridValues || {};
