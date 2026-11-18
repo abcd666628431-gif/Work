@@ -5102,10 +5102,19 @@ if (val === '') {
                 return val !== undefined && val !== null && String(val).trim() !== '';
             });
 
-            if ($('tempModalSlotLabel')) $('tempModalSlotLabel').innerText = slot;
+if ($('tempModalSlotLabel')) $('tempModalSlotLabel').innerText = slot;
             if ($('tempModalProgress')) $('tempModalProgress').innerText = `${filled.length}/${RAW_TEMPERATURE_POINTS.length}`;
-            if ($('tempModalRecorder') && document.activeElement !== $('tempModalRecorder')) {
-                $('tempModalRecorder').value = curSlotTemps['recorder'] || '';
+            const recorderEl = $('tempModalRecorder');
+            if (recorderEl && document.activeElement !== recorderEl) {
+                const savedRec = curSlotTemps['recorder'] || '';
+                const csList = ((Array.isArray(csMembersStore) && csMembersStore.length)
+                    ? csMembersStore
+                    : ['蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲']
+                ).filter(m => m !== '周靜儀');
+                const allOptions = savedRec && !csList.includes(savedRec) ? [savedRec, ...csList] : csList;
+                recorderEl.innerHTML = `<option value="">選擇客服人員</option>` +
+                    allOptions.map(m => `<option value="${window.esc(m)}" ${savedRec === m ? 'selected' : ''}>${window.esc(m)}</option>`).join('');
+                recorderEl.value = savedRec;
             }
 
             const isKeypadOpen = !$('tempKeypadModal')?.classList.contains('hidden');
@@ -5136,66 +5145,50 @@ window.checkPatrolTempCompletionReminder = (filledCount, totalCount, userFilledC
             const date = currentPatrolDate || getTodayDateStr();
             const slot = patrolSlot || window.getAutoPatrolSlot();
 
-            // 1. 計算該時段 12 個測溫點已填數量
+            // 1. 計算該時段 12 個測溫點已填數量 & 記錄者姓名是否空白
             const curSlotTemps = (patrolTempRecords[date] || {})[slot] || {};
             const tempFilled = RAW_TEMPERATURE_POINTS.filter(pt => {
                 const v = curSlotTemps[pt.id];
                 return v !== undefined && v !== null && String(v).trim() !== '';
             }).length;
             const totalTemps = RAW_TEMPERATURE_POINTS.length; // 12 個
+            const curRecorder = String(curSlotTemps['recorder'] || '').trim();
+
+            const isTempIncomplete = tempFilled < totalTemps;
+            const isNameBlank = !curRecorder;
+
+            // 只有當「12個溫度全滿」且「記錄者姓名也已選好」時，才不提醒
+            if (!isTempIncomplete && !isNameBlank) return;
 
             const remainTemps = totalTemps - tempFilled;
             const pct = Math.round((filledCount / totalCount) * 100);
-            const cleanUserName = typeof sysUserName === 'string' ? sysUserName.trim() : '';
-
             const halfKey = `${date}_${slot}_50`;
             const fullKey = `${date}_${slot}_100`;
-            const userAutoRecKey = `${date}_${slot}_autorec_${cleanUserName}`;
 
-            // 🌟 當「當前使用者個人剔檔量」達全部 105 檔的 50%（53 檔）時，自動將該使用者記名填入溫度表
-            let autoRecordedName = '';
-            if (cleanUserName && (userFilledCount * 2 >= totalCount) && !window._tempWarnFlags[userAutoRecKey]) {
-                window._tempWarnFlags[userAutoRecKey] = true;
-                if (!patrolTempRecords[date]) patrolTempRecords[date] = {};
-                if (!patrolTempRecords[date][slot]) patrolTempRecords[date][slot] = {};
-                const curRecorder = String(patrolTempRecords[date][slot]['recorder'] || '').trim();
-                if (!curRecorder) {
-                    const nowTs = Date.now();
-                    patrolTempRecords[date][slot]['recorder'] = cleanUserName;
-                    patrolTempRecords[date][slot]['recorder_ts'] = nowTs;
-                    safeSetLocal('work_cache_patrol_temp_records', patrolTempRecords);
-                    const recInp = $('tempModalRecorder');
-                    if (recInp) recInp.value = cleanUserName;
-                    window.syncTempSlotFieldToCloud?.(date, slot, {
-                        recorder: cleanUserName,
-                        recorder_ts: nowTs
-                    });
-                    autoRecordedName = cleanUserName;
-                    window.showToast(`✍️ 您已剔檔達 50%（${userFilledCount}/${totalCount} 檔），溫度表已自動記名：${cleanUserName}`);
-                }
-            }
+            const missingDesc = (tempFilled === 0 && isNameBlank)
+                ? '本時段溫度及記錄者姓名皆為空白'
+                : (isTempIncomplete && isNameBlank)
+                    ? `溫度尚有 ${remainTemps} 個點未填，且記錄者姓名為空白`
+                    : isTempIncomplete
+                        ? `溫度尚有 ${remainTemps} 個點未填（目前 ${tempFilled}/${totalTemps}）`
+                        : '記錄者姓名尚未選擇（目前為空白）';
 
-            // 如果 12 個測溫點都已填完，不再彈出未填溫度提醒
-            if (tempFilled >= totalTemps) return;
-
-            // 🌟 條件 A：全體剔檔 100% 全滿，但溫度未填完
+            // 🌟 條件 A：全體剔檔 100% 全滿，但溫度或姓名仍為空白
             if (filledCount >= totalCount) {
                 if (!window._tempWarnFlags[fullKey]) {
                     window._tempWarnFlags[fullKey] = true;
 
-                    // 語音播報提醒
                     if ('speechSynthesis' in window) {
                         try {
-                            const utt = new SpeechSynthesisUtterance('剔檔已完成，請填寫本時段溫度');
+                            const utt = new SpeechSynthesisUtterance('剔檔已完成，請填寫本時段溫度及記錄者姓名');
                             utt.lang = window._hasCantoneseVoice === false ? 'zh-CN' : 'zh-HK';
                             window.speechSynthesis.speak(utt);
                         } catch(e) {}
                     }
 
-                    // 彈出強烈提示與直接引導按鈕
                     window.showConfirm(
-                        '🌡️ 提醒：測溫尚未完成',
-                        `🎉【${slot}】剔檔已全數完成！\n但本時段溫度尚有 ${remainTemps} 個測溫點未填寫（目前 ${tempFilled}/${totalTemps}），是否現在填寫？`,
+                        '🌡️ 提醒：溫度表尚未完成',
+                        `🎉【${slot}】剔檔已全數完成！\n但${missingDesc}，是否現在填寫？`,
                         () => {
                             window.openTempModal();
                         }
@@ -5204,16 +5197,13 @@ window.checkPatrolTempCompletionReminder = (filledCount, totalCount, userFilledC
                 return;
             }
 
-            // 🌟 條件 B：全體剔檔過半 (>= 50%)，但溫度未填完
+            // 🌟 條件 B：全體剔檔過半 (>= 50%)，但溫度或姓名仍為空白
             if (pct >= 50 && pct < 100) {
                 if (!window._tempWarnFlags[halfKey]) {
                     window._tempWarnFlags[halfKey] = true;
 
-                    if (!autoRecordedName) {
-                        window.showToast(`⚠️ 巡查已過半！【${slot}】溫度尚有 ${remainTemps} 個點未填`, true);
-                    }
+                    window.showToast(`⚠️ 巡查已過半！【${slot}】${missingDesc}`, true);
 
-                    // 讓左下角溫度球產生光暈呼吸動畫 5 秒，提醒點擊
                     const floatBtn = $('floatingTempBtn');
                     if (floatBtn) {
                         floatBtn.classList.add('ring-4', 'ring-rose-500', 'animate-bounce');
@@ -22069,10 +22059,13 @@ historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
             </div>
             <button type="button" onclick="window.closeTempModal()" class="px-2 py-0.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold active:scale-95 transition-all">關閉</button>
         </header>
-        <div class="px-3 py-1 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
+<div class="px-3 py-1 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
             <span class="text-[10.5px] font-bold text-slate-500">進度 <span id="tempModalProgress" class="text-rose-600 font-black">0/12</span></span>
-            <input type="text" id="tempModalRecorder" placeholder="記錄者姓名" oninput="window.setPointTempRecorder(this.value)" onchange="window.setPointTempRecorder(this.value)"
-                   class="bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5 text-xs font-bold text-center w-24 focus:outline-none focus:border-rose-400">
+            <select id="tempModalRecorder" onchange="window.setPointTempRecorder(this.value)"
+                    style="text-align-last: center;"
+                    class="bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5 text-xs font-bold text-center w-28 focus:outline-none focus:border-rose-400 cursor-pointer">
+                <option value="">選擇客服人員</option>
+            </select>
         </div>
         <div id="tempModalList" class="flex-1 overflow-y-auto p-2.5 space-y-1 min-h-0 scrollbar-hide"></div>
         <div class="p-3 border-t border-slate-100 shrink-0 bg-slate-50">
