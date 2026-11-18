@@ -5140,12 +5140,76 @@ if ($('tempModalSlotLabel')) $('tempModalSlotLabel').innerText = slot;
 // 🌟 記錄每個時段是否已觸發過「過半」與「100%」的溫度提醒
         window._tempWarnFlags = window._tempWarnFlags || {};
 
-window.checkPatrolTempCompletionReminder = (filledCount, totalCount, userFilledCount = 0) => {
+// 🌟 彈出「選擇本時段溫度記錄客服人員」視窗（50% 與 100% 共用）
+        window.openTempRecorderStaffModal = (stageLabel = '50%', remainTemps = 12) => {
+            document.getElementById('tempRecorderStaffModal')?.remove();
+            const date = currentPatrolDate || getTodayDateStr();
+            const slot = patrolSlot || window.getAutoPatrolSlot();
+            const curSlotTemps = (patrolTempRecords[date] || {})[slot] || {};
+            const curRecorder = String(curSlotTemps['recorder'] || '').trim();
+
+            const csList = ((Array.isArray(csMembersStore) && csMembersStore.length)
+                ? csMembersStore
+                : ['蔣開紅', '何雪芬', '黃美濃', '林浩霆', '黃永超', '李頌瑤', '譚建安', '甘永寧', '陳麗嬋', '姚桂菊', '嚴飛菲']
+            ).filter(m => m !== '周靜儀');
+
+            const btnsHtml = csList.map(name => {
+                const isSel = curRecorder === name;
+                return `
+                <button type="button" onclick="window.selectTempRecorderFromPopup('${window.jsAttr(name)}')"
+                    class="py-2.5 px-2 rounded-xl text-xs font-black border transition-all active:scale-95 ${isSel ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-slate-50 hover:bg-blue-50 text-slate-700 border-slate-200'}">
+                    👤 ${window.esc(name)}
+                </button>`;
+            }).join('');
+
+            const tempStatusNote = remainTemps > 0
+                ? `另外本時段溫度尚有 <strong class="text-rose-600">${remainTemps} 個測溫點</strong> 未填`
+                : `本時段 12 個測溫點已填寫完成`;
+
+            const modalHtml = `
+            <div id="tempRecorderStaffModal" class="fixed inset-0 bg-slate-900/65 backdrop-blur-xs z-[10060] flex items-center justify-center p-4" onclick="if(event.target === this) this.remove();">
+                <div class="bg-white rounded-2xl p-4 w-full max-w-[330px] shadow-2xl border border-slate-200 animate-pop-in" onclick="event.stopPropagation()">
+                    <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
+                        <h3 class="font-black text-sm text-rose-600 flex items-center gap-1">
+                            ⚠️ 剔檔已達 ${stageLabel} · 請選擇客服人員
+                        </h3>
+                        <button type="button" onclick="document.getElementById('tempRecorderStaffModal')?.remove()" class="text-slate-400 hover:text-slate-600 px-1 text-sm font-black">✕</button>
+                    </div>
+                    <p class="text-[11px] font-bold text-slate-600 mb-2.5 leading-relaxed">
+                        【${slot}】溫度表的「記錄者姓名」目前為空白，請直接點選負責客服人員（${tempStatusNote}）：
+                    </p>
+                    <div class="grid grid-cols-3 gap-2">
+                        ${btnsHtml}
+                    </div>
+                    <div class="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
+                        <button type="button" onclick="document.getElementById('tempRecorderStaffModal')?.remove(); window.openTempModal();"
+                            class="flex-1 py-2 rounded-xl text-xs font-black text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 active:scale-95">
+                            🌡️ 前往填寫溫度表
+                        </button>
+                        <button type="button" onclick="document.getElementById('tempRecorderStaffModal')?.remove()"
+                            class="px-3 py-2 rounded-xl text-xs font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 active:scale-95">
+                            稍後再選
+                        </button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+        };
+
+        window.selectTempRecorderFromPopup = (name) => {
+            window.setPointTempRecorder(name);
+            const recEl = $('tempModalRecorder');
+            if (recEl) recEl.value = name;
+            document.getElementById('tempRecorderStaffModal')?.remove();
+            window.showToast(`✅ 已設定溫度記錄客服：${name}`);
+        };
+
+        window.checkPatrolTempCompletionReminder = (filledCount, totalCount, userFilledCount = 0) => {
             if (!totalCount) return;
             const date = currentPatrolDate || getTodayDateStr();
             const slot = patrolSlot || window.getAutoPatrolSlot();
 
-            // 1. 計算該時段 12 個測溫點已填數量 & 記錄者姓名是否空白
+            // 1. 計算該時段 12 個測溫點已填數量 & 客服人員姓名是否空白
             const curSlotTemps = (patrolTempRecords[date] || {})[slot] || {};
             const tempFilled = RAW_TEMPERATURE_POINTS.filter(pt => {
                 const v = curSlotTemps[pt.id];
@@ -5157,7 +5221,7 @@ window.checkPatrolTempCompletionReminder = (filledCount, totalCount, userFilledC
             const isTempIncomplete = tempFilled < totalTemps;
             const isNameBlank = !curRecorder;
 
-            // 只有當「12個溫度全滿」且「記錄者姓名也已選好」時，才不提醒
+            // 只有當「12個溫度全滿」且「客服人員姓名也已選好」時，才不提醒
             if (!isTempIncomplete && !isNameBlank) return;
 
             const remainTemps = totalTemps - tempFilled;
@@ -5165,44 +5229,47 @@ window.checkPatrolTempCompletionReminder = (filledCount, totalCount, userFilledC
             const halfKey = `${date}_${slot}_50`;
             const fullKey = `${date}_${slot}_100`;
 
-            const missingDesc = (tempFilled === 0 && isNameBlank)
-                ? '本時段溫度及記錄者姓名皆為空白'
-                : (isTempIncomplete && isNameBlank)
-                    ? `溫度尚有 ${remainTemps} 個點未填，且記錄者姓名為空白`
-                    : isTempIncomplete
-                        ? `溫度尚有 ${remainTemps} 個點未填（目前 ${tempFilled}/${totalTemps}）`
-                        : '記錄者姓名尚未選擇（目前為空白）';
-
-            // 🌟 條件 A：全體剔檔 100% 全滿，但溫度或姓名仍為空白
+            // 🌟 條件 A：全體剔檔達到 100% 時
             if (filledCount >= totalCount) {
                 if (!window._tempWarnFlags[fullKey]) {
                     window._tempWarnFlags[fullKey] = true;
 
                     if ('speechSynthesis' in window) {
                         try {
-                            const utt = new SpeechSynthesisUtterance('剔檔已完成，請填寫本時段溫度及記錄者姓名');
+                            const utt = new SpeechSynthesisUtterance(isNameBlank ? '剔檔已完成，請選擇客服人員並填寫本時段溫度' : '剔檔已完成，請填寫本時段溫度');
                             utt.lang = window._hasCantoneseVoice === false ? 'zh-CN' : 'zh-HK';
                             window.speechSynthesis.speak(utt);
                         } catch(e) {}
                     }
 
-                    window.showConfirm(
-                        '🌡️ 提醒：溫度表尚未完成',
-                        `🎉【${slot}】剔檔已全數完成！\n但${missingDesc}，是否現在填寫？`,
-                        () => {
-                            window.openTempModal();
-                        }
-                    );
+                    if (isNameBlank) {
+                        // 100% 且客服人員為空白 -> 直接彈出視窗提醒並可點選客服人員
+                        window.openTempRecorderStaffModal('100%', remainTemps);
+                    } else {
+                        // 100% 客服已選，但溫度未填完 -> 彈出確認框前往溫度表
+                        window.showConfirm(
+                            '🌡️ 提醒：測溫尚未完成',
+                            `🎉【${slot}】剔檔已全數完成！\n但本時段溫度尚有 ${remainTemps} 個測溫點未填寫（目前 ${tempFilled}/${totalTemps}），是否現在填寫？`,
+                            () => {
+                                window.openTempModal();
+                            }
+                        );
+                    }
                 }
                 return;
             }
 
-            // 🌟 條件 B：全體剔檔過半 (>= 50%)，但溫度或姓名仍為空白
+            // 🌟 條件 B：全體剔檔達到 50% 時
             if (pct >= 50 && pct < 100) {
                 if (!window._tempWarnFlags[halfKey]) {
                     window._tempWarnFlags[halfKey] = true;
 
-                    window.showToast(`⚠️ 巡查已過半！【${slot}】${missingDesc}`, true);
+                    if (isNameBlank) {
+                        // 50% 且客服人員為空白 -> 直接彈出視窗提醒並可點選客服人員
+                        window.openTempRecorderStaffModal('50%', remainTemps);
+                    } else {
+                        window.showToast(`⚠️ 巡查已過半！【${slot}】溫度尚有 ${remainTemps} 個點未填`, true);
+                    }
 
                     const floatBtn = $('floatingTempBtn');
                     if (floatBtn) {
