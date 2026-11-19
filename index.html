@@ -8956,9 +8956,470 @@ $('galleryItemEditModal')?.remove();
                 window._lastRenderFingerprint = '';
                 window.renderGallery();
 
-            } catch (err) {
+} catch (err) {
                 if (err.name !== 'AbortError') window.showToast(`❌ 無法存取資料夾`, true);
             }
+        };
+
+// ====== 🌟 AI 批次核對「提早收工 / 清潔」檔號功能（ChatAnywhere + gpt-4o 版） ======
+        window._stallAuditWarnings = window._stallAuditWarnings || {};
+        window._stallAuditLastResults = window._stallAuditLastResults || [];
+        const DEFAULT_CHATANYWHERE_KEY = 'sk-7bYayK6FD2g82EKKx5ATobm6F0bHODDmTj1Ii4y27hlYsX1Q';
+
+        window.getAiAuditApiKey = () => {
+            const saved = (localStorage.getItem('work_chatanywhere_api_key') || '').replace(/\s+/g, '');
+            return saved || DEFAULT_CHATANYWHERE_KEY;
+        };
+
+        window.promptSetAiApiKey = (onSaved) => {
+            $('aiApiKeyModal')?.remove();
+            const curKey = window.getAiAuditApiKey();
+            const modalHtml = `
+            <div id="aiApiKeyModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10060] flex items-center justify-center p-4" onclick="if(event.target===this)this.remove()">
+                <div class="bg-white rounded-2xl p-4 w-full max-w-[330px] shadow-2xl space-y-3 animate-pop-in" onclick="event.stopPropagation()">
+                    <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+                        <h3 class="font-black text-sm text-slate-800 flex items-center"><i data-lucide="key-round" class="w-4 h-4 mr-1.5 text-indigo-600"></i>設定 ChatAnywhere API Key</h3>
+                        <button type="button" onclick="document.getElementById('aiApiKeyModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1"><i data-lucide="x" class="w-4 h-4"></i></button>
+                    </div>
+                    <p class="text-[11px] text-slate-500 leading-relaxed">介面：<code class="bg-slate-100 px-1 rounded font-mono text-indigo-700">api.chatanywhere.org</code> · 模型：<strong>gpt-4o</strong></p>
+                    <input type="text" id="chatAnywhereKeyInput" value="${window.escAttr(curKey)}" placeholder="sk-..." autocomplete="off" spellcheck="false" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-800 focus:border-indigo-500 focus:outline-none">
+                    <div class="flex justify-between items-center gap-2 pt-1">
+                        <button type="button" onclick="localStorage.removeItem('work_chatanywhere_api_key'); document.getElementById('chatAnywhereKeyInput').value='${DEFAULT_CHATANYWHERE_KEY}'; window.showToast('已恢復預設金鑰');" class="px-2.5 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold">恢復預設</button>
+                        <div class="flex gap-1.5">
+                            <button type="button" onclick="document.getElementById('aiApiKeyModal')?.remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold">取消</button>
+                            <button type="button" id="saveChatAnywhereKeyBtn" class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black shadow-xs">儲存並繼續</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            if (window.lucide) lucide.createIcons({ root: $('aiApiKeyModal') });
+            $('saveChatAnywhereKeyBtn').onclick = () => {
+                const val = ($('chatAnywhereKeyInput')?.value || '').replace(/\s+/g, '');
+                if (!val) return window.showToast('⚠️ 請輸入有效的 API Key', true);
+                localStorage.setItem('work_chatanywhere_api_key', val);
+                $('aiApiKeyModal')?.remove();
+                window.showToast('✅ API Key 已儲存');
+                if (typeof onSaved === 'function') onSaved();
+            };
+        };
+
+        // 第 1 步：點擊「核對」後的二次確認提醒
+        window.confirmCheckGalleryStalls = () => {
+            const targets = (galleryItems || []).filter(item => {
+                if (item.isDeleted) return false;
+                const normCat = item.category === '收工' ? '提早收工' : item.category;
+                return normCat === '提早收工' || normCat === '清潔';
+            });
+
+            if (!targets.length) {
+                return window.showToast('目前圖庫中沒有「提早收工」或「清潔」相片可核對', true);
+            }
+
+            window.showConfirm(
+                '🔍 確認 AI 核對檔號 (gpt-4o)',
+                `篩選出共 ${targets.length} 張「提早收工 / 清潔」相片。\n\n• 按「確定」：立即一次送出核對\n• 按「取消」：可查看或修改 API Key`,
+                () => {
+                    window.executeBatchStallCheck(targets);
+                },
+                () => {
+                    window.promptSetAiApiKey(() => window.confirmCheckGalleryStalls());
+                }
+            );
+        };
+
+// 輔助：保持高清晰度（最長邊 1200px、品質 0.88），確保左側小紅牌與招牌殘字清晰可辨
+        window.resizeImageForStallCheck = (dataUrl, maxSide = 1200) => new Promise((resolve) => {
+            if (!dataUrl || !dataUrl.startsWith('data:image')) return resolve('');
+            const img = new Image();
+            img.onload = () => {
+                let { width: w, height: h } = img;
+                if (w > maxSide || h > maxSide) {
+                    const ratio = maxSide / Math.max(w, h);
+                    w = Math.round(w * ratio);
+                    h = Math.round(h * ratio);
+                }
+                const cvs = document.createElement('canvas');
+                cvs.width = w;
+                cvs.height = h;
+                const ctx = cvs.getContext('2d');
+                ctx.drawImage(img, 0, 0, w, h);
+                resolve(cvs.toDataURL('image/jpeg', 0.88));
+            };
+            img.onerror = () => resolve(dataUrl);
+            img.src = dataUrl;
+        });
+
+        // 🌟 嚴格格式標準化：只允許 1-XXX / R-XXX / J-XXX（自動把 RC-087、R11、1-2 等洗成標準 3 位數格式）
+        window.normalizeStallCodeForCompare = (raw) => {
+            let s = String(raw || '').trim().toUpperCase().replace(/^#/, '');
+            s = s.replace(/^RC[-_\s]*/i, 'R-'); // 實體魚檔牌常印 RC-087，強制轉為 R-087
+            const m = s.match(/^([1RJ])[-_\s]*0*(\d+)$/);
+            if (m) return `${m[1]}-${m[2].padStart(3, '0')}`;
+            return s;
+        };
+
+// 嚴格檢查：全系統只有 1-XXX / R-XXX / J-XXX 這三種格式才算正確，其他一律算錯
+        window.isCompleteStallCode = (normStr) => /^(1|R|J)-\d{3}$/.test(String(normStr || '').trim());
+
+        // 單張獨立呼叫 ChatAnywhere gpt-4o 核對檔號（同時回傳 Token 用量）
+        window.checkSingleStallImageWithAi = async (apiKey, item, resizedDataUrl) => {
+            const rawTitle = String(item.title || '').trim();
+            const promptText = `辨識圖中檔號牌或招牌，格式限1-XXX/R-XXX/J-XXX(RC-改R-)。現標:"${rawTitle || '無'}"(${item.category || ''},${item.time || ''})。只回JSON:{"detected":"","reason":""}`;
+
+            const resp = await fetch('https://api.chatanywhere.org/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model: 'gpt-4o',
+                    temperature: 0.1,
+                    response_format: { type: 'json_object' },
+                    messages: [
+                        {
+                            role: 'user',
+                            content: [
+                                { type: 'text', text: promptText },
+                                { type: 'image_url', image_url: { url: resizedDataUrl, detail: 'high' } }
+                            ]
+                        }
+                    ]
+                })
+            });
+
+            if (!resp.ok) {
+                const errText = await resp.text();
+                throw new Error(`API 請求失敗 (${resp.status}): ${errText.slice(0, 120)}`);
+            }
+
+            const resJson = await resp.json();
+            const rawText = resJson?.choices?.[0]?.message?.content || '{}';
+            const cleaned = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+            const parsed = JSON.parse(cleaned);
+            const usage = resJson?.usage || {};
+
+return {
+                ...parsed,
+                _usage: {
+                    promptTokens: Number(usage.prompt_tokens || 0),
+                    completionTokens: Number(usage.completion_tokens || 0),
+                    totalTokens: Number(usage.total_tokens || 0)
+                }
+            };
+        };
+
+// 明亮天藍色 SAO 玻璃 HUD 統計視窗：實心不透明底色、全中文、無英文字、零表情符號
+        window.openStallAuditSummaryModal = ({ checkedCount, totalN, totalTokens, promptTokens, completionTokens, elapsedSec, anomalyCount }) => {
+            $('stallAuditSummaryModal')?.remove();
+            const isAllOk = anomalyCount === 0;
+            const statusBannerStyle = isAllOk
+                ? 'background:#dcfce7;border:1px solid #22c55e;color:#166534;'
+                : 'background:#ffe4e6;border:1px solid #fb7185;color:#881337;';
+            const statusText = isAllOk
+                ? `核對完成，共 <span style="color:#15803d;font-weight:900;">${checkedCount} 張</span>相片無異常`
+                : `偵測到 ${anomalyCount} 張相片待修正`;
+
+            const modalHtml = `
+            <div id="stallAuditSummaryModal" style="position:fixed;inset:0;background:rgba(15,23,42,0.45);z-index:10060;display:flex;align-items:center;justify-content:center;padding:16px;" onclick="if(event.target===this)this.remove()">
+                <div style="position:relative;background:linear-gradient(180deg,#f0f9ff 0%,#ffffff 100%);color:#0f172a;border-radius:2px;padding:16px;width:100%;max-width:348px;box-shadow:0 14px 36px rgba(2,132,199,0.32);border:2px solid #0ea5e9;" class="space-y-3 animate-pop-in" onclick="event.stopPropagation()">
+                    <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #7dd3fc;padding-bottom:8px;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span style="display:inline-block;width:8px;height:8px;background:#0284c7;transform:rotate(45deg);"></span>
+                            <h3 style="font-weight:900;font-size:14px;letter-spacing:0.06em;color:#0c4a6e;margin:0;">檔號核對完成統計</h3>
+                        </div>
+                        <button type="button" onclick="document.getElementById('stallAuditSummaryModal')?.remove()" style="color:#0284c7;padding:4px;background:transparent;border:none;cursor:pointer;"><i data-lucide="x" class="w-4 h-4"></i></button>
+                    </div>
+
+                    <div style="${statusBannerStyle}padding:8px 12px;font-size:12px;font-weight:700;letter-spacing:0.05em;text-align:center;">
+                        ${statusText}
+                    </div>
+
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;text-align:center;font-variant-numeric:tabular-nums;">
+                        <div style="background:#e0f2fe;border:1px solid #7dd3fc;padding:8px;">
+                            <div style="font-size:10px;font-weight:700;letter-spacing:0.05em;color:#0369a1;">識別相片</div>
+                            <div style="font-size:14px;font-weight:900;color:#15803d;margin-top:2px;">${checkedCount}/${totalN} 張</div>
+                        </div>
+                        <div style="background:#e0f2fe;border:1px solid #7dd3fc;padding:8px;">
+                            <div style="font-size:10px;font-weight:700;letter-spacing:0.05em;color:#0369a1;">消耗 Token</div>
+                            <div style="font-size:14px;font-weight:900;color:#0c4a6e;margin-top:2px;">${totalTokens.toLocaleString()} Token</div>
+                        </div>
+                        <div style="background:#e0f2fe;border:1px solid #7dd3fc;padding:8px;">
+                            <div style="font-size:10px;font-weight:700;letter-spacing:0.05em;color:#0369a1;">總用時</div>
+                            <div style="font-size:14px;font-weight:900;color:#0c4a6e;margin-top:2px;">${elapsedSec} 秒</div>
+                        </div>
+                    </div>
+
+                    <div style="font-size:10.5px;font-weight:500;color:#0369a1;text-align:center;letter-spacing:0.05em;font-variant-numeric:tabular-nums;">
+                        送出 ${promptTokens.toLocaleString()} ／ 回傳 ${completionTokens.toLocaleString()}
+                    </div>
+
+                    <div style="display:flex;justify-content:flex-end;gap:8px;padding-top:4px;">
+                        ${!isAllOk ? `<button type="button" onclick="document.getElementById('stallAuditSummaryModal')?.remove(); window.openStallAuditResultModal();" style="flex:1;padding:8px 12px;background:#e11d48;border:1px solid #be123c;color:#ffffff;font-size:12px;font-weight:900;letter-spacing:0.06em;cursor:pointer;">查看異常 (${anomalyCount})</button>` : ''}
+                        <button type="button" onclick="document.getElementById('stallAuditSummaryModal')?.remove()" style="${isAllOk ? 'width:100%;' : 'padding:8px 20px;'}padding-top:8px;padding-bottom:8px;background:#facc15;border:2px solid #ca8a04;color:#422006;font-size:12px;font-weight:900;letter-spacing:0.12em;cursor:pointer;">確定</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            if (window.lucide) lucide.createIcons({ root: $('stallAuditSummaryModal') });
+        };
+
+        // 第 2 步：逐張獨立呼叫 gpt-4o 核對全部目標相片（真實進度 1/N -> N/N）
+        window.executeBatchStallCheck = async (targets) => {
+            const apiKey = window.getAiAuditApiKey();
+            if (!apiKey) return window.promptSetAiApiKey(() => window.executeBatchStallCheck(targets));
+
+            const startTimeMs = performance.now();
+            const totalN = targets.length;
+            window._stallAuditWarnings = {};
+            const anomalies = [];
+            let checkedCount = 0;
+            let totalTokens = 0;
+            let promptTokens = 0;
+            let completionTokens = 0;
+
+            window.setUploadProgress(2, `核對相片進度 0/${totalN}`);
+
+            try {
+                for (let idx = 0; idx < totalN; idx++) {
+                    const item = targets[idx];
+                    const stepNum = idx + 1;
+                    const startPct = Math.round((idx / totalN) * 100);
+                    window.setUploadProgress(Math.max(2, startPct), `核對相片進度 ${stepNum}/${totalN}`);
+
+                    const rawTitle = String(item.title || '').trim();
+                    const curNorm = window.normalizeStallCodeForCompare(rawTitle);
+                    const isRawExactStandard = /^(1|R|J)-\d{3}$/.test(rawTitle);
+
+                    const fullUrl = await getFullImageUrlAsync(item);
+                    const resizedDataUrl = await window.resizeImageForStallCheck(fullUrl, 1200);
+
+                    let detNorm = '';
+                    let aiReason = '';
+
+                    if (resizedDataUrl) {
+                        const r = await window.checkSingleStallImageWithAi(apiKey, item, resizedDataUrl);
+                        if (r?._usage) {
+                            promptTokens += r._usage.promptTokens;
+                            completionTokens += r._usage.completionTokens;
+                            totalTokens += r._usage.totalTokens || (r._usage.promptTokens + r._usage.completionTokens);
+                        }
+                        const candidateNorm = window.normalizeStallCodeForCompare(r?.detected || '');
+                        if (window.isCompleteStallCode(candidateNorm)) {
+                            detNorm = candidateNorm;
+                        }
+                        aiReason = String(r?.reason || '').trim();
+                    }
+
+                    checkedCount++;
+                    const endPct = Math.round((checkedCount / totalN) * 100);
+                    window.setUploadProgress(endPct, `核對相片進度 ${checkedCount}/${totalN}`);
+
+                    // 規則 1：原本不是嚴格標準格式，一律視為錯誤並提供修正
+                    if (!isRawExactStandard) {
+                        const fallbackFix = window.isCompleteStallCode(curNorm) ? curNorm : '';
+                        const finalSuggested = detNorm || fallbackFix;
+                        const warnObj = {
+                            itemId: item.id,
+                            currentTitle: rawTitle || '無標題',
+                            suggested: finalSuggested,
+                            reason: finalSuggested
+                                ? (aiReason || `格式異常，建議修正為 ${finalSuggested}`)
+                                : (aiReason || '檔號格式不完整'),
+                            category: item.category,
+                            time: item.time
+                        };
+                        window._stallAuditWarnings[item.id] = warnObj;
+                        anomalies.push(warnObj);
+                        continue;
+                    }
+
+                    // 規則 2：原本已是標準格式，但單張辨識出不同的標準檔號，視為錯誤並提供修正
+                    if (detNorm && detNorm !== rawTitle) {
+                        const warnObj = {
+                            itemId: item.id,
+                            currentTitle: rawTitle,
+                            suggested: detNorm,
+                            reason: aiReason || `圖面檔號為 ${detNorm}`,
+                            category: item.category,
+                            time: item.time
+                        };
+                        window._stallAuditWarnings[item.id] = warnObj;
+                        anomalies.push(warnObj);
+                    }
+                }
+
+                const elapsedSec = ((performance.now() - startTimeMs) / 1000).toFixed(1);
+                window._stallAuditLastResults = anomalies;
+                window.setUploadProgress(-1, '');
+                window._lastRenderFingerprint = '';
+                window.renderGallery();
+
+                window.openStallAuditSummaryModal({
+                    checkedCount,
+                    totalN,
+                    totalTokens,
+                    promptTokens,
+                    completionTokens,
+                    elapsedSec,
+                    anomalyCount: anomalies.length
+                });
+            } catch (err) {
+                console.error('AI 逐張核對檔號失敗：', err);
+                window.setUploadProgress(-1, '');
+                window.showToast(`核對失敗（已完成 ${checkedCount}/${totalN}）：${err.message || '請檢查網路或 API Key'}`, true);
+            }
+        };
+
+        // ✨ 全部一鍵修正（純改標題名稱，不重算縮圖、整批 1 次儲存與渲染，0.1 秒瞬間完成）
+        window.applyAllStallAuditFixes = async () => {
+            const fixableList = (window._stallAuditLastResults || []).filter(w => w.suggested);
+            if (!fixableList.length) return window.showToast('沒有可自動套用的建議檔號', true);
+
+            const batch = (currentUser && db) ? writeBatch(db) : null;
+            const changedLogs = [];
+
+            fixableList.forEach(warn => {
+                const item = galleryItems.find(x => x.id === warn.itemId);
+                if (!item) return;
+                const oldTitle = item.title || '無標題';
+                item.title = warn.suggested; // 只改名稱，保留原本 updatedAt 避免重建縮圖
+                changedLogs.push(`[${oldTitle}]→[${warn.suggested}]`);
+
+                delete window._stallAuditWarnings[warn.itemId];
+                if (batch) {
+                    batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', String(warn.itemId)), { title: warn.suggested }, { merge: true });
+                } else {
+                    window.queueGalleryMetadataPatch(warn.itemId, { title: warn.suggested });
+                }
+            });
+
+            window._stallAuditLastResults = (window._stallAuditLastResults || []).filter(w => !w.suggested);
+            if (!window._stallAuditLastResults.length) {
+                $('stallAuditResultModal')?.remove();
+            } else {
+                fixableList.forEach(w => document.getElementById(`audit-row-${w.itemId}`)?.remove());
+                if ($('auditRemainCount')) $('auditRemainCount').textContent = window._stallAuditLastResults.length;
+            }
+
+            // 只儲存 1 次、只渲染 1 次
+            await saveGalleryItemsSafe(galleryItems);
+            if (batch) {
+                batch.commit().catch(() => {
+                    fixableList.forEach(w => window.queueGalleryMetadataPatch(w.itemId, { title: w.suggested }));
+                });
+            }
+
+            window._lastRenderFingerprint = '';
+            window.renderGallery();
+            window.autoSyncClosedStallsToPatrol(true);
+            if (changedLogs.length) {
+                window.writeGalleryLog('修改圖片', `批次修正 ${changedLogs.length} 張: ${changedLogs.slice(0, 5).join('、')}`, 'AI 核對全部修正檔號');
+            }
+            window.showToast(`✅ 已瞬間修正全部 ${changedLogs.length} 張檔號！`);
+        };
+
+        // 第 3 步：異常集中彈窗（只列出有出錯的相片，支援單張套用與全部一鍵修正）
+        window.openStallAuditResultModal = async () => {
+            $('stallAuditResultModal')?.remove();
+            const list = window._stallAuditLastResults || [];
+            if (!list.length) return window.showToast('✅ 目前沒有待處理的異常檔號');
+
+            const fixableCount = list.filter(w => w.suggested).length;
+
+            const rowsHtml = (await Promise.all(list.map(async (warn) => {
+                const item = galleryItems.find(x => x.id === warn.itemId);
+                if (!item) return '';
+                const thumb = await getLowResThumbUrlAsync(item);
+                const safeId = window.jsAttr(item.id);
+                const safeSug = window.jsAttr(warn.suggested || '');
+
+                return `
+                <div id="audit-row-${item.id}" class="p-2.5 bg-rose-50/60 border border-rose-200 rounded-xl flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                        <img src="${thumb}" onclick="window.viewHdImage('${safeId}', event)" class="w-12 h-12 rounded-lg object-cover border border-rose-300 shrink-0 cursor-zoom-in" title="點擊放大檢查">
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-1 text-xs font-black">
+                                <span class="text-slate-500 line-through">${window.esc(warn.currentTitle)}</span>
+                                ${warn.suggested ? `<span class="text-slate-400">➔</span><span class="text-rose-600 bg-white px-1.5 py-0.2 rounded border border-rose-300">${window.esc(warn.suggested)}</span>` : ''}
+                            </div>
+                            <div class="text-[10.5px] font-bold text-rose-700 mt-0.5 truncate">⚠️ ${window.esc(warn.reason)}</div>
+                            <div class="text-[9.5px] font-mono text-slate-400 mt-0.5">${window.esc(warn.category || '')} · ${window.esc(warn.time || '')}</div>
+                        </div>
+                    </div>
+                    <div class="flex flex-col gap-1 shrink-0">
+                        ${warn.suggested ? `<button type="button" onclick="window.applyStallAuditFix('${safeId}', '${safeSug}')" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-black shadow-2xs active:scale-95">修正</button>` : `<button type="button" onclick="$('stallAuditResultModal')?.remove(); window.openEditGalleryModal('${safeId}')" class="px-2.5 py-1 bg-blue-600 text-white rounded-lg text-[11px] font-black">手動改</button>`}
+                        <button type="button" onclick="window.dismissStallAuditWarning('${safeId}')" class="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-500 border border-slate-200 rounded-lg text-[10.5px] font-bold active:scale-95">忽略</button>
+                    </div>
+                </div>`;
+            }))).join('');
+
+            const modalHtml = `
+            <div id="stallAuditResultModal" class="fixed inset-0 bg-slate-900/65 backdrop-blur-sm z-[10055] flex items-center justify-center p-3 sm:p-4" onclick="if(event.target===this)this.remove()">
+                <div class="bg-white rounded-2xl p-4 w-full max-w-[380px] max-h-[85vh] shadow-2xl border-2 border-rose-200 flex flex-col animate-pop-in" onclick="event.stopPropagation()">
+                    <div class="flex items-center justify-between pb-2.5 mb-2 border-b border-slate-100 shrink-0">
+                        <div class="flex items-center gap-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
+                            <h3 class="font-black text-sm text-slate-800">發現 <span id="auditRemainCount" class="text-rose-600">${list.length}</span> 張格式/檔號異常</h3>
+                        </div>
+                        <button type="button" onclick="document.getElementById('stallAuditResultModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1"><i data-lucide="x" class="w-4 h-4"></i></button>
+                    </div>
+                    <div class="text-[11px] font-bold text-slate-500 mb-2 shrink-0">僅允許 <strong>1-XXX</strong>、<strong>R-XXX</strong>、<strong>J-XXX</strong> 格式，其餘皆列為異常：</div>
+                    <div id="stallAuditListContainer" class="flex-1 overflow-y-auto space-y-2 pr-0.5 scrollbar-hide">${rowsHtml}</div>
+                    <div class="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center gap-2 shrink-0">
+                        <button type="button" onclick="window.promptSetAiApiKey()" class="text-[11px] font-bold text-slate-400 hover:text-indigo-600">⚙️ 重設 Key</button>
+                        <div class="flex items-center gap-1.5">
+                            ${fixableCount > 0 ? `<button type="button" onclick="window.applyAllStallAuditFixes()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95">✨ 全部修正 (${fixableCount})</button>` : ''}
+                            <button type="button" onclick="document.getElementById('stallAuditResultModal')?.remove()" class="px-3 py-1.5 bg-slate-800 text-white rounded-xl text-xs font-black active:scale-95">關閉</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            if (window.lucide) lucide.createIcons({ root: $('stallAuditResultModal') });
+        };
+
+        // 單張套用 AI 建議檔號（純改名稱，保留原縮圖版本號不重算）
+        window.applyStallAuditFix = async (itemId, newTitle) => {
+            const item = galleryItems.find(x => x.id === itemId);
+            if (!item || !newTitle) return;
+
+            const oldTitle = item.title || '無標題';
+            item.title = newTitle;
+
+            delete window._stallAuditWarnings[itemId];
+            window._stallAuditLastResults = (window._stallAuditLastResults || []).filter(x => x.itemId !== itemId);
+
+            await saveGalleryItemsSafe(galleryItems);
+            if (currentUser && db) {
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'gallery_items', itemId), { title: newTitle }, { merge: true }).catch(() => {
+                    window.queueGalleryMetadataPatch(itemId, { title: newTitle });
+                });
+            } else {
+                window.queueGalleryMetadataPatch(itemId, { title: newTitle });
+            }
+
+            window.writeGalleryLog('修改圖片', `[${oldTitle}] → [${newTitle}]`, 'AI 核對一鍵修正檔號');
+            document.getElementById(`audit-row-${itemId}`)?.remove();
+            if ($('auditRemainCount')) $('auditRemainCount').textContent = window._stallAuditLastResults.length;
+            if (window._stallAuditLastResults.length === 0) $('stallAuditResultModal')?.remove();
+
+            window._lastRenderFingerprint = '';
+            window.renderGallery();
+            window.autoSyncClosedStallsToPatrol(true);
+            window.showToast(`✅ 已修正為「${newTitle}」`);
+        };
+
+        // 忽略單張警告（解除紅框）
+        window.dismissStallAuditWarning = (itemId) => {
+            delete window._stallAuditWarnings[itemId];
+            window._stallAuditLastResults = (window._stallAuditLastResults || []).filter(x => x.itemId !== itemId);
+            document.getElementById(`audit-row-${itemId}`)?.remove();
+            if ($('auditRemainCount')) $('auditRemainCount').textContent = window._stallAuditLastResults.length;
+            if (window._stallAuditLastResults.length === 0) $('stallAuditResultModal')?.remove();
+            window._lastRenderFingerprint = '';
+            window.renderGallery();
         };
 
 // ====== 專屬攤販提早收工 Excel (CSV) 導出函式（新增檔主姓名欄位） ======
@@ -9975,15 +10436,25 @@ const topSectionHtml = useSao ? `
 
                 // 🌟 判斷：當分類為提早收工/清潔，且已經導出過，顯示綠色剔號
                 // 🌟 判斷：當分類包含收工/清潔，且已經導出過，顯示醒目的綠色剔號
-                // 🌟 判斷：只要該張圖片已導出過，所有分類一律顯示綠色剔號
+// 🌟 判斷：只要該張圖片已導出過，所有分類一律顯示綠色剔號
                 const exportedCheck = i.isExported 
                     ? `<span class="ml-1 inline-flex items-center text-emerald-600 font-black text-xs shrink-0 select-none" title="已成功導出">✔</span>` 
+                    : '';
+
+                // 🌟 檢查是否有 AI 標記的檔號異常
+                const auditWarn = window._stallAuditWarnings?.[i.id];
+                const cardBorderCls = auditWarn
+                    ? 'border-2 border-rose-500 ring-2 ring-rose-300/80 shadow-md'
+                    : `border border-slate-200 ${isSelected ? 'ring-2 ring-blue-500' : ''}`;
+                const warnBadgeHtml = auditWarn
+                    ? `<div onclick="event.stopPropagation(); window.openStallAuditResultModal()" class="absolute top-1 left-1 right-1 z-20 bg-rose-600/95 text-white text-[10px] font-black px-1.5 py-0.5 rounded shadow-md truncate text-center cursor-pointer animate-pulse" title="點擊查看異常詳情">⚠️ 疑誤: ${window.esc(auditWarn.suggested || '未辨識')}</div>`
                     : '';
 
                 return `
                     <div data-id="${i.id}" 
                          onclick="${window.isGallerySelectMode ? `window.toggleSelectGalleryItem('${i.id}', event)` : ''}"
-                         class="gallery-item-card relative group bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs flex flex-col transition-all cursor-pointer ${isSelected ? 'ring-2 ring-blue-500' : ''}">
+                         class="gallery-item-card relative group bg-white ${cardBorderCls} rounded-xl overflow-hidden shadow-xs flex flex-col transition-all cursor-pointer">
+                        ${warnBadgeHtml}
                         
                         <!-- 頂部整行：分類標籤（文字與剔號獨立，剔號絕不被截斷） -->
                         <div class="px-1 py-0.5 bg-slate-50 border-b border-slate-100 flex justify-between items-center select-none"
@@ -22370,10 +22841,14 @@ historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
                 <!-- 工具列：文字加大 2px + 緊湊邊框版 -->
                 <div class="px-1.5 py-1.5 border-b border-[#e6e2d6] flex items-center justify-between bg-white shrink-0 shadow-2xs z-20 gap-1">
 
-                    <div class="relative flex-1">
+<div class="relative flex-1">
                         <i data-lucide="search" class="absolute left-2.5 top-2 w-3.5 h-3.5 text-slate-400"></i>
                         <input type="text" id="gallerySearchInput" placeholder="搜尋圖片..." oninput="window.renderGallery()" class="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-1.5 py-0.5 text-[13px] text-slate-800 font-bold placeholder-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none tracking-wide text-center">
                     </div>
+                    <!-- 🌟 AI 核對檔號按鈕 -->
+                    <button type="button" onclick="window.confirmCheckGalleryStalls()" title="AI 核對提早收工與清潔相片檔號" class="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-1.5 py-0.5 rounded-lg flex items-center justify-center active:scale-95 text-[13px] font-black transition-all shadow-2xs shrink-0">
+                        <i data-lucide="scan-search" class="w-3.5 h-3.5 mr-0.5 text-indigo-600"></i>核對
+                    </button>
                     <!-- Excel 導出按鈕 (純圖示) -->
                     <button type="button" onclick="window.exportGalleryExcelCSV()" title="導出攤販提早收工資料表" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 p-1.5 rounded-lg flex items-center justify-center active:scale-95 transition-all shadow-2xs shrink-0">
                         <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
