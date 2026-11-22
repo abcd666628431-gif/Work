@@ -21918,22 +21918,11 @@ window.pushMeetingReportsToAllIframes = (reports) => {
           </span>
           <button type="button" class="toggle-btn" data-target="box_clean_detail" title="添加/收回輸入框">+</button>
         </div>
-        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="pest_count">
+        <div class="flex items-baseline flex-wrap gap-y-1 gap-x-1" data-trigger="pest_count">
           <span class="font-bold text-black dark:text-slate-100">· 蟲鼠狀況：</span>
           <span contenteditable="true" id="pest_count" class="expand-input num-input">無</span>
           <span class="text-black font-semibold">處</span>
-          <span class="bracket-group">
-            <span class="ml-1 font-semibold">(</span>
-            <span contenteditable="true" id="pest_loc" class="expand-input detail-input"></span>
-            <span class="text-black font-semibold">區域發現</span>
-            <span contenteditable="true" id="pest_type" class="expand-input detail-input ml-1"></span>
-            <span class="text-black font-semibold">類型)</span>
-            <span class="remark-box" id="box_pest_detail">
-              <span class="text-black font-semibold ml-1">備註：</span>
-              <span contenteditable="true" id="pest_detail" class="expand-input detail-input"></span>
-            </span>
-          </span>
-          <button type="button" class="toggle-btn" data-target="box_pest_detail" title="添加/收回說明">+</button>
+          <span contenteditable="true" id="pest_desc" class="expand-input detail-input"></span>
         </div>
       </div>
     </section>
@@ -22021,23 +22010,15 @@ window.pushMeetingReportsToAllIframes = (reports) => {
           </span>
           <button type="button" class="toggle-btn" data-target="box_cs_complaint_desc" title="添加/收回說明">+</button>
         </div>
-        <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="cs_inquiry_count">
+<div class="flex items-baseline flex-wrap gap-y-1 gap-x-1" data-trigger="cs_inquiry_count">
           <span class="font-bold text-black dark:text-slate-100">· 諮詢協助：</span>
           <span contenteditable="true" id="cs_inquiry_count" class="expand-input num-input">無</span>
           <span class="text-black font-semibold">人次</span>
-          
-          <span class="remark-box" id="box_cs_inquiry_desc_1"><span contenteditable="true" id="cs_inquiry_desc_1" class="expand-input detail-input"></span></span>
-          <button type="button" class="toggle-btn show-btn" data-target="box_cs_inquiry_desc_1" title="添加/收回 1">＋</button>
-          <span class="remark-box" id="box_cs_inquiry_desc_2"><span contenteditable="true" id="cs_inquiry_desc_2" class="expand-input detail-input"></span></span>
-          <button type="button" class="toggle-btn show-btn" data-target="box_cs_inquiry_desc_2" title="添加/收回 2">＋</button>
-          <span class="remark-box" id="box_cs_inquiry_desc_3"><span contenteditable="true" id="cs_inquiry_desc_3" class="expand-input detail-input"></span></span>
-          <button type="button" class="toggle-btn show-btn" data-target="box_cs_inquiry_desc_3" title="添加/收回 3">＋</button>
-          <span class="remark-box" id="box_cs_inquiry_desc_4"><span contenteditable="true" id="cs_inquiry_desc_4" class="expand-input detail-input"></span></span>
-          <button type="button" class="toggle-btn show-btn" data-target="box_cs_inquiry_desc_4" title="添加/收回 4">＋</button>
-          <span class="remark-box" id="box_cs_inquiry_desc_5"><span contenteditable="true" id="cs_inquiry_desc_5" class="expand-input detail-input"></span></span>
-          <button type="button" class="toggle-btn show-btn" data-target="box_cs_inquiry_desc_5" title="添加/收回 5">＋</button>
-          <span class="remark-box" id="box_cs_inquiry_desc_6"><span contenteditable="true" id="cs_inquiry_desc_6" class="expand-input detail-input"></span></span>
-          <button type="button" class="toggle-btn show-btn" data-target="box_cs_inquiry_desc_6" title="添加/收回 6">＋</button>
+          <select id="cs_inquiry_select" onchange="window.pickInquiryOption(this.value)" class="border border-slate-300 rounded-md px-1.5 py-0.5 text-xs bg-white text-slate-800">
+            <option value="">選單加入文字...</option>
+          </select>
+          <span contenteditable="true" id="cs_inquiry_desc" onblur="window.commitInquiryManualText(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}" class="expand-input detail-input"></span>
+          <button type="button" onclick="window.openInquiryOptionsManager()" class="text-xs px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300" title="管理或刪除選單選項">管理選項</button>
         </div>
         <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="cs_lost_count">
           <span class="font-bold text-black dark:text-slate-100">· 失物發現：</span>
@@ -22342,8 +22323,8 @@ window.pushMeetingReportsToAllIframes = (reports) => {
         const btns = row.querySelectorAll('.toggle-btn');
         if (!triggerEl || !btns.length) return;
 
-        const val = triggerEl.innerText.trim();
-        const isNum = !isNaN(val) && Number(val) > 0;
+const val = triggerEl.innerText.trim();
+        const isPositiveNum = /^\d+(?:\.\d+)?$/.test(val) && Number(val) > 0;
         const hasValidText = val !== '' && val !== '0' && val !== '無' && val !== '无' && val !== '正常';
 
         // 如果是「諮詢協助」，讓它的 6 個按鈕始終顯示
@@ -22370,22 +22351,22 @@ window.pushMeetingReportsToAllIframes = (reports) => {
       });
     }
 
-    function updateBracketStates() {
-      const isInactive = (text) => {
-        const val = text.trim();
-        return val === '' || val === '0' || val === '無' || val === '无' || val === '正常';
-      };
+const isInactiveFieldText = (text) => {
+      const val = String(text || '').trim();
+      return val === '' || val === '0' || val === '無' || val === '无' || val === '正常';
+    };
 
+    function updateBracketStates() {
       document.querySelectorAll('.bracket-group').forEach(bracketGroup => {
         const row = bracketGroup.closest('[data-trigger]');
         if (row) {
           const triggerId = row.getAttribute('data-trigger');
           const triggerEl = document.getElementById(triggerId);
-          if (triggerEl && isInactive(triggerEl.innerText)) {
+          if (triggerEl && isInactiveFieldText(triggerEl.innerText)) {
             bracketGroup.classList.remove('active');
             return;
           }
-          if (triggerEl && !isInactive(triggerEl.innerText)) {
+          if (triggerEl && !isInactiveFieldText(triggerEl.innerText)) {
             bracketGroup.classList.add('active');
             return;
           }
@@ -22403,12 +22384,17 @@ window.pushMeetingReportsToAllIframes = (reports) => {
       updateToggleBtnVisibility();
     }
 
+let toastHideTimer = null;
     function showToast(msg) {
       const toast = document.getElementById('toast');
       const toastMsg = document.getElementById('toast-message');
+      if (!toast || !toastMsg) return;
       toastMsg.innerText = msg;
       toast.classList.remove('translate-y-20', 'opacity-0');
-      setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 2500);
+      if (toastHideTimer) clearTimeout(toastHideTimer);
+      toastHideTimer = setTimeout(() => {
+        toast.classList.add('translate-y-20', 'opacity-0');
+      }, 2500);
     }
 
     // 🌟 備份每個展開框的初始結構，確保切換日期或清空時能完美還原
@@ -22434,10 +22420,12 @@ window.pushMeetingReportsToAllIframes = (reports) => {
       const box = document.getElementById(targetId);
       if (!box) return;
 
-      const triggerId = row.getAttribute('data-trigger');
+const triggerId = row.getAttribute('data-trigger');
       const triggerEl = triggerId ? document.getElementById(triggerId) : null;
-      const countVal = forceCount !== undefined ? forceCount : (triggerEl ? parseInt(triggerEl.innerText.trim(), 10) : 1);
-      const targetCount = (!isNaN(countVal) && countVal > 0) ? Math.min(countVal, 20) : 1;
+      const rawTriggerText = triggerEl ? triggerEl.innerText.trim() : '';
+      const parsedNum = /^\d+$/.test(rawTriggerText) ? parseInt(rawTriggerText, 10) : 1;
+      const countVal = forceCount !== undefined ? forceCount : parsedNum;
+      const targetCount = (Number.isInteger(countVal) && countVal > 0) ? Math.min(countVal, 20) : 1;
 
       const baseId = targetId.replace('box_', '');
       window._reportMultiStore = window._reportMultiStore || {};
@@ -22480,12 +22468,14 @@ window.pushMeetingReportsToAllIframes = (reports) => {
         window._reportMultiStore = window._reportMultiStore || {};
         window._reportMultiStore[baseId] = [];
         let html = '';
-        for (let i = 0; i < count; i++) {
+const safeCount = Math.min(count, 20);
+        for (let i = 0; i < safeCount; i++) {
           const k = baseId + '_multi_' + i;
-          const val = dataObj[k] !== undefined ? dataObj[k] : '';
+          const val = dataObj[k] !== undefined ? String(dataObj[k]) : '';
           window._reportMultiStore[baseId][i] = val;
-          const hasTextCls = (val && val !== '無') ? 'has-text' : '';
-          html += '<span class="inline-flex items-baseline my-0.5"><span contenteditable="true" id="' + k + '" data-group="' + baseId + '" class="expand-input detail-input ' + hasTextCls + '">' + val + '</span></span>';
+          const hasTextCls = (val.trim() && val.trim() !== '無') ? 'has-text' : '';
+          const safeVal = val.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+          html += '<span class="inline-flex items-baseline my-0.5"><span contenteditable="true" id="' + k + '" data-group="' + baseId + '" class="expand-input detail-input ' + hasTextCls + '">' + safeVal + '</span></span>';
         }
         box.innerHTML = html;
       });
@@ -22599,7 +22589,7 @@ function getArchiveIndex() {
       const timestamp = isInheritedDraft ? new Date(0).toISOString() : new Date().toISOString();
       const reportObject = { dateKey: dateKey, updatedAt: timestamp, data: data, tags: activeTags, boxes: openBoxes };
 
-      try {
+try {
         localStorage.setItem('market_report_' + dateKey, JSON.stringify(reportObject));
         let index = getArchiveIndex();
         if (!index.includes(dateKey)) {
@@ -22607,7 +22597,10 @@ function getArchiveIndex() {
           index.sort(function(a, b) { return b.localeCompare(a); });
           localStorage.setItem('market_reports_index', JSON.stringify(index));
         }
-      } catch(e) {}
+      } catch(e) {
+        console.error('本機儲存匯報失敗:', dateKey, e);
+        showToast('⚠️ 本機儲存空間不足，請匯出備份');
+      }
 
       updateHistoryCountBadge();
       return { dateKey: dateKey, report: reportObject };
@@ -22618,15 +22611,18 @@ function getArchiveIndex() {
         clearTimeout(autoSaveTimer);
         autoSaveTimer = null;
       }
-      if (pendingCloudPayload) {
+if (pendingCloudPayload) {
         try {
           window.parent.postMessage({
             type: 'SAVE_MEETING_REPORT',
             dateKey: pendingCloudPayload.dateKey,
             report: pendingCloudPayload.report
           }, '*');
-        } catch(e) {}
-        pendingCloudPayload = null;
+          pendingCloudPayload = null;
+        } catch(e) {
+          console.error('傳送雲端儲存訊息失敗:', e);
+          showToast('⚠️ 雲端同步通知失敗，請稍後重試');
+        }
       }
     }
 
@@ -22715,10 +22711,10 @@ window.addEventListener('message', function(event) {
         return;
       }
 
-      const currentKey = getCurrentDateKey();
+const currentKey = getCurrentDateKey();
       const currentReport = reports[currentKey];
       if (!currentReport || !currentReport.data) {
-        if (!localStorage.getItem('market_report_' + currentKey) && Object.keys(reports).length > 0) {
+        if (!localStorage.getItem('market_report_' + currentKey)) {
           loadReportByDate(currentKey);
         }
         updateHistoryCountBadge();
@@ -22863,8 +22859,9 @@ if (savedRaw) {
         updateBracketStates();
         updateToggleBtnVisibility();
 
-        if (isInherited) {
-          showToast('📋 暫無本日紀錄，已載入前日範本供參考（未儲存）');
+if (isInherited) {
+          buildAndSaveLocalReport(true);
+          showToast('📋 暫無本日紀錄，已載入前日範本');
         }
         return;
       }
@@ -23006,14 +23003,18 @@ const today = new Date();
       }
       const currentKey = getCurrentDateKey();
       index.forEach(function(dateKey) {
-        let summary = '無內容';
+let summary = '無內容';
         try {
           const raw = localStorage.getItem('market_report_' + dateKey);
           if (raw) {
             const obj = JSON.parse(raw);
-            summary = '保安事件: ' + (obj.data.sec_cases || '無') + ' | 清潔問題: ' + (obj.data.clean_cases || '無') + ' | 報修: ' + (obj.data.rep_comp_total || '無');
+            const dObj = obj?.data || {};
+            summary = '保安事件: ' + (dObj.sec_cases || '無') + ' | 清潔問題: ' + (dObj.clean_cases || '無') + ' | 報修: ' + (dObj.rep_comp_total || '無');
           }
-        } catch(e) {}
+        } catch(e) {
+          console.error('讀取歷史摘要失敗:', dateKey, e);
+          summary = '資料格式異常';
+        }
 
         const item = document.createElement('div');
         const isCurrent = (dateKey === currentKey);
@@ -23048,8 +23049,8 @@ item.className = 'p-3 rounded-xl border flex items-center justify-between gap-2 
 historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
         btn.addEventListener('click', function() {
           const d = btn.getAttribute('data-date');
-          
-          // 根源修復：若刪除的日期剛好為當前正排隊上傳的目標，立即取消延遲排程
+          if (!d || !confirm('確定要刪除 ' + d + ' 的匯報記錄嗎？')) return;
+
           if (pendingCloudPayload && pendingCloudPayload.dateKey === d) {
             pendingCloudPayload = null;
           }
@@ -23063,7 +23064,10 @@ historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
           localStorage.setItem('market_reports_index', JSON.stringify(idx));
           try {
             window.parent.postMessage({ type: 'DELETE_MEETING_REPORT', dateKey: d }, '*');
-          } catch(e) {}
+          } catch(e) {
+            console.error('通知刪除雲端匯報失敗:', e);
+            showToast('⚠️ 本機已刪除，雲端通知失敗');
+          }
           renderHistoryModal();
           updateHistoryCountBadge();
           showToast('已刪除 ' + d + ' 的匯報記錄');
@@ -23084,17 +23088,27 @@ historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
       if (e.target === historyModal) historyModal.classList.add('hidden');
     });
 
-    document.getElementById('btn-backup-export').addEventListener('click', () => {
+document.getElementById('btn-backup-export').addEventListener('click', () => {
       const index = getArchiveIndex();
       const allReports = {};
-      index.forEach(k => { allReports[k] = JSON.parse(localStorage.getItem(\`market_report_\${k}\`) || '{}'); });
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(allReports, null, 2));
+      index.forEach(k => {
+        const raw = localStorage.getItem('market_report_' + k);
+        if (!raw) return;
+        try {
+          allReports[k] = JSON.parse(raw);
+        } catch (e) {
+          console.error('備份略過損毀紀錄:', k, e);
+        }
+      });
+      const blob = new Blob([JSON.stringify(allReports, null, 2)], { type: 'application/json;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
       const downloadAnchor = document.createElement('a');
-      downloadAnchor.setAttribute("href", dataStr);
-      downloadAnchor.setAttribute("download", \`街市匯報備份_\${getCurrentDateKey()}.json\`);
+      downloadAnchor.href = blobUrl;
+      downloadAnchor.download = '街市匯報備份_' + getCurrentDateKey() + '.json';
       document.body.appendChild(downloadAnchor);
       downloadAnchor.click();
       downloadAnchor.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1500);
       showToast('已匯出完整歷史備份檔案');
     });
 
@@ -23130,7 +23144,8 @@ historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
       });
     });
 
-    document.getElementById('btn-clear').addEventListener('click', () => {
+document.getElementById('btn-clear').addEventListener('click', () => {
+      if (!confirm('確定要重設清空「' + getCurrentDateKey() + '」目前的填寫內容嗎？')) return;
       resetFieldsWithoutDate();
       saveCurrentDayReport();
       updateBracketStates();
@@ -23167,11 +23182,128 @@ historyList.querySelectorAll('.btn-del-record').forEach(function(btn) {
       localStorage.setItem('market_theme', !isDark ? 'dark' : 'light');
     });
 
+var INQUIRY_OPTS_KEY = 'report_cs_inquiry_options_v1';
+    var DEFAULT_INQUIRY_OPTS = ['攤位位置查詢', '營業時間查詢', '失物查詢', '設施使用說明'];
+
+    function escInquiryHtml(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    window.getInquiryOptions = function() {
+      try {
+        var raw = JSON.parse(localStorage.getItem(INQUIRY_OPTS_KEY) || 'null');
+        return (Array.isArray(raw) && raw.length) ? raw : DEFAULT_INQUIRY_OPTS.slice();
+      } catch (e) {
+        console.error('讀取諮詢協助選項失敗:', e);
+        return DEFAULT_INQUIRY_OPTS.slice();
+      }
+    };
+
+    window.saveInquiryOptions = function(opts) {
+      var cleaned = Array.from(new Set((opts || []).map(function(s) { return String(s || '').trim(); }).filter(Boolean)));
+      try {
+        localStorage.setItem(INQUIRY_OPTS_KEY, JSON.stringify(cleaned));
+      } catch (e) {
+        console.error('儲存諮詢協助選項失敗:', e);
+        showToast('⚠️ 無法儲存選單選項');
+      }
+      window.renderInquirySelect();
+    };
+
+    window.renderInquirySelect = function() {
+      var sel = document.getElementById('cs_inquiry_select');
+      if (!sel) return;
+      var opts = window.getInquiryOptions();
+      sel.innerHTML = '<option value="">選單加入文字...</option>' +
+        opts.map(function(o) {
+          return '<option value="' + escInquiryHtml(o) + '">' + escInquiryHtml(o) + '</option>';
+        }).join('');
+    };
+
+    window.pickInquiryOption = function(val) {
+      var box = document.getElementById('cs_inquiry_desc');
+      var sel = document.getElementById('cs_inquiry_select');
+      if (!box || !val) return;
+      var cur = (box.innerText || box.textContent || '').trim();
+      box.innerText = cur ? (cur + '、' + val) : val;
+      updateTextColor(box);
+      updateBracketStates();
+      updateToggleBtnVisibility();
+      if (sel) sel.value = '';
+      saveCurrentDayReport();
+    };
+
+    window.commitInquiryManualText = function(el) {
+      var txt = (el && (el.innerText || el.textContent) || '').trim();
+      if (!txt) return;
+      var opts = window.getInquiryOptions();
+      var changed = false;
+      txt.split(/[、,，;；/]+/).map(function(s) { return s.trim(); }).filter(Boolean).forEach(function(part) {
+        if (opts.indexOf(part) === -1) {
+          opts.push(part);
+          changed = true;
+        }
+      });
+      if (changed) {
+        window.saveInquiryOptions(opts);
+      }
+    };
+
+window.deleteInquiryOption = function(idx) {
+      var list = window.getInquiryOptions();
+      if (idx < 0 || idx >= list.length) return;
+      list.splice(idx, 1);
+      window.saveInquiryOptions(list);
+      window.renderInquiryOptionsList();
+    };
+
+    window.renderInquiryOptionsList = function() {
+      var listEl = document.getElementById('inquiryOptList');
+      if (!listEl) return;
+      var opts = window.getInquiryOptions();
+      if (!opts.length) {
+        listEl.innerHTML = '<div class="text-xs text-slate-400 text-center py-3">目前沒有選項</div>';
+        return;
+      }
+      listEl.innerHTML = opts.map(function(o, i) {
+        return '<div class="flex items-center justify-between py-1 px-2 bg-slate-50 rounded border border-slate-200 text-xs"><span>' + escInquiryHtml(o) + '</span><button type="button" data-del-idx="' + i + '" class="inquiry-del-btn text-rose-600 font-bold px-1.5">刪除</button></div>';
+      }).join('');
+      listEl.querySelectorAll('.inquiry-del-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var idx = parseInt(btn.getAttribute('data-del-idx'), 10);
+          window.deleteInquiryOption(idx);
+        });
+      });
+    };
+
+    window.openInquiryOptionsManager = function() {
+      var old = document.getElementById('inquiryOptModal');
+      if (old) old.remove();
+      var overlay = document.createElement('div');
+      overlay.id = 'inquiryOptModal';
+      overlay.className = 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4';
+      overlay.innerHTML = '<div class="bg-white rounded-xl p-4 w-full max-w-xs space-y-2.5 shadow-xl"><div class="flex justify-between items-center font-bold text-sm"><span>諮詢協助選單管理</span><button type="button" id="closeInquiryOptBtn">✕</button></div><div id="inquiryOptList" class="space-y-1.5 max-h-48 overflow-y-auto"></div></div>';
+      overlay.addEventListener('click', function(e) {
+        if (e.target === overlay) overlay.remove();
+      });
+      document.body.appendChild(overlay);
+      document.getElementById('closeInquiryOptBtn').addEventListener('click', function() {
+        overlay.remove();
+      });
+      window.renderInquiryOptionsList();
+    };
+
     const initialKey = getCurrentDateKey();
     loadReportByDate(initialKey);
     updateHistoryCountBadge();
     updateBracketStates();
     updateToggleBtnVisibility();
+    window.renderInquirySelect();
   <\/script>
 </body>
 </html>`;
