@@ -2896,8 +2896,81 @@ memberProfilesStore[name] = Object.assign({ id: '', avatar: '', gender: '女', p
             if (profileData?.avatar && profileData.avatar.startsWith('data:image')) {
                 syncConfig(`member_avatar_${encodeURIComponent(name)}`, { name, avatar: profileData.avatar, updatedAt: Date.now() });
             }
-            const cloudSlimProfiles = window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore);
+const cloudSlimProfiles = window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore);
             syncConfig('member_profiles', { profiles: cloudSlimProfiles });
+
+            window.restoreCleanAvatarsFromCache = async (silent = false) => {
+                const candidates = Array.from(new Set([
+                    ...(cleanMembersStore || []),
+                    ...(csMembersStore || []),
+                    ...(teamMembers || []),
+                    ...Object.keys(memberProfilesStore || {})
+                ])).filter(Boolean);
+
+                let restoredCount = 0;
+
+                for (const mName of candidates) {
+                    const curProf = memberProfilesStore[mName] || {};
+                    if (typeof curProf.avatar === 'string' && curProf.avatar.startsWith('data:image')) {
+                        if (typeof idbSet === 'function') {
+                            try { await idbSet(`avatar_${mName}`, curProf.avatar); } catch (e) {}
+                        }
+                        continue;
+                    }
+
+                    let foundAvatar = '';
+                    if (typeof idbGet === 'function') {
+                        try {
+                            const idbAv = await idbGet(`avatar_${mName}`);
+                            if (typeof idbAv === 'string' && idbAv.startsWith('data:image')) {
+                                foundAvatar = idbAv;
+                            }
+                        } catch (e) {}
+                    }
+
+                    if (!foundAvatar && currentUser && db && navigator.onLine) {
+                        try {
+                            const snap = await getDoc(cfgDoc(`member_avatar_${encodeURIComponent(mName)}`));
+                            const avData = snap.exists() ? snap.data()?.avatar : '';
+                            if (typeof avData === 'string' && avData.startsWith('data:image')) {
+                                foundAvatar = avData;
+                                if (typeof idbSet === 'function') {
+                                    await idbSet(`avatar_${mName}`, foundAvatar).catch(() => {});
+                                }
+                            }
+                        } catch (e) {}
+                    }
+
+                    if (foundAvatar) {
+                        memberProfilesStore[mName] = Object.assign(
+                            { id: '', avatar: '', gender: '女', residency: '本地', prefs: [] },
+                            memberProfilesStore[mName] || {},
+                            { avatar: foundAvatar }
+                        );
+                        restoredCount++;
+                    }
+                }
+
+                if (restoredCount > 0) {
+                    safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+                    if (typeof window.updateMapSimulation === 'function') window.updateMapSimulation();
+                    if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
+                        window.renderMemberRosterListsOnly?.();
+                    }
+                    if ($('scheduleManageModal')?.classList.contains('flex')) {
+                        window.renderScheduleManager?.(true);
+                    }
+                }
+
+                if (!silent) {
+                    if (restoredCount > 0) {
+                        window.showToast(`✅ 已還原 ${restoredCount} 位人員頭像！`);
+                    } else {
+                        window.showToast('⚠️ 本機與雲端皆未找到已存的頭像備份，可點擊成員重新上傳', true);
+                    }
+                }
+                return restoredCount;
+            };
 
 if (hasMergedDuplicates) {
                 const todayStr = getNowInputStrs().date;
@@ -12496,6 +12569,7 @@ tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility)
 checkAndResetDailySchedule(); 
             window.applyTabVisibility();
             window.switchTab('gallery');   // 確保載入本地快取時也直接切換為圖庫
+            window.restoreCleanAvatarsFromCache?.(true);
         }
 
 function setupPureRealtimeSync() {
@@ -21632,9 +21706,10 @@ window.recoverIdentityByFingerprint = async () => {
         onAuthStateChanged(auth, (user) => {
             currentUser = user; const dot = $('connectionDot'), st = $('connectionStatus');
             if (user) { 
-                dot?.classList.replace('bg-red-500', 'bg-green-500'); 
+dot?.classList.replace('bg-red-500', 'bg-green-500'); 
                 if (st) st.textContent = '系統已連線並同步'; 
                 window.recoverIdentityByFingerprint();
+                window.restoreCleanAvatarsFromCache?.(true);
                 setupPureRealtimeSync(); 
                 setupPatrolSync();
                 window.flushPendingGalleryLogs?.();
