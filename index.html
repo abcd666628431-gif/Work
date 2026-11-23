@@ -723,11 +723,7 @@ window.restoreMyIdentityOnBoot = async () => {
                 console.error('身分復原失敗:', e);
             }
         };
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => window.restoreMyIdentityOnBoot(), { once: true });
-        } else {
-            window.restoreMyIdentityOnBoot();
-        }
+// 等 openIDB 宣告完成後由 bootstrapApp 呼叫，避免初始化前存取
 
         // 🌟 5. 操作日誌「設備用戶名單」彈窗（查看所有已識別手機/電腦、即時改名同步雲端、刪除舊紀錄）
         window.openDeviceIdentityListModal = () => {
@@ -4219,8 +4215,18 @@ window.handleUploadMemberAvatar = async (name, input) => {
                     reader.readAsDataURL(file);
                 });
 
+if (typeof idbSet === 'function') {
+                    await idbSet(`avatar_${name}`, avatarDataUrl).catch(e => console.warn('頭像寫入 IDB 失敗:', e));
+                }
                 window.saveMemberProfile(name, { avatar: avatarDataUrl });
-window.openMemberProfilePopup(name, window._currentPopupLocation);
+                if (currentUser && db && navigator.onLine) {
+                    await setDoc(cfgDoc(`member_avatar_${encodeURIComponent(name)}`), {
+                        name,
+                        avatar: avatarDataUrl,
+                        updatedAt: Date.now()
+                    }, { merge: true }).catch(e => console.warn('頭像寫入雲端失敗:', e));
+                }
+                window.openMemberProfilePopup(name, window._currentPopupLocation);
 
                 window.updateMapSimulation();
                 if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterModal();
@@ -12501,10 +12507,10 @@ window.addEventListener('online', () => {
                 window.showToast('⚠️ 圖庫本機索引讀取失敗，暫以備用快取載入', true);
             }
 galleryItems = Array.isArray(idbGallery) ? idbGallery : getLocal('work_cache_gallery_items', []);
-            try {
+try {
                 const cachedRestore5d = await idbGet('app_restore_list_5d_cache');
 if (Array.isArray(cachedRestore5d) && cachedRestore5d.length) {
-                    const cutoff = Date.now() - RESTORE_KEEP_MS;
+                    const cutoff = Date.now() - (RESTORE_KEEP_DAYS * 86400000);
                     const map = new Map();
                     galleryItems.forEach(x => { if (x?.id) map.set(String(x.id), x); });
                     cachedRestore5d.forEach(r => {
@@ -12567,6 +12573,7 @@ tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility)
             if (!tabOrderList.includes('dashboard')) tabOrderList.unshift('dashboard');
             
 checkAndResetDailySchedule(); 
+            await window.restoreCleanAvatarsFromCache?.(true);
             window.applyTabVisibility();
             window.switchTab('gallery');   // 確保載入本地快取時也直接切換為圖庫
             window.restoreCleanAvatarsFromCache?.(true);
@@ -12811,13 +12818,27 @@ bindSync('future_memos', 'work_cache_future_memos', d => {
                 }
             });
 
-           // 🌟 成員檔案（頭像與工號）雲端監聽同步
-            bindSync('member_profiles', 'work_cache_member_profiles', d => {
+// 🌟 成員檔案（頭像與工號）雲端監聽同步（保留本機／IDB 既有頭像不被精簡雲端資料洗掉）
+            bindSync('member_profiles', 'work_cache_member_profiles', async d => {
                 if (d.profiles) {
-                    memberProfilesStore = d.profiles;
+                    const mergedProfiles = { ...d.profiles };
+                    for (const mKey of Object.keys(mergedProfiles)) {
+                        const curAv = memberProfilesStore?.[mKey]?.avatar;
+                        if (typeof curAv === 'string' && curAv.startsWith('data:image')) {
+                            mergedProfiles[mKey] = { ...mergedProfiles[mKey], avatar: curAv };
+                        } else if (typeof idbGet === 'function') {
+                            try {
+                                const idbAv = await idbGet(`avatar_${mKey}`);
+                                if (typeof idbAv === 'string' && idbAv.startsWith('data:image')) {
+                                    mergedProfiles[mKey] = { ...mergedProfiles[mKey], avatar: idbAv };
+                                }
+                            } catch (e) {}
+                        }
+                    }
+                    memberProfilesStore = mergedProfiles;
                     safeSetLocal('work_cache_member_profiles', memberProfilesStore);
                     if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
-                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager(true);
                 }
             });
 
@@ -21738,6 +21759,7 @@ dot?.classList.replace('bg-red-500', 'bg-green-500');
 
 async function bootstrapApp() {
             try {
+                await window.restoreMyIdentityOnBoot?.();
                 await loadLocalFastCache();
                 window.applyTabVisibility();
                 window.updatePatrolDateInputUI();
