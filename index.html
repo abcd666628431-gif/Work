@@ -3808,8 +3808,10 @@ let shiftIntervals = [[6 * 60 + 30, 22 * 60]];
                         if (idealIntervals.length === 0) {
                             const shiftSpanMins = shEndM - shStartM;
                             let targetRestMins = 60;
-                            if ( specialSched && (specialSched.restDurationNum || parseFloat(specialSched.restHours)) ) {
+if ( specialSched && (specialSched.restDurationNum || parseFloat(specialSched.restHours)) ) {
                                 targetRestMins = Math.round((specialSched.restDurationNum || parseFloat(specialSched.restHours)) * 60);
+                            } else if (prof.fixedRestHours !== undefined && prof.fixedRestHours !== '' && !isNaN(parseFloat(prof.fixedRestHours))) {
+                                targetRestMins = Math.round(parseFloat(prof.fixedRestHours) * 60);
                             } else if (shiftSpanMins >= 13 * 60) {
                                 targetRestMins = 240; // 06:30-22:00 長班預設休 4h (2h+2h)
                             } else if (shiftSpanMins >= 11 * 60) {
@@ -4655,9 +4657,30 @@ const toMinutes = (t) => {
                 tag.innerText = totalHours > 0 ? `${totalHours}h` : '常態';
             }
 
-            if (shouldSave && memberName) {
+if (shouldSave && memberName) {
                 window.saveMemberProfile(memberName, { fixedShiftTime: val });
                 window.showToast(val ? `✅ 已儲存固定上班時間：${val}` : '🧹 已恢復常態上班時間');
+            }
+        };
+
+        // 🌟 固定休息時數（幾 H）：支援點擊快捷鍵或直接輸入數字
+        window.saveFixedRestHours = (memberName, shouldSave = false, quickVal = null) => {
+            const inp = document.getElementById('fixedRestHoursInput');
+            let rawVal = '';
+            if (quickVal !== null) {
+                const cur = String(inp?.value || '').trim();
+                rawVal = (cur === String(quickVal)) ? '' : String(quickVal);
+                if (inp) inp.value = rawVal;
+            } else {
+                rawVal = (inp?.value || '').trim();
+            }
+
+            if (shouldSave && memberName) {
+                const num = parseFloat(rawVal);
+                const cleanVal = (rawVal !== '' && !isNaN(num) && num >= 0) ? String(num) : '';
+                window.saveMemberProfile(memberName, { fixedRestHours: cleanVal });
+                window.showToast(cleanVal !== '' ? `✅ 已儲存休息時間：${cleanVal}H` : '🧹 已恢復預設休息時數');
+                window.openMemberProfilePopup(memberName, window._currentPopupLocation);
             }
         };
 
@@ -4694,11 +4717,12 @@ const toMinutes = (t) => {
                 ? window._tempIdealRestSlots
                 : (savedRestParts.length > 0 ? savedRestParts : ['']);
 
-            // 取得固定上班時間（相容舊版 futureSchedules 內最後一筆設定）
+// 取得固定上班時間（相容舊版 futureSchedules 內最後一筆設定）
             const legacyShift = (profile.futureSchedules && profile.futureSchedules.length > 0)
                 ? (profile.futureSchedules[profile.futureSchedules.length - 1].shiftTime || '')
                 : '';
             const curFixedShift = profile.fixedShiftTime !== undefined ? profile.fixedShiftTime : legacyShift;
+            const curFixedRest = (profile.fixedRestHours !== undefined && profile.fixedRestHours !== null) ? String(profile.fixedRestHours) : '';
 
             popup.innerHTML = `
                 <div class="bg-white rounded-2xl p-4 shadow-2xl border border-slate-200 w-full max-w-[300px] flex flex-col items-center text-center animate-pop-in relative" onclick="event.stopPropagation()">
@@ -4798,7 +4822,7 @@ const toMinutes = (t) => {
                             </div>
                         </div>
 
-                        <!-- ② 固定上班時間（取代原「未來特定排程」） -->
+<!-- ② 固定上班時間（取代原「未來特定排程」） -->
                         <div class="space-y-1.5 pb-2 border-b border-indigo-200/60">
                             <div class="flex items-center justify-between">
                                 <span class="text-[11px] font-black text-indigo-800 flex items-center">
@@ -4815,6 +4839,20 @@ const toMinutes = (t) => {
                                 <button type="button" onclick="document.getElementById('fixedShiftTimeInput').value=''; window.calcAndSaveFixedShift('${safeNameAttr}', true); window.openMemberProfilePopup('${safeNameAttr}', window._currentPopupLocation);" class="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors shrink-0" title="清空">
                                     <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
                                 </button>` : ''}
+                            </div>
+                            <div class="flex items-center justify-between gap-1 pt-0.5">
+                                <span class="text-[10.5px] font-bold text-slate-600 shrink-0">休息時間：</span>
+                                <div class="flex items-center gap-1 flex-1 justify-end">
+                                    ${[1, 2, 3, 4].map(h => `
+                                        <button type="button" onclick="window.saveFixedRestHours('${safeNameAttr}', true, ${h})"
+                                            class="px-1.5 py-0.5 rounded text-[10px] font-mono font-black border transition-colors ${curFixedRest === String(h) ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs' : 'bg-white hover:bg-emerald-50 text-emerald-700 border-emerald-200'}">${h}H</button>
+                                    `).join('')}
+                                    <input type="number" id="fixedRestHoursInput" value="${window.esc(curFixedRest)}" min="0" max="12" step="0.5" placeholder="0"
+                                        oninput="window.saveFixedRestHours('${safeNameAttr}', false)"
+                                        onchange="window.saveFixedRestHours('${safeNameAttr}', true)"
+                                        class="w-11 bg-white border border-indigo-300 rounded-md px-1 py-0.5 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
+                                    <span class="text-[11px] font-mono font-black text-indigo-700 shrink-0">H</span>
+                                </div>
                             </div>
                         </div>
 
