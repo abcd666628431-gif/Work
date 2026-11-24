@@ -723,10 +723,10 @@ window.restoreMyIdentityOnBoot = async () => {
                 console.error('身分復原失敗:', e);
             }
         };
-        if (document.readyState === 'loading') {
+if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => window.restoreMyIdentityOnBoot(), { once: true });
         } else {
-            window.restoreMyIdentityOnBoot();
+            setTimeout(() => window.restoreMyIdentityOnBoot(), 0);
         }
 
         // 🌟 5. 操作日誌「設備用戶名單」彈窗（查看所有已識別手機/電腦、即時改名同步雲端、刪除舊紀錄）
@@ -1970,6 +1970,7 @@ window.purgeObsoleteLocalStorage(false);
         };
 
 const RESTORE_KEEP_DAYS = 5;
+        const RESTORE_KEEP_MS = RESTORE_KEEP_DAYS * 86400000;
         window.getRestoreCutoffDateStr = () => {
             const cutoffMs = Date.now() - (RESTORE_KEEP_DAYS - 1) * 86400000;
             return window.formatDateStrHK ? window.formatDateStrHK(cutoffMs) : new Date(cutoffMs + 8 * 3600000).toISOString().slice(0, 10);
@@ -2884,12 +2885,11 @@ delete memberProfilesStore[dupKey];
                 }
             }
 
-// 🌟 若含有 Base64 大頭像，同步備份到無容量限制的 IndexedDB，防止 profiles 肥大化
-            const incomingAvatar = (profileData && typeof profileData.avatar === 'string' && profileData.avatar.startsWith('data:image'))
+const incomingAvatar = (profileData && typeof profileData.avatar === 'string' && profileData.avatar.startsWith('data:image'))
                 ? profileData.avatar
                 : ((memberProfilesStore[name]?.avatar && memberProfilesStore[name].avatar.startsWith('data:image'))
                     ? memberProfilesStore[name].avatar
-                    : '');
+                    : (window._cloudAvatarsMap?.[name] || ''));
 
             if (incomingAvatar && typeof idbSet === 'function') {
                 idbSet(`avatar_${name}`, incomingAvatar).catch(err => {
@@ -2905,94 +2905,15 @@ delete memberProfilesStore[dupKey];
             );
             safeSetLocal('work_cache_member_profiles', memberProfilesStore);
 
-if (incomingAvatar) {
-                const avTs = Date.now();
-                const safeAvatarDocKey = 'member_avatar_' + Array.from(String(name)).map(ch => ch.charCodeAt(0).toString(16)).join('_').slice(0, 110);
-                syncConfig(safeAvatarDocKey, { name, avatar: incomingAvatar, updatedAt: avTs });
-
-                const staffId = String(memberProfilesStore[name]?.id || profileData?.id || '').trim().replace(/^#/, '').toUpperCase();
-                if (staffId) {
-                    const safeIdDocKey = 'member_avatar_id_' + staffId.replace(/[^A-Z0-9_-]/g, '_').slice(0, 80);
-                    syncConfig(safeIdDocKey, { name, id: staffId, avatar: incomingAvatar, updatedAt: avTs });
-                }
+            if (profileData?.avatar && profileData.avatar.startsWith('data:image')) {
+                window._cloudAvatarsMap = window._cloudAvatarsMap || {};
+                window._cloudAvatarsMap[name] = incomingAvatar;
+                syncConfig('member_avatars', { avatars: { [name]: incomingAvatar }, updatedAt: Date.now() }, true);
             }
             const cloudSlimProfiles = window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore);
             syncConfig('member_profiles', { profiles: cloudSlimProfiles });
 
-            window.restoreCleanAvatarsFromCache = async (silent = false) => {
-                const candidates = Array.from(new Set([
-                    ...(cleanMembersStore || []),
-                    ...(csMembersStore || []),
-                    ...(teamMembers || []),
-                    ...Object.keys(memberProfilesStore || {})
-                ])).filter(Boolean);
-
-                let restoredCount = 0;
-
-                for (const mName of candidates) {
-                    const curProf = memberProfilesStore[mName] || {};
-                    if (typeof curProf.avatar === 'string' && curProf.avatar.startsWith('data:image')) {
-                        if (typeof idbSet === 'function') {
-                            try { await idbSet(`avatar_${mName}`, curProf.avatar); } catch (e) {}
-                        }
-                        continue;
-                    }
-
-                    let foundAvatar = '';
-                    if (typeof idbGet === 'function') {
-                        try {
-                            const idbAv = await idbGet(`avatar_${mName}`);
-                            if (typeof idbAv === 'string' && idbAv.startsWith('data:image')) {
-                                foundAvatar = idbAv;
-                            }
-                        } catch (e) {}
-                    }
-
-                    if (!foundAvatar && currentUser && db && navigator.onLine) {
-                        try {
-                            const snap = await getDoc(cfgDoc(`member_avatar_${encodeURIComponent(mName)}`));
-                            const avData = snap.exists() ? snap.data()?.avatar : '';
-                            if (typeof avData === 'string' && avData.startsWith('data:image')) {
-                                foundAvatar = avData;
-                                if (typeof idbSet === 'function') {
-                                    await idbSet(`avatar_${mName}`, foundAvatar).catch(() => {});
-                                }
-                            }
-                        } catch (e) {}
-                    }
-
-                    if (foundAvatar) {
-                        memberProfilesStore[mName] = Object.assign(
-                            { id: '', avatar: '', gender: '女', residency: '本地', prefs: [] },
-                            memberProfilesStore[mName] || {},
-                            { avatar: foundAvatar }
-                        );
-                        restoredCount++;
-                    }
-                }
-
-                if (restoredCount > 0) {
-                    safeSetLocal('work_cache_member_profiles', memberProfilesStore);
-                    if (typeof window.updateMapSimulation === 'function') window.updateMapSimulation();
-                    if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
-                        window.renderMemberRosterListsOnly?.();
-                    }
-                    if ($('scheduleManageModal')?.classList.contains('flex')) {
-                        window.renderScheduleManager?.(true);
-                    }
-                }
-
-                if (!silent) {
-                    if (restoredCount > 0) {
-                        window.showToast(`✅ 已還原 ${restoredCount} 位人員頭像！`);
-                    } else {
-                        window.showToast('⚠️ 本機與雲端皆未找到已存的頭像備份，可點擊成員重新上傳', true);
-                    }
-                }
-                return restoredCount;
-            };
-
-if (hasMergedDuplicates) {
+            if (hasMergedDuplicates) {
                 const todayStr = getNowInputStrs().date;
                 window.syncActiveTodaySchedule();
                 if (window.currentMapRole === 'clean') {
@@ -3006,6 +2927,53 @@ if (hasMergedDuplicates) {
                 }
             }
         };
+
+        // 掃描本機 IndexedDB 所有 avatar_* 原圖
+        window.readAllAvatarsFromIDB = async () => {
+            const result = {};
+            try {
+                const dbInst = await openIDB();
+                await new Promise((resolve) => {
+                    const tx = dbInst.transaction(IDB_STORE, 'readonly');
+                    const store = tx.objectStore(IDB_STORE);
+                    const keysReq = store.getAllKeys();
+                    const valsReq = store.getAll();
+                    tx.oncomplete = () => {
+                        const keys = keysReq.result || [];
+                        const vals = valsReq.result || [];
+                        keys.forEach((k, idx) => {
+                            const keyStr = String(k || '');
+                            const val = vals[idx];
+                            if (keyStr.startsWith('avatar_') && typeof val === 'string' && val.startsWith('data:image')) {
+                                result[keyStr.slice('avatar_'.length)] = val;
+                            }
+                        });
+                        resolve();
+                    };
+                    tx.onerror = () => resolve();
+                });
+            } catch (e) {}
+            return result;
+        };
+
+        // 開機立即從本機 IndexedDB 回填頭像
+        window.hydrateAvatarsFromIDB = async () => {
+            const localAvs = await window.readAllAvatarsFromIDB();
+            let changed = false;
+            Object.entries(localAvs).forEach(([rawName, av]) => {
+                const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawName) : rawName;
+                if (!memberProfilesStore[canon]?.avatar) {
+                    memberProfilesStore[canon] = Object.assign({ id: '', avatar: '', gender: '女', residency: '本地', prefs: [] }, memberProfilesStore[canon] || {}, { avatar: av });
+                    changed = true;
+                }
+            });
+            if (changed) {
+                if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation?.();
+                if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterListsOnly?.();
+                if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager?.(true);
+            }
+        };
+        window.restoreCleanAvatarsFromCache = window.hydrateAvatarsFromIDB;
 
         // 🌟 儲存人員的 Top 3 優先崗位設定
         window.updateMemberPref = (name, idx, locVal) => {
@@ -4369,6 +4337,11 @@ document.getElementById('memberProfileModal')?.classList.add('hidden');
                 syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
 const cloudSlimProfiles = window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore);
                 syncConfig('member_profiles', { profiles: cloudSlimProfiles }, false);
+                if (memberProfilesStore[newName]?.avatar?.startsWith('data:image')) {
+                    window._cloudAvatarsMap = window._cloudAvatarsMap || {};
+                    window._cloudAvatarsMap[newName] = memberProfilesStore[newName].avatar;
+                    syncConfig('member_avatars', { avatars: { [newName]: memberProfilesStore[newName].avatar }, updatedAt: Date.now() }, true);
+                }
             }
 
             if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
@@ -12831,87 +12804,79 @@ bindSync('future_memos', 'work_cache_future_memos', d => {
                 }
             });
 
-// 🌟 成員檔案（頭像與工號）雲端監聽同步（保留既有頭像並自動訂閱各成員頭像文件）
-            window._memberAvatarUnsubs = window._memberAvatarUnsubs || {};
-            window.subscribeMemberAvatarDocs = (namesList = []) => {
-                if (!currentUser || !db) return;
-                const allNames = Array.from(new Set([
-                    ...(namesList || []),
-                    ...(cleanMembersStore || []),
-                    ...(csMembersStore || []),
-                    ...(teamMembers || []),
-                    ...Object.keys(memberProfilesStore || {})
-                ])).filter(Boolean);
+// 🌟 成員檔案（工號／性別／排班設定）與獨立頭像庫 (member_avatars) 雙向即時同步
+            window._cloudAvatarsMap = window._cloudAvatarsMap || {};
+            window._didInitialAvatarCloudPush = false;
 
-                const applyIncomingCloudAvatar = async (targetName, avData, avUpdatedAt = 0) => {
-                    if (!targetName || typeof avData !== 'string' || !avData.startsWith('data:image')) return;
-                    const curProf = memberProfilesStore[targetName] || {};
-                    const curTs = Number(curProf.avatarUpdatedAt || 0);
-                    if (curProf.avatar === avData && curTs >= Number(avUpdatedAt || 0)) return;
-
-                    memberProfilesStore[targetName] = Object.assign(
-                        { id: '', avatar: '', gender: '女', residency: '本地', prefs: [] },
-                        curProf,
-                        { avatar: avData, avatarUpdatedAt: Number(avUpdatedAt || Date.now()) }
-                    );
-                    safeSetLocal('work_cache_member_profiles', memberProfilesStore);
-                    if (typeof idbSet === 'function') {
-                        try { await idbSet(`avatar_${targetName}`, avData); } catch (e) {}
-                    }
-                    if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation?.();
-                    if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterListsOnly?.();
-                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager?.(true);
-                };
-
-                allNames.forEach(mName => {
-                    const safeAvatarDocKey = 'member_avatar_' + Array.from(String(mName)).map(ch => ch.charCodeAt(0).toString(16)).join('_').slice(0, 110);
-                    if (!window._memberAvatarUnsubs[safeAvatarDocKey]) {
-                        window._memberAvatarUnsubs[safeAvatarDocKey] = onSnapshot(cfgDoc(safeAvatarDocKey), (snap) => {
-                            if (!snap.exists()) return;
-                            const dAv = snap.data() || {};
-                            applyIncomingCloudAvatar(dAv.name || mName, dAv.avatar, dAv.updatedAt);
-                        }, () => {});
-                    }
-
-                    const staffId = String(memberProfilesStore[mName]?.id || '').trim().replace(/^#/, '').toUpperCase();
-                    if (staffId) {
-                        const safeIdDocKey = 'member_avatar_id_' + staffId.replace(/[^A-Z0-9_-]/g, '_').slice(0, 80);
-                        if (!window._memberAvatarUnsubs[safeIdDocKey]) {
-                            window._memberAvatarUnsubs[safeIdDocKey] = onSnapshot(cfgDoc(safeIdDocKey), (snap) => {
-                                if (!snap.exists()) return;
-                                const dAv = snap.data() || {};
-                                applyIncomingCloudAvatar(dAv.name || mName, dAv.avatar, dAv.updatedAt);
-                            }, () => {});
-                        }
-                    }
-                });
-            };
-
-            bindSync('member_profiles', 'work_cache_member_profiles', async d => {
+            bindSync('member_profiles', 'work_cache_member_profiles', d => {
                 if (d.profiles) {
-                    const mergedProfiles = { ...d.profiles };
-                    for (const k of Object.keys(mergedProfiles)) {
-                        const prevAv = memberProfilesStore[k]?.avatar;
-                        if (prevAv && prevAv.startsWith('data:image')) {
-                            mergedProfiles[k] = { ...mergedProfiles[k], avatar: prevAv };
-                        } else if (typeof idbGet === 'function') {
-                            try {
-                                const idbAv = await idbGet(`avatar_${k}`);
-                                if (idbAv && idbAv.startsWith('data:image')) {
-                                    mergedProfiles[k] = { ...mergedProfiles[k], avatar: idbAv };
-                                }
-                            } catch (e) {}
+                    const merged = { ...d.profiles };
+                    Object.keys(merged).forEach(k => {
+                        const keepAv = memberProfilesStore[k]?.avatar || window._cloudAvatarsMap[k];
+                        if (typeof keepAv === 'string' && keepAv.startsWith('data:image')) {
+                            merged[k] = { ...merged[k], avatar: keepAv };
                         }
-                    }
-                    memberProfilesStore = mergedProfiles;
+                    });
+                    memberProfilesStore = merged;
                     safeSetLocal('work_cache_member_profiles', memberProfilesStore);
-                    window.subscribeMemberAvatarDocs(Object.keys(mergedProfiles));
                     if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+                    if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterListsOnly?.();
                     if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
                 }
             });
 
-            window.subscribeMemberAvatarDocs();
+            onSnapshot(cfgDoc('member_avatars'), async (snap) => {
+                const cloudAvs = (snap.exists() && snap.data()?.avatars) ? snap.data().avatars : {};
+                window._cloudAvatarsMap = { ...cloudAvs };
+                let uiChanged = false;
+
+                for (const [rawName, av] of Object.entries(cloudAvs)) {
+                    if (typeof av !== 'string' || !av.startsWith('data:image')) continue;
+                    const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawName) : rawName;
+                    window._cloudAvatarsMap[canon] = av;
+                    if (memberProfilesStore[canon]?.avatar !== av) {
+                        memberProfilesStore[canon] = Object.assign(
+                            { id: '', avatar: '', gender: '女', residency: '本地', prefs: [] },
+                            memberProfilesStore[canon] || {},
+                            { avatar: av }
+                        );
+                        uiChanged = true;
+                    }
+                    idbSet(`avatar_${canon}`, av).catch(() => {});
+                }
+
+                // 首次連線時：若這台裝置本機 IndexedDB 有雲端缺少的舊頭像，自動一次補推上雲端
+                if (!window._didInitialAvatarCloudPush) {
+                    window._didInitialAvatarCloudPush = true;
+                    const localAvs = await window.readAllAvatarsFromIDB();
+                    const missingInCloud = {};
+                    Object.entries(localAvs).forEach(([rawName, av]) => {
+                        const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawName) : rawName;
+                        if (!cloudAvs[canon] && !cloudAvs[rawName]) {
+                            missingInCloud[canon] = av;
+                        }
+                        if (!memberProfilesStore[canon]?.avatar) {
+                            memberProfilesStore[canon] = Object.assign(
+                                { id: '', avatar: '', gender: '女', residency: '本地', prefs: [] },
+                                memberProfilesStore[canon] || {},
+                                { avatar: av }
+                            );
+                            uiChanged = true;
+                        }
+                    });
+                    const pushCount = Object.keys(missingInCloud).length;
+                    if (pushCount > 0) {
+                        const ok = await syncConfig('member_avatars', { avatars: missingInCloud, updatedAt: Date.now() }, true);
+                        if (ok) window.showToast(`✅ 已自動補傳 ${pushCount} 張頭像至雲端！`);
+                    }
+                }
+
+                if (uiChanged) {
+                    if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+                    if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterListsOnly?.();
+                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                }
+            }, () => {});
 
 // 🌟 新增：優先度看板排位 (loc_priority) 雲端即時同步
             bindSync('loc_priority', 'work_cache_loc_priority', d => {
@@ -21872,7 +21837,7 @@ window.pushMeetingReportsToAllIframes = (reports) => {
         if (iframe && iframe.contentWindow) {
             try {
                 // 🌟 根源修復 2：指定同源目標，若為 srcdoc 則限制來源，防止向外部廣播
-                const targetOrigin = window.location.origin === 'null' ? '*' : window.location.origin;
+const targetOrigin = (window.location.origin === 'null' || window.location.protocol === 'file:') ? '*' : window.location.origin;
                 iframe.contentWindow.postMessage({
                     type: 'SYNC_MEETING_REPORTS',
                     reports: data
