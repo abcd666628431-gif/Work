@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>工作記錄本</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest" defer></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" async></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
@@ -561,7 +561,15 @@ const parts = [];
             return { hwKey: 'hw_' + fullHash, fixedDefaultName: `成員_${fixedNum}` };
         };
 
-        const _hwSig = window.computeDeviceHardwareSignature();
+const _hwSig = (() => {
+            try {
+                const cached = JSON.parse(localStorage.getItem('work_cached_hw_sig') || 'null');
+                if (cached && cached.hwKey && cached.fixedDefaultName) return cached;
+            } catch (e) {}
+            const fresh = window.computeDeviceHardwareSignature();
+            try { localStorage.setItem('work_cached_hw_sig', JSON.stringify(fresh)); } catch (e) {}
+            return fresh;
+        })();
         window.deviceHwKey = _hwSig.hwKey;
 
         // 特徵 12: 背景非同步讀取手機內部儲存容量配額 (64GB/128GB/256GB/512GB 區分同款機型)
@@ -681,12 +689,14 @@ if (typeof idbSet === 'function') {
             if (currentUser?.uid) devPatch[currentUser.uid] = payload;
             if (window.deviceStorageQuotaTag) devPatch[window.deviceStorageQuotaTag] = payload;
 
-            if (typeof syncConfig === 'function') {
-                syncConfig('device_identities', { devices: devPatch }, true);
-            } else if (db && currentUser) {
-                setDoc(cfgDoc('device_identities'), { devices: devPatch }, { merge: true }).catch(err => {
-                    window.markSyncError?.('device_identities', { devices: devPatch }, true, err);
-                });
+if (currentUser && db) {
+                if (typeof syncConfig === 'function') {
+                    syncConfig('device_identities', { devices: devPatch }, true);
+                } else {
+                    setDoc(cfgDoc('device_identities'), { devices: devPatch }, { merge: true }).catch(err => {
+                        window.markSyncError?.('device_identities', { devices: devPatch }, true, err);
+                    });
+                }
             }
 
 if (prevName && /^成員_\d{3}$/.test(prevName) && prevName !== sysUserName && Array.isArray(galleryLogsStore)) {
@@ -1919,7 +1929,14 @@ if (aggressive && rawVal.length > 150000 && !keyName.startsWith('work_pending_')
                 console.error('清理過期本機快取時發生異常：', e);
             }
         };
-window.purgeObsoleteLocalStorage(false);
+if (localStorage.getItem('work_last_ls_purge_day') !== new Date().toISOString().slice(0, 10)) {
+            const runPurge = () => {
+                window.purgeObsoleteLocalStorage(false);
+                try { localStorage.setItem('work_last_ls_purge_day', new Date().toISOString().slice(0, 10)); } catch (e) {}
+            };
+            if ('requestIdleCallback' in window) requestIdleCallback(runPurge, { timeout: 3000 });
+            else setTimeout(runPurge, 2500);
+        }
         window.restoreLocalStorageBackupsFromIDB = async (keys = []) => {
             const restored = {};
             for (const k of keys) {
@@ -2347,7 +2364,7 @@ let galleryItems = [];
                 console.error('從 IndexedDB 還原圖庫清單失敗:', err);
             }
         };
-        setTimeout(() => window.hydrateGalleryItemsFromIDB(), 0);
+// 由 bootstrapApp -> loadLocalFastCache 統一載入一次，避免開機搶跑造成雙重渲染
         let memoryImageCache = new Map();
         let currentGalleryCategory = '全部';
         window.pendingUploadImages = [];
@@ -8375,47 +8392,56 @@ const splitImageTo4ChunksAsync = async (file, maxDim = CONFIG.maxDim, quality = 
         };
 
 
+window._inflightThumbMap = window._inflightThumbMap || new Map();
         const getLowResThumbUrlAsync = window.getLowResThumbUrlAsync = async (item) => {
             const id = item.id;
             // 關鍵 1：縮圖 Key 必須加上 updatedAt 版本號，旋轉後才會生成全新縮圖
             const verKey = `thumb_${id}_v_${item.updatedAt || item.createdAt || 0}`;
 
             if (thumbImageCache.has(verKey)) return thumbImageCache.get(verKey);
+            if (window._inflightThumbMap.has(verKey)) return window._inflightThumbMap.get(verKey);
 
-            const idbThumb = await idbGet(verKey);
-            if (idbThumb) {
-                thumbImageCache.set(verKey, idbThumb);
-                return idbThumb;
-            }
+            const task = (async () => {
+                const idbThumb = await idbGet(verKey);
+                if (idbThumb) {
+                    thumbImageCache.set(verKey, idbThumb);
+                    return idbThumb;
+                }
 
-            const fullSrc = await getFullImageUrlAsync(item);
-            if (!fullSrc) return '';
+                const fullSrc = await getFullImageUrlAsync(item);
+                if (!fullSrc) return '';
 
-            return new Promise((resolve) => {
-                const img = new Image();
-                img.onload = async () => {
-                    const maxDim = 360;
-                    let { width: w, height: h } = img;
-                    const scale = maxDim / Math.max(w, h);
-                    w = Math.round(w * scale);
-                    h = Math.round(h * scale);
+                return new Promise((resolve) => {
+                    const img = new Image();
+                    img.onload = async () => {
+                        const maxDim = 360;
+                        let { width: w, height: h } = img;
+                        const scale = maxDim / Math.max(w, h);
+                        w = Math.round(w * scale);
+                        h = Math.round(h * scale);
 
-                    const cvs = document.createElement('canvas');
-                    cvs.width = w;
-                    cvs.height = h;
-                    const ctx = cvs.getContext('2d');
-                    ctx.imageSmoothingEnabled = true;
-                    ctx.imageSmoothingQuality = 'high';
-                    ctx.drawImage(img, 0, 0, w, h);
+                        const cvs = document.createElement('canvas');
+                        cvs.width = w;
+                        cvs.height = h;
+                        const ctx = cvs.getContext('2d');
+                        ctx.imageSmoothingEnabled = true;
+                        ctx.imageSmoothingQuality = 'high';
+                        ctx.drawImage(img, 0, 0, w, h);
 
-                    const lowResUrl = cvs.toDataURL('image/jpeg', 0.75);
-                    thumbImageCache.set(verKey, lowResUrl);
-                    await idbSet(verKey, lowResUrl);
-                    resolve(lowResUrl);
-                };
-                img.onerror = () => resolve(fullSrc);
-                img.src = fullSrc;
+                        const lowResUrl = cvs.toDataURL('image/jpeg', 0.75);
+                        thumbImageCache.set(verKey, lowResUrl);
+                        await idbSet(verKey, lowResUrl);
+                        resolve(lowResUrl);
+                    };
+                    img.onerror = () => resolve(fullSrc);
+                    img.src = fullSrc;
+                });
+            })().finally(() => {
+                window._inflightThumbMap.delete(verKey);
             });
+
+            window._inflightThumbMap.set(verKey, task);
+            return task;
         };
 
 // ====== 全螢幕預覽控制函式 ======
@@ -11241,16 +11267,28 @@ window.ensurePersistentCameraInput();
                     <span class="text-xs font-black text-blue-700 tracking-wide">放開即可上傳圖片</span>
                 </div>`;
 
-            grid.innerHTML = `${overlayHtml}<div class="grid grid-cols-3 gap-1.5">${cameraSlotHtml}${renderedCards.join('')}</div>`;
-            // 修復：背景補上縮圖，不阻塞首次渲染。
-            filtered.forEach((i) => {
-                getLowResThumbUrlAsync(i).then((src) => {
-                    if (!src) return;
-                    const img = document.getElementById(`gallery-img-${i.id}`);
-                    if (img) img.src = src;
-                }).catch(err => console.error('縮圖載入失敗：', i.id, err));
-            });
-            lucide.createIcons();
+grid.innerHTML = `${overlayHtml}<div class="grid grid-cols-3 gap-1.5">${cameraSlotHtml}${renderedCards.join('')}</div>`;
+            // 只針對尚未進入記憶體快取的相片，以最多 4 張同時載入，不卡主執行緒
+            const needThumbs = filtered.filter(i => !thumbImageCache.has(`thumb_${i.id}_v_${i.updatedAt || i.createdAt || 0}`));
+            if (needThumbs.length > 0) {
+                let cursor = 0;
+                const runWorker = async () => {
+                    while (cursor < needThumbs.length) {
+                        const target = needThumbs[cursor++];
+                        try {
+                            const src = await getLowResThumbUrlAsync(target);
+                            if (!src) continue;
+                            const img = document.getElementById(`gallery-img-${target.id}`);
+                            if (img && img.src !== src) img.src = src;
+                        } catch (err) {
+                            console.error('縮圖載入失敗：', target.id, err);
+                        }
+                    }
+                };
+                const workers = Math.min(4, needThumbs.length);
+                for (let w = 0; w < workers; w++) runWorker();
+            }
+if (window.lucide) lucide.createIcons({ root: $('galleryPage') });
 
             const selBtn = $('gallerySelectModeBtn');
             if (selBtn) {
@@ -12439,7 +12477,6 @@ window.addEventListener('storage', async (e) => {
                     const latestList = await idbGet('app_gallery_metadata_list');
                     if (Array.isArray(latestList)) {
                         galleryItems = latestList;
-                        window._lastRenderFingerprint = '';
                         if (!$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
                         window.renderDashboard?.();
                     }
@@ -12610,10 +12647,8 @@ tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility)
             if (tabVisibilityState['dashboard'] === undefined) tabVisibilityState['dashboard'] = true;
             if (!tabOrderList.includes('dashboard')) tabOrderList.unshift('dashboard');
             
-await window.hydrateAvatarsFromIDB?.(true);
-            checkAndResetDailySchedule(); 
-            window.applyTabVisibility();
-            window.switchTab('gallery');   // 確保載入本地快取時也直接切換為圖庫
+window.hydrateAvatarsFromIDB?.(true);
+            checkAndResetDailySchedule();
         }
 
 function setupPureRealtimeSync() {
@@ -13299,16 +13334,23 @@ onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items')
                     }
                 });
 
-galleryItems = Array.from(mergedMap.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
-                saveGalleryItemsSafe(galleryItems);
-                
-window._galleryCloudLoaded = true;
+const _makeGallerySig = (arr) => (arr || []).map(x => `${x.id}_${x.title || ''}_${x.time || ''}_${x.category || ''}_${x.updatedAt || 0}_${!!x.isDeleted}_${!!x.isExported}`).join('|');
+                const _prevGallerySig = _makeGallerySig(galleryItems);
+                const _nextGalleryList = Array.from(mergedMap.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+                const _nextGallerySig = _makeGallerySig(_nextGalleryList);
+                const _galleryChanged = (_nextGallerySig !== _prevGallerySig);
+
+                galleryItems = _nextGalleryList;
+                if (_galleryChanged) {
+                    saveGalleryItemsSafe(galleryItems);
+                }
+
+                window._galleryCloudLoaded = true;
                 if ((Number(window.timeOffset) || 0) === 0 && !isFastForwarding) {
                     window._lastAutoArchiveRunTs = 0;
                     window.autoCleanupGalleryToTrash();
                 }
-                window._lastRenderFingerprint = '';
-                if (!$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
+                if (_galleryChanged && !$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
                 window.autoSyncClosedStallsToPatrol(true);
                 
                 if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
@@ -13324,11 +13366,11 @@ if (newIncomingCount > 0) {
             }, console.error);
 
 // 即時同步操作日誌：顯示最近 30 天；前端只讀取，不再自行永久刪除雲端日誌。
-            try {
-                const LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+try {
+                const LOG_RETENTION_MS = 5 * 24 * 60 * 60 * 1000;
                 const cutoffTs = Date.now() - LOG_RETENTION_MS;
                 const logColRef = collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs');
-                const logQuery = query(logColRef, where('timestamp', '>=', cutoffTs), orderBy('timestamp', 'desc'));
+                const logQuery = query(logColRef, where('timestamp', '>=', cutoffTs), orderBy('timestamp', 'desc'), limit(250));
 
                 onSnapshot(logQuery, (snap) => {
                     let list = [];
@@ -21841,6 +21883,7 @@ dot?.classList.replace('bg-red-500', 'bg-green-500');
 
 async function bootstrapApp() {
             try {
+                const authPromise = initAuth();
                 await loadLocalFastCache();
                 window.applyTabVisibility();
                 window.updatePatrolDateInputUI();
@@ -21852,8 +21895,8 @@ async function bootstrapApp() {
                     ? 'gallery' 
                     : (tabOrderList.find(k => tabVisibilityState[k] !== false) || 'gallery');
                 window.switchTab(defaultTab);
-                if (window.lucide) lucide.createIcons();
-                await initAuth();
+                if (window.lucide) lucide.createIcons({ root: document.querySelector('header') });
+                await authPromise;
             } catch (e) {
                 console.error('應用程式初始化失敗：', e);
                 window.showToast('初始化失敗，請重新載入頁面', true);
