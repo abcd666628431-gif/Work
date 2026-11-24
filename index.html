@@ -2905,9 +2905,16 @@ delete memberProfilesStore[dupKey];
             );
             safeSetLocal('work_cache_member_profiles', memberProfilesStore);
 
-            if (incomingAvatar) {
-                const safeAvatarDocKey = 'member_avatar_' + Array.from(String(name)).map(ch => ch.charCodeAt(0).toString(16)).join('_').slice(0, 120);
-                syncConfig(safeAvatarDocKey, { name, avatar: incomingAvatar, updatedAt: Date.now() });
+if (incomingAvatar) {
+                const avTs = Date.now();
+                const safeAvatarDocKey = 'member_avatar_' + Array.from(String(name)).map(ch => ch.charCodeAt(0).toString(16)).join('_').slice(0, 110);
+                syncConfig(safeAvatarDocKey, { name, avatar: incomingAvatar, updatedAt: avTs });
+
+                const staffId = String(memberProfilesStore[name]?.id || profileData?.id || '').trim().replace(/^#/, '').toUpperCase();
+                if (staffId) {
+                    const safeIdDocKey = 'member_avatar_id_' + staffId.replace(/[^A-Z0-9_-]/g, '_').slice(0, 80);
+                    syncConfig(safeIdDocKey, { name, id: staffId, avatar: incomingAvatar, updatedAt: avTs });
+                }
             }
             const cloudSlimProfiles = window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore);
             syncConfig('member_profiles', { profiles: cloudSlimProfiles });
@@ -12824,7 +12831,62 @@ bindSync('future_memos', 'work_cache_future_memos', d => {
                 }
             });
 
-// 🌟 成員檔案（頭像與工號）雲端監聽同步（保留既有頭像不被精簡雲端資料覆蓋）
+// 🌟 成員檔案（頭像與工號）雲端監聽同步（保留既有頭像並自動訂閱各成員頭像文件）
+            window._memberAvatarUnsubs = window._memberAvatarUnsubs || {};
+            window.subscribeMemberAvatarDocs = (namesList = []) => {
+                if (!currentUser || !db) return;
+                const allNames = Array.from(new Set([
+                    ...(namesList || []),
+                    ...(cleanMembersStore || []),
+                    ...(csMembersStore || []),
+                    ...(teamMembers || []),
+                    ...Object.keys(memberProfilesStore || {})
+                ])).filter(Boolean);
+
+                const applyIncomingCloudAvatar = async (targetName, avData, avUpdatedAt = 0) => {
+                    if (!targetName || typeof avData !== 'string' || !avData.startsWith('data:image')) return;
+                    const curProf = memberProfilesStore[targetName] || {};
+                    const curTs = Number(curProf.avatarUpdatedAt || 0);
+                    if (curProf.avatar === avData && curTs >= Number(avUpdatedAt || 0)) return;
+
+                    memberProfilesStore[targetName] = Object.assign(
+                        { id: '', avatar: '', gender: '女', residency: '本地', prefs: [] },
+                        curProf,
+                        { avatar: avData, avatarUpdatedAt: Number(avUpdatedAt || Date.now()) }
+                    );
+                    safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+                    if (typeof idbSet === 'function') {
+                        try { await idbSet(`avatar_${targetName}`, avData); } catch (e) {}
+                    }
+                    if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation?.();
+                    if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterListsOnly?.();
+                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager?.(true);
+                };
+
+                allNames.forEach(mName => {
+                    const safeAvatarDocKey = 'member_avatar_' + Array.from(String(mName)).map(ch => ch.charCodeAt(0).toString(16)).join('_').slice(0, 110);
+                    if (!window._memberAvatarUnsubs[safeAvatarDocKey]) {
+                        window._memberAvatarUnsubs[safeAvatarDocKey] = onSnapshot(cfgDoc(safeAvatarDocKey), (snap) => {
+                            if (!snap.exists()) return;
+                            const dAv = snap.data() || {};
+                            applyIncomingCloudAvatar(dAv.name || mName, dAv.avatar, dAv.updatedAt);
+                        }, () => {});
+                    }
+
+                    const staffId = String(memberProfilesStore[mName]?.id || '').trim().replace(/^#/, '').toUpperCase();
+                    if (staffId) {
+                        const safeIdDocKey = 'member_avatar_id_' + staffId.replace(/[^A-Z0-9_-]/g, '_').slice(0, 80);
+                        if (!window._memberAvatarUnsubs[safeIdDocKey]) {
+                            window._memberAvatarUnsubs[safeIdDocKey] = onSnapshot(cfgDoc(safeIdDocKey), (snap) => {
+                                if (!snap.exists()) return;
+                                const dAv = snap.data() || {};
+                                applyIncomingCloudAvatar(dAv.name || mName, dAv.avatar, dAv.updatedAt);
+                            }, () => {});
+                        }
+                    }
+                });
+            };
+
             bindSync('member_profiles', 'work_cache_member_profiles', async d => {
                 if (d.profiles) {
                     const mergedProfiles = { ...d.profiles };
@@ -12843,10 +12905,13 @@ bindSync('future_memos', 'work_cache_future_memos', d => {
                     }
                     memberProfilesStore = mergedProfiles;
                     safeSetLocal('work_cache_member_profiles', memberProfilesStore);
+                    window.subscribeMemberAvatarDocs(Object.keys(mergedProfiles));
                     if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
                     if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
                 }
             });
+
+            window.subscribeMemberAvatarDocs();
 
 // 🌟 新增：優先度看板排位 (loc_priority) 雲端即時同步
             bindSync('loc_priority', 'work_cache_loc_priority', d => {
