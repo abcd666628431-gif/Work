@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>工作記錄本</title>
-<script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest" defer></script>
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" async></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
@@ -561,15 +561,7 @@ const parts = [];
             return { hwKey: 'hw_' + fullHash, fixedDefaultName: `成員_${fixedNum}` };
         };
 
-const _hwSig = (() => {
-            try {
-                const cached = JSON.parse(localStorage.getItem('work_cached_hw_sig') || 'null');
-                if (cached && cached.hwKey && cached.fixedDefaultName) return cached;
-            } catch (e) {}
-            const fresh = window.computeDeviceHardwareSignature();
-            try { localStorage.setItem('work_cached_hw_sig', JSON.stringify(fresh)); } catch (e) {}
-            return fresh;
-        })();
+        const _hwSig = window.computeDeviceHardwareSignature();
         window.deviceHwKey = _hwSig.hwKey;
 
         // 特徵 12: 背景非同步讀取手機內部儲存容量配額 (64GB/128GB/256GB/512GB 區分同款機型)
@@ -689,14 +681,12 @@ if (typeof idbSet === 'function') {
             if (currentUser?.uid) devPatch[currentUser.uid] = payload;
             if (window.deviceStorageQuotaTag) devPatch[window.deviceStorageQuotaTag] = payload;
 
-if (currentUser && db) {
-                if (typeof syncConfig === 'function') {
-                    syncConfig('device_identities', { devices: devPatch }, true);
-                } else {
-                    setDoc(cfgDoc('device_identities'), { devices: devPatch }, { merge: true }).catch(err => {
-                        window.markSyncError?.('device_identities', { devices: devPatch }, true, err);
-                    });
-                }
+            if (typeof syncConfig === 'function') {
+                syncConfig('device_identities', { devices: devPatch }, true);
+            } else if (db && currentUser) {
+                setDoc(cfgDoc('device_identities'), { devices: devPatch }, { merge: true }).catch(err => {
+                    window.markSyncError?.('device_identities', { devices: devPatch }, true, err);
+                });
             }
 
 if (prevName && /^成員_\d{3}$/.test(prevName) && prevName !== sysUserName && Array.isArray(galleryLogsStore)) {
@@ -733,10 +723,10 @@ window.restoreMyIdentityOnBoot = async () => {
                 console.error('身分復原失敗:', e);
             }
         };
-if (document.readyState === 'loading') {
+        if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => window.restoreMyIdentityOnBoot(), { once: true });
         } else {
-            setTimeout(() => window.restoreMyIdentityOnBoot(), 0);
+            window.restoreMyIdentityOnBoot();
         }
 
         // 🌟 5. 操作日誌「設備用戶名單」彈窗（查看所有已識別手機/電腦、即時改名同步雲端、刪除舊紀錄）
@@ -1929,14 +1919,7 @@ if (aggressive && rawVal.length > 150000 && !keyName.startsWith('work_pending_')
                 console.error('清理過期本機快取時發生異常：', e);
             }
         };
-if (localStorage.getItem('work_last_ls_purge_day') !== new Date().toISOString().slice(0, 10)) {
-            const runPurge = () => {
-                window.purgeObsoleteLocalStorage(false);
-                try { localStorage.setItem('work_last_ls_purge_day', new Date().toISOString().slice(0, 10)); } catch (e) {}
-            };
-            if ('requestIdleCallback' in window) requestIdleCallback(runPurge, { timeout: 3000 });
-            else setTimeout(runPurge, 2500);
-        }
+window.purgeObsoleteLocalStorage(false);
         window.restoreLocalStorageBackupsFromIDB = async (keys = []) => {
             const restored = {};
             for (const k of keys) {
@@ -1987,7 +1970,6 @@ if (localStorage.getItem('work_last_ls_purge_day') !== new Date().toISOString().
         };
 
 const RESTORE_KEEP_DAYS = 5;
-        const RESTORE_KEEP_MS = RESTORE_KEEP_DAYS * 86400000;
         window.getRestoreCutoffDateStr = () => {
             const cutoffMs = Date.now() - (RESTORE_KEEP_DAYS - 1) * 86400000;
             return window.formatDateStrHK ? window.formatDateStrHK(cutoffMs) : new Date(cutoffMs + 8 * 3600000).toISOString().slice(0, 10);
@@ -2364,7 +2346,7 @@ let galleryItems = [];
                 console.error('從 IndexedDB 還原圖庫清單失敗:', err);
             }
         };
-// 由 bootstrapApp -> loadLocalFastCache 統一載入一次，避免開機搶跑造成雙重渲染
+        setTimeout(() => window.hydrateGalleryItemsFromIDB(), 0);
         let memoryImageCache = new Map();
         let currentGalleryCategory = '全部';
         window.pendingUploadImages = [];
@@ -2902,40 +2884,22 @@ delete memberProfilesStore[dupKey];
                 }
             }
 
-const incomingAvatar = (profileData && typeof profileData.avatar === 'string' && profileData.avatar.startsWith('data:image'))
-                ? profileData.avatar
-                : ((memberProfilesStore[name]?.avatar && memberProfilesStore[name].avatar.startsWith('data:image'))
-                    ? memberProfilesStore[name].avatar
-                    : (window._cloudAvatarsMap?.[name] || ''));
-
-            if (incomingAvatar && typeof idbSet === 'function') {
-                idbSet(`avatar_${name}`, incomingAvatar).catch(err => {
-                    console.error('頭像寫入 IndexedDB 失敗:', name, err);
-                });
+// 🌟 若含有 Base64 大頭像，同步備份到無容量限制的 IndexedDB，防止 profiles 肥大化
+            if (profileData?.avatar && profileData.avatar.startsWith('data:image')) {
+                try {
+                    idbSet(`avatar_${name}`, profileData.avatar);
+                } catch (e) {}
             }
 
-            memberProfilesStore[name] = Object.assign(
-                { id: '', avatar: '', gender: '女', prefs: [] },
-                memberProfilesStore[name] || {},
-                profileData,
-                incomingAvatar ? { avatar: incomingAvatar } : {}
-            );
+memberProfilesStore[name] = Object.assign({ id: '', avatar: '', gender: '女', prefs: [] }, memberProfilesStore[name] || {}, profileData);
             safeSetLocal('work_cache_member_profiles', memberProfilesStore);
-
-if (profileData?.avatar && profileData.avatar.startsWith('data:image')) {
-                const avTs = Date.now();
-                window._cloudAvatarsMap = window._cloudAvatarsMap || {};
-                window._cloudAvatarsMap[name] = incomingAvatar;
-                try { localStorage.setItem('work_cache_avatars_ts', String(avTs)); } catch (e) {}
-                syncConfig('member_avatars', { avatars: { [name]: incomingAvatar }, updatedAt: avTs }, true)
-                    .then(ok => {
-                        if (ok) syncConfig('member_avatars_meta', { updatedAt: avTs }, true);
-                    });
+            if (profileData?.avatar && profileData.avatar.startsWith('data:image')) {
+                syncConfig(`member_avatar_${encodeURIComponent(name)}`, { name, avatar: profileData.avatar, updatedAt: Date.now() });
             }
             const cloudSlimProfiles = window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore);
             syncConfig('member_profiles', { profiles: cloudSlimProfiles });
 
-            if (hasMergedDuplicates) {
+if (hasMergedDuplicates) {
                 const todayStr = getNowInputStrs().date;
                 window.syncActiveTodaySchedule();
                 if (window.currentMapRole === 'clean') {
@@ -2949,56 +2913,6 @@ if (profileData?.avatar && profileData.avatar.startsWith('data:image')) {
                 }
             }
         };
-
-        // 掃描本機 IndexedDB 所有 avatar_* 原圖
-        window.readAllAvatarsFromIDB = async () => {
-            const result = {};
-            try {
-                const dbInst = await openIDB();
-                await new Promise((resolve) => {
-                    const tx = dbInst.transaction(IDB_STORE, 'readonly');
-                    const store = tx.objectStore(IDB_STORE);
-                    const keysReq = store.getAllKeys();
-                    const valsReq = store.getAll();
-                    tx.oncomplete = () => {
-                        const keys = keysReq.result || [];
-                        const vals = valsReq.result || [];
-                        keys.forEach((k, idx) => {
-                            const keyStr = String(k || '');
-                            const val = vals[idx];
-                            if (keyStr.startsWith('avatar_') && typeof val === 'string' && val.startsWith('data:image')) {
-                                result[keyStr.slice('avatar_'.length)] = val;
-                            }
-                        });
-                        resolve();
-                    };
-                    tx.onerror = () => resolve();
-                });
-            } catch (e) {}
-            return result;
-        };
-
-// 開機立即從本機 IndexedDB 回填頭像（記錄本機張數；silent=true 時不額外觸發重繪）
-        window.hydrateAvatarsFromIDB = async (silent = false) => {
-            const localAvs = await window.readAllAvatarsFromIDB();
-            window._localAvatarCount = Object.keys(localAvs).length;
-            window._cloudAvatarsMap = window._cloudAvatarsMap || {};
-            let changed = false;
-            Object.entries(localAvs).forEach(([rawName, av]) => {
-                const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawName) : rawName;
-                window._cloudAvatarsMap[canon] = av;
-                if (memberProfilesStore[canon]?.avatar !== av) {
-                    memberProfilesStore[canon] = Object.assign({ id: '', avatar: '', gender: '女', residency: '本地', prefs: [] }, memberProfilesStore[canon] || {}, { avatar: av });
-                    changed = true;
-                }
-            });
-            if (changed && !silent) {
-                if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation?.();
-                if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterListsOnly?.();
-                if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager?.(true);
-            }
-        };
-        window.restoreCleanAvatarsFromCache = window.hydrateAvatarsFromIDB;
 
         // 🌟 儲存人員的 Top 3 優先崗位設定
         window.updateMemberPref = (name, idx, locVal) => {
@@ -3825,10 +3739,8 @@ let shiftIntervals = [[6 * 60 + 30, 22 * 60]];
                         if (idealIntervals.length === 0) {
                             const shiftSpanMins = shEndM - shStartM;
                             let targetRestMins = 60;
-if ( specialSched && (specialSched.restDurationNum || parseFloat(specialSched.restHours)) ) {
+                            if ( specialSched && (specialSched.restDurationNum || parseFloat(specialSched.restHours)) ) {
                                 targetRestMins = Math.round((specialSched.restDurationNum || parseFloat(specialSched.restHours)) * 60);
-                            } else if (prof.fixedRestHours !== undefined && prof.fixedRestHours !== '' && !isNaN(parseFloat(prof.fixedRestHours))) {
-                                targetRestMins = Math.round(parseFloat(prof.fixedRestHours) * 60);
                             } else if (shiftSpanMins >= 13 * 60) {
                                 targetRestMins = 240; // 06:30-22:00 長班預設休 4h (2h+2h)
                             } else if (shiftSpanMins >= 11 * 60) {
@@ -4364,16 +4276,6 @@ document.getElementById('memberProfileModal')?.classList.add('hidden');
                 syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
 const cloudSlimProfiles = window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore);
                 syncConfig('member_profiles', { profiles: cloudSlimProfiles }, false);
-if (memberProfilesStore[newName]?.avatar?.startsWith('data:image')) {
-                    const avTs = Date.now();
-                    window._cloudAvatarsMap = window._cloudAvatarsMap || {};
-                    window._cloudAvatarsMap[newName] = memberProfilesStore[newName].avatar;
-                    try { localStorage.setItem('work_cache_avatars_ts', String(avTs)); } catch (e) {}
-                    syncConfig('member_avatars', { avatars: { [newName]: memberProfilesStore[newName].avatar }, updatedAt: avTs }, true)
-                        .then(ok => {
-                            if (ok) syncConfig('member_avatars_meta', { updatedAt: avTs }, true);
-                        });
-                }
             }
 
             if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
@@ -4674,30 +4576,9 @@ const toMinutes = (t) => {
                 tag.innerText = totalHours > 0 ? `${totalHours}h` : '常態';
             }
 
-if (shouldSave && memberName) {
+            if (shouldSave && memberName) {
                 window.saveMemberProfile(memberName, { fixedShiftTime: val });
                 window.showToast(val ? `✅ 已儲存固定上班時間：${val}` : '🧹 已恢復常態上班時間');
-            }
-        };
-
-        // 🌟 固定休息時數（幾 H）：支援點擊快捷鍵或直接輸入數字
-        window.saveFixedRestHours = (memberName, shouldSave = false, quickVal = null) => {
-            const inp = document.getElementById('fixedRestHoursInput');
-            let rawVal = '';
-            if (quickVal !== null) {
-                const cur = String(inp?.value || '').trim();
-                rawVal = (cur === String(quickVal)) ? '' : String(quickVal);
-                if (inp) inp.value = rawVal;
-            } else {
-                rawVal = (inp?.value || '').trim();
-            }
-
-            if (shouldSave && memberName) {
-                const num = parseFloat(rawVal);
-                const cleanVal = (rawVal !== '' && !isNaN(num) && num >= 0) ? String(num) : '';
-                window.saveMemberProfile(memberName, { fixedRestHours: cleanVal });
-                window.showToast(cleanVal !== '' ? `✅ 已儲存休息時間：${cleanVal}H` : '🧹 已恢復預設休息時數');
-                window.openMemberProfilePopup(memberName, window._currentPopupLocation);
             }
         };
 
@@ -4734,12 +4615,11 @@ if (shouldSave && memberName) {
                 ? window._tempIdealRestSlots
                 : (savedRestParts.length > 0 ? savedRestParts : ['']);
 
-// 取得固定上班時間（相容舊版 futureSchedules 內最後一筆設定）
+            // 取得固定上班時間（相容舊版 futureSchedules 內最後一筆設定）
             const legacyShift = (profile.futureSchedules && profile.futureSchedules.length > 0)
                 ? (profile.futureSchedules[profile.futureSchedules.length - 1].shiftTime || '')
                 : '';
             const curFixedShift = profile.fixedShiftTime !== undefined ? profile.fixedShiftTime : legacyShift;
-            const curFixedRest = (profile.fixedRestHours !== undefined && profile.fixedRestHours !== null) ? String(profile.fixedRestHours) : '';
 
             popup.innerHTML = `
                 <div class="bg-white rounded-2xl p-4 shadow-2xl border border-slate-200 w-full max-w-[300px] flex flex-col items-center text-center animate-pop-in relative" onclick="event.stopPropagation()">
@@ -4839,7 +4719,7 @@ if (shouldSave && memberName) {
                             </div>
                         </div>
 
-<!-- ② 固定上班時間（取代原「未來特定排程」） -->
+                        <!-- ② 固定上班時間（取代原「未來特定排程」） -->
                         <div class="space-y-1.5 pb-2 border-b border-indigo-200/60">
                             <div class="flex items-center justify-between">
                                 <span class="text-[11px] font-black text-indigo-800 flex items-center">
@@ -4856,20 +4736,6 @@ if (shouldSave && memberName) {
                                 <button type="button" onclick="document.getElementById('fixedShiftTimeInput').value=''; window.calcAndSaveFixedShift('${safeNameAttr}', true); window.openMemberProfilePopup('${safeNameAttr}', window._currentPopupLocation);" class="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors shrink-0" title="清空">
                                     <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
                                 </button>` : ''}
-                            </div>
-                            <div class="flex items-center justify-between gap-1 pt-0.5">
-                                <span class="text-[10.5px] font-bold text-slate-600 shrink-0">休息時間：</span>
-                                <div class="flex items-center gap-1 flex-1 justify-end">
-                                    ${[1, 2, 3, 4].map(h => `
-                                        <button type="button" onclick="window.saveFixedRestHours('${safeNameAttr}', true, ${h})"
-                                            class="px-1.5 py-0.5 rounded text-[10px] font-mono font-black border transition-colors ${curFixedRest === String(h) ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs' : 'bg-white hover:bg-emerald-50 text-emerald-700 border-emerald-200'}">${h}H</button>
-                                    `).join('')}
-                                    <input type="number" id="fixedRestHoursInput" value="${window.esc(curFixedRest)}" min="0" max="12" step="0.5" placeholder="0"
-                                        oninput="window.saveFixedRestHours('${safeNameAttr}', false)"
-                                        onchange="window.saveFixedRestHours('${safeNameAttr}', true)"
-                                        class="w-11 bg-white border border-indigo-300 rounded-md px-1 py-0.5 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
-                                    <span class="text-[11px] font-mono font-black text-indigo-700 shrink-0">H</span>
-                                </div>
                             </div>
                         </div>
 
@@ -8392,56 +8258,47 @@ const splitImageTo4ChunksAsync = async (file, maxDim = CONFIG.maxDim, quality = 
         };
 
 
-window._inflightThumbMap = window._inflightThumbMap || new Map();
         const getLowResThumbUrlAsync = window.getLowResThumbUrlAsync = async (item) => {
             const id = item.id;
             // 關鍵 1：縮圖 Key 必須加上 updatedAt 版本號，旋轉後才會生成全新縮圖
             const verKey = `thumb_${id}_v_${item.updatedAt || item.createdAt || 0}`;
 
             if (thumbImageCache.has(verKey)) return thumbImageCache.get(verKey);
-            if (window._inflightThumbMap.has(verKey)) return window._inflightThumbMap.get(verKey);
 
-            const task = (async () => {
-                const idbThumb = await idbGet(verKey);
-                if (idbThumb) {
-                    thumbImageCache.set(verKey, idbThumb);
-                    return idbThumb;
-                }
+            const idbThumb = await idbGet(verKey);
+            if (idbThumb) {
+                thumbImageCache.set(verKey, idbThumb);
+                return idbThumb;
+            }
 
-                const fullSrc = await getFullImageUrlAsync(item);
-                if (!fullSrc) return '';
+            const fullSrc = await getFullImageUrlAsync(item);
+            if (!fullSrc) return '';
 
-                return new Promise((resolve) => {
-                    const img = new Image();
-                    img.onload = async () => {
-                        const maxDim = 360;
-                        let { width: w, height: h } = img;
-                        const scale = maxDim / Math.max(w, h);
-                        w = Math.round(w * scale);
-                        h = Math.round(h * scale);
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = async () => {
+                    const maxDim = 360;
+                    let { width: w, height: h } = img;
+                    const scale = maxDim / Math.max(w, h);
+                    w = Math.round(w * scale);
+                    h = Math.round(h * scale);
 
-                        const cvs = document.createElement('canvas');
-                        cvs.width = w;
-                        cvs.height = h;
-                        const ctx = cvs.getContext('2d');
-                        ctx.imageSmoothingEnabled = true;
-                        ctx.imageSmoothingQuality = 'high';
-                        ctx.drawImage(img, 0, 0, w, h);
+                    const cvs = document.createElement('canvas');
+                    cvs.width = w;
+                    cvs.height = h;
+                    const ctx = cvs.getContext('2d');
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
+                    ctx.drawImage(img, 0, 0, w, h);
 
-                        const lowResUrl = cvs.toDataURL('image/jpeg', 0.75);
-                        thumbImageCache.set(verKey, lowResUrl);
-                        await idbSet(verKey, lowResUrl);
-                        resolve(lowResUrl);
-                    };
-                    img.onerror = () => resolve(fullSrc);
-                    img.src = fullSrc;
-                });
-            })().finally(() => {
-                window._inflightThumbMap.delete(verKey);
+                    const lowResUrl = cvs.toDataURL('image/jpeg', 0.75);
+                    thumbImageCache.set(verKey, lowResUrl);
+                    await idbSet(verKey, lowResUrl);
+                    resolve(lowResUrl);
+                };
+                img.onerror = () => resolve(fullSrc);
+                img.src = fullSrc;
             });
-
-            window._inflightThumbMap.set(verKey, task);
-            return task;
         };
 
 // ====== 全螢幕預覽控制函式 ======
@@ -11267,28 +11124,16 @@ window.ensurePersistentCameraInput();
                     <span class="text-xs font-black text-blue-700 tracking-wide">放開即可上傳圖片</span>
                 </div>`;
 
-grid.innerHTML = `${overlayHtml}<div class="grid grid-cols-3 gap-1.5">${cameraSlotHtml}${renderedCards.join('')}</div>`;
-            // 只針對尚未進入記憶體快取的相片，以最多 4 張同時載入，不卡主執行緒
-            const needThumbs = filtered.filter(i => !thumbImageCache.has(`thumb_${i.id}_v_${i.updatedAt || i.createdAt || 0}`));
-            if (needThumbs.length > 0) {
-                let cursor = 0;
-                const runWorker = async () => {
-                    while (cursor < needThumbs.length) {
-                        const target = needThumbs[cursor++];
-                        try {
-                            const src = await getLowResThumbUrlAsync(target);
-                            if (!src) continue;
-                            const img = document.getElementById(`gallery-img-${target.id}`);
-                            if (img && img.src !== src) img.src = src;
-                        } catch (err) {
-                            console.error('縮圖載入失敗：', target.id, err);
-                        }
-                    }
-                };
-                const workers = Math.min(4, needThumbs.length);
-                for (let w = 0; w < workers; w++) runWorker();
-            }
-if (window.lucide) lucide.createIcons({ root: $('galleryPage') });
+            grid.innerHTML = `${overlayHtml}<div class="grid grid-cols-3 gap-1.5">${cameraSlotHtml}${renderedCards.join('')}</div>`;
+            // 修復：背景補上縮圖，不阻塞首次渲染。
+            filtered.forEach((i) => {
+                getLowResThumbUrlAsync(i).then((src) => {
+                    if (!src) return;
+                    const img = document.getElementById(`gallery-img-${i.id}`);
+                    if (img) img.src = src;
+                }).catch(err => console.error('縮圖載入失敗：', i.id, err));
+            });
+            lucide.createIcons();
 
             const selBtn = $('gallerySelectModeBtn');
             if (selBtn) {
@@ -12477,6 +12322,7 @@ window.addEventListener('storage', async (e) => {
                     const latestList = await idbGet('app_gallery_metadata_list');
                     if (Array.isArray(latestList)) {
                         galleryItems = latestList;
+                        window._lastRenderFingerprint = '';
                         if (!$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
                         window.renderDashboard?.();
                     }
@@ -12647,8 +12493,9 @@ tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility)
             if (tabVisibilityState['dashboard'] === undefined) tabVisibilityState['dashboard'] = true;
             if (!tabOrderList.includes('dashboard')) tabOrderList.unshift('dashboard');
             
-window.hydrateAvatarsFromIDB?.(true);
-            checkAndResetDailySchedule();
+checkAndResetDailySchedule(); 
+            window.applyTabVisibility();
+            window.switchTab('gallery');   // 確保載入本地快取時也直接切換為圖庫
         }
 
 function setupPureRealtimeSync() {
@@ -12890,96 +12737,15 @@ bindSync('future_memos', 'work_cache_future_memos', d => {
                 }
             });
 
-// 🌟 成員檔案與頭像按需同步（比對指紋與版本號：沒變動就零下載、零重複渲染）
-            window._cloudAvatarsMap = window._cloudAvatarsMap || {};
-            window._lastProfilesSyncFp = JSON.stringify(window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore));
-
+           // 🌟 成員檔案（頭像與工號）雲端監聽同步
             bindSync('member_profiles', 'work_cache_member_profiles', d => {
                 if (d.profiles) {
-                    const nextFp = JSON.stringify(d.profiles);
-                    const isSameData = (nextFp === window._lastProfilesSyncFp);
-                    window._lastProfilesSyncFp = nextFp;
-
-                    const merged = { ...d.profiles };
-                    Object.keys(merged).forEach(k => {
-                        const keepAv = memberProfilesStore[k]?.avatar || window._cloudAvatarsMap[k];
-                        if (typeof keepAv === 'string' && keepAv.startsWith('data:image')) {
-                            merged[k] = { ...merged[k], avatar: keepAv };
-                        }
-                    });
-                    memberProfilesStore = merged;
+                    memberProfilesStore = d.profiles;
                     safeSetLocal('work_cache_member_profiles', memberProfilesStore);
-                    if (!isSameData) {
-                        if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
-                        if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterListsOnly?.();
-                        if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
-                    }
+                    if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
                 }
             });
-
-            // 只監聽 30 Bytes 的版本號文件，版本不同或本機無頭像時才拉取 member_avatars
-            onSnapshot(cfgDoc('member_avatars_meta'), async (metaSnap) => {
-                const remoteTs = metaSnap.exists() ? Number(metaSnap.data()?.updatedAt || 0) : 0;
-                const localTs = Number(localStorage.getItem('work_cache_avatars_ts') || 0);
-                const hasLocalAvatars = (window._localAvatarCount || 0) > 0;
-
-                // 本機已有頭像且版本一致 ➔ 直接結束（不下載、不寫入、不重繪）
-                if (hasLocalAvatars && localTs > 0 && remoteTs > 0 && remoteTs <= localTs) {
-                    return;
-                }
-
-                try {
-                    const avSnap = await getDoc(cfgDoc('member_avatars'));
-                    const cloudAvs = (avSnap.exists() && avSnap.data()?.avatars) ? avSnap.data().avatars : {};
-                    const docTs = avSnap.exists() ? Number(avSnap.data()?.updatedAt || 0) : 0;
-                    const finalTs = Math.max(remoteTs, docTs) || Date.now();
-                    const localAvs = await window.readAllAvatarsFromIDB();
-                    const toWriteIdb = [];
-                    let uiChanged = false;
-
-                    for (const [rawName, av] of Object.entries(cloudAvs)) {
-                        if (typeof av !== 'string' || !av.startsWith('data:image')) continue;
-                        const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawName) : rawName;
-                        window._cloudAvatarsMap[canon] = av;
-                        if (memberProfilesStore[canon]?.avatar !== av) {
-                            memberProfilesStore[canon] = Object.assign(
-                                { id: '', avatar: '', gender: '女', residency: '本地', prefs: [] },
-                                memberProfilesStore[canon] || {},
-                                { avatar: av }
-                            );
-                            uiChanged = true;
-                        }
-                        if (localAvs[canon] !== av) {
-                            toWriteIdb.push([`avatar_${canon}`, av]);
-                        }
-                    }
-
-                    if (toWriteIdb.length > 0) {
-                        const dbInst = await openIDB();
-                        await new Promise((resolve) => {
-                            const tx = dbInst.transaction(IDB_STORE, 'readwrite');
-                            const store = tx.objectStore(IDB_STORE);
-                            toWriteIdb.forEach(([k, v]) => store.put(v, k));
-                            tx.oncomplete = () => resolve();
-                            tx.onerror = () => resolve();
-                        });
-                        window._localAvatarCount = Object.keys({ ...localAvs, ...cloudAvs }).length;
-                    }
-
-                    try { localStorage.setItem('work_cache_avatars_ts', String(finalTs)); } catch (e) {}
-                    if (!metaSnap.exists() && Object.keys(cloudAvs).length > 0) {
-                        syncConfig('member_avatars_meta', { updatedAt: finalTs }, true);
-                    }
-
-                    if (uiChanged) {
-                        if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
-                        if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterListsOnly?.();
-                        if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
-                    }
-                } catch (e) {
-                    console.error('按需同步頭像失敗:', e);
-                }
-            }, () => {});
 
 // 🌟 新增：優先度看板排位 (loc_priority) 雲端即時同步
             bindSync('loc_priority', 'work_cache_loc_priority', d => {
@@ -13334,23 +13100,16 @@ onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'gallery_items')
                     }
                 });
 
-const _makeGallerySig = (arr) => (arr || []).map(x => `${x.id}_${x.title || ''}_${x.time || ''}_${x.category || ''}_${x.updatedAt || 0}_${!!x.isDeleted}_${!!x.isExported}`).join('|');
-                const _prevGallerySig = _makeGallerySig(galleryItems);
-                const _nextGalleryList = Array.from(mergedMap.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
-                const _nextGallerySig = _makeGallerySig(_nextGalleryList);
-                const _galleryChanged = (_nextGallerySig !== _prevGallerySig);
-
-                galleryItems = _nextGalleryList;
-                if (_galleryChanged) {
-                    saveGalleryItemsSafe(galleryItems);
-                }
-
-                window._galleryCloudLoaded = true;
+galleryItems = Array.from(mergedMap.values()).sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+                saveGalleryItemsSafe(galleryItems);
+                
+window._galleryCloudLoaded = true;
                 if ((Number(window.timeOffset) || 0) === 0 && !isFastForwarding) {
                     window._lastAutoArchiveRunTs = 0;
                     window.autoCleanupGalleryToTrash();
                 }
-                if (_galleryChanged && !$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
+                window._lastRenderFingerprint = '';
+                if (!$('galleryPage')?.classList.contains('hidden')) window.renderGallery();
                 window.autoSyncClosedStallsToPatrol(true);
                 
                 if ($('galleryTrashModal') && !$('galleryTrashModal').classList.contains('hidden')) {
@@ -13366,11 +13125,11 @@ if (newIncomingCount > 0) {
             }, console.error);
 
 // 即時同步操作日誌：顯示最近 30 天；前端只讀取，不再自行永久刪除雲端日誌。
-try {
-                const LOG_RETENTION_MS = 5 * 24 * 60 * 60 * 1000;
+            try {
+                const LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
                 const cutoffTs = Date.now() - LOG_RETENTION_MS;
                 const logColRef = collection(db, 'artifacts', appId, 'public', 'data', 'gallery_logs');
-                const logQuery = query(logColRef, where('timestamp', '>=', cutoffTs), orderBy('timestamp', 'desc'), limit(250));
+                const logQuery = query(logColRef, where('timestamp', '>=', cutoffTs), orderBy('timestamp', 'desc'));
 
                 onSnapshot(logQuery, (snap) => {
                     let list = [];
@@ -16841,98 +16600,6 @@ window.closeDayCardActionMenu = () => {
             document.getElementById('dayCardActionFloatingMenu')?.remove();
         };
 
-window.exportClean0630StationSummaryText = (targetDateStr) => {
-            window.captureAll5DayDomValues();
-
-            const stationConfigs = [
-                { id: 'pt_8', title: "花園仔男廁Little garden Men's toilet" },
-                { id: 'pt_9', title: "花園仔女廁+傷健廁所Little garden Women's & Accessible toilet" },
-                { id: 'pt_3', title: "花園仔Little garden public area" },
-                { id: 'pt_4', title: "街市G層地面Ground floor public area" },
-                { id: 'pt_1', title: "街市一樓+廁所First floor public area + toilet" },
-                { id: 'pt_6', title: "機動On standby" }
-            ];
-
-            const getDispName = (canon) => {
-                const prof = window.getMemberProfile ? window.getMemberProfile(canon) : null;
-                if (prof && prof.residency === '外地' && prof.id && prof.id.trim()) {
-                    return prof.id.trim();
-                }
-                return canon;
-            };
-
-            let hasAny0630 = false;
-            const sectionsText = stationConfigs.map(cfg => {
-                const rawNames = window.getSlotAssignedNamesLive
-                    ? window.getSlotAssignedNamesLive(targetDateStr, cfg.id, '06:30', '07:00')
-                    : [];
-                const canons = Array.from(new Set(
-                    rawNames
-                        .map(n => String(n || '').trim())
-                        .filter(n => n && n !== '休' && !n.includes('...'))
-                ));
-                if (canons.length > 0) hasAny0630 = true;
-                const lines = canons.map(c => `        ${getDispName(c)}`);
-                return `${cfg.title}\n${lines.length ? lines.join('\n') : '        (未排人)'}`;
-            }).join('\n\n');
-
-            if (!hasAny0630) {
-                return window.showToast(`⚠️ 【${targetDateStr}】尚無 06:30 崗位排班資料！`, true);
-            }
-
-            const finalOutput = `${targetDateStr}\n清潔崗位/時間 06:30\n\n${sectionsText}`;
-
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(finalOutput).then(() => {
-                    window.showToast('📋 已自動複製 06:30 清潔崗位公告！');
-                }).catch(() => {});
-            }
-
-            document.getElementById('clean0630SummaryExportModal')?.remove();
-            const modalHtml = `
-            <div id="clean0630SummaryExportModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[10050] flex items-center justify-center p-4" onclick="if(event.target === this) this.remove()">
-                <div class="bg-white rounded-2xl p-4 w-full max-w-[400px] max-h-[85vh] shadow-2xl border border-slate-200 flex flex-col animate-pop-in" onclick="event.stopPropagation()">
-                    <div class="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-100 shrink-0">
-                        <div class="flex items-center space-x-1.5">
-                            <span class="w-2.5 h-2.5 rounded-full bg-cyan-600"></span>
-                            <h3 class="font-black text-sm text-slate-800">清潔崗位/時間 06:30 (${targetDateStr})</h3>
-                        </div>
-                        <button type="button" onclick="document.getElementById('clean0630SummaryExportModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
-                            <i data-lucide="x" class="w-4 h-4"></i>
-                        </button>
-                    </div>
-
-                    <textarea id="clean0630SummaryExportTextarea" class="w-full flex-1 min-h-[320px] bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs font-mono font-bold text-slate-800 leading-relaxed focus:outline-none focus:border-cyan-600 resize-none scrollbar-hide">${window.esc ? window.esc(finalOutput) : finalOutput}</textarea>
-
-                    <div class="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0">
-                        <button type="button" onclick="(() => {
-                            const txt = document.getElementById('clean0630SummaryExportTextarea').value;
-                            const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
-                            const a = document.createElement('a');
-                            a.href = URL.createObjectURL(blob);
-                            a.download = '清潔崗位_0630_${targetDateStr}.txt';
-                            a.click();
-                            window.showToast('💾 已下載 .txt 檔案');
-                        })()" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center active:scale-95 transition-all">
-                            <i data-lucide="download" class="w-3.5 h-3.5 mr-1"></i>下載檔案
-                        </button>
-
-                        <button type="button" onclick="(() => {
-                            const ta = document.getElementById('clean0630SummaryExportTextarea');
-                            ta.select();
-                            navigator.clipboard.writeText(ta.value);
-                            window.showToast('✅ 已複製！可直接貼上至微信/WhatsApp');
-                        })()" class="flex-1 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-xs font-black shadow-sm flex items-center justify-center active:scale-95 transition-all">
-                            <i data-lucide="copy" class="w-3.5 h-3.5 mr-1.5"></i>一鍵複製全文
-                        </button>
-                    </div>
-                </div>
-            </div>`;
-
-            document.body.insertAdjacentHTML('beforeend', modalHtml);
-            if (window.lucide) lucide.createIcons({ root: document.getElementById('clean0630SummaryExportModal') });
-        };
-
         window.toggleDayCardActionMenu = (dStr, e) => {
             if (e) e.stopPropagation();
             const existing = document.getElementById('dayCardActionFloatingMenu');
@@ -16944,35 +16611,24 @@ window.exportClean0630StationSummaryText = (targetDateStr) => {
 
             const btn = e?.currentTarget;
             const rect = btn ? btn.getBoundingClientRect() : { bottom: 80, right: window.innerWidth - 16 };
-            const isClean = window.currentMapRole === 'clean';
 
             const menu = document.createElement('div');
             menu.id = 'dayCardActionFloatingMenu';
             menu.dataset.dateStr = dStr;
             menu.style.top = `${Math.round(rect.bottom + 5)}px`;
             menu.style.right = `${Math.max(8, Math.round(window.innerWidth - rect.right))}px`;
-            menu.className = 'fixed z-[10060] bg-white rounded-xl shadow-2xl border border-slate-200 p-1.5 min-w-[144px] space-y-1 animate-pop-in select-none';
+            menu.className = 'fixed z-[10060] bg-white rounded-xl shadow-2xl border border-slate-200 p-1.5 min-w-[138px] space-y-1 animate-pop-in select-none';
             menu.onclick = (ev) => ev.stopPropagation();
 
-            const clean0630BtnHtml = isClean ? `
-                <button type="button" onclick="window.closeDayCardActionMenu(); window.exportClean0630StationSummaryText('${dStr}');"
-                    class="w-full px-2.5 py-1.5 rounded-lg text-[11px] font-black text-cyan-800 hover:bg-cyan-50 flex items-center gap-2 transition-colors text-left">
-                    <i data-lucide="clock" class="w-3.5 h-3.5 text-cyan-700 shrink-0"></i><span>導出6:30崗位</span>
-                </button>` : '';
-
-            const fullTableBtnHtml = !isClean ? `
-                <button type="button" onclick="window.closeDayCardActionMenu(); window.exportDayFullScheduleText('${dStr}');"
-                    class="w-full px-2.5 py-1.5 rounded-lg text-[11px] font-black text-blue-700 hover:bg-blue-50 flex items-center gap-2 transition-colors text-left">
-                    <i data-lucide="table" class="w-3.5 h-3.5 text-blue-600 shrink-0"></i><span>導出全表</span>
-                </button>` : '';
-
-            menu.innerHTML = `
+menu.innerHTML = `
                 <button type="button" onclick="window.closeDayCardActionMenu(); window.exportDayStationSummaryText('${dStr}');"
                     class="w-full px-2.5 py-1.5 rounded-lg text-[11px] font-black text-teal-700 hover:bg-teal-50 flex items-center gap-2 transition-colors text-left">
                     <i data-lucide="clipboard-list" class="w-3.5 h-3.5 text-teal-600 shrink-0"></i><span>導出崗位</span>
                 </button>
-                ${clean0630BtnHtml}
-                ${fullTableBtnHtml}
+                <button type="button" onclick="window.closeDayCardActionMenu(); window.exportDayFullScheduleText('${dStr}');"
+                    class="w-full px-2.5 py-1.5 rounded-lg text-[11px] font-black text-blue-700 hover:bg-blue-50 flex items-center gap-2 transition-colors text-left">
+                    <i data-lucide="table" class="w-3.5 h-3.5 text-blue-600 shrink-0"></i><span>導出全表</span>
+                </button>
                 <button type="button" onclick="window.closeDayCardActionMenu(); window.exportDayBreakScheduleText('${dStr}');"
                     class="w-full px-2.5 py-1.5 rounded-lg text-[11px] font-black text-amber-700 hover:bg-amber-50 flex items-center gap-2 transition-colors text-left">
                     <i data-lucide="coffee" class="w-3.5 h-3.5 text-amber-600 shrink-0"></i><span>導出休息</span>
@@ -21851,10 +21507,9 @@ window.recoverIdentityByFingerprint = async () => {
         onAuthStateChanged(auth, (user) => {
             currentUser = user; const dot = $('connectionDot'), st = $('connectionStatus');
             if (user) { 
-dot?.classList.replace('bg-red-500', 'bg-green-500'); 
+                dot?.classList.replace('bg-red-500', 'bg-green-500'); 
                 if (st) st.textContent = '系統已連線並同步'; 
                 window.recoverIdentityByFingerprint();
-                window.restoreCleanAvatarsFromCache?.(true);
                 setupPureRealtimeSync(); 
                 setupPatrolSync();
                 window.flushPendingGalleryLogs?.();
@@ -21883,7 +21538,6 @@ dot?.classList.replace('bg-red-500', 'bg-green-500');
 
 async function bootstrapApp() {
             try {
-                const authPromise = initAuth();
                 await loadLocalFastCache();
                 window.applyTabVisibility();
                 window.updatePatrolDateInputUI();
@@ -21895,8 +21549,8 @@ async function bootstrapApp() {
                     ? 'gallery' 
                     : (tabOrderList.find(k => tabVisibilityState[k] !== false) || 'gallery');
                 window.switchTab(defaultTab);
-                if (window.lucide) lucide.createIcons({ root: document.querySelector('header') });
-                await authPromise;
+                if (window.lucide) lucide.createIcons();
+                await initAuth();
             } catch (e) {
                 console.error('應用程式初始化失敗：', e);
                 window.showToast('初始化失敗，請重新載入頁面', true);
@@ -22051,7 +21705,7 @@ window.pushMeetingReportsToAllIframes = (reports) => {
         if (iframe && iframe.contentWindow) {
             try {
                 // 🌟 根源修復 2：指定同源目標，若為 srcdoc 則限制來源，防止向外部廣播
-const targetOrigin = (window.location.origin === 'null' || window.location.protocol === 'file:') ? '*' : window.location.origin;
+                const targetOrigin = window.location.origin === 'null' ? '*' : window.location.origin;
                 iframe.contentWindow.postMessage({
                     type: 'SYNC_MEETING_REPORTS',
                     reports: data
