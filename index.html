@@ -2088,10 +2088,18 @@ window._isFlushingSyncQueue = false;
                 window._isFlushingSyncQueue = false;
             }
         };
-        window.markSyncError = (key, data, merge, err) => {
+window.markSyncError = (key, data, merge, err) => {
             console.error(`雲端同步失敗 (${key}):`, err);
             const idx = window._syncQueue.findIndex(x => x.key === key);
-            const queued = { key, data, merge: !!merge, queuedAt: Date.now() };
+            let finalData = data;
+            if (idx >= 0 && key === 'member_avatars' && window._syncQueue[idx]?.data?.avatars && data?.avatars) {
+                finalData = {
+                    ...window._syncQueue[idx].data,
+                    ...data,
+                    avatars: { ...window._syncQueue[idx].data.avatars, ...data.avatars }
+                };
+            }
+            const queued = { key, data: finalData, merge: !!merge, queuedAt: Date.now() };
             if (idx >= 0) window._syncQueue[idx] = queued;
             else window._syncQueue.push(queued);
             persistSyncQueue();
@@ -2884,22 +2892,34 @@ delete memberProfilesStore[dupKey];
                 }
             }
 
-// 🌟 若含有 Base64 大頭像，同步備份到無容量限制的 IndexedDB，防止 profiles 肥大化
-            if (profileData?.avatar && profileData.avatar.startsWith('data:image')) {
-                try {
-                    idbSet(`avatar_${name}`, profileData.avatar);
-                } catch (e) {}
+const hasNewAvatar = !!(profileData && typeof profileData.avatar === 'string' && profileData.avatar.startsWith('data:image'));
+            const incomingAvatar = hasNewAvatar
+                ? profileData.avatar
+                : ((memberProfilesStore[name]?.avatar && memberProfilesStore[name].avatar.startsWith('data:image'))
+                    ? memberProfilesStore[name].avatar
+                    : (window._cloudAvatarsMap?.[name] || ''));
+
+            if (incomingAvatar && typeof idbSet === 'function') {
+                idbSet(`avatar_${name}`, incomingAvatar).catch(err => {
+                    console.error('頭像寫入 IndexedDB 失敗:', name, err);
+                });
             }
 
-memberProfilesStore[name] = Object.assign({ id: '', avatar: '', gender: '女', prefs: [] }, memberProfilesStore[name] || {}, profileData);
+            memberProfilesStore[name] = Object.assign(
+                { id: '', avatar: '', gender: '女', residency: '本地', prefs: [] },
+                memberProfilesStore[name] || {},
+                profileData,
+                incomingAvatar ? { avatar: incomingAvatar } : {}
+            );
             safeSetLocal('work_cache_member_profiles', memberProfilesStore);
-            if (profileData?.avatar && profileData.avatar.startsWith('data:image')) {
-                syncConfig(`member_avatar_${encodeURIComponent(name)}`, { name, avatar: profileData.avatar, updatedAt: Date.now() });
+
+            if (hasNewAvatar) {
+                window.syncAvatarToCloud({ [name]: incomingAvatar });
             }
             const cloudSlimProfiles = window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore);
             syncConfig('member_profiles', { profiles: cloudSlimProfiles });
 
-if (hasMergedDuplicates) {
+            if (hasMergedDuplicates) {
                 const todayStr = getNowInputStrs().date;
                 window.syncActiveTodaySchedule();
                 if (window.currentMapRole === 'clean') {
@@ -2911,6 +2931,72 @@ if (hasMergedDuplicates) {
                     safeSetLocal('work_cache_member_schedules', csSchedulesStore);
                     syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
                 }
+            }
+        };
+
+        // 統一上傳頭像並依序推進版本戳（離線時依 FIFO 排隊，不遺失）
+        window.syncAvatarToCloud = async (avatarsPatch) => {
+            if (!avatarsPatch || !Object.keys(avatarsPatch).length) return false;
+            const avTs = Date.now();
+            window._cloudAvatarsMap = window._cloudAvatarsMap || {};
+            Object.assign(window._cloudAvatarsMap, avatarsPatch);
+            try { localStorage.setItem('work_cache_avatars_ts', String(avTs)); } catch (e) {}
+            const ok = await syncConfig('member_avatars', { avatars: avatarsPatch, updatedAt: avTs }, true);
+            await syncConfig('member_avatars_meta', { updatedAt: avTs }, true);
+            return ok;
+        };
+
+        // 只讀取 IndexedDB 中 avatar_* 範圍（完全不碰圖庫高清原圖，不卡頓）
+        window.readAllAvatarsFromIDB = async () => {
+            const result = {};
+            try {
+                const dbInst = await openIDB();
+                await new Promise((resolve) => {
+                    const tx = dbInst.transaction(IDB_STORE, 'readonly');
+                    const store = tx.objectStore(IDB_STORE);
+                    const range = typeof IDBKeyRange !== 'undefined' ? IDBKeyRange.bound('avatar_', 'avatar_\uffff') : undefined;
+                    const keysReq = store.getAllKeys(range);
+                    const valsReq = store.getAll(range);
+                    tx.oncomplete = () => {
+                        const keys = keysReq.result || [];
+                        const vals = valsReq.result || [];
+                        keys.forEach((k, idx) => {
+                            const keyStr = String(k || '');
+                            const val = vals[idx];
+                            if (keyStr.startsWith('avatar_') && typeof val === 'string' && val.startsWith('data:image')) {
+                                result[keyStr.slice('avatar_'.length)] = val;
+                            }
+                        });
+                        resolve();
+                    };
+                    tx.onerror = () => resolve();
+                });
+            } catch (e) {}
+            return result;
+        };
+
+        // 開機從本機 IndexedDB 秒速回填頭像
+        window.hydrateAvatarsFromIDB = async (silent = false) => {
+            const localAvs = await window.readAllAvatarsFromIDB();
+            window._localAvatarCount = Object.keys(localAvs).length;
+            window._cloudAvatarsMap = window._cloudAvatarsMap || {};
+            let changed = false;
+            Object.entries(localAvs).forEach(([rawName, av]) => {
+                const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawName) : rawName;
+                window._cloudAvatarsMap[canon] = av;
+                if (memberProfilesStore[canon]?.avatar !== av) {
+                    memberProfilesStore[canon] = Object.assign(
+                        { id: '', avatar: '', gender: '女', residency: '本地', prefs: [] },
+                        memberProfilesStore[canon] || {},
+                        { avatar: av }
+                    );
+                    changed = true;
+                }
+            });
+            if (changed && !silent) {
+                if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation?.();
+                if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterListsOnly?.();
+                if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager?.(true);
             }
         };
 
@@ -3122,10 +3208,17 @@ window.deleteMemberByName = (name) => {
                     safeSetLocal('work_cache_duty_filter', window.activeDutyMembersFilter);
                     syncConfig('duty_filter', { filter: window.activeDutyMembersFilter });
                 }
-                if (!csMembersStore.includes(name) && !cleanMembersStore.includes(name) && memberProfilesStore[name]) {
+if (!csMembersStore.includes(name) && !cleanMembersStore.includes(name) && memberProfilesStore[name]) {
                     delete memberProfilesStore[name];
+                    if (window._cloudAvatarsMap) delete window._cloudAvatarsMap[name];
+                    idbDel(`avatar_${name}`).catch(() => {});
                     safeSetLocal('work_cache_member_profiles', memberProfilesStore);
-                    syncConfig('member_profiles', { profiles: memberProfilesStore });
+                    const slimProfiles = window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore);
+                    syncConfig('member_profiles', { profiles: slimProfiles });
+                    if (currentUser && db && navigator.onLine) {
+                        const delTs = Date.now();
+                        setDoc(cfgDoc('member_avatars'), { avatars: { [name]: deleteField() }, updatedAt: delTs }, { merge: true }).catch(() => {});
+                    }
                 }
                 if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
                     window.renderMemberRosterListsOnly();
@@ -4276,6 +4369,15 @@ document.getElementById('memberProfileModal')?.classList.add('hidden');
                 syncConfig('member_schedules', { schedules: csSchedulesStore, multiDay: csMultiDaySchedules, date: todayStr });
 const cloudSlimProfiles = window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore);
                 syncConfig('member_profiles', { profiles: cloudSlimProfiles }, false);
+                const renamedAv = memberProfilesStore[newName]?.avatar || window._cloudAvatarsMap?.[oldName] || '';
+                if (typeof renamedAv === 'string' && renamedAv.startsWith('data:image')) {
+                    memberProfilesStore[newName].avatar = renamedAv;
+                    if (window._cloudAvatarsMap) delete window._cloudAvatarsMap[oldName];
+                    window.syncAvatarToCloud({ [newName]: renamedAv });
+                    if (navigator.onLine) {
+                        setDoc(cfgDoc('member_avatars'), { avatars: { [oldName]: deleteField() } }, { merge: true }).catch(() => {});
+                    }
+                }
             }
 
             if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) {
@@ -12493,7 +12595,8 @@ tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility)
             if (tabVisibilityState['dashboard'] === undefined) tabVisibilityState['dashboard'] = true;
             if (!tabOrderList.includes('dashboard')) tabOrderList.unshift('dashboard');
             
-checkAndResetDailySchedule(); 
+await window.hydrateAvatarsFromIDB?.(true);
+            checkAndResetDailySchedule(); 
             window.applyTabVisibility();
             window.switchTab('gallery');   // 確保載入本地快取時也直接切換為圖庫
         }
@@ -12737,15 +12840,115 @@ bindSync('future_memos', 'work_cache_future_memos', d => {
                 }
             });
 
-           // 🌟 成員檔案（頭像與工號）雲端監聽同步
+// 🌟 成員檔案與獨立頭像庫 (member_avatars) 按需同步：沒變動零下載、零重複渲染
+            window._cloudAvatarsMap = window._cloudAvatarsMap || {};
+            window._didInitialAvatarCloudPush = false;
+            window._lastProfilesSyncFp = JSON.stringify(window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore));
+
             bindSync('member_profiles', 'work_cache_member_profiles', d => {
                 if (d.profiles) {
-                    memberProfilesStore = d.profiles;
+                    const nextFp = JSON.stringify(d.profiles);
+                    const isSameData = (nextFp === window._lastProfilesSyncFp);
+                    window._lastProfilesSyncFp = nextFp;
+
+                    const merged = { ...d.profiles };
+                    Object.keys(merged).forEach(k => {
+                        const pId = String(merged[k]?.id || '').trim().toUpperCase();
+                        const keepAv = memberProfilesStore[k]?.avatar
+                            || window._cloudAvatarsMap[k]
+                            || (pId ? window._cloudAvatarsMap[pId] : '');
+                        if (typeof keepAv === 'string' && keepAv.startsWith('data:image')) {
+                            merged[k] = { ...merged[k], avatar: keepAv };
+                        }
+                    });
+                    memberProfilesStore = merged;
                     safeSetLocal('work_cache_member_profiles', memberProfilesStore);
-                    if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
-                    if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                    if (!isSameData) {
+                        if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+                        if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterListsOnly?.();
+                        if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                    }
                 }
             });
+
+            // 監聽 30 Bytes 版本戳，只有新裝置或有人更換頭像時才拉取 member_avatars
+            onSnapshot(cfgDoc('member_avatars_meta'), async (metaSnap) => {
+                const remoteTs = metaSnap.exists() ? Number(metaSnap.data()?.updatedAt || 0) : 0;
+                const localTs = Number(localStorage.getItem('work_cache_avatars_ts') || 0);
+                const hasLocalAvatars = (window._localAvatarCount || 0) > 0;
+
+                if (hasLocalAvatars && localTs > 0 && remoteTs > 0 && remoteTs <= localTs) {
+                    return;
+                }
+
+                try {
+                    const avSnap = await getDoc(cfgDoc('member_avatars'));
+                    const cloudAvs = (avSnap.exists() && avSnap.data()?.avatars) ? avSnap.data().avatars : {};
+                    const docTs = avSnap.exists() ? Number(avSnap.data()?.updatedAt || 0) : 0;
+                    const finalTs = Math.max(remoteTs, docTs) || Date.now();
+                    const localAvs = await window.readAllAvatarsFromIDB();
+                    const toWriteIdb = [];
+                    let uiChanged = false;
+
+                    for (const [rawName, av] of Object.entries(cloudAvs)) {
+                        if (typeof av !== 'string' || !av.startsWith('data:image')) continue;
+                        const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawName) : rawName;
+                        window._cloudAvatarsMap[canon] = av;
+                        if (memberProfilesStore[canon]?.avatar !== av) {
+                            memberProfilesStore[canon] = Object.assign(
+                                { id: '', avatar: '', gender: '女', residency: '本地', prefs: [] },
+                                memberProfilesStore[canon] || {},
+                                { avatar: av }
+                            );
+                            uiChanged = true;
+                        }
+                        if (localAvs[canon] !== av) {
+                            toWriteIdb.push([`avatar_${canon}`, av]);
+                        }
+                    }
+
+                    // 首次連線：若本機有雲端缺少的頭像，自動一次補推上雲端
+                    if (!window._didInitialAvatarCloudPush) {
+                        window._didInitialAvatarCloudPush = true;
+                        const missingInCloud = {};
+                        Object.entries(localAvs).forEach(([rawName, av]) => {
+                            const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(rawName) : rawName;
+                            if (!cloudAvs[canon] && !cloudAvs[rawName]) {
+                                missingInCloud[canon] = av;
+                            }
+                        });
+                        if (Object.keys(missingInCloud).length > 0) {
+                            await window.syncAvatarToCloud(missingInCloud);
+                        }
+                    }
+
+                    // 合併成單一交易寫入 IndexedDB，不與圖庫索引搶鎖
+                    if (toWriteIdb.length > 0) {
+                        const dbInst = await openIDB();
+                        await new Promise((resolve) => {
+                            const tx = dbInst.transaction(IDB_STORE, 'readwrite');
+                            const store = tx.objectStore(IDB_STORE);
+                            toWriteIdb.forEach(([k, v]) => store.put(v, k));
+                            tx.oncomplete = () => resolve();
+                            tx.onerror = () => resolve();
+                        });
+                        window._localAvatarCount = Object.keys({ ...localAvs, ...cloudAvs }).length;
+                    }
+
+                    try { localStorage.setItem('work_cache_avatars_ts', String(finalTs)); } catch (e) {}
+                    if (!metaSnap.exists() && Object.keys(cloudAvs).length > 0) {
+                        syncConfig('member_avatars_meta', { updatedAt: finalTs }, true);
+                    }
+
+                    if (uiChanged) {
+                        if (!$('mapPage')?.classList.contains('hidden')) window.updateMapSimulation();
+                        if ($('memberRosterModal') && !$('memberRosterModal').classList.contains('hidden')) window.renderMemberRosterListsOnly?.();
+                        if ($('scheduleManageModal')?.classList.contains('flex')) window.renderScheduleManager();
+                    }
+                } catch (e) {
+                    console.error('按需同步頭像失敗:', e);
+                }
+            }, () => {});
 
 // 🌟 新增：優先度看板排位 (loc_priority) 雲端即時同步
             bindSync('loc_priority', 'work_cache_loc_priority', d => {
@@ -14607,9 +14810,10 @@ window.clearCurrentWeekCsRoster = () => {
             safeSetLocal('work_cache_member_profiles', memberProfilesStore);
 
             // 3. 同步至 Firebase 雲端
-            if (currentUser && db) {
+if (currentUser && db) {
                 syncConfig('loc_priority', { matrix: window.locPriorityMatrix });
-                syncConfig('member_profiles', { profiles: memberProfilesStore });
+                const slimProfiles = window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore);
+                syncConfig('member_profiles', { profiles: slimProfiles });
             }
 
             // 4. 若背後排班表或人員名單開啟中，同步更新顯示
@@ -16190,9 +16394,17 @@ window.saveGridSchedule = async () => {
                 } catch (e) { console.error('清幽靈備份失敗', e); }
 
                 // 8. 🌟 關鍵：使用 { merge: false } 完全覆蓋雲端檔案庫，徹底消滅雲端裡的舊名字記憶！
-                if (currentUser && db) {
+if (currentUser && db) {
                     try {
-                        await setDoc(cfgDoc('member_profiles'), { profiles: memberProfilesStore }, { merge: false });
+                        const slimProfiles = window.shrinkDataForLocalStorage('work_cache_member_profiles', memberProfilesStore);
+                        await setDoc(cfgDoc('member_profiles'), { profiles: slimProfiles }, { merge: false });
+                        const rescuedAvs = {};
+                        Object.entries(memberProfilesStore).forEach(([nm, pf]) => {
+                            if (pf?.avatar?.startsWith('data:image')) rescuedAvs[nm] = pf.avatar;
+                        });
+                        if (Object.keys(rescuedAvs).length > 0) {
+                            await window.syncAvatarToCloud(rescuedAvs);
+                        }
                         await setDoc(cfgDoc('clean_team_members'), { members: cleanMembersStore }, { merge: false });
                         await setDoc(cfgDoc('team_members'), { members: csMembersStore }, { merge: false });
                         await setDoc(cfgDoc('clean_member_schedules'), { schedules: cleanSchedulesStore, multiDay: cleanMultiDaySchedules, date: todayStr }, { merge: false });
