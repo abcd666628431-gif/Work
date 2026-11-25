@@ -22355,6 +22355,7 @@ window.pushMeetingReportsToAllIframes = (reports) => {
     
 .remark-box { display: none; align-items: baseline; flex-wrap: wrap; gap: 4px; }
     .remark-box.open { display: inline-flex; }
+    #box_cs_inquiry_panel.open { display: contents; }
 
     /* 預設隱藏加號按鈕，透過 JS 判斷數值有效時才顯示 */
     .toggle-btn { display: none !important; }
@@ -22583,14 +22584,16 @@ window.pushMeetingReportsToAllIframes = (reports) => {
           <span class="font-bold text-black dark:text-slate-100">· 諮詢協助：</span>
           <span contenteditable="true" id="cs_inquiry_count" class="expand-input num-input">無</span>
           <span class="text-black font-semibold">人次</span>
-          <span class="remark-box" id="box_cs_inquiry_panel">
-            <select id="cs_inquiry_select" onchange="window.pickInquiryOption(this.value)" class="border border-slate-300 rounded-md px-1.5 py-0.5 text-xs bg-white text-slate-800">
-              <option value="">選單新增框...</option>
-            </select>
-            <span id="cs_inquiry_boxes" class="inline-flex flex-wrap items-baseline gap-1"></span>
-            <button type="button" onclick="window.openInquiryOptionsManager()" class="text-xs px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300" title="手動新增或刪除選單選項">管理選項</button>
-          </span>
           <button type="button" class="toggle-btn" data-target="box_cs_inquiry_panel" title="添加/收回說明">+</button>
+          <div class="remark-box" id="box_cs_inquiry_panel">
+            <span class="inline-flex items-center gap-1.5 ml-1">
+              <select id="cs_inquiry_select" onchange="window.pickInquiryOption(this.value)" class="border border-slate-300 rounded-md px-1.5 py-0.5 text-xs bg-white text-slate-800">
+                <option value="">選單新增框...</option>
+              </select>
+              <button type="button" onclick="window.openInquiryOptionsManager()" class="text-xs px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300" title="手動新增或刪除選單選項">管理選項</button>
+            </span>
+            <div id="cs_inquiry_boxes" class="w-full flex flex-col items-start gap-1 pl-4 pt-1"></div>
+          </div>
         </div>
         <div class="flex items-baseline flex-wrap gap-y-1" data-trigger="cs_lost_count">
           <span class="font-bold text-black dark:text-slate-100">· 失物發現：</span>
@@ -23250,11 +23253,14 @@ if (pendingCloudPayload) {
       }
     }
 
-    // 全域委託監聽：打字、中文輸入完成、按 Enter
+// 全域委託監聽：打字、中文輸入完成、按 Enter
     document.addEventListener('input', function(e) {
       if (e.target && e.target.classList && e.target.classList.contains('expand-input')) {
         updateTextColor(e.target);
         if (e.target.id === 'meta_year' || e.target.id === 'meta_month' || e.target.id === 'meta_day') return;
+        if (e.target.id && e.target.id.indexOf('cs_inquiry_cnt_') === 0 && typeof window.recalcInquiryTotal === 'function') {
+          window.recalcInquiryTotal();
+        }
         updateBracketStates();
         updateToggleBtnVisibility();
         autoExpandRowInputs(e.target);
@@ -23266,6 +23272,9 @@ if (pendingCloudPayload) {
       if (e.target && e.target.classList && e.target.classList.contains('expand-input')) {
         updateTextColor(e.target);
         if (e.target.id === 'meta_year' || e.target.id === 'meta_month' || e.target.id === 'meta_day') return;
+        if (e.target.id && e.target.id.indexOf('cs_inquiry_cnt_') === 0 && typeof window.recalcInquiryTotal === 'function') {
+          window.recalcInquiryTotal();
+        }
         updateBracketStates();
         updateToggleBtnVisibility();
         autoExpandRowInputs(e.target);
@@ -23863,18 +23872,18 @@ window.reindexInquiryBoxes = function() {
       });
     };
 
-    window.buildInquiryBoxEl = function(idx, textVal, countVal) {
+window.buildInquiryBoxEl = function(idx, textVal, countVal) {
       var span = document.createElement('span');
-      span.className = 'inquiry-box-wrap inline-flex items-baseline gap-0.5 my-0.5';
+      span.className = 'inquiry-box-wrap inline-flex items-baseline gap-0 my-0.5 mr-1';
       var cnt = String(countVal == null ? '' : countVal).trim();
       var val = String(textVal == null ? '' : textVal).trim();
       var cntHasCls = (cnt && cnt !== '無') ? 'has-text' : '';
       var valHasCls = (val && val !== '無') ? 'has-text' : '';
       span.innerHTML =
-        '<span contenteditable="true" id="cs_inquiry_cnt_' + idx + '" class="expand-input !min-w-[24px] text-center font-bold ' + cntHasCls + '">' + escInquiryHtml(cnt) + '</span>' +
-        '<span class="text-black dark:text-slate-200 font-semibold">次</span>' +
-        '<span contenteditable="true" id="cs_inquiry_box_' + idx + '" class="expand-input detail-input ' + valHasCls + '">' + escInquiryHtml(val) + '</span>' +
-        '<button type="button" onclick="window.removeInquiryBox(this)" class="text-slate-400 hover:text-rose-600 text-xs font-bold px-0.5 leading-none select-none" title="刪除此框">×</button>';
+        '<span contenteditable="true" id="cs_inquiry_cnt_' + idx + '" style="color:#2563eb !important;margin:0 !important;padding-left:4px !important;padding-right:4px !important;min-width:20px !important;" class="expand-input text-center font-bold ' + cntHasCls + '">' + escInquiryHtml(cnt) + '</span>' +
+        '<span style="margin:0 2px !important;" class="text-black dark:text-slate-200 font-semibold">次</span>' +
+        '<span contenteditable="true" id="cs_inquiry_box_' + idx + '" style="margin:0 !important;padding-left:6px !important;padding-right:6px !important;min-width:44px !important;" class="expand-input detail-input ' + valHasCls + '">' + escInquiryHtml(val) + '</span>' +
+        '<button type="button" onclick="window.removeInquiryBox(this)" class="text-slate-400 hover:text-rose-600 text-xs font-bold pl-0.5 pr-1 leading-none select-none" title="刪除此框">×</button>';
       return span;
     };
 
@@ -23895,10 +23904,31 @@ window.reindexInquiryBoxes = function() {
       if (cntInput) cntInput.focus();
     };
 
+window.recalcInquiryTotal = function() {
+      var wrap = document.getElementById('cs_inquiry_boxes');
+      var totalEl = document.getElementById('cs_inquiry_count');
+      if (!wrap || !totalEl) return;
+
+      var cntEls = wrap.querySelectorAll('[id^="cs_inquiry_cnt_"]');
+      var sum = 0;
+      cntEls.forEach(function(inp) {
+        sum += parseTriggerState(inp.innerText).num;
+      });
+
+      if (sum > 0) {
+        totalEl.innerText = String(sum);
+        updateTextColor(totalEl);
+      } else if (cntEls.length === 0) {
+        totalEl.innerText = '無';
+        updateTextColor(totalEl);
+      }
+    };
+
     window.removeInquiryBox = function(btn) {
       var item = btn && btn.closest ? btn.closest('.inquiry-box-wrap') : null;
       if (item) item.remove();
       window.reindexInquiryBoxes();
+      window.recalcInquiryTotal();
       updateBracketStates();
       saveCurrentDayReport();
     };
