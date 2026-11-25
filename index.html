@@ -9724,18 +9724,22 @@ $('galleryItemEditModal')?.remove();
             });
         };
 
+window._cachedExportDirHandle = null;
+        getDirHandleFromIDB().then(h => { if (h) window._cachedExportDirHandle = h; }).catch(() => {});
+
         window.exportAllGalleryImages = async () => {
             let targetItems = [];
             if (window.isGallerySelectMode && window.selectedGalleryIds.size > 0) {
                 // 選取模式下，只導出有被勾選且未被刪除的圖片
                 targetItems = galleryItems.filter(i => !i.isDeleted && window.selectedGalleryIds.has(i.id));
             } else {
-                // 一般模式下：支援「全部」、「未導出」與各獨立分類
+                // 一般模式下：支援「全部」、「未導出」與各獨立分類（同步相容「收工」「開工-雞相」）
                 targetItems = galleryItems.filter(i => {
                     if (i.isDeleted) return false;
+                    const normCat = i.category === '收工' ? '提早收工' : (i.category === '開工-雞相' ? '營業相' : i.category);
                     if (currentGalleryCategory === '全部') return true;
                     if (currentGalleryCategory === '未導出') return !i.isExported;
-                    if (i.category !== currentGalleryCategory) return false;
+                    if (normCat !== currentGalleryCategory) return false;
                     return true;
                 });
             }
@@ -9744,18 +9748,26 @@ $('galleryItemEditModal')?.remove();
             if (!window.showDirectoryPicker) return window.showToast('瀏覽器不支援自選資料夾功能', true);
 
             try {
-                const cachedHandle = await getDirHandleFromIDB();
+                // 不在呼叫 showDirectoryPicker 前執行 await，避免瀏覽器判定點擊手勢過期而不彈窗
                 const pickerOptions = { mode: 'readwrite' };
-                if (cachedHandle) {
-                    try {
-                        const permission = await cachedHandle.queryPermission({ mode: 'readwrite' });
-                        if (permission === 'granted' || permission === 'prompt') pickerOptions.startIn = cachedHandle;
-                    } catch (e) {}
+                if (window._cachedExportDirHandle) {
+                    pickerOptions.startIn = window._cachedExportDirHandle;
                 }
 
                 window.showToast('請確認或選擇目標資料夾...');
-                const dirHandle = await window.showDirectoryPicker(pickerOptions);
+                let dirHandle;
+                try {
+                    dirHandle = await window.showDirectoryPicker(pickerOptions);
+                } catch (pickErr) {
+                    if (pickErr.name === 'AbortError') throw pickErr;
+                    // 若上次記住的資料夾失效或已搬移，清掉舊記憶並以預設位置重開視窗
+                    console.warn('記憶資料夾失效，改以預設位置重新開啟:', pickErr);
+                    window._cachedExportDirHandle = null;
+                    idbDel('_cached_export_dir_handle_').catch(() => {});
+                    dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                }
                 if (!dirHandle) return;
+                window._cachedExportDirHandle = dirHandle;
                 await saveDirHandleToIDB(dirHandle);
 
                 window.showToast(`準備導出共 ${targetItems.length} 張 PNG 圖片...`);
@@ -9838,7 +9850,14 @@ $('galleryItemEditModal')?.remove();
                 window.renderGallery();
 
 } catch (err) {
-                if (err.name !== 'AbortError') window.showToast(`❌ 無法存取資料夾`, true);
+                console.error('導出圖片中止或失敗:', err);
+                if (err.name === 'AbortError') {
+                    if (/active|already/i.test(err.message || '')) {
+                        window.showToast('⚠️ 已有資料夾視窗卡在背景，請先關閉或重新整理頁面', true);
+                    }
+                } else {
+                    window.showToast(`❌ 無法開啟資料夾 (${err.name || 'Error'})`, true);
+                }
             }
         };
 
