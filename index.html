@@ -387,11 +387,89 @@ tr[class*="pref-row-highlight-"] .sub-line-item[data-name=""] {
         .sao-hud-header-tag {
             clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 100%, 0 100%);
         }
-        .sao-amber-glow {
+.sao-amber-glow {
             background: linear-gradient(135deg, #f6ad1b 0%, #e08208 100%) !important;
             color: #ffffff !important;
             border-color: #ffffff !important;
             box-shadow: 0 0 12px rgba(245, 158, 11, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.45) !important;
+        }
+
+        /* ====== iPhone (iOS) 主分頁分段滑塊 ====== */
+        #tabBarContainer.ios-main-tabs {
+            position: relative !important;
+            display: grid !important;
+            grid-template-columns: repeat(var(--tab-count, 6), minmax(0, 1fr)) !important;
+            align-items: center !important;
+            gap: 0 !important;
+            padding: 2.5px !important;
+            border-radius: 10px !important;
+            background: rgba(118, 118, 128, 0.14) !important;
+            border: none !important;
+            box-shadow: inset 0 0.5px 1px rgba(0, 0, 0, 0.06) !important;
+            user-select: none;
+        }
+        .ios-main-tabs-thumb {
+            position: absolute;
+            top: 2.5px;
+            bottom: 2.5px;
+            left: 2.5px;
+            width: calc((100% - 5px) / var(--tab-count, 6));
+            border-radius: 7.5px;
+            background: #ffffff;
+            border: 0.5px solid rgba(0, 0, 0, 0.04);
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
+            transform: translate3d(calc(var(--tab-idx, 0) * 100%), 0, 0);
+            transition: transform 0.26s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.18s ease;
+            pointer-events: none;
+            z-index: 0;
+            box-sizing: border-box;
+            will-change: transform;
+        }
+        .ios-main-tabs-thumb.no-anim {
+            transition: none !important;
+        }
+        .ios-main-tab-btn {
+            position: relative;
+            z-index: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 5.5px 4px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            color: rgba(60, 60, 67, 0.74);
+            background: transparent;
+            border: none;
+            border-radius: 7.5px;
+            white-space: nowrap;
+            text-align: center;
+            cursor: pointer;
+            transition: color 0.18s ease, opacity 0.12s ease;
+        }
+        .ios-main-tab-btn:hover {
+            color: #111827;
+        }
+        .ios-main-tab-btn:active {
+            opacity: 0.45;
+        }
+.ios-main-tab-btn.is-active {
+            color: #2563eb;
+            font-weight: 700;
+        }
+        .dark-mode #tabBarContainer.ios-main-tabs {
+            background: rgba(148, 163, 184, 0.16) !important;
+        }
+        .dark-mode .ios-main-tabs-thumb {
+            background: #334155;
+            border-color: rgba(255, 255, 255, 0.08);
+        }
+        .dark-mode .ios-main-tab-btn {
+            color: rgba(203, 213, 225, 0.75);
+        }
+        .dark-mode .ios-main-tab-btn.is-active {
+            color: #ffffff;
         }
     </style>
     <script type="module">
@@ -2470,11 +2548,11 @@ window.getSplitTabLists = () => {
             menu.className = 'fixed z-[9990] bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-200 p-1.5 min-w-[132px] space-y-1 animate-pop-in';
             menu.onclick = (ev) => ev.stopPropagation();
 
-            menu.innerHTML = overflowTabs.map(k => {
+menu.innerHTML = overflowTabs.map(k => {
                 const meta = tabMetadataMap[k];
                 const isAct = curActive === k;
                 return `
-                    <button type="button" onclick="window.closeMoreTabsMenu(); window.switchTab('${k}');"
+                    <button type="button" onclick="window.closeMoreTabsMenu(); window.onIosMainTabClick('${k}');"
                         class="w-full px-3 py-2 rounded-xl text-xs font-black flex items-center justify-between gap-2 transition-colors ${isAct ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'text-slate-700 hover:bg-slate-100'}">
                         <span class="flex items-center gap-2">
                             <i data-lucide="${meta.icon}" class="w-3.5 h-3.5 ${isAct ? 'text-blue-600' : 'text-slate-500'}"></i>
@@ -2488,34 +2566,103 @@ window.getSplitTabLists = () => {
             if (window.lucide) lucide.createIcons({ root: menu });
         };
 
+        window.syncMainTabIosSlider = (activeKey, animate = true) => {
+            const container = $('tabBarContainer');
+            if (!container || !container.classList.contains('ios-main-tabs')) return;
+            const { overflowTabs } = window.getSplitTabLists();
+            const targetKey = activeKey || localStorage.getItem('activeTab') || 'gallery';
+            const btns = Array.from(container.querySelectorAll('button'));
+            let activeIdx = -1;
+
+            btns.forEach((btn, idx) => {
+                const isAct = (btn.id === 'tabMoreBtn')
+                    ? overflowTabs.includes(targetKey)
+                    : (btn.dataset.tabKey === targetKey);
+                btn.className = isAct ? 'ios-main-tab-btn is-active' : 'ios-main-tab-btn';
+                if (isAct) activeIdx = idx;
+            });
+
+            const thumb = $('mainTabIosThumb');
+            if (!thumb) return;
+            if (activeIdx < 0) {
+                thumb.style.opacity = '0';
+                return;
+            }
+            thumb.style.opacity = '1';
+            if (!animate) {
+                thumb.classList.add('no-anim');
+                container.style.setProperty('--tab-idx', String(activeIdx));
+                void thumb.offsetWidth;
+                thumb.classList.remove('no-anim');
+            } else {
+                container.style.setProperty('--tab-idx', String(activeIdx));
+            }
+        };
+
+        window.onIosMainTabClick = (tabKey) => {
+            window.syncMainTabIosSlider(tabKey, true);
+            requestAnimationFrame(() => {
+                if (typeof window.switchTab === 'function') window.switchTab(tabKey);
+            });
+        };
+
+        window._wrapSwitchTabForIos = () => {
+            if (typeof window.switchTab !== 'function' || window.switchTab._iosWrapped) return;
+            const origSwitchTab = window.switchTab;
+            const wrapped = function(tabKey, ...args) {
+                window.syncMainTabIosSlider?.(tabKey, true);
+                const res = origSwitchTab.apply(this, [tabKey, ...args]);
+                window.syncMainTabIosSlider?.(tabKey, true);
+                return res;
+            };
+            wrapped._iosWrapped = true;
+            window.switchTab = wrapped;
+        };
+
         window.applyTabVisibility = () => {
             const container = $('tabBarContainer');
             if (!container) return;
             window.closeMoreTabsMenu();
+            window._wrapSwitchTabForIos();
 
             const curActive = localStorage.getItem('activeTab') || 'gallery';
             const { primaryTabs, overflowTabs } = window.getSplitTabLists();
-            const actCls = "flex-1 py-1.5 px-1 text-xs rounded-md bg-white text-blue-600 shadow-sm border border-[#d6d0c4] font-semibold transition-all uppercase tracking-wider text-center whitespace-nowrap";
-            const inactCls = "flex-1 py-1.5 px-1 text-xs text-slate-500 hover:text-slate-700 transition-all uppercase tracking-wider text-center whitespace-nowrap";
+            const totalSlots = primaryTabs.length + (overflowTabs.length > 0 ? 1 : 0);
+            const sig = primaryTabs.join(',') + '|' + (overflowTabs.length > 0 ? '1' : '0');
 
-            let html = primaryTabs.map(tabKey => {
-                const meta = tabMetadataMap[tabKey];
-                const isCurrent = curActive === tabKey;
-                return `<button id="${meta.btnId}" onclick="window.switchTab('${tabKey}')" class="${isCurrent ? actCls : inactCls}">${meta.name}</button>`;
-            }).join('');
+            container.classList.add('ios-main-tabs');
+            container.style.setProperty('--tab-count', String(Math.max(1, totalSlots)));
 
-            if (overflowTabs.length > 0) {
-                const isMoreActive = overflowTabs.includes(curActive);
-                html += `<button id="tabMoreBtn" type="button" onclick="window.toggleMoreTabsMenu(event)" class="${isMoreActive ? actCls : inactCls}">更多▾</button>`;
+            if (container.dataset.tabsSig === sig && $('mainTabIosThumb')) {
+                window.syncMainTabIosSlider(curActive, true);
+            } else {
+                let html = `<div id="mainTabIosThumb" class="ios-main-tabs-thumb" aria-hidden="true"></div>`;
+                html += primaryTabs.map(tabKey => {
+                    const meta = tabMetadataMap[tabKey];
+                    const isCurrent = curActive === tabKey;
+                    return `<button id="${meta.btnId}" type="button" data-tab-key="${tabKey}" onclick="window.onIosMainTabClick('${tabKey}')" class="ios-main-tab-btn${isCurrent ? ' is-active' : ''}">${meta.name}</button>`;
+                }).join('');
+
+                if (overflowTabs.length > 0) {
+                    const isMoreActive = overflowTabs.includes(curActive);
+                    html += `<button id="tabMoreBtn" type="button" data-tab-key="__more__" onclick="window.toggleMoreTabsMenu(event)" class="ios-main-tab-btn${isMoreActive ? ' is-active' : ''}">更多▾</button>`;
+                }
+
+                container.innerHTML = html;
+                container.dataset.tabsSig = sig;
+                window.syncMainTabIosSlider(curActive, false);
             }
-
-            container.innerHTML = html;
 
             if (tabVisibilityState[curActive] === false) {
                 const firstVisible = tabOrderList.find(k => tabVisibilityState[k] !== false);
                 if (firstVisible) window.switchTab(firstVisible);
             }
         };
+
+        queueMicrotask(() => {
+            window._wrapSwitchTabForIos();
+            window.syncMainTabIosSlider(localStorage.getItem('activeTab') || 'gallery', false);
+        });
 
         window.tempModalTabOrder = [];
 
@@ -15126,46 +15273,32 @@ window.selectGridMember = (name) => {
                 }
             });
 
-            // 2. 頂部徽章與工時統計
+// 2. 同步底部懸浮膠囊的畫筆徽章、橡皮擦與拆半格亮燈狀態
+            const floatEraserBtn = $('schedFloatEraserBtn');
+            if (floatEraserBtn) {
+                floatEraserBtn.className = `px-2.5 py-1 rounded-full text-[11px] font-black transition-all flex items-center gap-1 whitespace-nowrap active:scale-95 ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100 hover:text-pink-600'}`;
+            }
+            const floatSplitterBtn = $('schedFloatSplitterBtn');
+            if (floatSplitterBtn) {
+                floatSplitterBtn.className = `px-2.5 py-1 rounded-full text-[11px] font-black transition-all flex items-center gap-1 whitespace-nowrap active:scale-95 ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100 hover:text-indigo-600'}`;
+            }
+
             const statusBadge = $('activeMemberBadge');
             if (statusBadge) {
                 if (!activeGridMember) {
-                    statusBadge.className = 'text-[10.5px] font-bold px-2.5 py-1 rounded-lg border bg-slate-50 text-slate-400 border-slate-200';
-                    statusBadge.innerHTML = '尚未選取工具/人員 (移至左側邊緣展開選單)';
+                    statusBadge.className = 'text-[11px] font-bold px-2.5 py-1 rounded-full border whitespace-nowrap transition-colors bg-slate-100/90 text-slate-500 border-slate-200';
+                    statusBadge.innerHTML = '畫筆：未選取';
                 } else if (activeGridMember === 'ERASER') {
-                    statusBadge.className = 'text-[10.5px] font-black px-2.5 py-1 rounded-lg border bg-pink-50 text-pink-600 border-pink-200';
-                    statusBadge.innerHTML = '🧹 目前工具：橡皮擦模式';
+                    statusBadge.className = 'text-[11px] font-black px-2.5 py-1 rounded-full border whitespace-nowrap transition-colors bg-pink-50 text-pink-600 border-pink-200';
+                    statusBadge.innerHTML = '🧹 橡皮擦中';
                 } else if (activeGridMember === 'SPLITTER') {
-                    statusBadge.className = 'text-[10.5px] font-black px-2.5 py-1 rounded-lg border bg-indigo-50 text-indigo-600 border-indigo-200';
-                    statusBadge.innerHTML = '✂️ 目前工具：拆分/合併模式';
+                    statusBadge.className = 'text-[11px] font-black px-2.5 py-1 rounded-full border whitespace-nowrap transition-colors bg-indigo-50 text-indigo-600 border-indigo-200';
+                    statusBadge.innerHTML = '✂️ 拆半格中';
                 } else {
                     const col = window.getMemberColorClass(activeGridMember);
-                    const calcShiftMinutesSafe = (startStr, endStr) => {
-                        if (!startStr || !endStr) return 0;
-                        const [sH, sM] = startStr.split(':').map(Number);
-                        const [eH, eM] = endStr.split(':').map(Number);
-                        let startMins = sH * 60 + sM;
-                        let endMins = eH * 60 + eM;
-                        if (endMins <= startMins) endMins += 24 * 60;
-                        return endMins - startMins;
-                    };
-                    const todayStr = getNowInputStrs().date;
-                    let workMins = 0, restMins = 0;
-                    document.querySelectorAll(`[data-date="${todayStr}"][data-loc][data-start][data-end]`).forEach(cell => {
-                        const disp = cell.classList.contains('grid-input-display') ? cell : cell.querySelector('.grid-input-display');
-                        if (!disp) return;
-                        const names = window.extractCellText(disp).split('\n').map(x => x.trim());
-                        if (names.includes(activeGridMember)) {
-                            const dur = calcShiftMinutesSafe(cell.dataset.start, cell.dataset.end);
-                            if (dur > 0) {
-                                if (cell.dataset.loc === 'pt_7') restMins += dur;
-                                else workMins += dur;
-                            }
-                        }
-                    });
-                    const statsText = (workMins > 0 || restMins > 0) ? ` (今日: 上班${workMins/60}h · 休${restMins/60}h)` : '';
-                    statusBadge.className = `text-[10.5px] font-black px-2.5 py-1 rounded-lg border ${col.bg} ${col.text} ${col.border} shadow-2xs`;
-                    statusBadge.innerHTML = `當前選取：${activeGridMember}<span class="font-mono text-[10px] ml-1 opacity-85">${statsText}</span>`;
+                    const safeClearAttr = window.jsAttr(activeGridMember);
+                    statusBadge.className = `text-[11px] font-black px-2.5 py-1 rounded-full border whitespace-nowrap transition-colors inline-flex items-center gap-1.5 ${col.bg} ${col.text} ${col.border}`;
+                    statusBadge.innerHTML = `<span>🖌️ ${window.esc(activeGridMember)}</span><button type="button" onclick="window.selectGridMember('${safeClearAttr}')" class="opacity-65 hover:opacity-100 leading-none px-0.5" title="取消選取畫筆">✕</button>`;
                 }
             }
 
@@ -16875,32 +17008,42 @@ window.startDualPaneResize = (e) => {
         };
 
         // 🌟 注入排班表專用「100%真全螢幕 ＋ 暖米灰護眼底色 ＋ 可見滾動條」樣式
-        window.ensureScheduleScrollbarStyle = () => {
-            let styleEl = document.getElementById('schedVisibleScrollbarCss');
-            if (!styleEl) {
-                styleEl = document.createElement('style');
-                styleEl.id = 'schedVisibleScrollbarCss';
-                document.head.appendChild(styleEl);
-            }
+window.ensureScheduleScrollbarStyle = () => {
+            if (document.getElementById('schedVisibleScrollbarCss')) return;
+            const styleEl = document.createElement('style');
+            styleEl.id = 'schedVisibleScrollbarCss';
+            document.head.appendChild(styleEl);
             styleEl.textContent = `
                 /* 1. 徹底消除外圍紅圈黑邊，100% 真・全螢幕滿版 */
                 #scheduleManageModal {
                     padding: 0 !important;
                 }
-                #scheduleManageModal > div {
+#scheduleManageModal > div {
+                    display: flex !important;
+                    flex-direction: column !important;
                     width: 100vw !important;
                     max-width: 100vw !important;
                     height: 100vh !important;
                     max-height: 100vh !important;
+                    overflow: hidden !important;
                     border-radius: 0 !important;
                     border: none !important;
                     background-color: #e8e3d9 !important;
                 }
-                /* 2. 消除刺眼純白，全面改為柔和暖米灰/燕麥紙護眼色 */
+                #scheduleManageList {
+                    display: flex !important;
+                    flex-direction: column !important;
+                    flex: 1 1 0% !important;
+                    min-height: 0 !important;
+                    width: 100% !important;
+                    padding: 0 !important;
+                    margin: 0 !important;
+                    overflow: hidden !important;
+                }
+                /* 2. 隱藏外層佔高度的舊標題列（已整合至單排極簡頂欄，釋放垂直空間） */
                 #scheduleManageModal > div > header,
-                #scheduleManageModal > div > div:first-child {
-                    background-color: #f2efe9 !important;
-                    border-color: #d5cfc2 !important;
+                #scheduleManageModal > div > div:first-child:not(#scheduleManageList) {
+                    display: none !important;
                 }
                 #scheduleManageModal .sub-line-item.bg-white,
                 #scheduleManageModal td.bg-white {
@@ -16934,8 +17077,82 @@ window.startDualPaneResize = (e) => {
                     border-radius: 6px !important;
                     border: 2px solid #e8e3d9 !important;
                 }
-                .sched-scroll-area::-webkit-scrollbar-thumb:hover {
+.sched-scroll-area::-webkit-scrollbar-thumb:hover {
                     background: #64748b !important;
+                }
+/* 5. iPhone (iOS) 原生分段控制滑塊 */
+                .ios-seg {
+                    position: relative;
+                    display: inline-grid;
+                    align-items: center;
+                    padding: 2px;
+                    border-radius: 9px;
+                    background: rgba(118, 118, 128, 0.14);
+                    box-shadow: inset 0 0.5px 1px rgba(0, 0, 0, 0.06);
+                    user-select: none;
+                }
+                .ios-seg-thumb {
+                    position: absolute;
+                    top: 2px;
+                    bottom: 2px;
+                    left: 2px;
+                    width: calc((100% - 4px) / var(--seg-count, 4));
+                    border-radius: 7px;
+                    background: #ffffff;
+                    border: 0.5px solid rgba(0, 0, 0, 0.04);
+                    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
+                    transform: translateX(calc(var(--seg-idx, 0) * 100%));
+                    transition: transform 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+                    pointer-events: none;
+                    z-index: 0;
+                    box-sizing: border-box;
+                }
+                .ios-seg-btn {
+                    position: relative;
+                    z-index: 1;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 4px;
+                    padding: 4px 10px;
+                    font-size: 11.5px;
+                    font-weight: 600;
+                    letter-spacing: -0.01em;
+                    color: rgba(60, 60, 67, 0.78);
+                    white-space: nowrap;
+                    border-radius: 7px;
+                    background: transparent;
+                    transition: color 0.18s ease, opacity 0.12s ease;
+                    cursor: pointer;
+                }
+                .ios-seg-btn:hover {
+                    color: #111827;
+                }
+                .ios-seg-btn:active {
+                    opacity: 0.45;
+                }
+                .ios-seg-btn.is-active {
+                    color: #000000;
+                    font-weight: 700;
+                }
+                .ios-seg-btn.is-active svg {
+                    color: #007AFF;
+                }
+                .ios-seg-btn:not(:last-child)::after {
+                    content: '';
+                    position: absolute;
+                    right: 0;
+                    top: 24%;
+                    bottom: 24%;
+                    width: 1px;
+                    background: rgba(60, 60, 67, 0.22);
+                    border-radius: 1px;
+                    transition: opacity 0.18s ease;
+                    pointer-events: none;
+                }
+                .ios-seg-btn.is-active::after,
+                .ios-seg-btn:has(+ .is-active)::after {
+                    opacity: 0;
                 }
             `;
         };
@@ -16965,6 +17182,57 @@ window.cancelScheduleEdits = () => {
 
 window.closeDayCardActionMenu = () => {
             document.getElementById('dayCardActionFloatingMenu')?.remove();
+        };
+
+        window.closeSchedMoreSettingsMenu = () => {
+            document.getElementById('schedMoreSettingsFloatingMenu')?.remove();
+        };
+
+        window.toggleSchedMoreSettingsMenu = (e) => {
+            if (e) e.stopPropagation();
+            window.closeDayCardActionMenu?.();
+            const existing = document.getElementById('schedMoreSettingsFloatingMenu');
+            if (existing) {
+                existing.remove();
+                return;
+            }
+
+            const btn = e?.currentTarget;
+            const rect = btn ? btn.getBoundingClientRect() : { bottom: 48, right: window.innerWidth - 16 };
+            const isClean = window.currentMapRole === 'clean';
+            const isIdMode = window.nonLocalDisplayMode === 'id';
+
+            const menu = document.createElement('div');
+            menu.id = 'schedMoreSettingsFloatingMenu';
+            menu.style.top = `${Math.round(rect.bottom + 6)}px`;
+            menu.style.right = `${Math.max(8, Math.round(window.innerWidth - rect.right))}px`;
+            menu.className = 'fixed z-[10065] bg-white rounded-xl shadow-2xl border border-slate-200 p-1.5 min-w-[188px] space-y-1 animate-pop-in select-none';
+            menu.onclick = (ev) => ev.stopPropagation();
+
+            menu.innerHTML = `
+                ${!isClean ? `
+                <button type="button" onclick="window.closeSchedMoreSettingsMenu(); window.openCsWeeklyRosterModal();"
+                    class="w-full px-2.5 py-2 rounded-lg text-[11.5px] font-bold text-slate-700 hover:bg-slate-100 flex items-center gap-2 transition-colors text-left">
+                    <i data-lucide="calendar-days" class="w-3.5 h-3.5 text-indigo-600 shrink-0"></i><span>7日班次更表</span>
+                </button>` : ''}
+                <button type="button" onclick="window.closeSchedMoreSettingsMenu(); window.openPositionPriorityModal();"
+                    class="w-full px-2.5 py-2 rounded-lg text-[11.5px] font-bold text-slate-700 hover:bg-slate-100 flex items-center gap-2 transition-colors text-left">
+                    <i data-lucide="kanban" class="w-3.5 h-3.5 text-sky-600 shrink-0"></i><span>優先度看板</span>
+                </button>
+                <button type="button" id="btnToggleNonLocalDisp" onclick="window.toggleNonLocalDisplayMode(); window.closeSchedMoreSettingsMenu();"
+                    class="w-full px-2.5 py-2 rounded-lg text-[11.5px] font-bold text-slate-700 hover:bg-slate-100 flex items-center justify-between gap-3 transition-colors text-left border-t border-slate-100 pt-2">
+                    <span class="flex items-center gap-2">
+                        <i data-lucide="repeat" class="w-3.5 h-3.5 text-amber-600 shrink-0"></i>
+                        <span>外地人顯示編號</span>
+                    </span>
+                    <span class="w-7 h-4 rounded-full p-0.5 transition-colors flex items-center ${isIdMode ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'}">
+                        <span class="w-3 h-3 rounded-full bg-white shadow-2xs block"></span>
+                    </span>
+                </button>
+            `;
+
+            document.body.appendChild(menu);
+            if (window.lucide) lucide.createIcons({ root: menu });
         };
 
 window.exportClean0630StationSummaryText = (targetDateStr) => {
@@ -17110,7 +17378,10 @@ window.exportClean0630StationSummaryText = (targetDateStr) => {
             if (window.lucide) lucide.createIcons({ root: menu });
         };
 
-        document.addEventListener('click', () => window.closeDayCardActionMenu?.());
+document.addEventListener('click', () => {
+            window.closeDayCardActionMenu?.();
+            window.closeSchedMoreSettingsMenu?.();
+        });
 
 window.captureScheduleViewportAnchor = () => {
             const scroller = document.getElementById('scheduleGridScrollArea');
@@ -17136,16 +17407,53 @@ window.captureScheduleViewportAnchor = () => {
         };
 
 window.setScheduleViewLayout = (mode) => {
-            window.captureAll5DayDomValues();
-            window.get5DayScheduleDates().forEach(d => window.ensureDateSeededInTempGrid(d.dateStr));
-            window._pendingSchedAnchor = window.captureScheduleViewportAnchor();
-            window.scheduleViewLayout = mode || 'split';
-            safeSetLocal('work_cache_sched_layout', window.scheduleViewLayout);
-            window.renderScheduleManager(true);
+            const nextMode = mode || 'split';
+            if (nextMode === window.scheduleViewLayout) return;
+
+            const seg = document.getElementById('schedIosSegControl');
+            const modes = ['split', 'person', 'station', 'excel'];
+            const nextIdx = Math.max(0, modes.indexOf(nextMode));
+
+            if (seg) {
+                seg.style.setProperty('--seg-idx', String(nextIdx));
+                seg.querySelectorAll('.ios-seg-btn').forEach(btn => {
+                    btn.classList.toggle('is-active', btn.dataset.segMode === nextMode);
+                });
+            }
+
+            requestAnimationFrame(() => {
+                window.captureAll5DayDomValues();
+                window.get5DayScheduleDates().forEach(d => window.ensureDateSeededInTempGrid(d.dateStr));
+                window._pendingSchedAnchor = window.captureScheduleViewportAnchor();
+                window.scheduleViewLayout = nextMode;
+                safeSetLocal('work_cache_sched_layout', window.scheduleViewLayout);
+                window.renderScheduleManager(true);
+            });
         };
 
-        // 切換左表頂部的「崗位畫筆」
+        window.switchSchedRoleIos = (role) => {
+            const curRole = window.currentMapRole === 'clean' ? 'clean' : 'cs';
+            if (role === curRole) return;
+
+            const seg = document.getElementById('schedRoleIosSeg');
+            if (seg) {
+                seg.style.setProperty('--seg-idx', role === 'clean' ? '1' : '0');
+                seg.querySelectorAll('.ios-seg-btn').forEach(btn => {
+                    btn.classList.toggle('is-active', btn.dataset.roleMode === role);
+                });
+            }
+
+            requestAnimationFrame(() => {
+                window.toggleMapRoleMode(role);
+                window.renderScheduleManager();
+            });
+        };
+
+// 切換左表頂部的「崗位畫筆」
         window.selectLeftLocBrush = (locId) => {
+            if (locId !== 'ERASER' && activeGridMember === 'ERASER') {
+                window.selectGridMember('ERASER');
+            }
             window.activeLeftLocBrush = locId;
             document.querySelectorAll('.left-loc-brush-btn').forEach(btn => {
                 const bLoc = btn.dataset.locBrush;
@@ -17788,18 +18096,18 @@ window.splitLeftPaneMode = getLocal('work_cache_sched_left_mode', 'person'); // 
         // 🌟 Excel總覽上方「抹休息」畫筆開關
         window.toggleExcelRestBrush = () => {
             window.excelRestBrushActive = !window.excelRestBrushActive;
-            if (window.excelRestBrushActive) {
+if (window.excelRestBrushActive) {
                 activeGridMember = null;
                 const badge = $('activeMemberBadge');
                 if (badge) {
-                    badge.className = 'text-[10.5px] font-black px-2.5 py-1 rounded-lg border bg-emerald-50 text-emerald-700 border-emerald-300 shadow-2xs';
-                    badge.innerHTML = '🟩 目前工具：Excel總覽抹休息模式（點擊或拖曳人員列）';
+                    badge.className = 'text-[11px] font-black px-2.5 py-1 rounded-full border whitespace-nowrap transition-colors bg-emerald-50 text-emerald-700 border-emerald-300';
+                    badge.innerHTML = '🟩 抹休息中';
                 }
             } else {
                 const badge = $('activeMemberBadge');
                 if (badge) {
-                    badge.className = 'text-[10.5px] font-bold px-2.5 py-1 rounded-lg border bg-[#e6e1d6] text-slate-600 border-slate-300';
-                    badge.innerHTML = '右表畫筆：點人名即可選取';
+                    badge.className = 'text-[11px] font-bold px-2.5 py-1 rounded-full border whitespace-nowrap transition-colors bg-slate-100/90 text-slate-500 border-slate-200';
+                    badge.innerHTML = '畫筆：未選取';
                 }
             }
             document.querySelectorAll('.excel-rest-brush-btn').forEach(b => {
@@ -18603,102 +18911,178 @@ const leftPaneMode = window.splitLeftPaneMode || 'person';
                 ? window.getMemberColorClass(activeGridMember)
                 : null;
 
-            list.innerHTML = `
-            <div class="relative flex flex-col w-full h-full overflow-hidden bg-[#e8e3d9]">
-                
-                <div class="shrink-0 z-40 px-3 py-1.5 bg-[#f2efe9] border-b border-[#d5cfc2] shadow-xs flex flex-wrap justify-between items-center gap-2 w-full">
-                    <div class="flex items-center gap-1.5 flex-wrap">
-                        <div class="flex bg-[#ded8cc] p-0.5 rounded-lg border border-slate-300 shadow-inner">
-                            <button type="button" onclick="window.toggleMapRoleMode('cs'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${!isCleanRole ? 'bg-[#faf8f3] text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧑‍💻 客服排班</button>
-                            <button type="button" onclick="window.toggleMapRoleMode('clean'); window.renderScheduleManager();" class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${isCleanRole ? 'bg-[#faf8f3] text-teal-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}">🧹 清潔排班</button>
+const drawerInnerHtml = `
+                <div class="space-y-1 shrink-0 pb-2 border-b border-slate-200">
+                    <div class="text-[10px] font-black text-slate-500 px-1 tracking-wider">排班工具</div>
+                    ${!isCleanRole ? `
+                    <div class="w-full cursor-pointer member-btn-container" data-name="SPLITTER" onclick="window.selectGridMember('SPLITTER')">
+                        <div class="w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-[1.02]' : 'bg-[#faf8f3] text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-2xs'}">
+                            ✂️ 拆分/合併時段
                         </div>
-
-<div class="flex bg-indigo-50/80 p-0.5 rounded-lg border border-indigo-200 shadow-inner">
-                            <button type="button" onclick="window.setScheduleViewLayout('split')" class="px-2.5 py-1 text-[10.5px] font-black rounded-md transition-all inline-flex items-center gap-1 ${layoutMode === 'split' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}"><i data-lucide="columns-2" class="w-3.5 h-3.5"></i>左右雙介面</button>
-                            <button type="button" onclick="window.setScheduleViewLayout('person')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all inline-flex items-center gap-1 ${layoutMode === 'person' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}"><i data-lucide="user" class="w-3.5 h-3.5"></i>人員介面</button>
-                            <button type="button" onclick="window.setScheduleViewLayout('station')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all inline-flex items-center gap-1 ${layoutMode === 'station' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}"><i data-lucide="map-pin" class="w-3.5 h-3.5"></i>崗位介面</button>
-                            <button type="button" onclick="window.setScheduleViewLayout('excel')" class="px-2 py-1 text-[10.5px] font-black rounded-md transition-all inline-flex items-center gap-1 ${layoutMode === 'excel' ? 'bg-indigo-600 text-white shadow-xs' : 'text-indigo-700 hover:bg-indigo-100'}"><i data-lucide="table" class="w-3.5 h-3.5"></i>Excel總覽</button>
+                    </div>` : ''}
+                    <div class="w-full cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')">
+                        <div class="w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-[1.02]' : 'bg-[#faf8f3] text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-2xs'}">
+                            <i data-lucide="eraser" class="w-3.5 h-3.5 mr-1.5"></i>橡皮擦
                         </div>
-
-                        <button type="button" onclick="document.getElementById('sched-day-card-${getNowInputStrs().date}')?.scrollIntoView({ behavior: 'smooth', block: 'center' })" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-2.5 py-1 rounded-lg text-[10.5px] font-black active:scale-95">📍 定位今日</button>
-                        
-                        ${!isCleanRole ? `
-                        <button type="button" onclick="window.openCsWeeklyRosterModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-700 px-2.5 py-1 rounded-lg text-[10.5px] font-black shadow-2xs flex items-center gap-1 active:scale-95 transition-all" title="開啟客服一週固定班次規劃表">
-                            <i data-lucide="calendar-days" class="w-3.5 h-3.5"></i>
-                            <span>7日班次更表</span>
-                        </button>` : ''}
-                        
-                        <button type="button" id="btnToggleNonLocalDisp" onclick="window.toggleNonLocalDisplayMode()" class="px-2.5 py-1 rounded-lg text-[10.5px] font-black border transition-colors flex items-center gap-1 shadow-2xs ${window.nonLocalDisplayMode === 'id' ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300'}" title="點擊切換排班表上的外地人員顯示格式">
-                            <i data-lucide="repeat" class="w-3 h-3"></i>
-                            <span>外地人：${window.nonLocalDisplayMode === 'id' ? '顯示編號' : '顯示名稱'}</span>
-                        </button>
-
-                        <button type="button" onclick="window.selectGridMember('ERASER')" class="px-2 py-1 rounded-lg text-[10.5px] font-black border transition-all ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-xs' : 'bg-pink-50 text-pink-600 border-pink-200 hover:bg-pink-100'}">🧹 橡皮擦</button>
-                        ${!isCleanRole ? `<button type="button" onclick="window.selectGridMember('SPLITTER')" class="px-2 py-1 rounded-lg text-[10.5px] font-black border transition-all ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs' : 'bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100'}">✂️ 拆半格</button>` : ''}
-
-                        <div id="activeMemberBadge" class="text-[10.5px] font-black px-2.5 py-1 rounded-lg border ${!activeGridMember ? 'bg-[#e6e1d6] text-slate-600 border-slate-300 font-bold' : (activeGridMember === 'ERASER' ? 'bg-pink-50 text-pink-600 border-pink-200' : (activeGridMember === 'SPLITTER' ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : `${curActiveCol.bg} ${curActiveCol.text} ${curActiveCol.border} shadow-2xs`))}">
-                            ${!activeGridMember ? '右表畫筆：點左表人名即可選取' : (activeGridMember === 'ERASER' ? '🧹 目前工具：橡皮擦模式' : (activeGridMember === 'SPLITTER' ? '✂️ 目前工具：拆分/合併模式' : `右表畫筆：${activeGridMember}`))}
-                        </div>
-                    </div>
-
-                    <div class="flex items-center gap-1.5">
-                        <input type="file" id="scheduleExcelImportInput" accept=".csv" class="hidden" onchange="window.importScheduleCSV(event)">
-                        <button type="button" onclick="window.openPositionPriorityModal()" class="text-[11px] font-black transition-colors px-2.5 py-1.5 rounded-lg border shadow-2xs bg-sky-50 hover:bg-sky-100 text-sky-800 border-sky-300 flex items-center active:scale-95" title="以拖曳看板調整人員崗位優先順位">
-                            <i data-lucide="kanban" class="w-3.5 h-3.5 mr-1 text-sky-600"></i>優先度看板
-                        </button>
-                        <button type="button" onclick="window.openMemberRosterModal()" class="text-[11px] font-black transition-colors px-3 py-1.5 rounded-lg border shadow-2xs bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 flex items-center active:scale-95">
-                            <i data-lucide="users" class="w-3.5 h-3.5 mr-1 text-amber-600"></i>編輯名單 (${visibleMembers.length}/${teamMembers.length})
-                        </button>
-<button type="button" onclick="window.cancelScheduleEdits()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10.5px] px-2.5 py-1.5 rounded-lg border border-slate-300 transition-colors flex items-center active:scale-95" title="放棄尚未儲存的修改並還原"><i data-lucide="undo-2" class="w-3.5 h-3.5 mr-1"></i>取消</button>
-                        <button onclick="window.saveGridSchedule()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg shadow-sm transition-colors active:scale-95 flex items-center"><i data-lucide="save" class="w-3.5 h-3.5 mr-1"></i>儲存 5 日排班</button>
                     </div>
                 </div>
+                <div class="space-y-2 pt-1 flex-1 overflow-y-auto pr-0.5 scrollbar-hide">
+                    <div class="space-y-1">
+                        <div class="flex items-center justify-between px-1 text-[10px] font-black text-blue-700 bg-blue-50/80 rounded py-0.5">
+                            <span>👨 男性成員</span>
+                            <span class="font-mono text-[9px] text-blue-600 bg-[#faf8f3] px-1 rounded shadow-2xs">${maleVisible.length}人</span>
+                        </div>
+                        ${maleVisible.length > 0 ? maleVisible.map(name => renderDrawerMemberBtn(name)).join('') : '<div class="text-[9.5px] text-slate-400 text-center py-1 font-bold">無出勤男員</div>'}
+                    </div>
+                    <div class="space-y-1 pt-1 border-t border-slate-200">
+                        <div class="flex items-center justify-between px-1 text-[10px] font-black text-rose-700 bg-rose-50/80 rounded py-0.5">
+                            <span>👩 女性成員</span>
+                            <span class="font-mono text-[9px] text-rose-600 bg-[#faf8f3] px-1 rounded shadow-2xs">${femaleVisible.length}人</span>
+                        </div>
+                        ${femaleVisible.length > 0 ? femaleVisible.map(name => renderDrawerMemberBtn(name)).join('') : '<div class="text-[9.5px] text-slate-400 text-center py-1 font-bold">無出勤女員</div>'}
+                    </div>
+                </div>`;
 
-                <div class="relative flex-1 min-h-0 flex overflow-hidden">
-                    <div id="schedLeftDrawer"
-                         onmouseenter="this.classList.remove('-translate-x-[calc(100%-22px)]'); this.classList.add('translate-x-0');"
-                         onmouseleave="if(!this.dataset.pinned){ this.classList.add('-translate-x-[calc(100%-22px)]'); this.classList.remove('translate-x-0'); }"
-class="${(layoutMode === 'station' || layoutMode === 'excel') ? 'flex' : 'hidden'} absolute left-0 top-0 bottom-0 z-50 items-stretch -translate-x-[calc(100%-22px)] transition-transform duration-200 ease-out pointer-events-auto">
-                        <div class="w-[175px] bg-[#f4f1ea]/95 backdrop-blur-md border-r-2 border-slate-300 shadow-2xl flex flex-col h-full overflow-y-auto p-2 space-y-2.5 scrollbar-hide">
-                            <div class="space-y-1 shrink-0 pb-2 border-b border-slate-200">
-                                <div class="text-[10px] font-black text-slate-500 px-1 tracking-wider">排班工具</div>
-                                ${!isCleanRole ? `
-                                <div class="w-full cursor-pointer member-btn-container" data-name="SPLITTER" onclick="window.selectGridMember('SPLITTER')">
-                                    <div class="w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-[1.02]' : 'bg-[#faf8f3] text-indigo-600 border-indigo-200 hover:border-indigo-400 shadow-2xs'}">
-                                        ✂️ 拆分/合併時段
-                                    </div>
-                                </div>` : ''}
-                                <div class="w-full cursor-pointer member-btn-container" data-name="ERASER" onclick="window.selectGridMember('ERASER')">
-                                    <div class="w-full px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition-all flex items-center justify-start ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white border-pink-600 shadow-md scale-[1.02]' : 'bg-[#faf8f3] text-pink-600 border-pink-200 hover:border-pink-400 hover:text-pink-600 shadow-2xs'}">
-                                        <i data-lucide="eraser" class="w-3.5 h-3.5 mr-1.5"></i>橡皮擦
-                                    </div>
-                                </div>
+            const existingTopBar = document.getElementById('schedTopBar');
+            const existingGridArea = document.getElementById('scheduleGridScrollArea');
+
+            if (existingTopBar && existingGridArea) {
+                // 局部更新：保留頂欄與底部膠囊不重建，滑塊可同時順暢滑動且零卡頓
+                const roleSeg = document.getElementById('schedRoleIosSeg');
+                if (roleSeg) {
+                    roleSeg.style.setProperty('--seg-idx', isCleanRole ? '1' : '0');
+                    roleSeg.querySelectorAll('.ios-seg-btn').forEach(btn => {
+                        btn.classList.toggle('is-active', btn.dataset.roleMode === (isCleanRole ? 'clean' : 'cs'));
+                    });
+                }
+                const layoutSeg = document.getElementById('schedIosSegControl');
+                if (layoutSeg) {
+                    layoutSeg.style.setProperty('--seg-idx', String(Math.max(0, ['split', 'person', 'station', 'excel'].indexOf(layoutMode))));
+                    layoutSeg.querySelectorAll('.ios-seg-btn').forEach(btn => {
+                        btn.classList.toggle('is-active', btn.dataset.segMode === layoutMode);
+                    });
+                }
+                const rosterCountEl = document.getElementById('schedRosterCountLabel');
+                if (rosterCountEl) rosterCountEl.textContent = `${visibleMembers.length}/${teamMembers.length}`;
+
+                const drawerEl = document.getElementById('schedLeftDrawer');
+                const drawerInner = document.getElementById('schedLeftDrawerInner');
+                if (drawerEl) {
+                    const showDrawer = (layoutMode === 'station' || layoutMode === 'excel');
+                    drawerEl.classList.toggle('flex', showDrawer);
+                    drawerEl.classList.toggle('hidden', !showDrawer);
+                }
+                if (drawerInner) drawerInner.innerHTML = drawerInnerHtml;
+
+                const splitterWrap = document.getElementById('schedFloatSplitterWrap');
+                if (splitterWrap) {
+                    splitterWrap.classList.toggle('hidden', isCleanRole);
+                    splitterWrap.classList.toggle('inline-flex', !isCleanRole);
+                }
+
+                existingGridArea.innerHTML = fiveDayTablesHtml;
+                if (window.lucide) {
+                    lucide.createIcons({ root: existingGridArea });
+                    if (drawerInner) lucide.createIcons({ root: drawerInner });
+                }
+            } else {
+                list.innerHTML = `
+                <div class="relative flex flex-col flex-1 min-h-0 w-full h-full overflow-hidden bg-[#e8e3d9]">
+                    
+                    <!-- 單排極簡頂欄：左(標題+角色) · 中(視角分頁) · 右(名單+設定+存檔+關閉) -->
+                    <div id="schedTopBar" class="shrink-0 z-40 px-2.5 py-1.5 bg-[#f7f5f0] border-b border-[#d5cfc2] flex flex-wrap items-center justify-between gap-2 w-full">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <div class="hidden sm:flex items-center gap-1.5 font-black text-[13px] text-slate-800 shrink-0 pr-1" title="5日上下對照排班總表 (前2日・當日・後2日)">
+                                <i data-lucide="calendar-range" class="w-4 h-4 text-indigo-600"></i>
+                                <span>5日排班</span>
                             </div>
-                            <div class="space-y-2 pt-1 flex-1 overflow-y-auto pr-0.5 scrollbar-hide">
-                                <div class="space-y-1">
-                                    <div class="flex items-center justify-between px-1 text-[10px] font-black text-blue-700 bg-blue-50/80 rounded py-0.5">
-                                        <span>👨 男性成員</span>
-                                        <span class="font-mono text-[9px] text-blue-600 bg-[#faf8f3] px-1 rounded shadow-2xs">${maleVisible.length}人</span>
-                                    </div>
-                                    ${maleVisible.length > 0 ? maleVisible.map(name => renderDrawerMemberBtn(name)).join('') : '<div class="text-[9.5px] text-slate-400 text-center py-1 font-bold">無出勤男員</div>'}
-                                </div>
-                                <div class="space-y-1 pt-1 border-t border-slate-200">
-                                    <div class="flex items-center justify-between px-1 text-[10px] font-black text-rose-700 bg-rose-50/80 rounded py-0.5">
-                                        <span>👩 女性成員</span>
-                                        <span class="font-mono text-[9px] text-rose-600 bg-[#faf8f3] px-1 rounded shadow-2xs">${femaleVisible.length}人</span>
-                                    </div>
-                                    ${femaleVisible.length > 0 ? femaleVisible.map(name => renderDrawerMemberBtn(name)).join('') : '<div class="text-[9.5px] text-slate-400 text-center py-1 font-bold">無出勤女員</div>'}
-                                </div>
+                            <div id="schedRoleIosSeg" class="ios-seg grid-cols-2" style="--seg-count: 2; --seg-idx: ${isCleanRole ? 1 : 0};">
+                                <div class="ios-seg-thumb" aria-hidden="true"></div>
+                                <button type="button" data-role-mode="cs" onclick="window.switchSchedRoleIos('cs')" class="ios-seg-btn !px-3 ${!isCleanRole ? 'is-active' : ''}">客服</button>
+                                <button type="button" data-role-mode="clean" onclick="window.switchSchedRoleIos('clean')" class="ios-seg-btn !px-3 ${isCleanRole ? 'is-active' : ''}">清潔</button>
                             </div>
+
+                            <div class="h-4 w-[1px] bg-slate-300/80 hidden md:block"></div>
+
+                            <div id="schedIosSegControl" class="ios-seg grid-cols-4" style="--seg-count: 4; --seg-idx: ${Math.max(0, ['split', 'person', 'station', 'excel'].indexOf(layoutMode))};">
+                                <div class="ios-seg-thumb" aria-hidden="true"></div>
+                                <button type="button" data-seg-mode="split" onclick="window.setScheduleViewLayout('split')" class="ios-seg-btn ${layoutMode === 'split' ? 'is-active' : ''}"><i data-lucide="columns-2" class="w-3.5 h-3.5"></i><span>雙介面</span></button>
+                                <button type="button" data-seg-mode="person" onclick="window.setScheduleViewLayout('person')" class="ios-seg-btn ${layoutMode === 'person' ? 'is-active' : ''}"><i data-lucide="user" class="w-3.5 h-3.5"></i><span>人員</span></button>
+                                <button type="button" data-seg-mode="station" onclick="window.setScheduleViewLayout('station')" class="ios-seg-btn ${layoutMode === 'station' ? 'is-active' : ''}"><i data-lucide="map-pin" class="w-3.5 h-3.5"></i><span>崗位</span></button>
+                                <button type="button" data-seg-mode="excel" onclick="window.setScheduleViewLayout('excel')" class="ios-seg-btn ${layoutMode === 'excel' ? 'is-active' : ''}"><i data-lucide="table" class="w-3.5 h-3.5"></i><span>Excel</span></button>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center gap-1.5">
+                            <input type="file" id="scheduleExcelImportInput" accept=".csv" class="hidden" onchange="window.importScheduleCSV(event)">
+                            <button type="button" onclick="window.openMemberRosterModal()" class="px-2.5 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-bold flex items-center gap-1 active:scale-95 transition-colors" title="管理出勤與成員名單">
+                                <i data-lucide="users" class="w-3.5 h-3.5 text-slate-500"></i>
+                                <span>名單 <span id="schedRosterCountLabel" class="font-mono text-slate-500">${visibleMembers.length}/${teamMembers.length}</span></span>
+                            </button>
+                            <button type="button" onclick="window.toggleSchedMoreSettingsMenu(event)" class="px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-bold flex items-center gap-1 active:scale-95 transition-colors" title="優先度看板、外地人編號與更多設定">
+                                <i data-lucide="settings" class="w-3.5 h-3.5 text-slate-500"></i>
+                                <span class="hidden md:inline">更多</span>
+                                <i data-lucide="chevron-down" class="w-3 h-3 text-slate-400"></i>
+                            </button>
+
+                            <div class="h-4 w-[1px] bg-slate-300/90 mx-0.5"></div>
+
+                            <button type="button" onclick="window.cancelScheduleEdits()" class="px-2.5 py-1 rounded-lg text-slate-600 hover:bg-slate-200/70 hover:text-slate-900 font-bold text-[11px] transition-colors flex items-center active:scale-95" title="放棄尚未儲存的修改並還原">取消</button>
+                            <button type="button" onclick="window.saveGridSchedule()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[11.5px] px-3 py-1 rounded-lg shadow-xs transition-colors active:scale-95 flex items-center gap-1">
+                                <i data-lucide="save" class="w-3.5 h-3.5"></i><span>儲存排班</span>
+                            </button>
+                            <button type="button" onclick="window.closeScheduleManager()" class="p-1 ml-0.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 transition-colors" title="關閉排班總表">
+                                <i data-lucide="x" class="w-4 h-4"></i>
+                            </button>
                         </div>
                     </div>
 
-                    <div id="scheduleGridScrollArea" class="sched-scroll-area flex-1 overflow-auto p-1">
-                        ${fiveDayTablesHtml}
+                    <div class="relative flex-1 min-h-0 flex overflow-hidden">
+                        <div id="schedLeftDrawer"
+                             onmouseenter="this.classList.remove('-translate-x-[calc(100%-22px)]'); this.classList.add('translate-x-0');"
+                             onmouseleave="if(!this.dataset.pinned){ this.classList.add('-translate-x-[calc(100%-22px)]'); this.classList.remove('translate-x-0'); }"
+                             class="${(layoutMode === 'station' || layoutMode === 'excel') ? 'flex' : 'hidden'} absolute left-0 top-0 bottom-0 z-50 items-stretch -translate-x-[calc(100%-22px)] transition-transform duration-200 ease-out pointer-events-auto">
+                            <div id="schedLeftDrawerInner" class="w-[175px] bg-[#f4f1ea]/95 border-r-2 border-slate-300 shadow-2xl flex flex-col h-full overflow-y-auto p-2 space-y-2.5 scrollbar-hide">
+                                ${drawerInnerHtml}
+                            </div>
+                        </div>
+
+                        <div id="scheduleGridScrollArea" class="sched-scroll-area flex-1 overflow-auto p-1 pb-16">
+                            ${fiveDayTablesHtml}
+                        </div>
+
+                        <!-- 底部中央半透明毛玻璃懸浮工具膠囊 -->
+                        <div class="absolute bottom-3 left-1/2 -translate-x-1/2 z-[60] max-w-[96vw] flex items-center gap-1 px-2 py-1 rounded-full bg-white/95 backdrop-blur-md border border-slate-300 shadow-[0_8px_24px_rgba(15,23,42,0.18)] select-none">
+                            <button type="button" onclick="document.getElementById('sched-day-card-' + getNowInputStrs().date)?.scrollIntoView({ behavior: 'smooth', block: 'center' })"
+                                class="px-2.5 py-1 rounded-full text-[11px] font-black text-slate-700 hover:bg-slate-100 active:scale-95 transition-colors flex items-center gap-1 whitespace-nowrap" title="捲動定位至今日排班">
+                                <i data-lucide="crosshair" class="w-3.5 h-3.5 text-blue-600"></i><span>今日</span>
+                            </button>
+
+                            <div class="h-4 w-[1px] bg-slate-300/80"></div>
+
+                            <div id="activeMemberBadge" title="點擊人員名單或左側抽屜切換畫筆"
+                                class="text-[11px] font-black px-2.5 py-1 rounded-full border whitespace-nowrap transition-colors ${!activeGridMember ? 'bg-slate-100/90 text-slate-500 border-slate-200 font-bold' : (activeGridMember === 'ERASER' ? 'bg-pink-50 text-pink-600 border-pink-200' : (activeGridMember === 'SPLITTER' ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : `${curActiveCol.bg} ${curActiveCol.text} ${curActiveCol.border}`))}">
+                                ${!activeGridMember ? '畫筆：未選取' : (activeGridMember === 'ERASER' ? '🧹 橡皮擦中' : (activeGridMember === 'SPLITTER' ? '✂️ 拆半格中' : `🖌️ ${window.esc(activeGridMember)}`))}
+                            </div>
+
+                            <div class="h-4 w-[1px] bg-slate-300/80"></div>
+
+                            <button type="button" id="schedFloatEraserBtn" onclick="window.selectGridMember('ERASER')"
+                                class="px-2.5 py-1 rounded-full text-[11px] font-black transition-all flex items-center gap-1 whitespace-nowrap active:scale-95 ${activeGridMember === 'ERASER' ? 'bg-pink-500 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100 hover:text-pink-600'}" title="點擊或拖曳清除排班格">
+                                <i data-lucide="eraser" class="w-3.5 h-3.5"></i><span>橡皮擦</span>
+                            </button>
+
+                            <span id="schedFloatSplitterWrap" class="${isCleanRole ? 'hidden' : 'inline-flex'}">
+                                <button type="button" id="schedFloatSplitterBtn" onclick="window.selectGridMember('SPLITTER')"
+                                    class="px-2.5 py-1 rounded-full text-[11px] font-black transition-all flex items-center gap-1 whitespace-nowrap active:scale-95 ${activeGridMember === 'SPLITTER' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100 hover:text-indigo-600'}" title="切換整小時／半小時拆分">
+                                    <i data-lucide="scissors" class="w-3.5 h-3.5"></i><span>拆半格</span>
+                                </button>
+                            </span>
+                        </div>
                     </div>
-                </div>
-</div>`;
-            if (window.lucide) lucide.createIcons({ root: $('scheduleManageModal') });
+                </div>`;
+                if (window.lucide) lucide.createIcons({ root: $('scheduleManageModal') });
+            }
 
 const newScrollArea = document.getElementById('scheduleGridScrollArea');
             if (newScrollArea) {
@@ -18782,10 +19166,10 @@ const getExcelActionForCell = (cellEl) => {
                         const { date, member, start, end } = pCell.dataset;
                         const curLocs = (pCell.dataset.curLocs || '').split(',').filter(Boolean);
                         const brushLoc = (activeGridMember === 'ERASER') ? 'ERASER' : (window.activeLeftLocBrush || 'pt_7');
-                        if (!leftPaintMode) {
-                            leftPaintMode = (brushLoc === 'ERASER' || curLocs.includes(brushLoc)) ? 'clear' : 'assign';
+if (!ps.leftPaintMode) {
+                            ps.leftPaintMode = (brushLoc === 'ERASER' || curLocs.includes(brushLoc)) ? 'clear' : 'assign';
                         }
-                        window.togglePersonCellRest(date, member, start, end, leftPaintMode);
+                        window.togglePersonCellRest(date, member, start, end, ps.leftPaintMode);
                         return;
                     }
                     if (!window.excelRestBrushActive && (!activeGridMember || activeGridMember === 'SPLITTER')) return;
@@ -18797,10 +19181,10 @@ const getExcelActionForCell = (cellEl) => {
                         if (cellKey !== window._lastPaintedExcelKey) {
                             window._lastPaintedExcelKey = cellKey;
                             window._lastExcelPaintTs = Date.now();
-                            if (!excelPaintMode) {
-                                excelPaintMode = getExcelActionForCell(excelCell);
+                            if (!ps.excelPaintMode) {
+                                ps.excelPaintMode = getExcelActionForCell(excelCell);
                             }
-                            window.handleExcelRightCellClick(date, loc, start, end, excelPaintMode, excelCell);
+                            window.handleExcelRightCellClick(date, loc, start, end, ps.excelPaintMode, excelCell);
                         }
                         return;
                     }
@@ -18816,55 +19200,47 @@ const getExcelActionForCell = (cellEl) => {
                 newScrollArea.addEventListener('mousedown', (e) => {
                     const pCell = e.target?.closest ? e.target.closest('td[data-pcell="1"]') : null;
                     if (pCell) {
-                        isPainting = true;
+                        ps.isPainting = true;
                         const curLocs = (pCell.dataset.curLocs || '').split(',').filter(Boolean);
                         const brushLoc = (activeGridMember === 'ERASER') ? 'ERASER' : (window.activeLeftLocBrush || 'pt_7');
-                        leftPaintMode = (brushLoc === 'ERASER' || curLocs.includes(brushLoc)) ? 'clear' : 'assign';
+                        ps.leftPaintMode = (brushLoc === 'ERASER' || curLocs.includes(brushLoc)) ? 'clear' : 'assign';
                         window._lastPaintedPCell = pCell;
                         return;
                     }
-const excelCell = e.target?.closest ? e.target.closest('td[data-excel-cell="1"]') : null;
+                    const excelCell = e.target?.closest ? e.target.closest('td[data-excel-cell="1"]') : null;
                     if (excelCell && (window.excelRestBrushActive || (activeGridMember && activeGridMember !== 'SPLITTER'))) {
-                        isPainting = true;
-                        excelPaintMode = getExcelActionForCell(excelCell);
+                        ps.isPainting = true;
+                        ps.excelPaintMode = getExcelActionForCell(excelCell);
                         paintTarget(excelCell);
                         return;
                     }
                     if (activeGridMember && activeGridMember !== 'SPLITTER') {
-                        isPainting = true;
+                        ps.isPainting = true;
                         paintTarget(e.target);
                     }
                 });
                 newScrollArea.addEventListener('mousemove', (e) => {
-                    if (isPainting) paintTarget(e.target);
-                });
-                window.addEventListener('mouseup', () => {
-                    isPainting = false;
-                    leftPaintMode = null;
-                    excelPaintMode = null;
-                    window._lastPaintedSubItem = null;
-                    window._lastPaintedPCell = null;
-                    window._lastPaintedExcelKey = null;
+                    if (ps.isPainting) paintTarget(e.target);
                 });
 
-newScrollArea.addEventListener('touchstart', (e) => {
+                newScrollArea.addEventListener('touchstart', (e) => {
                     if (window.excelRestBrushActive || (activeGridMember && activeGridMember !== 'SPLITTER')) {
                         const touch = e.touches[0];
                         const el = document.elementFromPoint(touch.clientX, touch.clientY);
                         const excelCell = el?.closest ? el.closest('td[data-excel-cell="1"]') : null;
                         if (excelCell) {
-                            isPainting = true;
-                            excelPaintMode = getExcelActionForCell(excelCell);
+                            ps.isPainting = true;
+                            ps.excelPaintMode = getExcelActionForCell(excelCell);
                             paintTarget(excelCell);
                             return;
                         }
-                        isPainting = true;
+                        ps.isPainting = true;
                         paintTarget(el);
                     }
                 }, { passive: true });
 
                 newScrollArea.addEventListener('touchmove', (e) => {
-                    if (!isPainting || !activeGridMember || activeGridMember === 'SPLITTER') return;
+                    if (!ps.isPainting || (!window.excelRestBrushActive && (!activeGridMember || activeGridMember === 'SPLITTER'))) return;
                     const touch = e.touches[0];
                     const el = document.elementFromPoint(touch.clientX, touch.clientY);
                     if (el?.closest && el.closest('td[data-excel-cell="1"]') && e.cancelable) {
