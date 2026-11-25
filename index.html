@@ -13445,38 +13445,33 @@ window.updateMapSimulation = () => {
                 });
                 if (!curSched) return '';
 
-let endTargetMs = window.getScheduleRange(curSched.start, curSched.end, nowTime).e.getTime();
-                let isGoingToRest = false;
+const slotEndMs = window.getScheduleRange(curSched.start, curSched.end, nowTime).e.getTime();
+                const slotRemainMins = Math.max(0, Math.ceil((slotEndMs - nowTime) / 60000));
 
-// 若該員當天稍後還有「休息中 (pt_7)」（即使中間有轉班），皆標記顯示休息圖示
+                // 執勤中：只抓接下來最近一段「休息中 (pt_7)」的開始時間，完全不受中間崗位調動影響
+                let nextRestStartMs = null;
                 if (locId !== 'pt_7') {
                     memberSchedules.forEach(rs => {
                         if (rs.name === personName && rs.locationId === 'pt_7') {
-                            const rRange = window.getScheduleRange(rs.start, rs.end, nowTime);
-                            const rStart = rRange.s.getTime();
-                            if (rStart > nowTime) {
-                                if (rStart < endTargetMs) endTargetMs = rStart;
-                                isGoingToRest = true;
+                            const rStart = window.getScheduleRange(rs.start, rs.end, nowTime).s.getTime();
+                            if (rStart > nowTime && (nextRestStartMs === null || rStart < nextRestStartMs)) {
+                                nextRestStartMs = rStart;
                             }
                         }
                     });
                 }
 
-                const remainMins = Math.max(0, Math.ceil((endTargetMs - nowTime) / 60000));
-                const rH = Math.floor(remainMins / 60);
-                const rM = remainMins % 60;
-
-if (!usedIncomingByLoc[locId]) usedIncomingByLoc[locId] = new Set();
+                if (!usedIncomingByLoc[locId]) usedIncomingByLoc[locId] = new Set();
                 const curNamesSet = new Set(locGroups[locId] || []);
                 let waitingName = '';
 
-                // 🌟 嚴格判定：只有剩餘時間 <= 15 分鐘時，才顯示「待:接替人名」
-                if (remainMins > 0 && remainMins <= 15) {
+                // 🌟 嚴格判定：只有本崗位剩餘時間 <= 15 分鐘時，才顯示「頂-接替人名」
+                if (slotRemainMins > 0 && slotRemainMins <= 15) {
                     const nextReplacement = memberSchedules.find(ns => {
                         if (ns.locationId !== locId || ns.name === personName) return false;
                         if (curNamesSet.has(ns.name) || usedIncomingByLoc[locId].has(ns.name)) return false;
                         const nsStartMs = window.getScheduleRange(ns.start, ns.end, nowTime).s.getTime();
-                        return Math.abs(nsStartMs - endTargetMs) <= 60000;
+                        return Math.abs(nsStartMs - slotEndMs) <= 60000;
                     });
 
                     if (nextReplacement) {
@@ -13491,15 +13486,27 @@ if (!usedIncomingByLoc[locId]) usedIncomingByLoc[locId] = new Set();
                     }
                 }
 
-// 🌟 亮白半透明毛玻璃長方框：接下來有休息時加上線條咖啡杯圖示，沒有休息則不加
-                const timeStr = rH > 0 ? `${rH}h ${rM > 0 ? rM + 'm' : ''}`.trim() : `${rM}m`;
-                const coffeeIconHtml = `<svg class="w-2.5 h-2.5 text-slate-600 mr-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v2"/><path d="M14 2v2"/><path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/><path d="M6 2v2"/></svg>`;
-                const timeBoxHtml = `
-                    <div class="inline-flex items-center justify-center px-1.5 py-[1.5px] rounded-[4px] bg-white/75 backdrop-blur-xs text-slate-800 font-mono text-[10px] font-black leading-none shadow-2xs border border-slate-300/80 whitespace-nowrap">
-                        ${isGoingToRest ? coffeeIconHtml : ''}<span>${timeStr}</span>
-                    </div>`;
+                // 執勤中有下一個休息才顯示「☕ 倒數時間」，接下來沒休息就不顯示；休息中 (pt_7) 則顯示剩餘休息時間
+                let timeBoxHtml = '';
+                const showRestCountdown = (locId !== 'pt_7' && nextRestStartMs !== null);
+                const showInRestRemain = (locId === 'pt_7');
+                if (showRestCountdown || showInRestRemain) {
+                    const displayRemainMins = showRestCountdown
+                        ? Math.max(0, Math.ceil((nextRestStartMs - nowTime) / 60000))
+                        : slotRemainMins;
+                    const rH = Math.floor(displayRemainMins / 60);
+                    const rM = displayRemainMins % 60;
+                    const timeStr = rH > 0 ? `${rH}h ${rM > 0 ? rM + 'm' : ''}`.trim() : `${rM}m`;
+                    const coffeeIconHtml = `<svg class="w-2.5 h-2.5 text-slate-600 mr-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v2"/><path d="M14 2v2"/><path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/><path d="M6 2v2"/></svg>`;
+                    timeBoxHtml = `
+                        <div class="inline-flex items-center justify-center px-1.5 py-[1.5px] rounded-[4px] bg-white/75 backdrop-blur-xs text-slate-800 font-mono text-[10px] font-black leading-none shadow-2xs border border-slate-300/80 whitespace-nowrap">
+                            ${showRestCountdown ? coffeeIconHtml : ''}<span>${timeStr}</span>
+                        </div>`;
+                }
 
-return `
+                if (!waitingName && !timeBoxHtml) return '';
+
+                return `
                     <div class="flex flex-col items-center justify-center leading-none -space-y-[1px] pointer-events-none select-none z-10">
                         ${waitingName ? `<div class="bg-white/95 border border-orange-400 text-orange-500 text-[10px] font-bold px-1.5 py-[1.5px] rounded-[4px] shadow-2xs whitespace-nowrap tracking-tight leading-none animate-flag-in">頂-${window.esc(waitingName)}</div>` : ''}
                         ${timeBoxHtml}
@@ -17262,7 +17269,7 @@ const cardColorCls = isSelectedBrush
                 const rawStaffId = (prof.id || '').trim();
                 const displayStaffId = rawStaffId || (window.isStaffIdFormat(canon) ? canon.toUpperCase() : '--');
 
-                let workMins = 0, restMins = 0, missingCount = 0;
+let workMins = 0, restMins = 0, missingCount = 0;
 
                 const cellsHtml = slots.map(slot => {
                     const [sH, sM] = slot.start.split(':').map(Number);
@@ -17270,7 +17277,6 @@ const cardColorCls = isSelectedBrush
                     const sMins = sH * 60 + sM, eMins = eH * 60 + eM;
                     const durMins = eMins - sMins;
                     const isCurrentSlot = isToday && curTotalMins >= sMins && curTotalMins < eMins;
-                    // 🌟 100% 還原固定半小時格寬度，絕不壓扁變形
                     const colWidth = isCleanRole
                         ? (slot.start === '20:00' ? 'w-[58px] min-w-[58px] max-w-[58px]' : 'w-[38px] min-w-[38px] max-w-[38px]')
                         : 'w-[50px] min-w-[50px] max-w-[50px]';
@@ -17287,6 +17293,8 @@ const cardColorCls = isSelectedBrush
                         const startH = slot.start.split(':')[0];
                         const endH = slot.end.split(':')[0];
                         const hA_s = `${startH}:00`, hA_e = `${startH}:30`, hB_s = `${startH}:30`, hB_e = `${endH}:00`;
+                        let slotWorkAdded = 0;
+                        let slotRestAdded = 0;
 
                         allLocEntries.forEach(([locId, pt]) => {
                             const isSplit = !!splitHoursState[`${rolePrefix}${dStr}_${locId}_${slot.start}`];
@@ -17298,11 +17306,11 @@ const cardColorCls = isSelectedBrush
                                     if (locId === 'pt_7') {
                                         isResting = true;
                                         restLabel = (inA && inB) ? '休' : (inA ? '上休' : '下休');
-                                        restMins += (inA && inB) ? 60 : 30;
+                                        slotRestAdded = Math.max(slotRestAdded, (inA && inB) ? 60 : 30);
                                     } else {
                                         assignedWorkLocIds.push(locId);
                                         assignedLocs.push(window.getShortStationLabel(locId, pt?.name));
-                                        workMins += (inA && inB) ? 60 : 30;
+                                        slotWorkAdded = Math.max(slotWorkAdded, (inA && inB) ? 60 : 30);
                                     }
                                 }
                             } else {
@@ -17311,36 +17319,40 @@ const cardColorCls = isSelectedBrush
                                     assignedLocIds.push(locId);
                                     if (locId === 'pt_7') {
                                         isResting = true;
-                                        restMins += 60;
+                                        slotRestAdded = Math.max(slotRestAdded, 60);
                                     } else {
                                         assignedWorkLocIds.push(locId);
                                         assignedLocs.push(window.getShortStationLabel(locId, pt?.name));
-                                        workMins += 60;
+                                        slotWorkAdded = Math.max(slotWorkAdded, 60);
                                     }
                                 }
                             }
                         });
+                        workMins += slotWorkAdded;
+                        restMins += slotRestAdded;
                     } else {
+                        let hasWorkInSlot = false;
                         allLocEntries.forEach(([locId, pt]) => {
                             const inFull = window.getSlotAssignedNamesLive(dStr, locId, slot.start, slot.end).includes(canon);
                             if (inFull) {
                                 assignedLocIds.push(locId);
                                 if (locId === 'pt_7') {
                                     isResting = true;
-                                    restMins += durMins;
                                 } else {
+                                    hasWorkInSlot = true;
                                     assignedWorkLocIds.push(locId);
                                     assignedLocs.push(window.getShortStationLabel(locId, pt?.name));
-                                    workMins += durMins;
                                 }
                             }
                         });
+                        // 兼任不重複算：同一個時段無論排幾個崗位或同時休息，各只計一次 durMins
+                        if (hasWorkInSlot) workMins += durMins;
+                        if (isResting) restMins += durMins;
                     }
 
                     const glowCls = isCurrentSlot ? 'now-glowing-slot' : '';
                     const curLocStr = assignedLocIds.join(',');
 
-                    // 狀態 1：🟩 休息時間（柔和護眼抹茶綠）
                     if (isResting) {
                         return `<td onclick="window.togglePersonCellRest('${dStr}', '${safeNameAttr}', '${slot.start}', '${slot.end}')"
                             data-pcell="1" data-date="${dStr}" data-member="${window.escAttr(canon)}" data-start="${slot.start}" data-end="${slot.end}" data-state="rest" data-cur-locs="${curLocStr}"
@@ -17349,7 +17361,6 @@ const cardColorCls = isSelectedBrush
                         </td>`;
                     }
 
-                    // 狀態 2：🟦 已排崗位（各崗位專屬鮮明柔和色 ＋ 8.5px 無截斷字體）
                     if (assignedLocs.length > 0) {
                         const locText = assignedLocs.join('+');
                         const primaryLocId = assignedWorkLocIds[0] || 'pt_1';
@@ -17361,7 +17372,6 @@ const cardColorCls = isSelectedBrush
                         </td>`;
                     }
 
-// 狀態 3：🟥 上班時間內但未排班（柔和暖米白底配粉紅外框）
                     if (inShift) {
                         missingCount++;
                         return `<td onclick="window.togglePersonCellRest('${dStr}', '${safeNameAttr}', '${slot.start}', '${slot.end}')"
@@ -17369,19 +17379,40 @@ const cardColorCls = isSelectedBrush
                             class="p-0 border-2 border-red-300/90 bg-[#f8f6f0] hover:bg-[#cbead6]/60 text-center align-middle ${colWidth} ${glowCls} cursor-pointer select-none transition-colors" title="${canon} ${slot.start}-${slot.end} 未排班">&nbsp;</td>`;
                     }
 
-                    // 狀態 4：⬜ 非上班時間（柔和純灰底）
                     return `<td onclick="window.togglePersonCellRest('${dStr}', '${safeNameAttr}', '${slot.start}', '${slot.end}')"
                         data-pcell="1" data-date="${dStr}" data-member="${window.escAttr(canon)}" data-start="${slot.start}" data-end="${slot.end}" data-state="off" data-cur-locs=""
                         class="p-0 border border-slate-400/60 bg-[#cbd5e1] text-center align-middle ${colWidth} ${glowCls} cursor-pointer select-none" title="${canon} ${slot.start}-${slot.end} 非上班時間">&nbsp;</td>`;
                 }).join('');
 
-const workH = parseFloat((workMins / 60).toFixed(1));
+                // 核對應休時數：優先取當日特殊排程/個人固定休息時數，否則依班次長度推算應休時數
+                const specialSched = (prof.futureSchedules || []).find(sc => sc.date === dStr);
+                let targetRestH = 0;
+                if (specialSched && (specialSched.restDurationNum || parseFloat(specialSched.restHours))) {
+                    targetRestH = parseFloat(specialSched.restDurationNum || parseFloat(specialSched.restHours)) || 0;
+                } else if (prof.fixedRestHours !== undefined && prof.fixedRestHours !== '' && !isNaN(parseFloat(prof.fixedRestHours))) {
+                    targetRestH = parseFloat(prof.fixedRestHours) || 0;
+                } else if (!shiftInfo.isOff && shiftInfo.intervals.length > 0) {
+                    const spanH = (Math.max(...shiftInfo.intervals.map(p => p[1])) - Math.min(...shiftInfo.intervals.map(p => p[0]))) / 60;
+                    if (spanH >= 13) targetRestH = 4;
+                    else if (spanH >= 11) targetRestH = 3;
+                    else if (spanH >= 6) targetRestH = 1;
+                }
+
+                const workH = parseFloat((workMins / 60).toFixed(1));
                 const restH = parseFloat((restMins / 60).toFixed(1));
-                const summaryBadge = shiftInfo.isOff
-                    ? `<span class="px-1 py-[1px] rounded bg-slate-200 text-slate-600 text-[8.5px] font-black leading-none block w-fit">例休</span>`
-                    : (missingCount === 0 && (workH > 0 || restH > 0)
-                        ? `<span class="px-1 py-[1px] rounded bg-[#d5f0de] text-[#14532d] border border-[#86efac] text-[8.5px] font-mono font-black leading-none block w-fit whitespace-nowrap">上${workH}h·休${restH}h ✔</span>`
-                        : `<span class="px-1 py-[1px] rounded bg-rose-100 text-rose-700 border border-rose-300 text-[8.5px] font-mono font-black leading-none block w-fit whitespace-nowrap">漏${missingCount}格·休${restH}h</span>`);
+                const isRestEnough = restH >= targetRestH;
+
+                let summaryBadge = '';
+                if (shiftInfo.isOff) {
+                    summaryBadge = `<span class="px-1 py-[1px] rounded bg-slate-200 text-slate-600 text-[8.5px] font-black leading-none block w-fit">例休</span>`;
+                } else if (missingCount === 0 && isRestEnough && (workH > 0 || restH > 0)) {
+                    summaryBadge = `<span class="px-1 py-[1px] rounded bg-[#d5f0de] text-[#14532d] border border-[#86efac] text-[8.5px] font-mono font-black leading-none block w-fit whitespace-nowrap">上${workH}h·休${restH}h ✔</span>`;
+                } else if (missingCount === 0 && !isRestEnough) {
+                    const lackH = parseFloat((targetRestH - restH).toFixed(1));
+                    summaryBadge = `<span class="px-1 py-[1px] rounded bg-rose-100 text-rose-700 border border-rose-300 text-[8.5px] font-mono font-black leading-none block w-fit whitespace-nowrap">休${restH}/${targetRestH}h(少${lackH}h)</span>`;
+                } else {
+                    summaryBadge = `<span class="px-1 py-[1px] rounded bg-rose-100 text-rose-700 border border-rose-300 text-[8.5px] font-mono font-black leading-none block w-fit whitespace-nowrap">漏${missingCount}格·休${restH}h</span>`;
+                }
 
                 const avatarHtml = prof.avatar
                     ? `<img src="${prof.avatar}" class="w-6 h-6 rounded-full object-cover border border-white shadow-2xs shrink-0 bg-[#fdfbf7] mt-0.5">`
