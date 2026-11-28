@@ -4129,8 +4129,10 @@ let shiftIntervals = [[6 * 60 + 30, 22 * 60]];
                         if (idealIntervals.length === 0) {
                             const shiftSpanMins = shEndM - shStartM;
                             let targetRestMins = 60;
-                            if ( specialSched && (specialSched.restDurationNum || parseFloat(specialSched.restHours)) ) {
+if ( specialSched && (specialSched.restDurationNum || parseFloat(specialSched.restHours)) ) {
                                 targetRestMins = Math.round((specialSched.restDurationNum || parseFloat(specialSched.restHours)) * 60);
+                            } else if (prof.fixedRestHours !== undefined && prof.fixedRestHours !== '' && !isNaN(parseFloat(prof.fixedRestHours))) {
+                                targetRestMins = Math.round(parseFloat(prof.fixedRestHours) * 60);
                             } else if (shiftSpanMins >= 13 * 60) {
                                 targetRestMins = 240; // 06:30-22:00 長班預設休 4h (2h+2h)
                             } else if (shiftSpanMins >= 11 * 60) {
@@ -4584,6 +4586,10 @@ window.openMemberProfilePopup(name, window._currentPopupLocation);
                 gender: oldProf.gender || targetProf.gender || '女',
                 residency: oldProf.residency || targetProf.residency || '本地',
                 prefs: (oldProf.prefs && oldProf.prefs.length) ? oldProf.prefs : (targetProf.prefs || []),
+fixedShiftTime: oldProf.fixedShiftTime || targetProf.fixedShiftTime || '',
+                fixedRestHours: oldProf.fixedRestHours !== undefined ? oldProf.fixedRestHours : (targetProf.fixedRestHours ?? ''),
+fixedShiftTime: oldProf.fixedShiftTime || targetProf.fixedShiftTime || '',
+                fixedRestHours: oldProf.fixedRestHours !== undefined ? oldProf.fixedRestHours : (targetProf.fixedRestHours ?? ''),
                 idealRestTime: oldProf.idealRestTime || targetProf.idealRestTime || '',
                 futureSchedules: oldProf.futureSchedules || targetProf.futureSchedules || []
             };
@@ -4887,104 +4893,105 @@ csMembersStore = csMembersStore.filter(m => m !== canonical);
             window.showToast(`✅ 已將「${canonical}」成功歸類至【${targetRole === 'clean' ? '清潔' : '客服'}】名單！`);
         };
 
-// 🌟 理想休息時段：支援動態新增、刪除，預設起始為 1 個
-        window.calcAndSaveDualRest = (memberName, shouldSave = false) => {
-            const inputs = Array.from(document.querySelectorAll('.ideal-rest-input'));
-            const tag = document.getElementById('idealRestHoursTag');
+// 🌟 固定上班時間：支援動態新增／刪除多段班，即時計算總時數並同步排班左表
+        window._parseTimeRangeMins = (str) => {
+            if (!str) return 0;
+            const norm = String(str).replace(/[～~—–－至到]/g, '-').replace(/：/g, ':');
+            const regex = /(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/g;
+            let total = 0, m;
+            while ((m = regex.exec(norm)) !== null) {
+                const sH = Number(m[1]), sM = Number(m[2]), eH = Number(m[3]), eM = Number(m[4]);
+                if (sM > 59 || eM > 59 || sH > 24 || eH > 24) continue;
+                const sTot = sH * 60 + sM, eTot = eH * 60 + eM;
+                if (eTot > sTot) total += (eTot - sTot);
+            }
+            return total;
+        };
 
-const toMinutes = (t) => {
-                const cleanT = String(t || '').trim().replace(/：/g, ':');
-                const m = cleanT.match(/^(\d{1,2}):(\d{2})$/);
-                if (!m) return NaN;
-                const hh = Number(m[1]), mm = Number(m[2]);
-                if (mm < 0 || mm > 59 || hh < 0 || hh > 24 || (hh === 24 && mm > 0)) return NaN;
-                return hh * 60 + mm;
-            };
+        window._refreshOpenPersonTables = () => {
+            if ($('scheduleManageModal')?.classList.contains('flex') && typeof window.refreshPersonTableDay === 'function') {
+                window.get5DayScheduleDates?.().forEach(d => window.refreshPersonTableDay(d.dateStr));
+            }
+        };
+
+        window.calcAndSaveFixedShift = (memberName, shouldSave = false) => {
+            const inputs = Array.from(document.querySelectorAll('.fixed-shift-input'));
+            const tag = document.getElementById('fixedShiftHoursTag');
+            const values = inputs.map(inp => inp.value.trim());
 
             let totalMinutes = 0;
-            const values = inputs.map(inp => inp.value.trim());
-            values.forEach(val => {
-                if (!val) return;
-                const norm = val.replace(/[～~—–－至到]/g, '-').replace(/：/g, ':');
-                const match = norm.match(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/);
-                if (match) {
-                    const sM = toMinutes(match[1]), eM = toMinutes(match[2]);
-                    if (!isNaN(sM) && !isNaN(eM) && eM > sM) {
-                        totalMinutes += (eM - sM);
-                    }
-                }
-            });
-
+            values.forEach(v => { totalMinutes += window._parseTimeRangeMins(v); });
             const totalHours = parseFloat((totalMinutes / 60).toFixed(2));
-            if (tag) {
-                tag.innerText = totalHours > 0 ? `${totalHours}h` : '0h';
-            }
+            if (tag) tag.innerText = totalHours > 0 ? `${totalHours}h` : '常態';
 
             if (shouldSave && memberName) {
                 const combined = values.filter(Boolean).join(', ');
-                window.saveMemberProfile(memberName, { idealRestTime: combined });
-                window.showToast(combined ? `✅ 已儲存理想休息（共 ${totalHours}h）` : '🧹 已清空理想休息時間');
+                window.saveMemberProfile(memberName, { fixedShiftTime: combined });
+                window._refreshOpenPersonTables();
+                window.showToast(combined ? `✅ 已儲存固定上班時間（共 ${totalHours}h）` : '🧹 已恢復常態上班時間');
             }
         };
 
-        window.addIdealRestSlot = (memberName) => {
-            const inputs = Array.from(document.querySelectorAll('.ideal-rest-input')).map(i => i.value.trim());
+        window.addFixedShiftSlot = (memberName) => {
+            const inputs = Array.from(document.querySelectorAll('.fixed-shift-input')).map(i => i.value.trim());
             inputs.push('');
-            window._tempIdealRestSlots = inputs;
+            window._tempFixedShiftSlots = inputs;
             window.openMemberProfilePopup(memberName, window._currentPopupLocation);
         };
 
-        window.removeIdealRestSlot = (memberName, idx) => {
-            const inputs = Array.from(document.querySelectorAll('.ideal-rest-input')).map(i => i.value.trim());
+        window.removeFixedShiftSlot = (memberName, idx) => {
+            const inputs = Array.from(document.querySelectorAll('.fixed-shift-input')).map(i => i.value.trim());
             if (inputs.length <= 1) {
                 inputs[0] = '';
             } else {
                 inputs.splice(idx, 1);
             }
-            window._tempIdealRestSlots = inputs;
+            window._tempFixedShiftSlots = inputs;
             const combined = inputs.filter(Boolean).join(', ');
-            window.saveMemberProfile(memberName, { idealRestTime: combined });
+            window.saveMemberProfile(memberName, { fixedShiftTime: combined });
+            window._refreshOpenPersonTables();
             window.openMemberProfilePopup(memberName, window._currentPopupLocation);
         };
 
-        // 🌟 固定上班時間：即時計算時數並儲存
-        window.calcAndSaveFixedShift = (memberName, shouldSave = false) => {
-            const inp = document.getElementById('fixedShiftTimeInput');
-            const tag = document.getElementById('fixedShiftHoursTag');
+        // 🌟 單行休息時間：可打時數（如 1h / 2）或指定時段（如 10:00-11:00），自動同步驗證與排班
+        window.calcAndSaveFixedRest = (memberName, shouldSave = false) => {
+            const inp = document.getElementById('fixedRestTimeInput');
+            const tag = document.getElementById('fixedRestHoursTag');
             const val = (inp?.value || '').trim();
 
-            const toMinutes = (t) => {
-                const cleanT = String(t || '00:00').replace(/[^\d:：]/g, '').replace(/：/g, ':');
-                const [h, m] = cleanT.split(':').map(Number);
-                return (h || 0) * 60 + (m || 0);
-            };
+            const rangeMins = window._parseTimeRangeMins(val);
+            let restHours = '';
+            let idealRestTime = '';
 
-            let totalMinutes = 0;
-            if (val) {
-                const norm = val.replace(/[～~—–－至到]/g, '-').replace(/：/g, ':');
-                const regex = /(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g;
-                let match;
-                while ((match = regex.exec(norm)) !== null) {
-                    const sM = toMinutes(match[1]), eM = toMinutes(match[2]);
-                    if (!isNaN(sM) && !isNaN(eM) && eM > sM) totalMinutes += (eM - sM);
+            if (rangeMins > 0) {
+                restHours = parseFloat((rangeMins / 60).toFixed(2));
+                idealRestTime = val;
+            } else if (val) {
+                const numMatch = val.match(/(\d+(?:\.\d+)?)/);
+                if (numMatch) {
+                    const num = parseFloat(numMatch[1]);
+                    if (!isNaN(num) && num >= 0) restHours = num;
                 }
             }
 
-            const totalHours = parseFloat((totalMinutes / 60).toFixed(2));
             if (tag) {
-                tag.innerText = totalHours > 0 ? `${totalHours}h` : '常態';
+                tag.innerText = restHours !== '' ? `${restHours}h` : '自動';
             }
 
             if (shouldSave && memberName) {
-                window.saveMemberProfile(memberName, { fixedShiftTime: val });
-                window.showToast(val ? `✅ 已儲存固定上班時間：${val}` : '🧹 已恢復常態上班時間');
+                window.saveMemberProfile(memberName, {
+                    fixedRestHours: restHours,
+                    idealRestTime: idealRestTime
+                });
+                window._refreshOpenPersonTables();
+                window.showToast(val ? `✅ 已儲存休息時間（${restHours !== '' ? restHours + 'h' : val}）` : '🧹 已恢復自動計算休息時間');
             }
         };
 
         window.openMemberProfilePopup = (name, locationName) => {
             const canonicalName = window.resolveMemberIdentity ? window.resolveMemberIdentity(name) : (name || '').trim();
             if (window._lastPopupMemberName !== canonicalName) {
-                window._tempIdealRestSlots = null;
+                window._tempFixedShiftSlots = null;
                 window._lastPopupMemberName = canonicalName;
             }
             const profile = window.getMemberProfile(canonicalName);
@@ -4995,7 +5002,7 @@ const toMinutes = (t) => {
                 popup = document.createElement('div');
                 popup.id = 'memberProfileModal';
                 popup.className = 'fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[320] flex items-center justify-center p-4';
-                popup.onclick = (e) => { if (e.target === popup) { window._tempIdealRestSlots = null; popup.classList.add('hidden'); } };
+                popup.onclick = (e) => { if (e.target === popup) { window._tempFixedShiftSlots = null; popup.classList.add('hidden'); } };
                 document.body.appendChild(popup);
             }
 
@@ -5007,22 +5014,25 @@ const toMinutes = (t) => {
                 .filter(([k]) => k !== 'pt_7')
                 .sort(([a], [b]) => (order.indexOf(a) === -1 ? 999 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 999 : order.indexOf(b)));
 
-            // 取得理想休息時段陣列（起始為 1 個）
-            const rawRest = (profile.idealRestTime || '').replace(/[～~—–－]/g, '-').replace(/：/g, ':');
-            const savedRestParts = rawRest.split(/[,，、/]+/).map(s => s.trim()).filter(Boolean);
-            const restSlots = Array.isArray(window._tempIdealRestSlots) && window._tempIdealRestSlots.length > 0
-                ? window._tempIdealRestSlots
-                : (savedRestParts.length > 0 ? savedRestParts : ['']);
-
-            // 取得固定上班時間（相容舊版 futureSchedules 內最後一筆設定）
+            // 取得固定上班時間陣列（起始 1 段，可動態新增／刪除）
             const legacyShift = (profile.futureSchedules && profile.futureSchedules.length > 0)
                 ? (profile.futureSchedules[profile.futureSchedules.length - 1].shiftTime || '')
                 : '';
-            const curFixedShift = profile.fixedShiftTime !== undefined ? profile.fixedShiftTime : legacyShift;
+            const rawFixedShift = (profile.fixedShiftTime !== undefined ? profile.fixedShiftTime : legacyShift)
+                .replace(/[～~—–－]/g, '-').replace(/：/g, ':');
+            const savedShiftParts = rawFixedShift.split(/[,，、/]+/).map(s => s.trim()).filter(Boolean);
+            const shiftSlots = Array.isArray(window._tempFixedShiftSlots) && window._tempFixedShiftSlots.length > 0
+                ? window._tempFixedShiftSlots
+                : (savedShiftParts.length > 0 ? savedShiftParts : ['']);
+
+            // 取得休息時間顯示值（優先顯示具體時段，否則顯示固定小時數）
+            const curRestDisplay = profile.idealRestTime
+                ? profile.idealRestTime
+                : (profile.fixedRestHours !== undefined && profile.fixedRestHours !== '' ? `${profile.fixedRestHours}h` : '');
 
             popup.innerHTML = `
                 <div class="bg-white rounded-2xl p-4 shadow-2xl border border-slate-200 w-full max-w-[300px] flex flex-col items-center text-center animate-pop-in relative" onclick="event.stopPropagation()">
-                    <button type="button" onclick="window._tempIdealRestSlots=null; document.getElementById('memberProfileModal').classList.add('hidden')" class="absolute top-2.5 right-2.5 text-slate-400 hover:text-slate-600 p-1">
+                    <button type="button" onclick="window._tempFixedShiftSlots=null; document.getElementById('memberProfileModal').classList.add('hidden')" class="absolute top-2.5 right-2.5 text-slate-400 hover:text-slate-600 p-1">
                         <i data-lucide="x" class="w-4 h-4"></i>
                     </button>
                     
@@ -5089,52 +5099,44 @@ const toMinutes = (t) => {
                     </div>
 
                     <div class="w-full mt-2 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-200/80 text-left space-y-2">
-                        <!-- ① 理想休息時段（起始 1 個，可動態新增/刪除） -->
-                        <div class="space-y-1.5 pb-2 border-b border-indigo-200/60 text-left">
+                        <!-- ① 固定上班時間（可新增／刪除多段） -->
+                        <div class="space-y-1.5 pb-2 border-b border-indigo-200/60">
                             <div class="flex items-center justify-between">
                                 <span class="text-[11px] font-black text-indigo-800 flex items-center shrink-0">
-                                    <i data-lucide="coffee" class="w-3.5 h-3.5 mr-1 text-indigo-600"></i>理想休息時段
+                                    <i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-indigo-600"></i>固定上班時間
                                 </span>
                                 <div class="flex items-center gap-1">
-                                    <span id="idealRestHoursTag" class="text-[10px] font-mono font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-1.5 py-0.2 rounded">0h</span>
-                                    <button type="button" onclick="window.addIdealRestSlot('${safeNameAttr}')" class="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[10px] font-black flex items-center active:scale-95">
+                                    <span id="fixedShiftHoursTag" class="text-[10px] font-mono font-black text-indigo-700 bg-indigo-100 border border-indigo-300 px-1.5 py-0.2 rounded">常態</span>
+                                    <button type="button" onclick="window.addFixedShiftSlot('${safeNameAttr}')" class="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[10px] font-black flex items-center active:scale-95">
                                         <i data-lucide="plus" class="w-2.5 h-2.5 mr-0.5"></i>新增
                                     </button>
                                 </div>
                             </div>
                             <div class="space-y-1">
-                                ${restSlots.map((slotVal, sIdx) => `
+                                ${shiftSlots.map((slotVal, sIdx) => `
                                     <div class="flex items-center justify-between gap-1">
-                                        <span class="text-[10px] font-bold text-slate-600 shrink-0">第 ${sIdx + 1} 段：</span>
-                                        <input type="text" value="${window.esc(slotVal)}" placeholder="例: 10:00-11:00"
-                                            oninput="window.calcAndSaveDualRest('${safeNameAttr}', false)"
-                                            onchange="window._tempIdealRestSlots=null; window.calcAndSaveDualRest('${safeNameAttr}', true)"
-                                            class="ideal-rest-input flex-1 min-w-0 bg-white border border-indigo-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
-                                        <button type="button" onclick="window.removeIdealRestSlot('${safeNameAttr}', ${sIdx})" class="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors shrink-0" title="刪除此段">
+                                        ${shiftSlots.length > 1 ? `<span class="text-[10px] font-bold text-slate-600 shrink-0">第 ${sIdx + 1} 段：</span>` : ''}
+                                        <input type="text" value="${window.esc(slotVal)}" placeholder="例: 06:30-15:30"
+                                            oninput="window.calcAndSaveFixedShift('${safeNameAttr}', false)"
+                                            onchange="window._tempFixedShiftSlots=null; window.calcAndSaveFixedShift('${safeNameAttr}', true)"
+                                            class="fixed-shift-input flex-1 min-w-0 bg-white border border-indigo-300 rounded-md px-2 py-1 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
+                                        <button type="button" onclick="window.removeFixedShiftSlot('${safeNameAttr}', ${sIdx})" class="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors shrink-0" title="刪除此段">
                                             <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
                                         </button>
                                     </div>
                                 `).join('')}
                             </div>
-                        </div>
 
-                        <!-- ② 固定上班時間（取代原「未來特定排程」） -->
-                        <div class="space-y-1.5 pb-2 border-b border-indigo-200/60">
-                            <div class="flex items-center justify-between">
-                                <span class="text-[11px] font-black text-indigo-800 flex items-center">
-                                    <i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-indigo-600"></i>固定上班時間
+                            <!-- 單行休息時間輸入 -->
+                            <div class="flex items-center justify-between gap-1.5 pt-1">
+                                <span class="text-[10.5px] font-black text-emerald-800 flex items-center shrink-0">
+                                    <i data-lucide="coffee" class="w-3 h-3 mr-1 text-emerald-600"></i>休息時間
                                 </span>
-                                <span id="fixedShiftHoursTag" class="text-[10px] font-mono font-black text-indigo-700 bg-indigo-100 border border-indigo-300 px-1.5 py-0.2 rounded">常態</span>
-                            </div>
-                            <div class="flex items-center justify-between gap-1">
-                                <input type="text" id="fixedShiftTimeInput" value="${window.esc(curFixedShift)}" placeholder="例: 06:30-15:30 (留空為預設)"
-                                    oninput="window.calcAndSaveFixedShift('${safeNameAttr}', false)"
-                                    onchange="window.calcAndSaveFixedShift('${safeNameAttr}', true)"
-                                    class="flex-1 min-w-0 bg-white border border-indigo-300 rounded-md px-2 py-1 text-xs font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
-                                ${curFixedShift ? `
-                                <button type="button" onclick="document.getElementById('fixedShiftTimeInput').value=''; window.calcAndSaveFixedShift('${safeNameAttr}', true); window.openMemberProfilePopup('${safeNameAttr}', window._currentPopupLocation);" class="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors shrink-0" title="清空">
-                                    <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
-                                </button>` : ''}
+                                <input type="text" id="fixedRestTimeInput" value="${window.esc(curRestDisplay)}" placeholder="例: 1h 或 10:00-11:00"
+                                    oninput="window.calcAndSaveFixedRest('${safeNameAttr}', false)"
+                                    onchange="window.calcAndSaveFixedRest('${safeNameAttr}', true)"
+                                    class="flex-1 min-w-0 bg-white border border-emerald-300 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-center focus:outline-none focus:border-emerald-500">
+                                <span id="fixedRestHoursTag" class="text-[10px] font-mono font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-1.5 py-0.2 rounded shrink-0">自動</span>
                             </div>
                         </div>
 
@@ -5156,8 +5158,8 @@ ${locEntries.map(([locKey, locObj]) => `<option value="${window.esc(locKey)}" ${
             popup.classList.remove('hidden');
             if (window.lucide) lucide.createIcons({ root: popup });
 
-            if (window.calcAndSaveDualRest) window.calcAndSaveDualRest(canonicalName, false);
-            if (window.calcAndSaveFixedShift) window.calcAndSaveFixedShift(canonicalName, false);
+            window.calcAndSaveFixedShift(canonicalName, false);
+            window.calcAndSaveFixedRest(canonicalName, false);
         };
 
         // 🌟 計算「前2日、昨日、當日、明日、後2日」共 5 天的日期陣列
