@@ -4,12 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>工作記錄本</title>
-<script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest" defer></script>
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" async></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest" defer></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
     <style>
         *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
         * { -ms-overflow-style: none !important; scrollbar-width: none !important; -webkit-tap-highlight-color: transparent; }
@@ -557,6 +558,22 @@ tr[class*="pref-row-highlight-"] .sub-line-item[data-name=""] {
 import { getFirestore, collection, doc, getDoc, setDoc, updateDoc, getDocs, deleteDoc, onSnapshot, writeBatch, addDoc, query, where, orderBy, limit, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
       // 🌟【加在這裡】全域安全人名拆分函式：只用換行、逗號、頓號、分號分割，保留「Mary Chan」中間的空格
+window.ensureXlsxLoaded = () => {
+            if (typeof window.XLSX !== 'undefined') return Promise.resolve(window.XLSX);
+            if (window._xlsxLoadPromise) return window._xlsxLoadPromise;
+            window._xlsxLoadPromise = new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+                s.onload = () => resolve(window.XLSX);
+                s.onerror = () => {
+                    window._xlsxLoadPromise = null;
+                    reject(new Error('Excel 匯出模組載入失敗，請檢查網路'));
+                };
+                document.head.appendChild(s);
+            });
+            return window._xlsxLoadPromise;
+        };
+
         window.splitMemberNamesSafe = (text) => {
             if (!text) return [];
             return String(text)
@@ -1572,10 +1589,19 @@ window.mergePatrolAndTempLogs = (items, windowMs = 30 * 60 * 1000) => {
                 return;
             }
 
-            // 1. 按時間降序（由新到舊）
-            const sortedLogs = [...galleryLogsStore].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+const sortedLogs = [...galleryLogsStore].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
             const weekNames = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
             const isAdminUser = window.isAdminUnlocked ? window.isAdminUnlocked() : false;
+
+            const logsSig = JSON.stringify({
+                isAdminUser,
+                expDates: Array.from(window.expandedLogDates || []).sort(),
+                expGrps: Array.from(window.expandedLogGroups || []).sort(),
+                devSig: window._lastDevicesIdentSig || '',
+                items: sortedLogs.map(l => `${l.id || ''}_${l.timestamp || 0}_${l.user || ''}_${l.action || ''}`)
+            });
+            if (window._lastLogsRenderSig === logsSig && container.children.length > 0) return;
+            window._lastLogsRenderSig = logsSig;
 
             // 2. 先依「日期（日子 MM/DD）」分組
             const dayBuckets = new Map();
@@ -2678,25 +2704,11 @@ menu.innerHTML = overflowTabs.map(k => {
             }
         };
 
-        window.onIosMainTabClick = (tabKey) => {
-            window.syncMainTabIosSlider(tabKey, true);
-            requestAnimationFrame(() => {
-                if (typeof window.switchTab === 'function') window.switchTab(tabKey);
-            });
+window.onIosMainTabClick = (tabKey) => {
+            if (typeof window.switchTab === 'function') window.switchTab(tabKey);
         };
 
-        window._wrapSwitchTabForIos = () => {
-            if (typeof window.switchTab !== 'function' || window.switchTab._iosWrapped) return;
-            const origSwitchTab = window.switchTab;
-            const wrapped = function(tabKey, ...args) {
-                window.syncMainTabIosSlider?.(tabKey, true);
-                const res = origSwitchTab.apply(this, [tabKey, ...args]);
-                window.syncMainTabIosSlider?.(tabKey, true);
-                return res;
-            };
-            wrapped._iosWrapped = true;
-            window.switchTab = wrapped;
-        };
+        window._wrapSwitchTabForIos = () => {};
 
         window.applyTabVisibility = () => {
             const container = $('tabBarContainer');
@@ -6065,7 +6077,7 @@ if ('speechSynthesis' in window) {
     }
 };
 
-       window.autoSyncClosedStallsToPatrol = async (silent = true) => {
+window.autoSyncClosedStallsToPatrol = async (silent = true, skipRender = false) => {
     const todayStr = getTodayDateStr();
     const isHistoricalDate = currentPatrolDate < todayStr;
 
@@ -6197,7 +6209,7 @@ safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
         });
         if (window.resumePatrolUploadQueue) window.resumePatrolUploadQueue(false);
 
-        if (!$('patrolPage')?.classList.contains('hidden')) {
+if (!skipRender && !$('patrolPage')?.classList.contains('hidden')) {
             window.renderPatrol();
         }
     }
@@ -6494,12 +6506,15 @@ window._speechSpeakTimer = setTimeout(applyVoiceAndSpeak, 50);
         }
     }
 
-    patrolState = patrolHistoryStore[currentPatrolDate] || {};
+patrolState = patrolHistoryStore[currentPatrolDate] || {};
     safeSetLocal('work_cache_patrol_history', patrolHistoryStore);
-    safeSetLocal('work_cache_patrol_records', patrolState);
 
-window.enqueuePatrolSync(currentPatrolDate, key, targetSlot);
-    window.renderPatrol();
+    window.enqueuePatrolSync(currentPatrolDate, key, targetSlot);
+    if (typeof window.updateSinglePatrolCardUI === 'function') {
+        window.updateSinglePatrolCardUI(stall);
+    } else {
+        window.renderPatrol();
+    }
     window.resumePatrolUploadQueue(false);
 
     // 🌟 以全部 105 檔計算總進度，並單獨統計「當前使用者」個人剔檔數量
@@ -6742,7 +6757,7 @@ window.renderPatrol();
             }
         })();
 
-        window.setPatrolSlot = (slot) => {
+window.setPatrolSlot = (slot, skipRender = false) => {
             patrolSlot = slot;
             window.clearFocusAutoTimer();
             
@@ -6778,8 +6793,8 @@ window.renderPatrol();
 
 const slotBar = $('patrol-slot-0')?.parentElement;
             if (window.lucide && slotBar) lucide.createIcons({ root: slotBar });
-            if (!$('patrolPage')?.classList.contains('hidden')) {
-                window.autoSyncClosedStallsToPatrol(true);
+            if (!skipRender && !$('patrolPage')?.classList.contains('hidden')) {
+                window.autoSyncClosedStallsToPatrol(true, true);
                 window.renderPatrol();
             }
             // 🌟 若溫度彈窗開著，切換時段時同步刷新該時段的溫度紀錄
@@ -7231,146 +7246,124 @@ window.jumpToPatrolStall = (targetFloor, targetId) => {
             }, 100);
         };
 
-        window.renderPatrol = () => {
+        window.buildPatrolCardHtml = (stall, idx) => {
+            const cardBg = 'bg-slate-100 border-slate-300 shadow-none';
+            const cardUnfilledBg = 'bg-white border-amber-400 shadow-sm';
+            const status = window.getPatrolStatus(stall, patrolSlot);
+            const isFilled = status !== '';
+
+            const btnClsA = status === 'A'
+                ? 'bg-emerald-500 text-white border-emerald-500 shadow-sm ring-1 ring-emerald-300'
+                : 'bg-white text-emerald-600 border-emerald-400 hover:bg-emerald-50 shadow-2xs';
+            const btnCls1 = status === '1'
+                ? 'bg-amber-500 text-white border-amber-500 shadow-sm ring-1 ring-amber-300'
+                : 'bg-white text-amber-700 border-amber-300 hover:bg-amber-50 shadow-2xs';
+            const btnCls0 = status === '0'
+                ? 'bg-slate-700 text-white border-slate-700 shadow-sm ring-1 ring-slate-400'
+                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 shadow-2xs';
+
+            const scale = patrolCardScale || '100';
+            const S = scale === '150' ? {
+                card: 'p-2 px-2.5 gap-1.5 w-full', id: 'text-[27px] px-1.5 py-0.5 rounded-lg', gender: 'text-[18px] px-1.5 py-0.5',
+                name: 'text-sm font-black', sub: 'text-[11px]', badge: 'text-[10px] px-1.5 py-0.5',
+                btn: 'w-10 h-10 rounded-lg', btnMain: 'text-sm', btnSub: 'text-[9px] mt-0.5 scale-90', layout: 'stack'
+            } : scale === '125' ? {
+                card: 'p-2 px-2.5 gap-1.5 w-full', id: 'text-[22.5px] px-1.5 py-0.5 rounded-md', gender: 'text-[15px] px-1 py-0.5',
+                name: 'text-sm font-black', sub: 'text-[11px]', badge: 'text-[10px] px-1.5 py-0.5',
+                btn: 'w-10 h-10 rounded-lg', btnMain: 'text-sm', btnSub: 'text-[9px] mt-0.5 scale-90', layout: 'stack'
+            } : {
+                card: 'p-2 px-2 gap-1 w-full', id: 'text-lg px-1.5 py-0.5 rounded-md', gender: 'text-xs px-1 py-0.5',
+                name: 'text-sm font-black', sub: 'text-[11px]', badge: 'text-[10px] px-1.5 py-0.5',
+                btn: 'w-10 h-10 rounded-lg', btnMain: 'text-sm', btnSub: 'text-[9px] mt-0.5 scale-90', layout: 'inline'
+            };
+
+            const genderTagScaled = stall.gender === '男'
+                ? `<span class="bg-blue-600 text-white font-black ${S.gender} rounded-md shrink-0 shadow-xs leading-none">男</span>`
+                : `<span class="bg-rose-500 text-white font-black ${S.gender} rounded-md shrink-0 shadow-xs leading-none">女</span>`;
+
+            let statusBadgeScaled = `<span class="font-bold text-rose-600 bg-rose-50 border border-rose-300 ${S.badge} rounded-full leading-none whitespace-nowrap">未填</span>`;
+            if (status === 'A') statusBadgeScaled = `<span class="bg-emerald-500 text-white font-black ${S.badge} rounded-full shadow-xs leading-none whitespace-nowrap">[A] 檔主</span>`;
+            else if (status === '1') statusBadgeScaled = `<span class="bg-amber-500 text-white font-black ${S.badge} rounded-full shadow-xs leading-none whitespace-nowrap">[1] 協作</span>`;
+            else if (status === '0') statusBadgeScaled = `<span class="bg-slate-600 text-white font-black ${S.badge} rounded-full shadow-xs leading-none whitespace-nowrap">[0] 無人</span>`;
+
+            const btnsHtml = `
+                <div class="flex items-center gap-1.5 shrink-0">
+                    <div class="flex items-center">${statusBadgeScaled}</div>
+                    <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, 'A')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnClsA}">
+                        <span class="${S.btnMain} leading-none">A</span><span class="${S.btnSub} font-bold">檔主</span>
+                    </button>
+                    <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, '1')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnCls1}">
+                        <span class="${S.btnMain} leading-none">1</span><span class="${S.btnSub} font-bold">協作</span>
+                    </button>
+                    <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, '0')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnCls0}">
+                        <span class="${S.btnMain} leading-none">0</span><span class="${S.btnSub} font-bold">無人</span>
+                    </button>
+                </div>`;
+
+            if (S.layout === 'stack') {
+                return `
+                <div id="patrol-card-${stall.floor}-${stall.id}" class="${S.card} rounded-2xl border transition-all flex items-center justify-between ${isFilled ? cardBg : cardUnfilledBg}">
+                    <div class="flex flex-col justify-center min-w-0 flex-1 pr-2 ${isFilled ? 'opacity-45' : ''}">
+                        <div class="flex items-center gap-1 mb-0.5">
+                            <span class="bg-slate-950 text-white font-black ${S.id} shrink-0 shadow-xs leading-none tracking-tighter">${stall.id}</span>
+                            ${genderTagScaled}
+                        </div>
+                        <div class="flex items-center gap-1.5 min-w-0">
+                            <span class="${S.sub} text-slate-500 font-bold truncate shrink-0">${stall.floor} · ${stall.type}</span>
+                            <span class="${S.name} font-black text-slate-900 truncate">${stall.name || '無'}</span>
+                        </div>
+                    </div>
+                    ${btnsHtml}
+                </div>`;
+            }
+
+            return `
+            <div id="patrol-card-${stall.floor}-${stall.id}" class="${S.card} rounded-2xl border transition-all flex items-center justify-between ${isFilled ? cardBg : cardUnfilledBg}">
+                <div class="flex flex-col justify-center min-w-0 pr-1 flex-1 ${isFilled ? 'opacity-45' : ''}">
+                    <div class="flex items-center gap-1 mb-0.5 min-w-0">
+                        <span class="bg-slate-950 text-white font-black ${S.id} shrink-0 shadow-xs leading-none tracking-tighter">${stall.id}</span>
+                        ${genderTagScaled}
+                        <span class="${S.name} font-black text-slate-900 truncate ml-0.5">${stall.name || '無'}</span>
+                    </div>
+                    <div class="${S.sub} text-slate-500 font-bold truncate pl-0.5">${stall.floor} · ${stall.type}</div>
+                </div>
+                ${btnsHtml}
+            </div>`;
+        };
+
+        window.updatePatrolProgressUI = () => {
             const stalls = window.getFilteredPatrolStalls();
             const total = stalls.length;
             let filledCount = 0;
-            let unfilledStalls = [];
-
-            stalls.forEach(s => {
-                const status = window.getPatrolStatus(s, patrolSlot);
-                if (status) filledCount++;
-                else unfilledStalls.push(s);
-            });
-
+            stalls.forEach(s => { if (window.getPatrolStatus(s, patrolSlot)) filledCount++; });
             const pct = total === 0 ? 0 : Math.round((filledCount / total) * 100);
-            if ($('patrolProgressText'))$('patrolProgressText').innerText = `${filledCount} / ${total} (${pct}%)`;
-            if ($('patrolProgressBar'))$('patrolProgressBar').style.width = `${pct}%`;
-            if ($('patrolUnfilledBadge'))$('patrolUnfilledBadge').innerText = unfilledStalls.length;
+            if ($('patrolProgressText')) $('patrolProgressText').innerText = `${filledCount} / ${total} (${pct}%)`;
+            if ($('patrolProgressBar')) $('patrolProgressBar').style.width = `${pct}%`;
+            if ($('patrolUnfilledBadge')) $('patrolUnfilledBadge').innerText = total - filledCount;
+        };
 
-            const cardBg = 'bg-slate-100 border-slate-300 shadow-none';
-            const cardUnfilledBg = 'bg-white border-amber-400 shadow-sm';
+        window.updateSinglePatrolCardUI = (stall) => {
+            window.updatePatrolProgressUI();
+            if (patrolViewMode === 'map') {
+                window.renderPatrolMap();
+                return;
+            }
+            const stalls = window.getFilteredPatrolStalls();
+            const idx = stalls.findIndex(s => s.floor === stall.floor && s.id === stall.id);
+            const cardEl = document.getElementById(`patrol-card-${stall.floor}-${stall.id}`);
+            if (idx !== -1 && cardEl) {
+                cardEl.outerHTML = window.buildPatrolCardHtml(stalls[idx], idx);
+            } else {
+                window.renderPatrol();
+            }
+        };
 
+        window.renderPatrol = () => {
+            const stalls = window.getFilteredPatrolStalls();
+            window.updatePatrolProgressUI();
             const container = $('patrolCardList');
             if (!container) return;
-
-            container.innerHTML = stalls.map((stall, idx) => {
-                const status = window.getPatrolStatus(stall, patrolSlot);
-                const isFilled = status !== '';
-
-                const btnClsA = status === 'A'
-                    ? 'bg-emerald-500 text-white border-emerald-500 shadow-sm ring-1 ring-emerald-300'
-                    : 'bg-white text-emerald-600 border-emerald-400 hover:bg-emerald-50 shadow-2xs';
-
-                const btnCls1 = status === '1'
-                    ? 'bg-amber-500 text-white border-amber-500 shadow-sm ring-1 ring-amber-300'
-                    : 'bg-white text-amber-700 border-amber-300 hover:bg-amber-50 shadow-2xs';
-
-                const btnCls0 = status === '0'
-                    ? 'bg-slate-700 text-white border-slate-700 shadow-sm ring-1 ring-slate-400'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 shadow-2xs';
-
-                const scale = patrolCardScale || '100';
-
-                // 🌟 檔號黑藥丸左右收窄為 px-1.5，性別標籤收窄為 px-1
-                const S = scale === '150' ? {
-                    card: 'p-2 px-2.5 gap-1.5 w-full',
-                    id: 'text-[27px] px-1.5 py-0.5 rounded-lg',
-                    gender: 'text-[18px] px-1.5 py-0.5',
-                    name: 'text-sm font-black',
-                    sub: 'text-[11px]',
-                    badge: 'text-[10px] px-1.5 py-0.5',
-                    btn: 'w-10 h-10 rounded-lg',
-                    btnMain: 'text-sm',
-                    btnSub: 'text-[9px] mt-0.5 scale-90',
-                    layout: 'stack'
-                } : scale === '125' ? {
-                    card: 'p-2 px-2.5 gap-1.5 w-full',
-                    id: 'text-[22.5px] px-1.5 py-0.5 rounded-md',
-                    gender: 'text-[15px] px-1 py-0.5',
-                    name: 'text-sm font-black',
-                    sub: 'text-[11px]',
-                    badge: 'text-[10px] px-1.5 py-0.5',
-                    btn: 'w-10 h-10 rounded-lg',
-                    btnMain: 'text-sm',
-                    btnSub: 'text-[9px] mt-0.5 scale-90',
-                    layout: 'stack'
-                } : {
-                    card: 'p-2 px-2 gap-1 w-full',
-                    id: 'text-lg px-1.5 py-0.5 rounded-md',
-                    gender: 'text-xs px-1 py-0.5',
-                    name: 'text-sm font-black',
-                    sub: 'text-[11px]',
-                    badge: 'text-[10px] px-1.5 py-0.5',
-                    btn: 'w-10 h-10 rounded-lg',
-                    btnMain: 'text-sm',
-                    btnSub: 'text-[9px] mt-0.5 scale-90',
-                    layout: 'inline'
-                };
-
-                const genderTagScaled = stall.gender === '男'
-                    ? `<span class="bg-blue-600 text-white font-black ${S.gender} rounded-md shrink-0 shadow-xs leading-none">男</span>`
-                    : `<span class="bg-rose-500 text-white font-black ${S.gender} rounded-md shrink-0 shadow-xs leading-none">女</span>`;
-
-                let statusBadgeScaled = `<span class="font-bold text-rose-600 bg-rose-50 border border-rose-300 ${S.badge} rounded-full leading-none whitespace-nowrap">未填</span>`;
-                if (status === 'A') statusBadgeScaled = `<span class="bg-emerald-500 text-white font-black ${S.badge} rounded-full shadow-xs leading-none whitespace-nowrap">[A] 檔主</span>`;
-                else if (status === '1') statusBadgeScaled = `<span class="bg-amber-500 text-white font-black ${S.badge} rounded-full shadow-xs leading-none whitespace-nowrap">[1] 協作</span>`;
-                else if (status === '0') statusBadgeScaled = `<span class="bg-slate-600 text-white font-black ${S.badge} rounded-full shadow-xs leading-none whitespace-nowrap">[0] 無人</span>`;
-
-                // 中／大：檔號與性別間距收窄為 gap-1
-                if (S.layout === 'stack') {
-                    return `
-                    <div id="patrol-card-${stall.floor}-${stall.id}" class="${S.card} rounded-2xl border transition-all flex items-center justify-between ${isFilled ? cardBg : cardUnfilledBg}">
-                        <div class="flex flex-col justify-center min-w-0 flex-1 pr-2 ${isFilled ? 'opacity-45' : ''}">
-                            <div class="flex items-center gap-1 mb-0.5">
-                                <span class="bg-slate-950 text-white font-black ${S.id} shrink-0 shadow-xs leading-none tracking-tighter">${stall.id}</span>
-                                ${genderTagScaled}
-                            </div>
-                            <div class="flex items-center gap-1.5 min-w-0">
-                                <span class="${S.sub} text-slate-500 font-bold truncate shrink-0">${stall.floor} · ${stall.type}</span>
-                                <span class="${S.name} font-black text-slate-900 truncate">${stall.name || '無'}</span>
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-1.5 shrink-0">
-                            <div class="flex items-center">${statusBadgeScaled}</div>
-                            <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, 'A')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnClsA}">
-                                <span class="${S.btnMain} leading-none">A</span><span class="${S.btnSub} font-bold">檔主</span>
-                            </button>
-                            <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, '1')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnCls1}">
-                                <span class="${S.btnMain} leading-none">1</span><span class="${S.btnSub} font-bold">協作</span>
-                            </button>
-                            <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, '0')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnCls0}">
-                                <span class="${S.btnMain} leading-none">0</span><span class="${S.btnSub} font-bold">無人</span>
-                            </button>
-                        </div>
-                    </div>`;
-                }
-
-                // 小：檔號、性別與姓名間距收窄為 gap-1
-                return `
-                <div id="patrol-card-${stall.floor}-${stall.id}" class="${S.card} rounded-2xl border transition-all flex items-center justify-between ${isFilled ? cardBg : cardUnfilledBg}">
-                    <div class="flex flex-col justify-center min-w-0 pr-1 flex-1 ${isFilled ? 'opacity-45' : ''}">
-                        <div class="flex items-center gap-1 mb-0.5 min-w-0">
-                            <span class="bg-slate-950 text-white font-black ${S.id} shrink-0 shadow-xs leading-none tracking-tighter">${stall.id}</span>
-                            ${genderTagScaled}
-                            <span class="${S.name} font-black text-slate-900 truncate ml-0.5">${stall.name || '無'}</span>
-                        </div>
-                        <div class="${S.sub} text-slate-500 font-bold truncate pl-0.5">${stall.floor} · ${stall.type}</div>
-                    </div>
-                    <div class="flex items-center gap-1.5 shrink-0">
-                        <div class="flex items-center">${statusBadgeScaled}</div>
-                        <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, 'A')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnClsA}">
-                            <span class="${S.btnMain} leading-none">A</span><span class="${S.btnSub} font-bold">檔主</span>
-                        </button>
-                        <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, '1')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnCls1}">
-                            <span class="${S.btnMain} leading-none">1</span><span class="${S.btnSub} font-bold">協作</span>
-                        </button>
-                        <button type="button" onclick="window.setPatrolStatusByFilteredIndex(${idx}, '0')" class="${S.btn} font-black flex flex-col items-center justify-center border active:scale-90 transition-all ${btnCls0}">
-                            <span class="${S.btnMain} leading-none">0</span><span class="${S.btnSub} font-bold">無人</span>
-                        </button>
-                    </div>
-                </div>`;
-            }).join('');
+            container.innerHTML = stalls.map((stall, idx) => window.buildPatrolCardHtml(stall, idx)).join('');
 
 if (patrolViewMode === 'map') window.renderPatrolMap();
             window.updatePatrolCardScaleUI();
@@ -7417,7 +7410,7 @@ if (patrolViewMode === 'map') window.renderPatrolMap();
                     setTimeout(() => input.focus(), 80);
                 }
             }
-            if (window.lucide) lucide.createIcons();
+window.safeCreateIcons({ root: btn });
         };
 
         window.closePatrolSearchModal = () => {
@@ -7553,7 +7546,8 @@ window.renderPatrolSearchResults = (queryStr) => {
         };
 
 // 🌟 單日匯出（保留原有單日格式，可在彈窗內一鍵呼叫）
-        window.exportSingleDayPatrolExcel = (targetDate) => {
+window.exportSingleDayPatrolExcel = async (targetDate) => {
+            try { await window.ensureXlsxLoaded(); } catch (e) { return window.showToast(e.message, true); }
             const dateStr = targetDate || currentPatrolDate || getTodayDateStr();
             const currentRecords = patrolHistoryStore[dateStr] || {};
             const dayTemps = patrolTempRecords[dateStr] || {};
@@ -7606,10 +7600,8 @@ window.renderPatrolSearchResults = (queryStr) => {
         };
 
         // 🌟 整月匯出（支援 10月、11月、12月 等任意月份，自動從雲端抓齊整月每一天資料）
-        window.exportMonthlyPatrolExcel = async (yearNum, monthNum) => {
-            if (typeof XLSX === 'undefined') {
-                return window.showToast('匯出模組尚未載入，請稍候再試', true);
-            }
+window.exportMonthlyPatrolExcel = async (yearNum, monthNum) => {
+            try { await window.ensureXlsxLoaded(); } catch (e) { return window.showToast(e.message, true); }
             const yStr = String(yearNum);
             const mStr = pad(monthNum);
             const monthPrefix = `${yStr}-${mStr}`;
@@ -8118,7 +8110,7 @@ window.stopOverdueAlarm = () => {
                 btn.className = "flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-400 shadow-xs hover:bg-slate-200 transition-all active:scale-95 cursor-pointer";
                 btn.innerHTML = `<i data-lucide="bell-off" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i><span class="text-[10px] font-bold">靜音</span>`;
             }
-            if (window.lucide) lucide.createIcons();
+window.safeCreateIcons({ root: btn });
         };
 
 window.checkMemoAlerts = () => {
@@ -8418,7 +8410,7 @@ window.crSwitchTab?.(crCurrentTab || 'active');
                 _closeAndNext();
                 if (typeof onConfirm === 'function') onConfirm();
             };
-            lucide.createIcons(); modal.classList.replace('hidden', 'flex');
+window.safeCreateIcons({ root: resultList });
         };
 
         // 修復：Promise 版確認窗，取代會被 PWA／WebView 封鎖的原生 confirm。
@@ -10404,7 +10396,8 @@ const oldTitle = item.title || '無標題';
         };
 
 // ====== 專屬攤販提早收工 Excel (CSV) 導出函式（新增檔主姓名欄位） ======
-        window.exportGalleryExcelCSV = () => {
+window.exportGalleryExcelCSV = async () => {
+            try { await window.ensureXlsxLoaded(); } catch (e) { console.warn(e); }
             // 108 檔全攤位檔主對照表 (由官方資料自動比對)
             const STALL_OWNERS = {
                 "1_1": "鄭錫霖", "1_2": "余家昇", "1_3": "馮春育", "1_5": "張俠川", "1_6": "余偉強",
@@ -10689,10 +10682,9 @@ const STANDARD_CHICKEN_STALLS = ['J-018', 'J-022', 'J-024', 'J-025'];
 window.renderDashboard = () => {
             try {
                 const dashPage = document.getElementById('dashboardPage');
-                if (dashPage) {
-                    dashPage.classList.remove('p-3', 'p-4', 'px-3', 'px-4', 'pt-3', 'pt-4');
-                    dashPage.classList.add('px-1.5', 'pt-1', 'pb-2');
-                }
+                if (!dashPage || dashPage.classList.contains('hidden')) return;
+                dashPage.classList.remove('p-3', 'p-4', 'px-3', 'px-4', 'pt-3', 'pt-4');
+                dashPage.classList.add('px-1.5', 'pt-1', 'pb-2');
                 const container = document.getElementById('dashboardContent');
                 if (!container) return;
                 container.classList.remove('p-3', 'p-4', 'px-3', 'px-4', 'pt-3', 'pt-4');
@@ -10901,6 +10893,20 @@ window.renderDashboard = () => {
                 };
 
 const useSao = window.isSaoMode !== false;
+
+                const dashSig = JSON.stringify({
+                    useSao,
+                    todayStr,
+                    curSlot,
+                    patrolSlots: allFourSlots.map(s => getSlotPatrolFilled(s)),
+                    tempSlots: allFourSlots.map(s => getSlotTempFilled(s)),
+                    cr: `${activeCrRecords.length}_${crRemainBoxes}`,
+                    photos: `${uploadedFirstFloorCodes.size}_${uploadedChickenCodes.size}_${amTempPhotos}_${pmTempPhotos}_${earlyCloseCount}_${uploadedCleanCodes.size}`,
+                    memos: sortedMemos.map(m => `${m.id}_${m.date}_${m.time}_${m.title}`),
+                    logs: logGroups.map(g => `${g.id}_${g.items.length}_${window.expandedDashLogGroups?.has(g.id) ? 1 : 0}`)
+                });
+                if (window._lastDashRenderSig === dashSig && container.children.length > 0) return;
+                window._lastDashRenderSig = dashSig;
 
                 const allPatrolSlotsHtml = allFourSlots.map(slot => {
                     const cnt = getSlotPatrolFilled(slot);
@@ -11373,6 +11379,18 @@ const useSao = window.isSaoMode !== false;
             }
         };
 
+window._gallerySearchTimer = null;
+        window.debouncedRenderGallery = () => {
+            clearTimeout(window._gallerySearchTimer);
+            window._gallerySearchTimer = setTimeout(() => window.renderGallery(), 150);
+        };
+
+window._gallerySearchTimer = null;
+        window.debouncedRenderGallery = () => {
+            clearTimeout(window._gallerySearchTimer);
+            window._gallerySearchTimer = setTimeout(() => window.renderGallery(), 150);
+        };
+
         window.renderGallery = async () => {
             const sidebar = $('gallerySidebar'), grid = $('galleryGrid');
             if (!sidebar || !grid) return;
@@ -11386,6 +11404,7 @@ const useSao = window.isSaoMode !== false;
                         <button onclick="window.openCategoryManager()" class="text-slate-400 hover:text-blue-500 p-0.5"><i data-lucide="settings" class="w-3.5 h-3.5"></i></button>
                     </div>
                     ${galleryCategories.map(cat => `<button onclick="window.setGalleryCategory('${window.escAttr(cat)}')" class="w-full text-center py-1.5 px-0.5 text-[13px] font-black rounded-md transition-colors truncate ${currentGalleryCategory === cat ? 'bg-blue-500 text-white' : 'text-slate-700 hover:bg-slate-200'}">${cat}</button>`).join('')}`;
+                window.safeCreateIcons({ root: sidebar });
             }
 
             const filtered = galleryItems.filter(item => {
@@ -11579,7 +11598,7 @@ grid.innerHTML = `${overlayHtml}<div class="grid grid-cols-3 gap-1.5">${cameraSl
                 const workers = Math.min(4, needThumbs.length);
                 for (let w = 0; w < workers; w++) runWorker();
             }
-            if (window.lucide) lucide.createIcons({ root: $('galleryPage') });
+window.safeCreateIcons({ root: grid });
 
             const selBtn = $('gallerySelectModeBtn');
             if (selBtn) {
@@ -11661,12 +11680,13 @@ grid.innerHTML = `${overlayHtml}<div class="grid grid-cols-3 gap-1.5">${cameraSl
         window._batchCategoryLocked = false;
 
 window.safeCreateIcons = (opts) => {
-            if (window.lucide && typeof window.lucide.createIcons === 'function') {
-                try {
-                    opts ? window.lucide.createIcons(opts) : window.lucide.createIcons();
-                } catch (err) {
-                    console.warn('圖示渲染異常:', err);
-                }
+            if (!window.lucide || typeof window.lucide.createIcons !== 'function') return;
+            const rootEl = opts?.root || document;
+            if (typeof rootEl.querySelector === 'function' && !rootEl.querySelector('[data-lucide]')) return;
+            try {
+                opts ? window.lucide.createIcons(opts) : window.lucide.createIcons();
+            } catch (err) {
+                console.warn('圖示渲染異常:', err);
             }
         };
 
@@ -12876,12 +12896,11 @@ window.addEventListener('online', () => {
 galleryItems = Array.isArray(idbGallery) ? idbGallery : getLocal('work_cache_gallery_items', []);
             try {
                 const cachedRestore5d = await idbGet('app_restore_list_5d_cache');
-if (Array.isArray(cachedRestore5d) && cachedRestore5d.length) {
-                    const cutoff = Date.now() - RESTORE_KEEP_MS;
+                if (Array.isArray(cachedRestore5d) && cachedRestore5d.length) {
                     const map = new Map();
                     galleryItems.forEach(x => { if (x?.id) map.set(String(x.id), x); });
                     cachedRestore5d.forEach(r => {
-                        if (r?.id && Number(r.deletedAt || r.archivedAt || r.createdAt || 0) >= cutoff && !map.has(String(r.id))) {
+                        if (r?.id && !window.isRestoreItemExpired(r) && !map.has(String(r.id))) {
                             map.set(String(r.id), r);
                         }
                     });
@@ -12891,6 +12910,8 @@ if (Array.isArray(cachedRestore5d) && cachedRestore5d.length) {
                 console.error('讀取本機 5 日還原清單記憶失敗:', e);
             }
             galleryItems.forEach(i => { delete i.src; delete i.chunks; });
+            // 對齊雲端排序，確保本機快取最新時 onSnapshot 不會誤判變更而二次重繪
+            galleryItems.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
 
             splitHoursState = getLocal('work_cache_split_hours', {});
             futureMemos = getLocal('work_cache_future_memos', []);
@@ -12939,9 +12960,13 @@ tabVisibilityState = getLocal('work_cache_tab_visibility', defaultTabVisibility)
             if (tabVisibilityState['dashboard'] === undefined) tabVisibilityState['dashboard'] = true;
             if (!tabOrderList.includes('dashboard')) tabOrderList.unshift('dashboard');
             
-await window.hydrateAvatarsFromIDB?.(true);
-window.hydrateAvatarsFromIDB?.(true);
-            checkAndResetDailySchedule();
+// 頭像與跨日檢查改於首屏渲染後背景執行，不再阻塞圖庫首屏與重複讀兩次 IDB
+            const runAfterFirstPaint = () => {
+                window.hydrateAvatarsFromIDB?.(false);
+                checkAndResetDailySchedule();
+            };
+            if ('requestIdleCallback' in window) requestIdleCallback(runAfterFirstPaint, { timeout: 1200 });
+            else setTimeout(runAfterFirstPaint, 300);
         }
 
 function setupPureRealtimeSync() {
@@ -13728,8 +13753,9 @@ if (newIncomingCount > 0) {
                     window.playAlertSound();
                     window.showGalleryTopNotification(newIncomingCount);
                 }
-                // 🌟 當同事上傳/修改相片時，即時更新儀表板盤點數據
-                window.scheduleDashboardUpdate?.();
+if (_galleryChanged) {
+                    window.scheduleDashboardUpdate?.();
+                }
             }, console.error);
 
 // 即時同步操作日誌：與本機 5 天保存期對齊，並加上 limit(200) 避免大量歷史紀錄拖慢載入
@@ -13750,7 +13776,7 @@ if (newIncomingCount > 0) {
                         }
                     });
 
-galleryLogsStore = list;
+window.saveAndPruneLogs5Days(list, false);
                     if ($('galleryLogsModal') && !$('galleryLogsModal').classList.contains('hidden')) {
                         window.renderGalleryLogs();
                     }
@@ -14111,8 +14137,8 @@ if (window.dutyCountdownMode === 'rest') {
                         return { name, rank, subSort, col, statusBadge };
                     });
 
-                    memberDutyList.sort((a, b) => a.rank - b.rank || a.subSort - b.subSort || a.name.localeCompare(b.name));
-                    staffStatusListEl.innerHTML = memberDutyList.map(item => {
+memberDutyList.sort((a, b) => a.rank - b.rank || a.subSort - b.subSort || a.name.localeCompare(b.name));
+                    const nextStaffHtml = memberDutyList.map(item => {
                         const prof = window.getMemberProfile(item.name);
                         const hasId = prof.id && prof.id.trim() !== '' && prof.id.trim().toUpperCase() !== item.name.trim().toUpperCase();
                         const safeNameAttr = window.jsAttr(item.name);
@@ -14126,6 +14152,11 @@ if (window.dutyCountdownMode === 'rest') {
                             <div class="shrink-0">${item.statusBadge}</div>
                         </div>`;
                     }).join('');
+                    if (staffStatusListEl.dataset.renderSig !== nextStaffHtml) {
+                        staffStatusListEl.dataset.renderSig = nextStaffHtml;
+                        staffStatusListEl.innerHTML = nextStaffHtml;
+                        window.safeCreateIcons({ root: staffStatusListEl });
+                    }
                 }
             }
 
@@ -14144,11 +14175,15 @@ if (window.dutyCountdownMode === 'rest') {
                     const topStackHtml = getCountdownAndIncomingHtml(name, locId, idx);
 
 if (!isCleanRole) {
-                        // 🎧 客服模式：外層鎖定底部圓點位置，內層執行動畫，確保不往下掉且有「待:」時水平對齊
                         let seed = 0; for (let i = 0; i < name.length; i++) seed += name.charCodeAt(i);
                         const floatCls = ['animate-float-a', 'animate-float-b', 'animate-float-c'][seed % 3];
                         const floatDelay = `${(seed % 5) * -3}s`;
-                        marker.innerHTML = `<div class="flex flex-col items-center justify-end ${floatCls}" style="animation-delay:${floatDelay};"><div class="flex flex-col items-center -space-y-[1px] mb-1">${topStackHtml}<div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-lg whitespace-nowrap tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${window.esc(name)}</div></div><div class="relative flex items-center justify-center"><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md z-10 relative flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div><div class="absolute w-8 h-8 bg-blue-400/40 rounded-full radar-slow z-0"></div></div></div>`;
+                        const nextCsHtml = `<div class="flex flex-col items-center justify-end ${floatCls}" style="animation-delay:${floatDelay};"><div class="flex flex-col items-center -space-y-[1px] mb-1">${topStackHtml}<div class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-md shadow-lg whitespace-nowrap tracking-wider border border-white/80 flex items-center"><i data-lucide="user" class="w-3 h-3 mr-1 text-white"></i>${window.esc(name)}</div></div><div class="relative flex items-center justify-center"><div class="w-5 h-5 bg-blue-500 rounded-full border-[2px] border-white shadow-md z-10 relative flex items-center justify-center"><i data-lucide="user" class="w-3 h-3 text-white"></i></div><div class="absolute w-8 h-8 bg-blue-400/40 rounded-full radar-slow z-0"></div></div></div>`;
+                        if (marker.dataset.renderSig !== nextCsHtml) {
+                            marker.dataset.renderSig = nextCsHtml;
+                            marker.innerHTML = nextCsHtml;
+                            window.safeCreateIcons({ root: marker });
+                        }
 if (marker.parentNode !== container) container.appendChild(marker);
                         const off = names.length > 1 ? (idx - (names.length - 1) / 2) * 75 : 0;
                         marker.style.left = `calc(${loc.x}% + ${off}px - 20px)`;
@@ -14240,7 +14275,7 @@ const step = (locId === 'pt_4') ? 80 : 65;
                     });
                 }
             });
-if (window.lucide) lucide.createIcons({ root: $('mapPage') });
+window.safeCreateIcons({ root: container });
             document.querySelectorAll('.member-dynamic-marker[data-active="false"]').forEach(el => el.remove());
         };
 
@@ -17832,10 +17867,23 @@ const canon = window.resolveMemberIdentity ? window.resolveMemberIdentity(member
             });
 
 window._hasUnsavedGridEdits = true;
-            window.refreshPersonTableDay(dStr);
-            if (typeof window.refreshRightExcelStationPane === 'function') {
-                window.refreshRightExcelStationPane(dStr);
-            }
+            window.scheduleSchedulePaneRefresh(dStr);
+        };
+
+        window._schedRefreshDates = window._schedRefreshDates || new Set();
+        window._schedRefreshRaf = null;
+        window.scheduleSchedulePaneRefresh = (dStr) => {
+            window._schedRefreshDates.add(dStr);
+            if (window._schedRefreshRaf) return;
+            window._schedRefreshRaf = requestAnimationFrame(() => {
+                window._schedRefreshRaf = null;
+                const dates = Array.from(window._schedRefreshDates);
+                window._schedRefreshDates.clear();
+                dates.forEach(d => {
+                    window.refreshPersonTableDay?.(d);
+                    window.refreshRightExcelStationPane?.(d);
+                });
+            });
         };
 
         window.buildPersonTableBodyHtml = (dStr) => {
@@ -18210,9 +18258,8 @@ window.handleExcelRightCellClick = (dStr, locId, startStr, endStr, forcedMode = 
                 }
             });
 
-            window._hasUnsavedGridEdits = true;
-            window.refreshRightExcelStationPane(dStr);
-            window.refreshPersonTableDay(dStr);
+window._hasUnsavedGridEdits = true;
+            window.scheduleSchedulePaneRefresh(dStr);
         };
 
 window.splitLeftPaneMode = getLocal('work_cache_sched_left_mode', 'person'); // 'person' | 'station' | 'excel'
@@ -19397,15 +19444,7 @@ if (!ps.leftPaintMode) {
                     paintTarget(el);
                 }, { passive: false });
 
-                window.addEventListener('touchend', () => {
-                    isPainting = false;
-                    leftPaintMode = null;
-                    excelPaintMode = null;
-                    window._lastPaintedSubItem = null;
-                    window._lastPaintedPCell = null;
-                    window._lastPaintedExcelKey = null;
-                });
-            }
+}
         };
 
         window.toggleTask = async (taskId) => {
@@ -20812,99 +20851,6 @@ galleryCategories = (imp.galleryCategories || galleryCategories).filter(c => c !
             }, 250);
         };
 
-window.editTimelineTask = (taskId, eOrIsNew) => {
-            if (eOrIsNew && typeof eOrIsNew === 'object' && eOrIsNew.stopPropagation) {
-                eOrIsNew.stopPropagation();
-            }
-            const t = dailyScheduleData.find(x => String(x.id) === String(taskId));
-            if (!t) return;
-
-            document.getElementById('timelineEditModal')?.remove();
-            const isNew = eOrIsNew === true;
-            const safeId = window.jsAttr(String(t.id));
-            const curGroup = t.group || '';
-            const curDesc = (t.content && t.content !== '點擊編輯...') ? t.content : (t.note || '');
-
-            const modalHtml = `
-            <div id="timelineEditModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-4" onclick="if(event.target === this) this.remove();">
-                <div class="bg-white rounded-2xl p-5 w-full max-w-[330px] shadow-2xl relative animate-pop-in" onclick="event.stopPropagation()">
-                    <div class="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-100">
-                        <h3 class="font-bold text-base text-slate-800 flex items-center">
-                            <i data-lucide="edit-3" class="w-4 h-4 mr-2 text-blue-500"></i>${isNew ? '新增動態任務' : '修改動態任務'}
-                        </h3>
-                        <button type="button" onclick="document.getElementById('timelineEditModal')?.remove()" class="text-slate-400 hover:text-slate-600 p-1">
-                            <i data-lucide="x" class="w-4 h-4"></i>
-                        </button>
-                    </div>
-                    <div class="space-y-3">
-                        <div>
-                            <label class="text-[11px] font-bold text-slate-500 block mb-1">任務標題</label>
-                            <input type="text" id="tlEditTitle" value="${window.esc(t.title || '')}" placeholder="輸入任務名稱..." class="w-full border border-slate-300 rounded-xl p-2 text-sm font-bold text-slate-800 focus:border-blue-500 focus:outline-none text-center">
-                        </div>
-                        <div class="flex gap-2">
-                            <div class="flex-1">
-                                <label class="text-[11px] font-bold text-slate-500 block mb-1">開始時間</label>
-                                <input type="time" id="tlEditStart" value="${window.esc(t.start || '09:00')}" class="w-full border border-slate-300 rounded-xl p-2 text-xs font-mono font-bold text-slate-800 focus:border-blue-500 focus:outline-none text-center">
-                            </div>
-                            <div class="flex-1">
-                                <label class="text-[11px] font-bold text-slate-500 block mb-1">結束時間</label>
-                                <input type="time" id="tlEditEnd" value="${window.esc(t.end || '10:00')}" class="w-full border border-slate-300 rounded-xl p-2 text-xs font-mono font-bold text-slate-800 focus:border-blue-500 focus:outline-none text-center">
-                            </div>
-                        </div>
-                        <div>
-                            <label class="text-[11px] font-bold text-slate-500 block mb-1">所屬組別</label>
-                            <select id="tlEditGroup" class="w-full border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-700 bg-slate-50 focus:border-blue-500 focus:outline-none text-center">
-                                <option value="" ${curGroup === '' ? 'selected' : ''}>無指定組別</option>
-                                <option value="A" ${curGroup === 'A' ? 'selected' : ''}>A 組</option>
-                                <option value="B" ${curGroup === 'B' ? 'selected' : ''}>B 組</option>
-                                <option value="C" ${curGroup === 'C' ? 'selected' : ''}>C 組</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="text-[11px] font-bold text-slate-500 block mb-1">詳細內容 / 備註 (選填)</label>
-                            <textarea id="tlEditContent" placeholder="輸入任務補充說明..." class="w-full border border-slate-300 rounded-xl p-2 text-xs text-slate-700 focus:border-blue-500 focus:outline-none h-20 resize-none">${window.esc(curDesc)}</textarea>
-                        </div>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center">
-                        <button type="button" onclick="window.deleteTaskCard('${safeId}', event); document.getElementById('timelineEditModal')?.remove();" class="text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-xl text-xs font-bold active:scale-95 transition-all">刪除卡片</button>
-                        <div class="space-x-1.5 flex">
-                            <button type="button" onclick="document.getElementById('timelineEditModal')?.remove()" class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold">取消</button>
-                            <button type="button" onclick="window.saveTimelineTaskEdit('${safeId}')" class="px-4 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95">儲存</button>
-                        </div>
-                    </div>
-                </div>
-            </div>`;
-            document.body.insertAdjacentHTML('beforeend', modalHtml);
-            const modalEl = document.getElementById('timelineEditModal');
-            if (window.lucide && modalEl) lucide.createIcons({ root: modalEl });
-        };
-
-        window.saveTimelineTaskEdit = (taskId) => {
-            const t = dailyScheduleData.find(x => String(x.id) === String(taskId));
-            if (!t) return;
-            const title = ($('tlEditTitle')?.value || '').trim();
-            const start = ($('tlEditStart')?.value || '').trim();
-            const end = ($('tlEditEnd')?.value || '').trim();
-            const group = $('tlEditGroup')?.value || '';
-            const content = ($('tlEditContent')?.value || '').trim();
-
-            if (!title) return window.showToast('⚠️ 請填寫任務標題', true);
-            if (!start || !end) return window.showToast('⚠️ 請設定開始與結束時間', true);
-
-            t.title = title;
-            t.start = start;
-            t.end = end;
-            t.group = group;
-            t.content = content;
-            t.note = content;
-
-            safeSetLocal('work_cache_schedule', dailyScheduleData);
-            syncConfig('schedule', { tasks: dailyScheduleData });
-            document.getElementById('timelineEditModal')?.remove();
-            if (!$('timelinePage')?.classList.contains('hidden')) window.renderTimeline(false);
-            window.showToast('✅ 已更新動態任務');
-        };
-
 window.editTimelineTask = (taskId, eOrIsNew, draftTask = null) => {
             if (eOrIsNew && typeof eOrIsNew === 'object' && eOrIsNew.stopPropagation) {
                 eOrIsNew.stopPropagation();
@@ -21176,7 +21122,11 @@ window.updateCurrentTimeIndicator = (force = false) => {
                 const d = new Date(parts[0], parts[1] - 1, parts[2] + deltaDays, 12, 0, 0);
                 currentHygieneDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
             }
-            window.renderHygienePage();
+if (typeof window.updateSingleHygieneRowUI === 'function') {
+                window.updateSingleHygieneRowUI(stallId);
+            } else {
+                window.renderHygienePage();
+            }
         };
 
 window.getHygieneDayStaff = (dateKey) => {
@@ -21294,7 +21244,11 @@ window.setHygieneCheck = (stallId, checkType) => {
                 setDoc(cfgDoc('hygiene_records'), { records: { [dateKey]: payload } }, { merge: true }).catch(() => {});
             }
 
-            window.renderHygienePage();
+if (typeof window.updateSingleHygieneRowUI === 'function') {
+                window.updateSingleHygieneRowUI(stallId);
+            } else {
+                window.renderHygienePage();
+            }
             if (shouldOpenStaffModal) {
                 window.openHygieneStaffModal();
             }
@@ -21499,10 +21453,8 @@ window.clearCurrentHygieneDay = (e) => {
         };
 
 // 🌟 衛生巡查：單日匯出
-        window.exportSingleDayHygieneExcel = (targetDate) => {
-            if (typeof XLSX === 'undefined') {
-                return window.showToast('匯出模組尚未載入，請稍候再試', true);
-            }
+window.exportSingleDayHygieneExcel = async (targetDate) => {
+            try { await window.ensureXlsxLoaded(); } catch (e) { return window.showToast(e.message, true); }
             const dateKey = targetDate || currentHygieneDate || getTodayDateStr();
             const { weekLabel, stalls } = window.getHygieneDayStalls(dateKey);
             const dayData = hygieneRecordsStore[dateKey] || {};
@@ -21550,10 +21502,8 @@ window.clearCurrentHygieneDay = (e) => {
         };
 
         // 🌟 衛生巡查：指定月份整月匯出（支援 1～12月 如 10月、11月、12月）
-        window.exportMonthlyHygieneExcel = async (yearNum, monthNum) => {
-            if (typeof XLSX === 'undefined') {
-                return window.showToast('匯出模組尚未載入，請稍候再試', true);
-            }
+window.exportMonthlyHygieneExcel = async (yearNum, monthNum) => {
+            try { await window.ensureXlsxLoaded(); } catch (e) { return window.showToast(e.message, true); }
             const yStr = String(yearNum);
             const mStr = pad(monthNum);
             const monthPrefix = `${yStr}-${mStr}`;
@@ -21792,9 +21742,8 @@ window.renderHygienePage = () => {
                 .concat(csList.map(m => `<option value="${window.esc(m)}" ${dayStaff === m ? 'selected' : ''}>👤 ${window.esc(m)} ▾</option>`))
                 .join('');
 
-            // 🌟 2. 所有控制項統一鎖定高度 h-[26px] 與固定寬度，手機版垂直與水平 100% 整齊對齊
-            const rowsHtml = stalls.map(sId => {
-                const r = dayData[sId] || {};
+            window.buildHygieneRowHtml = (sId, dayDataMap) => {
+                const r = (dayDataMap || {})[sId] || {};
                 const stallInfo = RAW_PATROL_STALLS.find(x => x.id === sId);
                 const ownerName = stallInfo?.name || '';
                 const curCheck = r.checkVal || (r.checked ? 'V' : '');
@@ -21815,63 +21764,52 @@ window.renderHygienePage = () => {
 
                 return `
                 <div id="hyg-card-${sId}" class="w-full px-1.5 py-1 rounded-xl border ${rowBgCls} shadow-2xs flex items-center gap-1 whitespace-nowrap overflow-hidden transition-all">
-                    <!-- [檔號] 固定寬 40px、高 26px -->
                     <span class="w-[40px] h-[26px] flex items-center justify-center bg-slate-900 text-white font-mono font-black text-[10.5px] rounded-md shrink-0 leading-none" title="${window.esc(ownerName)}">${sId}</span>
-
-                    <!-- 選單1 固定寬 34px、高 26px、手機強制置中 -->
-                    <select onchange="window.updateHygieneField('${sId}', 'opt1', this.value)"
-                        style="text-align-last: center;"
+                    <select onchange="window.updateHygieneField('${sId}', 'opt1', this.value)" style="text-align-last: center;"
                         class="w-[34px] h-[26px] appearance-none text-center bg-slate-50 border ${r.opt1 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md p-0 text-[10.5px] font-black shrink-0 cursor-pointer leading-none focus:border-blue-500 focus:outline-none">
                         <option value="">--</option>
                         ${HYGIENE_OPT1_LIST.map(o => `<option value="${o}" ${r.opt1 === o ? 'selected' : ''}>${o}</option>`).join('')}
                     </select>
-
-                    <!-- 選單2 固定寬 34px、高 26px -->
-                    <select onchange="window.updateHygieneField('${sId}', 'opt2', this.value)"
-                        style="text-align-last: center;"
+                    <select onchange="window.updateHygieneField('${sId}', 'opt2', this.value)" style="text-align-last: center;"
                         class="w-[34px] h-[26px] appearance-none text-center bg-slate-50 border ${r.opt2 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md p-0 text-[10.5px] font-black shrink-0 cursor-pointer leading-none focus:border-blue-500 focus:outline-none">
                         <option value="">--</option>
                         ${HYGIENE_OPT2_LIST.map(o => `<option value="${o}" ${r.opt2 === o ? 'selected' : ''}>${o}</option>`).join('')}
                     </select>
-
-                    <!-- 選單3 固定寬 34px、高 26px -->
-                    <select onchange="window.updateHygieneField('${sId}', 'opt3', this.value)"
-                        style="text-align-last: center;"
+                    <select onchange="window.updateHygieneField('${sId}', 'opt3', this.value)" style="text-align-last: center;"
                         class="w-[34px] h-[26px] appearance-none text-center bg-slate-50 border ${r.opt3 ? 'border-blue-400 text-blue-700 bg-blue-50/40' : 'border-slate-300 text-slate-500'} rounded-md p-0 text-[10.5px] font-black shrink-0 cursor-pointer leading-none focus:border-blue-500 focus:outline-none">
                         <option value="">--</option>
                         ${HYGIENE_OPT3_LIST.map(o => `<option value="${o}" ${r.opt3 === o ? 'selected' : ''}>${o}</option>`).join('')}
                     </select>
-
-                    <!-- 備註 彈性寬度、高 26px -->
                     <input type="text" value="${window.esc(r.remark || '')}" placeholder="備註"
                         oninput="window.updateHygieneField('${sId}', 'remark', this.value)"
                         class="flex-1 min-w-[36px] w-0 h-[26px] bg-slate-50 border border-slate-300 rounded-md px-1.5 py-0 text-[11px] font-bold text-slate-800 leading-none transition-all focus:bg-white focus:border-blue-500 focus:outline-none">
-
-                    <!-- 巡查 V/X 固定高 26px -->
                     <div class="flex items-center gap-0.5 shrink-0 h-[26px]">
                         <span class="hidden sm:inline text-[10px] font-black text-slate-600 select-none mr-0.5">巡查</span>
                         <button type="button" onclick="window.setHygieneCheck('${sId}', 'V')" title="正常 / 合格"
                             class="w-[24px] h-[26px] flex items-center justify-center rounded-md border shrink-0 active:scale-90 transition-all ${curCheck === 'V' ? 'bg-emerald-500 text-white border-emerald-600 shadow-2xs' : 'bg-white text-slate-400 border-slate-300 hover:text-emerald-600 hover:bg-emerald-50/50'}">
-                            <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
-                                <polyline points="20 6 9 17 4 12"></polyline>
-                            </svg>
+                            <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
                         </button>
                         <button type="button" onclick="window.setHygieneCheck('${sId}', 'X')" title="沒有查"
                             class="w-[24px] h-[26px] flex items-center justify-center rounded-md border shrink-0 active:scale-90 transition-all ${curCheck === 'X' ? 'bg-rose-500 text-white border-rose-600 shadow-2xs' : 'bg-white text-slate-400 border-slate-300 hover:text-rose-600 hover:bg-rose-50/50'}">
-                            <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
-                                <line x1="18" y1="6" x2="6" y2="18"></line>
-                                <line x1="6" y1="6" x2="18" y2="18"></line>
-                            </svg>
+                            <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                         </button>
                     </div>
-
-                    <!-- 完成通知按鈕 固定寬 52px、高 26px（字數改變也不會推擠左方欄位） -->
                     <button type="button" onclick="window.updateHygieneField('${sId}', 'notified')"
                         class="w-[52px] h-[26px] flex items-center justify-center rounded-md text-[10px] font-black border shrink-0 leading-none active:scale-95 transition-all ${notifyBtnCls}">
                         ${isNotified ? '✔已通知' : '完成通知'}
                     </button>
                 </div>`;
-            }).join('');
+            };
+
+            window.updateSingleHygieneRowUI = (sId) => {
+                const card = document.getElementById(`hyg-card-${sId}`);
+                if (!card) return window.renderHygienePage();
+                const dKey = currentHygieneDate || getTodayDateStr();
+                card.outerHTML = window.buildHygieneRowHtml(sId, hygieneRecordsStore[dKey] || {});
+                window.updateHygieneStatsBar?.();
+            };
+
+            const rowsHtml = stalls.map(sId => window.buildHygieneRowHtml(sId, dayData)).join('');
 
             page.innerHTML = `
                 <div class="relative bg-white rounded-2xl px-2.5 py-1.5 mb-2 border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-1.5 shrink-0">
@@ -21947,25 +21885,30 @@ const targetPage = $(pages[tab]);
                 targetPage.classList.add(['dashboard', 'hygiene', 'map', 'gallery', 'coldRoom', 'closing'].includes(tab) ? 'flex' : 'block'); 
             }
 
-// 更新按鈕樣式（包含「更多」按鈕）
-            const { overflowTabs } = window.getSplitTabLists ? window.getSplitTabLists() : { overflowTabs: [] };
-            tabOrderList.forEach(k => {
-                const btn = $(tabMetadataMap[k]?.btnId);
-                if (btn) btn.className = inactCls;
-            });
-            const targetBtn = $(tabMetadataMap[tab]?.btnId);
-            if (targetBtn) targetBtn.className = actCls;
-            const moreBtn = $('tabMoreBtn');
-            if (moreBtn) moreBtn.className = overflowTabs.includes(tab) ? actCls : inactCls;
+const tabContainer = $('tabBarContainer');
+            if (tabContainer && tabContainer.classList.contains('ios-main-tabs')) {
+                window.syncMainTabIosSlider?.(tab, true);
+            } else {
+                const { overflowTabs } = window.getSplitTabLists ? window.getSplitTabLists() : { overflowTabs: [] };
+                tabOrderList.forEach(k => {
+                    const btn = $(tabMetadataMap[k]?.btnId);
+                    if (btn) btn.className = inactCls;
+                });
+                const targetBtn = $(tabMetadataMap[tab]?.btnId);
+                if (targetBtn) targetBtn.className = actCls;
+                const moreBtn = $('tabMoreBtn');
+                if (moreBtn) moreBtn.className = overflowTabs.includes(tab) ? actCls : inactCls;
+            }
 
             // 🌟 關鍵修正第 2 步：頁面已經移除 hidden 後，才執行對應的渲染函式
             ({
                 dashboard: window.renderDashboard, // 👈 補在 patrol 的正上方這一行
 patrol: () => {
-                    window.autoSyncClosedStallsToPatrol(true);
-                    if (typeof window.applyAutoPatrolSlot === 'function') {
-                        window.applyAutoPatrolSlot(true);
-                    }
+                    const autoSlot = window.getAutoPatrolSlot ? window.getAutoPatrolSlot() : patrolSlot;
+                    lastAutoTriggeredSlot = autoSlot;
+                    window.setPatrolSlot(autoSlot, true);
+                    window.scheduleNextPatrolSlotSwitch?.();
+                    window.autoSyncClosedStallsToPatrol(true, true);
                     window.setPatrolViewMode(patrolViewMode || 'card');
                 },
                 hygiene: window.renderHygienePage,
@@ -22614,19 +22557,10 @@ setupPureRealtimeSync();
                 window.flushGalleryMetadataPatches?.();
                 window.flushPendingTempSync?.();
                 window._flushSyncQueue?.();
-                if (timeOffset === 0 && window.timeOffset === 0 && !isFastForwarding) {
-                    window.autoCleanupGalleryToTrash();
-                }
-                window.autoSyncClosedStallsToPatrol(true);
-
-                // 🌟 重開網頁連上雲端時，自動檢查並補傳離線期間拍的照片
+// 歸檔、剔檔聯動與離線照片補傳已由 setupPureRealtimeSync 統一觸發，此處僅補合併未入列項目
                 const offlinePending = getLocal('work_pending_offline_uploads', []);
-                if (offlinePending.length > 0 && !window._uploadQueue.length) {
-                    window._uploadQueue = offlinePending;
-                    window._totalUploadCount = offlinePending.length;
-                }
-                if (window._uploadQueue.length > 0 && navigator.onLine) {
-                    window.resumeBatchUploadQueue();
+                if (offlinePending.length > 0) {
+                    window.enqueueGalleryUploads(offlinePending);
                 }
             } else {
                 dot?.classList.replace('bg-green-500', 'bg-red-500'); 
@@ -23792,7 +23726,7 @@ if (pendingCloudPayload) {
       }
     });
 
-    document.addEventListener('compositionend', function(e) {
+document.addEventListener('compositionend', function(e) {
       if (e.target && e.target.classList && e.target.classList.contains('expand-input')) {
         updateTextColor(e.target);
         if (e.target.id === 'meta_year' || e.target.id === 'meta_month' || e.target.id === 'meta_day') return;
@@ -23802,14 +23736,6 @@ if (pendingCloudPayload) {
         updateBracketStates();
         updateToggleBtnVisibility();
         autoExpandRowInputs(e.target);
-        saveCurrentDayReport();
-      }
-    });
-
-    document.addEventListener('compositionend', function(e) {
-      if (e.target && e.target.classList && e.target.classList.contains('expand-input')) {
-        updateTextColor(e.target);
-        if (e.target.id === 'meta_year' || e.target.id === 'meta_month' || e.target.id === 'meta_day') return;
         saveCurrentDayReport();
       }
     });
@@ -25048,7 +24974,7 @@ window.recalcInquiryTotal = function() {
 
 <div class="relative flex-1">
                         <i data-lucide="search" class="absolute left-2.5 top-2 w-3.5 h-3.5 text-slate-400"></i>
-                        <input type="text" id="gallerySearchInput" placeholder="搜尋圖片..." oninput="window.renderGallery()" class="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-1.5 py-0.5 text-[13px] text-slate-800 font-bold placeholder-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none tracking-wide text-center">
+<input type="text" id="gallerySearchInput" placeholder="搜尋圖片..." oninput="window.debouncedRenderGallery()" class="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-1.5 py-0.5 text-[13px] text-slate-800 font-bold placeholder-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none tracking-wide text-center">
                     </div>
                     <!-- 🌟 AI 核對檔號按鈕 -->
                     <button type="button" onclick="window.confirmCheckGalleryStalls()" title="AI 核對提早收工與清潔相片檔號" class="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-1.5 py-0.5 rounded-lg flex items-center justify-center active:scale-95 text-[13px] font-black transition-all shadow-2xs shrink-0">
